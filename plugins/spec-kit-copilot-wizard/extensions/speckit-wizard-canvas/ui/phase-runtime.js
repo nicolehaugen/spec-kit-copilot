@@ -22,6 +22,7 @@ import {
 import { CANONICAL_BY_FULL } from "../pipeline/effective-phases.mjs";
 import { resolveHooksForCommand } from "../pipeline/active-artifacts.mjs";
 import { effectivePipelinePhases } from "../pipeline/effective-phases.mjs";
+import { parseLookupId } from "./lookup-id.mjs";
 
 // -------- Section: phase/clarifications.js --------
 
@@ -215,6 +216,10 @@ export function resolvePipelineEntry(id, snapshot) {
                 // to do nothing. Mirrors synthesizeCanonicalPhase() in
                 // app.js which uses the same `speckit.<id>` convention.
                 commandName: `speckit.${id}`,
+                // Core phases are backed by the built-in layer, which the
+                // CLI emits with `lookupId: null`. Set explicitly so the
+                // field is present across every phase kind.
+                lookupId: null,
                 artifactPath: scanned?.artifactPath ?? null,
                 lastRunAt: scanned?.lastRunAt ?? null,
                 ...(scanned?.folderPath ? { folderPath: scanned.folderPath } : {}),
@@ -248,6 +253,7 @@ export function resolvePipelineEntry(id, snapshot) {
                 locked: false,
                 commandName: extResolved.commandName,
                 source: `extension:${extResolved.ext.id}`,
+                lookupId: extResolved.lookupId ?? null,
                 artifactPath: scanned?.artifactPath ?? null,
                 lastRunAt: scanned?.lastRunAt ?? null,
                 // LLM-inferred metadata from artifact-targets.json cache
@@ -304,6 +310,7 @@ function resolveExtensionArtifactFromSnapshot(pipelineId, snapshot) {
         shortLabel,
         sourcePath: active.sourcePath || null,
         description: art.description || "",
+        lookupId: active.lookupId ?? null,
     };
 }
 
@@ -890,14 +897,22 @@ export function renderMoreCommandsPanel() {
 // Resolve the on-disk markdown path for a command tile, when known.
 // Priority:
 //   1. composition activeLayer.sourcePath (accurate — includes preset overrides).
-//   2. derived preset path from `p.source` + `p.commandName`.
+//   2. derived preset path parsed from the phase's `lookupId` or `source`.
 // Returns null when the file isn't on disk (e.g. synthesized core-only commands).
 export function commandSourcePath(p) {
     if (!p) return null;
-    const activeLayer = lookupActiveLayer(p.id, p.commandName);
+    const activeLayer = lookupActiveLayerForCommand(p);
     if (activeLayer?.sourcePath) return activeLayer.sourcePath;
-    // Derive from `source: "preset:<presetId>"` for preset-only commands
-    // that don't have composition entries (game-narrative extras).
+    // Fallback for preset-only commands without a composition entry.
+    // Use the deterministic `lookupId` prefix parse; drop back to
+    // `p.source` only if neither the winning layer nor the phase
+    // carries a `lookupId`.
+    const parsed = parseLookupId(activeLayer?.lookupId) ?? parseLookupId(p.lookupId);
+    if (parsed && parsed.providerKind === "preset" && p.commandName) {
+        return `.specify/presets/${parsed.providerId}/commands/${p.commandName}.md`;
+    }
+    // Safety net for phases whose constructor doesn't attach `lookupId`;
+    // read the preset id from `p.source`.
     if (typeof p.source === "string" && p.source.startsWith("preset:") && p.commandName) {
         const presetId = p.source.slice("preset:".length).split(":")[0];
         return `.specify/presets/${presetId}/commands/${p.commandName}.md`;
@@ -905,13 +920,30 @@ export function commandSourcePath(p) {
     return null;
 }
 
-// Look up the winning composition layer for a command id (either "commands/<name>" or a phase id).
-export function lookupActiveLayer(id, commandName) {
-    const compArtifacts = state.snapshot?.composition?.artifacts ?? [];
-    const cmdLookupId = commandName ? `commands/${commandName}` : null;
-    const compArtifact =
-        (cmdLookupId && compArtifacts.find((a) => a.id === cmdLookupId)) ||
-        compArtifacts.find((a) => a.id === id);
-    return (compArtifact?.stack ?? []).find((l) => l.active) || null;
+// Return the winning stack layer for a phase-tile (`p`). A phase doesn't
+// intrinsically know which artifact stack it belongs to, so search by
+// `commands/<commandName>` first and fall back to `p.id`.
+export function lookupActiveLayerForCommand(p) {
+    if (!p) return null;
+    const artifacts = state.snapshot?.composition?.artifacts ?? [];
+    const commandArtifactId = p.commandName ? `commands/${p.commandName}` : null;
+    const artifact =
+        (commandArtifactId && artifacts.find((a) => a.id === commandArtifactId)) ||
+        artifacts.find((a) => a.id === p.id);
+    return (artifact?.stack ?? []).find((l) => l.active) || null;
+}
+
+// Deterministic lookup by CLI `lookupId`. Walks all artifact stacks and
+// returns the specific layer whose `lookupId` matches. Core layers carry
+// `lookupId: null` per the CLI contract and cannot be addressed this way.
+export function lookupLayerByLookupId(lookupId) {
+    if (typeof lookupId !== "string" || !lookupId) return null;
+    const artifacts = state.snapshot?.composition?.artifacts ?? [];
+    for (const a of artifacts) {
+        for (const l of a.stack ?? []) {
+            if (l && l.lookupId === lookupId) return l;
+        }
+    }
+    return null;
 }
 

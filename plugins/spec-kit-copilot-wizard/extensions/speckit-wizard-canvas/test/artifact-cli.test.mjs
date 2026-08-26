@@ -4,6 +4,8 @@ import {
     buildCompositionFromCli,
 } from "../composition/artifact-cli.mjs";
 import { computePipelineFastPath } from "../composition/pipeline-fast-path.mjs";
+import { parseLookupId, findLayerByLookupId } from "../ui/lookup-id.mjs";
+import { computeProviderContributions } from "../ui/composition.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -285,5 +287,116 @@ describe("buildCompositionFromCli", () => {
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
+    });
+});
+
+describe("lookupId helper", () => {
+    test("parseLookupId extracts (providerKind, providerId, kind, name) for preset layers", () => {
+        assert.deepEqual(
+            parseLookupId("preset:compliance:command:speckit.plan"),
+            { providerKind: "preset", providerId: "compliance", kind: "command", name: "speckit.plan" },
+        );
+    });
+
+    test("parseLookupId extracts identity for extension layers", () => {
+        assert.deepEqual(
+            parseLookupId("extension:assess:template:intake-spec"),
+            { providerKind: "extension", providerId: "assess", kind: "template", name: "intake-spec" },
+        );
+    });
+
+    test("parseLookupId returns null for null / non-string / malformed input", () => {
+        assert.equal(parseLookupId(null), null);
+        assert.equal(parseLookupId(undefined), null);
+        assert.equal(parseLookupId(""), null);
+        assert.equal(parseLookupId("preset:only-two"), null);
+        assert.equal(parseLookupId("preset:p:command"), null);
+        assert.equal(parseLookupId(42), null);
+        // Unknown provider kind is rejected.
+        assert.equal(parseLookupId("bogus:x:command:y"), null);
+    });
+
+    test("names containing colons are preserved (everything after the 3rd colon joins the remainder)", () => {
+        // Defensive: if the CLI ever emits a name with an embedded colon,
+        // parse the first three segments and treat the tail as the name.
+        assert.deepEqual(
+            parseLookupId("preset:p:command:speckit:weird:name"),
+            { providerKind: "preset", providerId: "p", kind: "command", name: "speckit:weird:name" },
+        );
+    });
+
+    test("findLayerByLookupId returns the exact matching layer across artifact stacks", async () => {
+        const root = mkdtempSync(join(tmpdir(), "speckit-cli-test-"));
+        try {
+            const comp = await buildCompositionFromCli({
+                workspaceRoot: root,
+                presetItems: [{ id: "compliance", installedId: "compliance", active: true, name: "Compliance Preset" }],
+                extensionItems: [],
+                runner: fakeRunner(PRESET_OVERRIDE_FIXTURE),
+            });
+            const layer = findLayerByLookupId(comp, "preset:compliance:command:speckit.plan");
+            assert.ok(layer, "matching layer found");
+            assert.equal(layer.presetId, "compliance");
+            assert.equal(layer.active, true);
+            // Null and unknown ids resolve to null.
+            assert.equal(findLayerByLookupId(comp, null), null);
+            assert.equal(findLayerByLookupId(comp, ""), null);
+            assert.equal(findLayerByLookupId(comp, "preset:nope:command:x"), null);
+            // Empty comp is safe.
+            assert.equal(findLayerByLookupId(null, "preset:compliance:command:speckit.plan"), null);
+            assert.equal(findLayerByLookupId({}, "preset:compliance:command:speckit.plan"), null);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("computeProviderContributions (lookupId-driven bucketing)", () => {
+    test("preset winner buckets under providerId parsed from lookupId", async () => {
+        const root = mkdtempSync(join(tmpdir(), "speckit-cli-test-"));
+        try {
+            const comp = await buildCompositionFromCli({
+                workspaceRoot: root,
+                presetItems: [{ id: "compliance", installedId: "compliance", active: true, name: "Compliance Preset" }],
+                extensionItems: [],
+                runner: fakeRunner(PRESET_OVERRIDE_FIXTURE),
+            });
+            const contributions = computeProviderContributions(comp.artifacts);
+            const bucket = contributions.get("compliance");
+            assert.ok(bucket, "bucket keyed by providerId parsed from lookupId");
+            // The preset overrides a canonical command (which is a `core`
+            // baseline artifact in the fixture), so the contribution counts
+            // under `customized`, not `added`.
+            assert.equal(bucket.customized.command, 1);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test("layers with null lookupId (synthesized hook attribution) still bucket via presetId fallback", () => {
+        // Hand-built artifact simulating what `applyHookAttributions` in
+        // `artifact-cli.mjs` writes: a synthetic extension-hook layer with
+        // `lookupId: null` (the wizard does not invent CLI IDs). The
+        // fallback to `layer.presetId` keeps these buckets attributed.
+        const artifacts = [{
+            id: "commands/speckit.assess.intake",
+            kind: "hook",
+            stack: [{
+                layer: "extension",
+                presetId: "assess",
+                presetName: "Assess",
+                strategy: "replace",
+                active: true,
+                hidden: false,
+                manifestPath: ".specify/extensions/assess/extension.yml",
+                lookupId: null,
+            }],
+            hookBindings: [{ phase: "after_specify", extensionId: "assess", targetCommand: "speckit.assess.intake" }],
+        }];
+        const contributions = computeProviderContributions(artifacts);
+        assert.ok(
+            contributions.get("assess"),
+            "fallback to layer.presetId keeps synthetic hook layers attributed to the extension",
+        );
     });
 });
