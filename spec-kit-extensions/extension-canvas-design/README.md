@@ -35,14 +35,14 @@ with a released Wizard version is not established by this package.
 discovery-only by default; `--install-allowed` permits installation:
 
 ```powershell
-specify extension catalog add https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-extensions/catalog.json --name spec-kit-copilot --install-allowed
+specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json --name spec-kit-copilot --install-allowed
 specify extension add extension-canvas-design
 ```
 
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/github/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.0/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.0/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.

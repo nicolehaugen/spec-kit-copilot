@@ -7,7 +7,7 @@ extension:
   description: Registered settings pages for the Spec Kit Canvas Designer.
   category: process
   author: spec-kit-copilot
-  repository: https://github.com/github/spec-kit-copilot
+  repository: https://github.com/nicolehaugen/spec-kit-copilot
   license: MIT
 
 requires:

@@ -15,7 +15,7 @@ Copilot canvas providers remain under `plugins/`.
 Register the catalog once, then install by ID:
 
 ```powershell
-specify extension catalog add https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-extensions/catalog.json --name spec-kit-copilot --install-allowed
+specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json --name spec-kit-copilot --install-allowed
 specify extension add extension-canvas-design
 ```
 
@@ -37,12 +37,16 @@ the package ID and remains unchanged.
 
 To publish an extension from the GitHub Actions UI after merging those updates:
 
-1. Open **Actions** in `github/spec-kit-copilot`.
+1. Open **Actions** in `nicolehaugen/spec-kit-copilot`.
 2. Select **Release Extension Trigger**, then **Run workflow**.
 3. Leave **Use workflow from** set to **main**, enter the extension's directory
    name under `spec-kit-extensions/` (for example, `extension-canvas-design`), and enter
    its manifest version (for example, `0.1.0`; an optional `v` prefix is accepted).
 4. Click **Run workflow** and monitor its packaging and release jobs.
+
+The manual trigger appears after this workflow is merged into your fork's
+default branch. Merging into `nicolehaugen/spec-kit-copilot` does not change
+`github/spec-kit-copilot`; releases and tags are created in your fork only.
 
 The trigger calls the reusable **Release Extension** workflow as part of the
 same run. GitHub's built-in `GITHUB_TOKEN` can create tags and publish releases,
