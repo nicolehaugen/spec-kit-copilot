@@ -3,7 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { isSupportedLocalKind, validateLocalSource } from "../server/designer-local-sources.mjs";
+import { isSupportedLocalKind, stripSurroundingQuotes, validateLocalSource } from "../server/designer-local-sources.mjs";
 
 async function fixture(t) {
     const dir = await mkdtemp(join(tmpdir(), "speckit-local-source-"));
@@ -18,6 +18,20 @@ test("only presets and extensions are supported local kinds, never bundles", () 
     assert.equal(isSupportedLocalKind("unknown"), false);
 });
 
+test("stripSurroundingQuotes strips exactly one balanced wrapping pair", () => {
+    assert.equal(stripSurroundingQuotes("C:\\Users\\name\\dir"), "C:\\Users\\name\\dir");
+    assert.equal(stripSurroundingQuotes("\"C:\\Users\\name\\dir\""), "C:\\Users\\name\\dir");
+    assert.equal(stripSurroundingQuotes("'C:\\Users\\name\\dir'"), "C:\\Users\\name\\dir");
+    assert.equal(stripSurroundingQuotes("/home/name/dir"), "/home/name/dir");
+});
+
+test("stripSurroundingQuotes rejects unmatched or embedded quotes", () => {
+    assert.throws(() => stripSurroundingQuotes("\"C:\\Users\\name\\dir"), /quotes/);
+    assert.throws(() => stripSurroundingQuotes("C:\\Users\\name\\dir\""), /quotes/);
+    assert.throws(() => stripSurroundingQuotes("C:\\Users\\na\"me\\dir"), /quotes/);
+    assert.throws(() => stripSurroundingQuotes("\"C:\\Users\\name\\dir'"), /quotes/);
+});
+
 test("validates a well-formed local preset directory and returns its canonical path", async (t) => {
     const dir = await fixture(t);
     await writeFile(join(dir, "preset.yml"), "schema_version: 1\npreset:\n  id: my-preset\n  name: My Preset\n  version: 1.2.3\n");
@@ -26,6 +40,13 @@ test("validates a well-formed local preset directory and returns its canonical p
     assert.equal(result.id, "my-preset");
     assert.equal(result.name, "My Preset");
     assert.equal(result.version, "1.2.3");
+    assert.equal(result.path, await realpath(dir));
+});
+
+test("accepts a path pasted with surrounding double quotes (Explorer 'Copy as path')", async (t) => {
+    const dir = await fixture(t);
+    await writeFile(join(dir, "preset.yml"), "schema_version: 1\npreset:\n  id: my-preset\n  name: My Preset\n  version: 1.2.3\n");
+    const result = await validateLocalSource("presets", `"${dir}"`);
     assert.equal(result.path, await realpath(dir));
 });
 
@@ -46,6 +67,7 @@ test("rejects unsupported kinds, empty/relative paths and missing directories", 
     await assert.rejects(validateLocalSource("presets", "relative\\path"), /must be absolute/);
     await assert.rejects(validateLocalSource("presets", join(dir, "does-not-exist")), /Directory not found/);
     await assert.rejects(validateLocalSource("presets", `${dir}\x00bad`), /path looks invalid/);
+    await assert.rejects(validateLocalSource("presets", `"${dir}`), /quotes/);
 });
 
 test("rejects a directory missing its manifest file", async (t) => {

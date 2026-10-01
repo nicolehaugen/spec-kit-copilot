@@ -221,6 +221,28 @@ test("rejects an invalid local path with an explicit error and lets the user ret
     await expect(presets.locator(".designer-local-item")).toHaveCount(1);
 });
 
+test("accepts a local path pasted with surrounding quotes and displays it canonically unquoted", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
+    await presets.locator('[data-designer-local="presets"] summary').click();
+    const pathInput = presets.locator('[data-designer-local-path="presets"]');
+    // Mirrors what Windows Explorer's "Copy as path" puts on the clipboard.
+    await pathInput.fill(`"${LOCAL_PRESET_PATH}"`);
+    await presets.locator('[data-designer-local-add="presets"]').click();
+    await expect(presets.locator('[data-designer-local-error="presets"]')).toBeHidden();
+    const localItem = presets.locator(".designer-local-item");
+    await expect(localItem).toHaveCount(1);
+    await expect(localItem.getByText("Copilot Sub-Agent Delegation")).toBeVisible();
+
+    const responsePromise = page.waitForResponse((response) =>
+        response.url().includes("/api/designer/launch") && response.request().method() === "POST");
+    await dialog.getByRole("button", { name: "Launch designer" }).click();
+    const response = await responsePromise;
+    expect(response.request().postDataJSON()).toMatchObject({
+        localSelections: { presets: [{ id: "copilot-sub-agents", path: LOCAL_PRESET_PATH }] },
+    });
+});
+
 test("local sources reset on dialog close/reopen but are retained after a launch failure", async ({ page }) => {
     const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
     const presets = dialog.getByRole("tabpanel", { name: "Presets" });

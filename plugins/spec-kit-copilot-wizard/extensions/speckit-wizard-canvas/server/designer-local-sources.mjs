@@ -57,6 +57,24 @@ export function isSupportedLocalKind(kind) {
     return Object.prototype.hasOwnProperty.call(MANIFEST, kind);
 }
 
+// Windows Explorer's "Copy as path" (and many shells' drag-and-drop) wraps
+// the whole path in a single balanced pair of double quotes, e.g.
+// `"C:\Users\name\dir"`, which users often paste verbatim. Strip exactly one
+// such surrounding pair (double, or less commonly single) before validating
+// the path. Anything else involving a quote character — an unmatched
+// leading/trailing quote, or one embedded mid-path — is rejected explicitly
+// rather than left to fail the `isAbsolute` check with a confusing message.
+export function stripSurroundingQuotes(value) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    const wrapped = value.length >= 2 && first === last && (first === "\"" || first === "'");
+    const unwrapped = wrapped ? value.slice(1, -1) : value;
+    if (unwrapped.includes("\"") || unwrapped.includes("'")) {
+        throw new Error("Remove the surrounding or embedded quotes from the path.");
+    }
+    return unwrapped;
+}
+
 /**
  * Validate a user-typed absolute directory as a local preset/extension
  * source. Resolves with `{ kind, id, name, version, path }` (the canonical,
@@ -73,14 +91,15 @@ export async function validateLocalSource(kind, rawPath) {
     if (trimmed.length > PATH_LIMIT || /[\x00-\x1f]/.test(trimmed)) {
         throw new Error("That path looks invalid.");
     }
-    if (!isAbsolute(trimmed)) {
+    const unquoted = stripSurroundingQuotes(trimmed).trim();
+    if (!isAbsolute(unquoted)) {
         throw new Error("Local development paths must be absolute (e.g. C:\\path\\to\\dir or /path/to/dir).");
     }
     let canonical;
     try {
-        canonical = await realpath(trimmed);
+        canonical = await realpath(unquoted);
     } catch {
-        throw new Error(`Directory not found: ${trimmed}`);
+        throw new Error(`Directory not found: ${unquoted}`);
     }
     const manifestPath = join(canonical, manifest.file);
     let fileStat;
