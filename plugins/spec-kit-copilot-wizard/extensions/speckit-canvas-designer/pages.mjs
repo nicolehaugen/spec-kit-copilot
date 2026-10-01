@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, realpath, rename, rm } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fingerprint, handoffDirectory } from "./handoff.mjs";
+import { fingerprint } from "./handoff.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
 const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
@@ -135,15 +135,13 @@ function buildModel(entries, schema) {
     return { pages, constraints, values };
 }
 
-async function context(handoff, workspace, project) {
+async function context(project) {
     const checkout = await realpath(project);
-    const folder = handoffDirectory(await realpath(workspace), handoff.handoffId);
-    if (await realpath(folder) !== folder) throw new Error("Designer page state escapes session artifacts");
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
     const { document: schema } = await boundedJson(join(specify, "extensions",
         "extension-canvas-design", "schemas", "page.schema.json"), specify, FILE_LIMIT);
-    return { checkout, folder, schema };
+    return { checkout, schema };
 }
 
 export async function assertPageCommand(project) {
@@ -161,8 +159,8 @@ export async function assertPageCommand(project) {
     }
 }
 
-export async function storeDesignerPages(handoff, workspace, project, input, isCurrent = () => true) {
-    const { checkout, folder, schema } = await context(handoff, workspace, project);
+export async function loadResolvedDesignerPages(handoff, project, input) {
+    const { checkout, schema } = await context(project);
     if (!Array.isArray(input) || !input.length || input.length > 100) {
         throw new Error("Designer requires between 1 and 100 resolved page paths");
     }
@@ -186,58 +184,7 @@ export async function storeDesignerPages(handoff, workspace, project, input, isC
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
     const model = buildModel(entries, schema);
-    const snapshot = { schemaVersion: 1, loadId: randomUUID(), handoffId: handoff.handoffId,
-        sourceFingerprint: handoff.sourceFingerprint, checkout, entries };
-    const revision = fingerprint(snapshot);
-    const temporary = join(folder, `.pages-${randomUUID()}.tmp`);
-    try {
-        await usingFile(temporary, folder, JSON.stringify(snapshot));
-        if (!isCurrent()) throw new Error("Designer page load was superseded; reload pages again");
-        if (await realpath(folder) !== folder) throw new Error("Designer page state escapes session artifacts");
-        await rename(temporary, join(folder, "pages.json"));
-    } finally {
-        if (await realpath(folder) === folder) await rm(temporary, { force: true });
-    }
-    return { ...model, revision };
-}
-
-async function usingFile(path, folder, text) {
-    if (await realpath(folder) !== folder) throw new Error("Designer page state escapes session artifacts");
-    const file = await open(path, "wx", 0o600);
-    try {
-        const stat = await file.stat();
-        const current = await lstat(path);
-        if (await realpath(folder) !== folder || await realpath(path) !== path
-            || !current.isFile() || current.dev !== stat.dev || current.ino !== stat.ino) {
-            throw new Error("Designer page state changed while opening its snapshot");
-        }
-        await file.writeFile(text, "utf8");
-    }
-    finally { await file.close(); }
-}
-
-export async function loadDesignerPages(handoff, workspace, project, { allowMissing = false } = {}) {
-    const { checkout, folder, schema } = await context(handoff, workspace, project);
-    let saved;
-    try { saved = (await boundedJson(join(folder, "pages.json"), folder, MODEL_LIMIT)).document; }
-    catch (error) {
-        if (error.code === "ENOENT") {
-            if (allowMissing) {
-                try { await lstat(join(folder, "pages.json")); }
-                catch (statError) {
-                    if (statError.code === "ENOENT") return null;
-                    throw statError;
-                }
-                throw error;
-            }
-            throw new Error("Designer pages have not been loaded; run speckit-extension-canvas-design-load-page first");
-        }
-        throw error;
-    }
-    if (saved.schemaVersion !== 1 || typeof saved.loadId !== "string"
-        || !/^[a-f0-9-]{36}$/.test(saved.loadId) || saved.handoffId !== handoff.handoffId
-        || saved.sourceFingerprint !== handoff.sourceFingerprint || saved.checkout !== checkout) {
-        throw new Error("Designer page model belongs to another handoff or project; reload pages");
-    }
-    return { ...buildModel(saved.entries, schema), revision: fingerprint(saved) };
+    return { ...model, revision: fingerprint({
+        handoffId: handoff.handoffId, sourceFingerprint: handoff.sourceFingerprint, checkout, entries,
+    }) };
 }

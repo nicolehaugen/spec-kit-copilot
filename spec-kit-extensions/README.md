@@ -29,8 +29,8 @@ Each extension is versioned independently in its `extension.yml`. Update the
 manifest, catalog entry, and package README version together.
 Package IDs, directory names, and ZIP names use `extension-<name>`.
 Tags use `<extension-id>-vX.Y.Z`, matching the preset version suffix, and release
-titles use `<extension-id> vX.Y.Z`. For example, version `0.1.1` of
-`extension-canvas-design` is tagged `extension-canvas-design-v0.1.1` and ships
+titles use `<extension-id> vX.Y.Z`. For example, version `0.1.2` of
+`extension-canvas-design` is tagged `extension-canvas-design-v0.1.2` and ships
 `extension-canvas-design.zip`. Standard filenames such as `extension.yml` and
 `README.md` are unchanged. The discovery tag `canvas-design` is independent of
 the package ID and remains unchanged.

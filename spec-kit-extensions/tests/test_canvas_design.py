@@ -111,7 +111,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(entry["tags"], ["copilot", "canvas-design"])
         self.assertEqual(self.manifest["tags"], entry["tags"])
         self.assertIn("Copilot", entry["description"])
-        self.assertIn("canvas action", entry["description"])
+        self.assertIn("when opening", entry["description"])
         version = entry["version"]
         self.assertEqual(
             entry["download_url"],
@@ -235,20 +235,22 @@ class CanvasDesignPackageTests(unittest.TestCase):
         for required in (
             "$ARGUMENTS", "`handoffId`",
             "Additional Designer pages", "removing duplicates",
-            "specify preset resolve <name>", "Resolve all pages before submitting any",
+            "specify preset resolve <name>", "Resolve all pages before opening Designer",
             "Preserve spaces and drive-letter colons",
             "not found` can return exit code 0",
             "Stop on missing/ambiguous results",
+            "composition warning",
+            "Inspect the output AND exit status",
+            "complete path following the exact",
             "Never choose a file by scanning",
             'open_canvas({canvasId:"speckit-canvas-designer"',
             'extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"',
-            "Call `invoke_canvas_action` exactly once",
-            'actionName:"loadPages"',
+            "open the official installed Copilot provider exactly once",
             'pages:[{"name":"<template-name>","path":"<resolved-path>"},...]',
-            "Submit the complete collected set",
+            "Submit all four defaults and any additional pages",
             "report the CLI error/output and stop without opening Designer",
             "do not run a Python helper or write the provider's state files yourself",
-            "Only a successful `loaded:true` result means Designer is ready",
+            "Only a successful open means Designer is ready",
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, normalized)

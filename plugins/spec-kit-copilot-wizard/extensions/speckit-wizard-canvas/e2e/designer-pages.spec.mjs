@@ -54,29 +54,13 @@ test("Essentials renders the five registered controls; other pages and actions r
         await expect(slug).toBeChecked();
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        await expect(page.getByRole("status")).toHaveText("Live");
+        await expect(page.getByRole("status")).toHaveText("Ready");
     } finally {
         await page.close();
         await shell.close();
     }
 });
 
-test("initial loading shows no settings until the complete page model arrives", async ({ page }) => {
-    const shell = await startShell({ handoffId: "test" });
-    await page.goto(shell.url);
-    try {
-        await expect(page.getByRole("heading", { name: "Loading settings..." })).toBeVisible();
-        await expect(page.getByRole("tab")).toHaveCount(0);
-        shell.update(null, { pending: false, error: "canvas-settings-extra: not found" });
-        await expect(page.getByRole("alert")).toContainText("not found");
-        await expect(page.getByRole("heading", { name: "Settings unavailable" })).toBeVisible();
-        shell.update(await model(), { pending: false, error: "" });
-        await expect(page.getByRole("tab")).toHaveCount(4);
-        await expect(page.getByRole("textbox", { name: "Canvas ID (required)" })).toBeVisible();
-        await expect(page.getByRole("alert")).toBeHidden();
-        await expect(page.getByRole("button", { name: "Reload pages" })).toHaveCount(0);
-    } finally {
-        await page.close();
-        await shell.close();
-    }
+test("handoff cannot serve a loading shell without validated pages", async () => {
+    await expect(startShell({ handoffId: "test" })).rejects.toThrow(/validated before opening/);
 });
