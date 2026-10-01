@@ -142,17 +142,24 @@ async function context(project) {
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
-    const { document: schema } = await boundedJson(join(specify, "extensions",
-        "extension-canvas-design", "schemas", "page.schema.json"), specify, FILE_LIMIT);
-    if (schema?.type !== "object" || !Array.isArray(schema.required)
-        || !schema.required.includes("fields") || !schema.required.includes("id")
-        || schema.properties?.fields?.type !== "array"
-        || schema.properties.fields.items?.type !== "object"
-        || !schema.properties.fields.items.properties) {
-        throw new Error("Invalid shared Designer page schema");
+    const schemaPath = join(specify, "extensions", "extension-canvas-design", "schemas", "page.schema.json");
+    let schema;
+    try {
+        // Presets replace page content; the installed extension supplies the evolving validation contract.
+        ({ document: schema } = await boundedJson(schemaPath, specify, FILE_LIMIT));
+        if (schema?.type !== "object" || !Array.isArray(schema.required)
+            || !schema.required.includes("fields") || !schema.required.includes("id")
+            || schema.properties?.fields?.type !== "array"
+            || schema.properties.fields.items?.type !== "object"
+            || !schema.properties.fields.items.properties) {
+            throw new Error("Invalid shared Designer page schema");
+        }
+        checkSchema({ schemaVersion: 1, id: "canvas-settings-setup", title: "Essentials",
+            order: 10, fields: [{ id: "canvas.id", label: "Canvas ID" }] }, schema, "Designer page schema");
+    } catch (error) {
+        throw new Error(`Cannot load Canvas Design page schema at ${schemaPath}: ${error.message}. `
+            + "Repair or reinstall extension-canvas-design and try again.", { cause: error });
     }
-    checkSchema({ schemaVersion: 1, id: "canvas-settings-setup", title: "Essentials",
-        order: 10, fields: [{ id: "canvas.id", label: "Canvas ID" }] }, schema, "Designer page schema");
     return { checkout, schema };
 }
 

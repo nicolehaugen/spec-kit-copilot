@@ -394,11 +394,30 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
     }
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [entries[0], entries[0], ...entries.slice(2)]), /duplicate Designer page name/);
+});
+
+test("unavailable page schema stops opening with repair guidance; invalid pages remain per-page errors", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
     const schema = join(project, ".specify", "extensions", "extension-canvas-design",
         "schemas", "page.schema.json");
-    await writeFile(schema, "{}");
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries),
-        /Invalid shared Designer page schema/);
+    const original = await readFile(schema);
+    for (const [contents, reason] of [
+        [null, /ENOENT/], ["{broken", /Invalid Designer JSON/],
+        ["{}", /Invalid shared Designer page schema/],
+    ]) {
+        if (contents === null) await rm(schema);
+        else await writeFile(schema, contents);
+        await assert.rejects(loadResolvedDesignerPages(validHandoff(), project, entries),
+            (error) => error.message.includes(schema)
+                && /Repair or reinstall extension-canvas-design/.test(error.message)
+                && reason.test(error.message));
+    }
+    await writeFile(schema, original);
+    await writeFile(entries[0].path, "{broken");
+    const model = await loadResolvedDesignerPages(validHandoff(), project, entries);
+    assert.match(model.pages[0].error.reason, /Invalid Designer JSON/);
+    assert.equal(model.pages[1].title, "Artifacts");
 });
 
 test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {
@@ -472,6 +491,16 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         await assert.rejects(canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [...entries, entries[0]],
         } }), /duplicate Designer page name/);
+        const schema = join(project, ".specify", "extensions", "extension-canvas-design",
+            "schemas", "page.schema.json");
+        const installedSchema = await readFile(schema);
+        await rm(schema);
+        await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } }),
+            (error) => error.code === "designer_open_failed"
+                && error.message.includes(schema)
+                && /Repair or reinstall extension-canvas-design/.test(error.message));
+        await assert.rejects(fetch(empty.url));
+        await writeFile(schema, installedSchema);
         const missing = await canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [{ name: entries[0].name, path: join(project, ".specify", "missing.json") },
                 ...entries.slice(1)],

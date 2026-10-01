@@ -15,6 +15,9 @@ Preset and project overrides are honored. Failed CLI resolution, incomplete
 page lists, unsafe paths and invalid handoffs fail opening. A resolved page
 whose file is missing or invalid instead appears as a marked tab with its
 template name, path and reason so the user can troubleshoot with the agent.
+If the installed Canvas Design page schema itself is missing or unusable,
+Designer does not open and reports the schema path with repair guidance;
+individual page errors still appear as tabs once the schema loads.
 
 Essentials displays Canvas ID, Title, Description, Workflow header and Show
 slug field from the resolved template. Artifacts, Appearance and Result Badges
