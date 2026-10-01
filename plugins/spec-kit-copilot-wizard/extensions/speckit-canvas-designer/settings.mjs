@@ -85,6 +85,16 @@ async function readSettings(path, handoff, model, openFile = open) {
     return record;
 }
 
+async function assertTemporaryFile(file, path, folder) {
+    const [opened, current, actualFolder] = await Promise.all([
+        file.stat(), lstat(path), realpath(folder),
+    ]);
+    if (actualFolder !== folder || !opened.isFile() || !current.isFile()
+        || current.isSymbolicLink() || opened.dev !== current.dev || opened.ino !== current.ino) {
+        throw new Error("Designer settings escape session artifacts");
+    }
+}
+
 export async function loadDesignerSettings(workspacePath, handoff, model, openFile = open) {
     const record = await readSettings(await settingsPath(workspacePath, handoff),
         handoff, model, openFile);
@@ -92,7 +102,7 @@ export async function loadDesignerSettings(workspacePath, handoff, model, openFi
         settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
 }
 
-export async function saveDesignerSettings(workspacePath, handoff, model, request) {
+export async function saveDesignerSettings(workspacePath, handoff, model, request, openFile = open) {
     if (!request || typeof request !== "object" || Array.isArray(request)
         || Object.keys(request).sort().join() !== "modelRevision,revision,values"
         || request.modelRevision !== model.revision
@@ -114,8 +124,12 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
         const folder = dirname(path);
         const temporary = join(folder, `settings-${randomUUID()}.tmp`);
         try {
-            const file = await open(temporary, "wx", 0o600);
-            try { await file.writeFile(bytes); }
+            const file = await openFile(temporary, "wx", 0o600);
+            try {
+                await assertTemporaryFile(file, temporary, folder);
+                await file.writeFile(bytes);
+                await assertTemporaryFile(file, temporary, folder);
+            }
             finally { await file.close(); }
             if (await realpath(folder) !== folder) {
                 throw new Error("Designer settings escape session artifacts");

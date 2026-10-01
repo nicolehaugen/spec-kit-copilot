@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFile, copyFile, mkdtemp, mkdir, open, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -300,6 +300,44 @@ test("settings reads stay bounded when the file grows after its initial stat", a
                 close: () => file.close(),
             };
         }), /Saved Designer settings exceed the size limit/);
+});
+
+test("settings reject a swapped temporary-file parent before writing", async (t) => {
+    const workspace = await fixture(t);
+    const outside = await fixture(t);
+    const handoff = validHandoff();
+    const directory = await saveHandoff(workspace, handoff);
+    const outsideDirectory = await saveHandoff(outside, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    const backup = `${directory}-original`;
+    let replaced = false;
+    try {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+            revision: 0, modelRevision: model.revision, values: { "canvas.id": "saved" },
+        }, async (path, flags, mode) => {
+            await rename(directory, backup);
+            try {
+                await symlink(outsideDirectory, directory,
+                    process.platform === "win32" ? "junction" : "dir");
+            } catch (error) {
+                await rename(backup, directory);
+                throw error;
+            }
+            replaced = true;
+            return open(path, flags, mode);
+        }), /Designer settings escape session artifacts/);
+        assert.deepEqual((await readdir(outsideDirectory)).sort(), ["handoff.json"]);
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; settings write race assertion skipped");
+    } finally {
+        if (replaced) {
+            await rm(directory, { recursive: true });
+            await rename(backup, directory);
+        }
+    }
 });
 
 test("handoff rejects a FIFO promptly instead of waiting for a writer", {
