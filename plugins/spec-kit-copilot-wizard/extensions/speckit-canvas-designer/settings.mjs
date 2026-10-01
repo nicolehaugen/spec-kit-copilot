@@ -115,7 +115,7 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
     const work = prior.catch(() => {}).then(async () => {
         const current = await readSettings(path, handoff, model);
         if (request.revision !== (current?.revision ?? 0)) {
-            throw new Error("Designer settings changed; reload before saving");
+            throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before saving.");
         }
         const record = { schemaVersion: 1, handoffId: handoff.handoffId,
             modelRevision: model.revision, revision: request.revision + 1, values: request.values };

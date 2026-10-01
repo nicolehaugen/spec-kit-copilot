@@ -426,7 +426,7 @@ test("Save persists values beside the handoff and rejects stale or invalid chang
     assert.equal(stored.revision, 1);
     assert.deepEqual((await readFile(entries[0].path, "utf8")).includes("my-canvas"), false);
     await assert.rejects(saveDesignerSettings(workspace, handoff, model, request),
-        /changed; reload before saving/);
+        /Copy any unsaved edits, then close and reopen Designer before saving/);
     const revised = await saveDesignerSettings(workspace, handoff, model,
         { ...request, revision: 1, values: { ...values, "canvas.description": "Updated" } });
     assert.equal(revised.settingsRevision, 2);
@@ -466,7 +466,7 @@ test("token-gated Save endpoint reports errors without losing the current values
     assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
     const stale = await post(payload);
     assert.equal(stale.status, 409);
-    assert.match((await stale.json()).error, /reload before saving/);
+    assert.match((await stale.json()).error, /close and reopen Designer before saving/);
     const invalid = await post({ ...payload, revision: 1, values: { ...values,
         "canvas.id": "UPPER" } });
     assert.equal(invalid.status, 422);

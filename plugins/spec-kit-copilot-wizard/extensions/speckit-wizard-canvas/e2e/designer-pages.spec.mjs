@@ -151,7 +151,7 @@ test("Save validates values, persists edits and reports stale revisions", async 
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Changed");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("stale-canvas");
         await save.click();
-        await expect(page.getByRole("alert")).toContainText("reload before saving");
+        await expect(page.getByRole("alert")).toContainText("close and reopen Designer before saving");
         await expect(page.getByRole("textbox", { name: "Title (required)" })).toHaveValue("Changed");
     } finally {
         await shell.close();
