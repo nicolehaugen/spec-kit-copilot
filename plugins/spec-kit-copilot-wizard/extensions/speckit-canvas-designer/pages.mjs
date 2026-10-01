@@ -199,9 +199,18 @@ export async function loadResolvedDesignerPages(handoff, project, input) {
     const entries = [];
     let size = 0;
     for (const { name, path } of paths) {
-        const parent = await realpath(dirname(path));
-        if (parent !== specify && !inside(specify, parent)) {
-            throw new Error(`${name}: Designer file escapes its allowed directory: ${path}`);
+        let parent = dirname(path);
+        while (true) {
+            try {
+                const actual = await realpath(parent);
+                if (actual !== specify && !inside(specify, actual)) {
+                    throw new Error(`${name}: Designer file escapes its allowed directory: ${path}`);
+                }
+                break;
+            } catch (error) {
+                if (error.code !== "ENOENT" || parent === specify) throw error;
+                parent = dirname(parent);
+            }
         }
         let entry;
         try {

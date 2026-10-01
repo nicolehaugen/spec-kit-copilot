@@ -298,6 +298,12 @@ test("reads the complete effective page set from the child checkout without a sn
     assert.equal(missing.pages[0].error.name, "canvas-settings-setup");
     assert.match(missing.pages[0].error.reason, /missing/);
     assert.equal(Object.hasOwn(missing.constraints, "canvas.id"), false);
+    const missingParentPath = join(project, ".specify", "not-created", "nested", "setup.json");
+    const missingParent = await loadResolvedDesignerPages(handoff, project,
+        [{ name: entries[0].name, path: missingParentPath }, ...entries.slice(1)]);
+    assert.equal(missingParent.pages[0].error.path, missingParentPath);
+    assert.match(missingParent.pages[0].error.reason, /missing/);
+    assert.equal(missingParent.pages[1].title, "Artifacts");
     await writeFile(join(workspace, "outside.json"), JSON.stringify(changed));
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [{ name: entries[0].name, path: join(workspace, "outside.json") }, ...entries.slice(1)]),
@@ -375,6 +381,16 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
         await assert.rejects(loadResolvedDesignerPages(handoff, project,
             [{ name: entries[0].name, path: alias }, ...entries.slice(1)]),
         /escapes its allowed directory/);
+    }
+    const outsideAlias = join(project, ".specify", "outside-alias");
+    try {
+        await symlink(workspace, outsideAlias, process.platform === "win32" ? "junction" : "dir");
+        await assert.rejects(loadResolvedDesignerPages(handoff, project,
+            [{ name: entries[0].name, path: join(outsideAlias, "missing-dir", "setup.json") },
+                ...entries.slice(1)]), /escapes its allowed directory/);
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; parent alias assertion skipped");
     }
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [entries[0], entries[0], ...entries.slice(2)]), /duplicate Designer page name/);
