@@ -352,6 +352,18 @@ export function createHandler(deps) {
                             enableProviderForSession: deps.enableDesignerProvider,
                         });
                     },
+                    "/api/designer/local-source": async () => {
+                        const { isSupportedLocalKind, validateLocalSource } = await import("./server/designer-local-sources.mjs");
+                        if (!isSupportedLocalKind(body?.kind) || typeof body?.path !== "string") {
+                            return jsonError(res, 400, "kind must be presets or extensions, and path is required");
+                        }
+                        try {
+                            const item = await validateLocalSource(body.kind, body.path);
+                            return jsonRes(res, 200, { item });
+                        } catch (err) {
+                            return jsonError(res, 400, err.message);
+                        }
+                    },
                 };
                 const route = postRoutes[url.pathname];
                 if (route) return route();

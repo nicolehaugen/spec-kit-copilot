@@ -7,7 +7,38 @@ export const HANDOFF_LIMIT = 64 * 1024;
 const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const PACKAGE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const KINDS = ["presets", "extensions", "bundles"];
+// Local development sources: no bundles (plan explicitly excludes local
+// bundles), and the path is a user-typed absolute directory rather than a
+// catalog download URL.
+const LOCAL_KINDS = ["presets", "extensions"];
+const LOCAL_PATH = /^(?:[A-Za-z]:[\\/]|\\\\|\/)[^\x00-\x1f]{0,4094}$/;
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// `localSelections` is an optional, additive top-level handoff key. Absent
+// entirely (the hosted-catalog-only path) is valid and leaves the handoff
+// byte-identical to the pre-local-dev schema.
+function validLocalSelections(value) {
+    if (value === undefined) return true;
+    if (!record(value) || Object.keys(value).some((kind) => !LOCAL_KINDS.includes(kind))) return false;
+    // A kind with no local selections is omitted entirely (not sent as an
+    // empty array) to keep the handoff minimal; treat an absent kind as an
+    // empty list rather than requiring every kind key to be present.
+    return LOCAL_KINDS.every((kind) => {
+        const list = kind in value ? value[kind] : [];
+        if (!Array.isArray(list) || list.length > 20) return false;
+        const seen = new Set();
+        return list.every((item) => {
+            if (!record(item) || Object.keys(item).some((key) =>
+                !["id", "source", "approved", "path"].includes(key))) return false;
+            if (typeof item.id !== "string" || !PACKAGE.test(item.id)) return false;
+            if (item.source !== "local" || item.approved !== true) return false;
+            if (typeof item.path !== "string" || !LOCAL_PATH.test(item.path)) return false;
+            if (seen.has(item.id)) return false;
+            seen.add(item.id);
+            return true;
+        });
+    });
+}
 
 function safeUrl(value) {
     if (value === null) return true;
@@ -33,7 +64,8 @@ export function validateHandoff(handoff, id) {
     validateHandoffId(id);
     if (!record(handoff)
         || Object.keys(handoff).some((key) =>
-            !["schemaVersion", "handoffId", "workflow", "selections", "sourceFingerprint"].includes(key))
+            !["schemaVersion", "handoffId", "workflow", "selections", "sourceFingerprint", "localSelections"]
+                .includes(key))
         || handoff.schemaVersion !== 1 || handoff.handoffId !== id
         || !record(handoff.workflow)
         || Object.keys(handoff.workflow).some((key) => key !== "selectedPhases")
@@ -55,13 +87,14 @@ export function validateHandoff(handoff, id) {
                 && (item.version === null || (typeof item.version === "string"
                     && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(item.version)))
                 && safeUrl(item.downloadUrl)))
+        || !validLocalSelections(handoff.localSelections)
         || typeof handoff.sourceFingerprint !== "string"
         || !/^[a-f0-9]{64}$/.test(handoff.sourceFingerprint)
         || Buffer.byteLength(JSON.stringify(handoff)) > HANDOFF_LIMIT) {
         throw new Error("Invalid Designer handoff");
     }
     const expected = Buffer.from(fingerprint({
-        workflow: handoff.workflow, selections: handoff.selections,
+        workflow: handoff.workflow, selections: handoff.selections, localSelections: handoff.localSelections,
     }), "hex");
     if (!timingSafeEqual(expected, Buffer.from(handoff.sourceFingerprint, "hex"))) {
         throw new Error("Designer handoff fingerprint mismatch");

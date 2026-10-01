@@ -13,13 +13,19 @@ let inspecting = 0;
 let errorMessage = "";
 let processing = false;
 let pendingInspections = new Set();
+// Local development sources (presets/extensions only, never bundles): a
+// session-only, opt-in addition alongside the hosted catalog selections
+// above. Reset whenever the dialog closes or reopens; retained across a
+// failed launch attempt, matching the hosted `selections` persistence.
+const LOCAL_KINDS = ["presets", "extensions"];
+let localItems = { presets: [], extensions: [] };
 
 function phaseIds(snapshot) {
     return [...new Set(effectivePipelinePhases(snapshot).map((phase) =>
         stripCommandsPrefix(phase.id)))];
 }
 
-export async function submitDesignerLaunch(snapshot, checked, fetcher = fetch) {
+export async function submitDesignerLaunch(snapshot, checked, fetcher = fetch, localChecked = undefined) {
     let response;
     try {
         response = await fetcher(`/api/designer/launch?token=${encodeURIComponent(TOKEN)}`, {
@@ -29,6 +35,7 @@ export async function submitDesignerLaunch(snapshot, checked, fetcher = fetch) {
                 selections: checked,
                 catalogFingerprint: snapshot.catalog.designerFingerprint,
                 expectedPhases: phaseIds(snapshot),
+                ...(localChecked !== undefined ? { localSelections: localChecked } : {}),
             }),
         });
     } catch (error) {
@@ -77,6 +84,21 @@ export function freshCanvasDesignerSelections() {
     return { presets: [], extensions: [], bundles: [] };
 }
 
+/** Checked local sources, keyed by kind, as `{id, path}` pairs ready for the
+ * launch payload. Returns `undefined` when nothing is checked so callers can
+ * omit the `localSelections` key entirely (byte-identical request when the
+ * feature is unused). */
+function checkedLocalSelections() {
+    const result = {};
+    for (const kind of LOCAL_KINDS) {
+        const checked = localItems[kind]
+            .filter((item) => item.checked)
+            .map((item) => ({ id: item.id, path: item.path }));
+        if (checked.length) result[kind] = checked;
+    }
+    return Object.keys(result).length ? result : undefined;
+}
+
 export function currentCanvasDesignerSelections() {
     if (!selections) return null;
     const result = structuredClone(selections);
@@ -100,8 +122,25 @@ function closeDialog() {
     errorMessage = "";
     pendingInspections = new Set();
     inspecting = 0;
+    localItems = { presets: [], extensions: [] };
     if (restoreFocus?.isConnected) restoreFocus.focus();
     restoreFocus = null;
+}
+
+function renderLocalSection(kind, label) {
+    const singular = label.slice(0, -1).toLowerCase();
+    return `<details class="designer-local" data-designer-local="${kind}">
+        <summary>Local development</summary>
+        <div class="designer-local-body">
+            <p class="wizard-modal-desc designer-local-desc">Add an uninstalled local ${singular} directory for this session. A local ${singular} takes precedence over a hosted selection with the same ID, including a bundle member.</p>
+            <div class="designer-local-add">
+                <input type="text" class="designer-local-path" data-designer-local-path="${kind}" placeholder="Absolute path to ${singular} directory" aria-label="Local ${singular} directory path">
+                <button type="button" class="btn btn-secondary designer-local-add-btn" data-designer-local-add="${kind}">Add</button>
+            </div>
+            <p class="designer-local-error" data-designer-local-error="${kind}" role="alert" hidden></p>
+            <ul class="designer-local-list" data-designer-local-list="${kind}"></ul>
+        </div>
+    </details>`;
 }
 
 function renderChoices(snapshot, kind, label) {
@@ -112,6 +151,7 @@ function renderChoices(snapshot, kind, label) {
             <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-included-by" hidden></small></span>
             <span class="badge source designer-source-tag">${escapeHtml((item.source ?? "default").replace(/^./, (c) => c.toUpperCase()))}</span>
         </label>`).join("") : `<p class="wizard-modal-desc">No ${label.toLowerCase()} tagged canvas-design are available.</p>`}
+        ${LOCAL_KINDS.includes(kind) ? renderLocalSection(kind, label) : ""}
     </fieldset>`;
 }
 
@@ -139,6 +179,75 @@ function refreshBundleChoices(root, snapshot) {
     }
 }
 
+function renderLocalList(root, kind) {
+    const list = root.querySelector(`[data-designer-local-list="${kind}"]`);
+    if (!list) return;
+    list.innerHTML = localItems[kind].map((item, index) => `<li class="designer-local-item">
+            <label class="designer-choice">
+                <input type="checkbox" data-designer-local-kind="${kind}" data-designer-local-index="${index}" ${item.checked ? "checked" : ""}>
+                <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-local-path-text">${escapeHtml(item.path)}</small></span>
+            </label>
+            <button type="button" class="btn btn-secondary designer-local-remove" data-designer-local-kind="${kind}" data-designer-local-index="${index}">Remove</button>
+        </li>`).join("");
+    list.querySelectorAll("input[data-designer-local-index]").forEach((input) => {
+        input.addEventListener("change", () => {
+            localItems[kind][Number(input.dataset.designerLocalIndex)].checked = input.checked;
+        });
+    });
+    list.querySelectorAll("button[data-designer-local-index]").forEach((button) => {
+        button.addEventListener("click", () => {
+            localItems[kind].splice(Number(button.dataset.designerLocalIndex), 1);
+            renderLocalList(root, kind);
+        });
+    });
+}
+
+async function addLocalSource(root, kind, pathInput) {
+    if (processing) return;
+    const dialogSelections = selections;
+    const errorEl = root.querySelector(`[data-designer-local-error="${kind}"]`);
+    const addBtn = root.querySelector(`[data-designer-local-add="${kind}"]`);
+    const path = pathInput.value.trim();
+    errorEl.hidden = true;
+    errorEl.textContent = "";
+    if (!path) {
+        errorEl.textContent = "Enter a directory path.";
+        errorEl.hidden = false;
+        return;
+    }
+    addBtn.disabled = true;
+    pathInput.disabled = true;
+    try {
+        const response = await fetch(`/api/designer/local-source?token=${encodeURIComponent(TOKEN)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Canvas-Token": TOKEN },
+            body: JSON.stringify({ kind, path }),
+        });
+        const body = await response.json().catch(() => null);
+        if (dialogSelections !== selections) return;
+        if (!response.ok) {
+            throw new Error(body?.error ?? `Could not add local ${kind.slice(0, -1)} (${response.status}).`);
+        }
+        const item = body?.item;
+        if (!item?.id || !item?.path) throw new Error("Local source response was invalid.");
+        if (localItems[kind].some((entry) => entry.id === item.id)) {
+            throw new Error(`A local ${kind.slice(0, -1)} with id "${item.id}" is already added.`);
+        }
+        localItems[kind].push({ ...item, checked: true });
+        pathInput.value = "";
+        renderLocalList(root, kind);
+    } catch (error) {
+        if (dialogSelections !== selections) return;
+        errorEl.textContent = error.message;
+        errorEl.hidden = false;
+    } finally {
+        if (dialogSelections === selections) {
+            addBtn.disabled = false;
+            pathInput.disabled = false;
+        }
+    }
+}
+
 async function inspectBundle(item) {
     const params = new URLSearchParams({ id: item.id, source: item.source, token: TOKEN });
     const response = await fetch(`/api/designer/bundle-members?${params}`);
@@ -162,6 +271,7 @@ export function openCanvasDesignerDialog() {
     deselectedMembers = new Set();
     errorMessage = "";
     pendingInspections = new Set();
+    localItems = { presets: [], extensions: [] };
     root.innerHTML = `<div class="wizard-modal-backdrop designer-backdrop">
         <section class="wizard-modal generation-modal designer-modal" role="dialog" aria-modal="true" aria-labelledby="designer-title" aria-describedby="designer-description">
             <header class="wizard-modal-head"><h3 id="designer-title">Canvas designer setup</h3><button type="button" class="wizard-modal-close" aria-label="Close">✕</button></header>
@@ -208,6 +318,18 @@ export function openCanvasDesignerDialog() {
             tabs[target].focus();
         });
     });
+    for (const kind of LOCAL_KINDS) {
+        const pathInput = root.querySelector(`[data-designer-local-path="${kind}"]`);
+        const addBtn = root.querySelector(`[data-designer-local-add="${kind}"]`);
+        if (!pathInput || !addBtn) continue;
+        addBtn.addEventListener("click", () => addLocalSource(root, kind, pathInput));
+        pathInput.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            addLocalSource(root, kind, pathInput);
+        });
+        renderLocalList(root, kind);
+    }
     root.querySelectorAll("[data-designer-kind]").forEach((input) => input.addEventListener("change", async () => {
         if (confirming || processing || input.disabled) return;
         const dialogSelections = selections;
@@ -308,7 +430,7 @@ export function openCanvasDesignerDialog() {
         updateLaunch(root);
         let accepted = false;
         try {
-            await submitDesignerLaunch(snapshot, checked, fetch);
+            await submitDesignerLaunch(snapshot, checked, fetch, checkedLocalSelections());
             if (selections !== dialogSelections) return;
             accepted = true;
         } catch (error) {

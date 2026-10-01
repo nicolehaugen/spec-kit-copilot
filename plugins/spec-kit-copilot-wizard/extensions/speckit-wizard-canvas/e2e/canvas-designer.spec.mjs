@@ -1,4 +1,13 @@
 import { test, expect } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+
+// A real, valid preset directory in this repo — used to exercise the
+// "Local development" add flow against an actual manifest on disk, matching
+// how e2e/server.mjs wires getInstance() to the real repo root rather than a
+// fixture workspace.
+const LOCAL_PRESET_PATH = fileURLToPath(
+    new URL("../../../../../spec-kit-presets/copilot-sub-agents", import.meta.url),
+).replace(/[\\/]$/, "");
 
 test.beforeEach(async ({ page }) => {
     await page.goto("/?token=e2e-token");
@@ -154,4 +163,94 @@ test("activation failure preserves selections for a one-click retry", async ({ p
     expect(requests.map((body) => body.selections.presets)).toEqual(Array(2).fill([
         { id: "foreign-preset", source: "copilot", approved: true },
     ]));
+});
+
+test("local development section is collapsed, additive, and only on Presets/Extensions", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
+    const localSection = presets.locator('[data-designer-local="presets"]');
+    await expect(localSection).toBeVisible();
+    await expect(localSection.locator("summary")).toHaveText("Local development");
+    await expect(localSection).not.toHaveJSProperty("open", true);
+    await expect(presets.getByText(/takes precedence over a hosted selection/)).toBeHidden();
+    await localSection.locator("summary").click();
+    await expect(presets.getByText(/takes precedence over a hosted selection/)).toBeVisible();
+    // Hosted copy, tabs, and bundle behavior are untouched: no local section
+    // on Bundles, and the hosted preset checkbox is still present and
+    // unaffected by the local section existing.
+    await dialog.getByRole("tab", { name: "Bundles" }).click();
+    const bundles = dialog.getByRole("tabpanel", { name: "Bundles" });
+    await expect(bundles.locator('[data-designer-local]')).toHaveCount(0);
+    await dialog.getByRole("tab", { name: "Presets" }).click();
+    await expect(presets.getByRole("checkbox", { name: /Design preset/ })).toBeVisible();
+});
+
+test("adds a local preset via typed absolute path, checks it in automatically, and it wins over a hosted id", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
+    await presets.locator('[data-designer-local="presets"] summary').click();
+    await presets.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
+    await presets.locator('[data-designer-local-add="presets"]').click();
+    const localItem = presets.locator(".designer-local-item");
+    await expect(localItem).toHaveCount(1);
+    await expect(localItem.getByText("Copilot Sub-Agent Delegation")).toBeVisible();
+    await expect(localItem.getByText("copilot-sub-agents · v1.0.0")).toBeVisible();
+    await expect(localItem.getByRole("checkbox")).toBeChecked();
+
+    const responsePromise = page.waitForResponse((response) =>
+        response.url().includes("/api/designer/launch") && response.request().method() === "POST");
+    await dialog.getByRole("button", { name: "Launch designer" }).click();
+    const response = await responsePromise;
+    expect(response.request().postDataJSON()).toMatchObject({
+        localSelections: { presets: [{ id: "copilot-sub-agents", path: LOCAL_PRESET_PATH }] },
+    });
+});
+
+test("rejects an invalid local path with an explicit error and lets the user retry", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
+    await presets.locator('[data-designer-local="presets"] summary').click();
+    const pathInput = presets.locator('[data-designer-local-path="presets"]');
+    await pathInput.fill("relative/not-absolute");
+    await presets.locator('[data-designer-local-add="presets"]').click();
+    await expect(presets.locator('[data-designer-local-error="presets"]')).toContainText("must be absolute");
+    await expect(presets.locator(".designer-local-item")).toHaveCount(0);
+
+    await pathInput.fill(LOCAL_PRESET_PATH);
+    await presets.locator('[data-designer-local-add="presets"]').click();
+    await expect(presets.locator(".designer-local-item")).toHaveCount(1);
+});
+
+test("local sources reset on dialog close/reopen but are retained after a launch failure", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
+    await presets.locator('[data-designer-local="presets"] summary').click();
+    await presets.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
+    await presets.locator('[data-designer-local-add="presets"]').click();
+    await expect(presets.locator(".designer-local-item")).toHaveCount(1);
+
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.getByRole("button", { name: "Generate canvas" }).click();
+    const reopened = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const reopenedPresets = reopened.getByRole("tabpanel", { name: "Presets" });
+    await expect(reopenedPresets.locator('[data-designer-local="presets"]')).not.toHaveJSProperty("open", true);
+    await expect(reopenedPresets.locator(".designer-local-item")).toHaveCount(0);
+
+    await reopenedPresets.locator('[data-designer-local="presets"] summary').click();
+    await reopenedPresets.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
+    await reopenedPresets.locator('[data-designer-local-add="presets"]').click();
+    await expect(reopenedPresets.locator(".designer-local-item")).toHaveCount(1);
+
+    await page.route("**/api/designer/launch?*", async (route) => {
+        await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "Designer activation timed out" }),
+        });
+    });
+    await reopened.getByRole("button", { name: "Launch designer" }).click();
+    await expect(reopened.getByRole("alert")).toContainText("activation timed out");
+    await expect(reopenedPresets.locator(".designer-local-item")).toHaveCount(1);
+    await expect(reopenedPresets.locator(".designer-local-item").getByRole("checkbox")).toBeChecked();
 });
