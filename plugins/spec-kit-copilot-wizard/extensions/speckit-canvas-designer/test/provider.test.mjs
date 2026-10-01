@@ -442,6 +442,9 @@ test("token-gated Save endpoint reports errors without losing the current values
     const handoff = validHandoff();
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
+    const changedPage = JSON.parse(await readFile(entries[1].path, "utf8"));
+    changedPage.fields.push({ id: "changed", label: "Changed" });
+    await writeFile(entries[1].path, JSON.stringify(changedPage));
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries));
     const shell = await startShell(handoff, model, workspace);
@@ -470,6 +473,10 @@ test("token-gated Save endpoint reports errors without losing the current values
     const invalid = await post({ ...payload, revision: 1, values: { ...values,
         "canvas.id": "UPPER" } });
     assert.equal(invalid.status, 422);
+    const invalidNamedChanged = await post({ ...payload, revision: 1,
+        values: { ...values, changed: true } });
+    assert.equal(invalidNamedChanged.status, 422);
+    assert.equal((await invalidNamedChanged.json()).error, "Invalid Designer setting: changed");
     assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
 });
 

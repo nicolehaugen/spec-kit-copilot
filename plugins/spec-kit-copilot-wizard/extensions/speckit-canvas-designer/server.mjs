@@ -86,7 +86,11 @@ export async function startShell(handoff = null, model = null, workspacePath = n
                 res.end(JSON.stringify(state()));
             } catch (error) {
                 const invalid = error instanceof SyntaxError || /Invalid Designer|unexpected or missing fields/.test(error.message);
-                const conflict = /changed|do not match/.test(error.message);
+                const conflict = [
+                    "Designer handoff changed; reopen before saving",
+                    "Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before saving.",
+                    "Saved Designer settings do not match the current handoff or pages",
+                ].includes(error.message);
                 const oversized = error.message === "Designer settings exceed the size limit";
                 sendError(conflict ? 409 : oversized ? 413 : invalid ? 422 : 500, error.message);
             }
