@@ -83,10 +83,17 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.deepEqual(response.body, { queued: true });
     assert.equal(sent.length, 1);
     assert.match(sent[0].prompt, /no base_branch \(the project default\)/);
-    assert.match(sent[0].prompt, /Do not edit it afterward or install selected customizations/);
+    assert.match(sent[0].prompt, /Do not edit it afterward/);
+    assert.match(sent[0].prompt, /speckit-extension.*--install-allowed.*extension-canvas-design by ID/);
+    assert.match(sent[0].prompt, /speckit-bundle.*speckit-preset/);
+    assert.match(sent[0].prompt, /speckit-extension-canvas-design-load-page/);
+    assert.match(sent[0].prompt, /ONCE after all installations/);
+    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.1/);
+    assert.match(sent[0].prompt, /loadPages canvas action/);
     assert.match(sent[0].prompt, /plugin:spec-kit-copilot-wizard:speckit-canvas-designer/);
     assert.doesNotMatch(sent[0].prompt, /extensions_manage|list_canvas_capabilities|extensions_reload/);
     assert.match(sent[0].prompt, /open_canvas\(\{canvasId:"speckit-canvas-designer",extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"/);
+    assert.doesNotMatch(sent[0].prompt, /speckit_designer_load_pages/);
     assert.doesNotMatch(sent[0].prompt, /bootstrap\.mjs|\.github\/extensions\//);
     assert.match(sent[0].prompt, /handoff\.json under YOUR session-state artifacts/);
     const json = sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\nEND_HANDOFF_JSON\n/)[1];
