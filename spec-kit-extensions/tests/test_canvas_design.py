@@ -111,7 +111,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(entry["tags"], ["copilot", "canvas-design"])
         self.assertEqual(self.manifest["tags"], entry["tags"])
         self.assertIn("Copilot", entry["description"])
-        self.assertIn("when opening", entry["description"])
+        self.assertIn("speckit_designer_load_pages", entry["description"])
         version = entry["version"]
         self.assertEqual(
             entry["download_url"],
@@ -233,24 +233,20 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(defaults, [f"canvas-settings-{name}" for name in PAGE_NAMES])
         normalized = " ".join(self.command.split())
         for required in (
-            "$ARGUMENTS", "`handoffId`",
+            "$ARGUMENTS", "`handoffId`", "`requestId`",
             "Additional Designer pages", "removing duplicates",
-            "specify preset resolve <name>", "Resolve all pages before opening Designer",
+            "specify preset resolve <name>", "Resolve all pages before submitting any",
             "Preserve spaces and drive-letter colons",
             "not found` can return exit code 0",
             "Stop on missing/ambiguous results",
-            "composition warning",
-            "Inspect the output AND exit status",
-            "complete path following the exact",
             "Never choose a file by scanning",
-            'open_canvas({canvasId:"speckit-canvas-designer"',
-            'extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"',
-            "open the official installed Copilot provider exactly once",
-            'pages:[{"name":"<template-name>","path":"<resolved-path>"},...]',
-            "Submit all four defaults and any additional pages",
-            "report the CLI error/output and stop without opening Designer",
+            "Call the custom `speckit_designer_load_pages` tool exactly once",
+            'pages: [{"name": "<template-name>", "path": "<resolved-path>"}, ...]',
+            "Submit the entire collected set",
+            "`error` containing the CLI error/output instead of `pages`",
+            "If the tool is unavailable, report that and stop",
             "do not run a Python helper or write the provider's state files yourself",
-            "Only a successful open means Designer is ready",
+            "Do not claim that opening or loading succeeded before the tool succeeds",
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, normalized)
