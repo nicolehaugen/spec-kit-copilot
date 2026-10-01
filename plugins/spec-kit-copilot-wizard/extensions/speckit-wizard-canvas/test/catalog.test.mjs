@@ -50,7 +50,7 @@ test("catalog hydration keeps only string tags for every item kind", async (t) =
             [["canvas-design", "appearance"], [], [], ["canvas-design"]]);
     }
     assert.equal(EXTENSION_CATALOG_URL.copilot,
-        "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json");
+        "https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-extensions/catalog.json");
 });
 
 describe("preset-loader", () => {
