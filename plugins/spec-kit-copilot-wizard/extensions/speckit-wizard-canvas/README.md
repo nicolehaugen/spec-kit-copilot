@@ -175,25 +175,30 @@ choose hosted presets, extensions, and bundles before launching the child
 session that installs them. Hosted catalogs remain the primary, default way
 to pick what gets installed.
 
-Each of the **Presets** and **Extensions** tabs additionally has a collapsed
-**Local development** `<details>` section. It is purely additive — it does
-not change any existing copy, hosted catalog list, community warnings,
-bundle behavior, or keyboard/focus handling. Use it to point the dialog at
-one or more local checkouts instead of (or in addition to) the hosted
-registry entry:
+There is one collapsed **Local development** `<details>` section, rendered
+as a sibling of the Presets/Extensions/Bundles tabpanels rather than inside
+any single tab, so it stays visible no matter which tab is active. It is
+purely additive — it does not change any existing copy, hosted catalog
+list, community warnings, bundle behavior, or keyboard/focus handling. Use
+it to point the dialog at one or more local checkouts instead of (or in
+addition to) the hosted registry entry:
 
 - Type an absolute directory path and click **Add**. There is no folder
   picker (browse) in this MVP — only a real host file-picker API would be
   wired up, and none exists in this environment, so this stays typed-path
   only rather than faking a browse button.
-- The directory must contain a readable, parseable `preset.yml` (for
-  Presets) or `extension.yml` (for Extensions) with a valid `id`, a
-  non-empty `name`, and an optional `version`. Invalid paths, missing
-  manifests, and unparseable YAML are all rejected with an explicit inline
-  error instead of silently failing.
-- You may add multiple unrelated local directories to the same kind; each
-  appears in its own list and can be independently checked or removed.
-  Local bundles are not supported — bundles stay hosted-catalog-only.
+- There is a single path input, not one per kind. The directory's kind
+  (preset vs. extension) is auto-detected server-side from whichever
+  manifest is present — a readable, parseable `preset.yml` or
+  `extension.yml` with a valid `id`, a non-empty `name`, and an optional
+  `version` — so you never pick a subgroup to add it to. Invalid paths,
+  missing manifests, and unparseable YAML are all rejected with an
+  explicit inline error instead of silently failing.
+- You may add multiple unrelated local directories, of either detected
+  kind; each appears in the same shared list and can be independently
+  checked or removed. Local bundles are not supported — bundles stay
+  hosted-catalog-only, and a directory whose manifest doesn't resolve to a
+  preset or extension kind is rejected.
 - Checking a local entry opts it into the launch handoff. If its `id`
   collides with a hosted selection — including a hosted bundle's member —
   the local entry always wins. Child installation uses
