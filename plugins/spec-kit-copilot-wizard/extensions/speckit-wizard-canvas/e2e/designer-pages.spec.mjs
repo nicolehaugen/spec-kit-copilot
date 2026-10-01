@@ -29,8 +29,29 @@ async function model(revision = "first") {
     };
 }
 
+async function startPreparedShell(state) {
+    const workspace = await mkdtemp(join(tmpdir(), "designer-pages-e2e-"));
+    const workflow = { selectedPhases: [] };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "test", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    const folder = handoffDirectory(workspace, handoff.handoffId);
+    try {
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        const shell = await startShell(handoff, state, workspace);
+        return { url: shell.url, close: async () => {
+            await shell.close();
+            await rm(workspace, { recursive: true, force: true });
+        } };
+    } catch (error) {
+        await rm(workspace, { recursive: true, force: true });
+        throw error;
+    }
+}
+
 async function openDesigner(page) {
-    const shell = await startShell({ handoffId: "test" }, await model());
+    const shell = await startPreparedShell(await model());
     await page.goto(shell.url);
     return shell;
 }
@@ -48,7 +69,7 @@ async function openWithError(page, name) {
             delete state.values[field];
         }
     }
-    const shell = await startShell({ handoffId: "test" }, state);
+    const shell = await startPreparedShell(state);
     await page.goto(shell.url);
     return shell;
 }
@@ -183,7 +204,7 @@ test("failed Essentials stays selected when a custom page sorts before it", asyn
     state.pages.push({ page: "custom-settings", id: "custom-settings", title: "Custom",
         order: 5, fields: [] });
     state.pages.sort((a, b) => a.order - b.order);
-    const shell = await startShell({ handoffId: "test" }, state);
+    const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
         await expect(page.getByRole("tab", { name: "canvas-settings-setup (error)" }))

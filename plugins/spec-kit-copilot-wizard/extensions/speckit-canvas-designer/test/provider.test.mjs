@@ -369,11 +369,14 @@ test("handoff rejects a FIFO promptly instead of waiting for a writer", {
 });
 
 test("shell serves validated pages behind its token", async (t) => {
+    const workspace = await fixture(t);
     const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
     const model = { pages: [{ id: "canvas-settings-setup", page: "canvas-settings-setup",
         title: "Essentials", fields: [] }], constraints: {}, values: {}, revision: "test" };
     await assert.rejects(startShell(handoff), /validated before opening/);
-    const shell = await startShell(handoff, model);
+    await assert.rejects(startShell(handoff, model), /session workspace is required/);
+    const shell = await startShell(handoff, model, workspace);
     t.after(() => shell.close());
     const url = new URL(shell.url);
     assert.equal(url.hostname, "127.0.0.1");

@@ -33,6 +33,9 @@ const ASSETS = {
 
 export async function startShell(handoff = null, model = null, workspacePath = null) {
     if (handoff && !model) throw new Error("Designer pages must be validated before opening");
+    if (handoff && (typeof workspacePath !== "string" || !workspacePath.trim())) {
+        throw new Error("Designer session workspace is required to save settings");
+    }
     const assets = handoff
         ? new Map(await Promise.all(Object.entries(ASSETS).map(async ([path, [file, type]]) =>
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
