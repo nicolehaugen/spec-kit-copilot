@@ -1,6 +1,10 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test, expect } from "@playwright/test";
 import { startShell } from "../../speckit-canvas-designer/server.mjs";
+import { fingerprint, handoffDirectory } from "../../speckit-canvas-designer/handoff.mjs";
+import { loadDesignerSettings } from "../../speckit-canvas-designer/settings.mjs";
 
 const templateRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/pages/", import.meta.url);
 
@@ -25,8 +29,29 @@ async function model(revision = "first") {
     };
 }
 
+async function startPreparedShell(state) {
+    const workspace = await mkdtemp(join(tmpdir(), "designer-pages-e2e-"));
+    const workflow = { selectedPhases: [] };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "test", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    const folder = handoffDirectory(workspace, handoff.handoffId);
+    try {
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        const shell = await startShell(handoff, state, workspace);
+        return { url: shell.url, close: async () => {
+            await shell.close();
+            await rm(workspace, { recursive: true, force: true });
+        } };
+    } catch (error) {
+        await rm(workspace, { recursive: true, force: true });
+        throw error;
+    }
+}
+
 async function openDesigner(page) {
-    const shell = await startShell({ handoffId: "test" }, await model());
+    const shell = await startPreparedShell(await model());
     await page.goto(shell.url);
     return shell;
 }
@@ -44,7 +69,7 @@ async function openWithError(page, name) {
             delete state.values[field];
         }
     }
-    const shell = await startShell({ handoffId: "test" }, state);
+    const shell = await startPreparedShell(state);
     await page.goto(shell.url);
     return shell;
 }
@@ -70,7 +95,7 @@ test("Essentials renders the five registered controls; other pages and actions r
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(id).toHaveValue("example-canvas");
         await expect(slug).toBeChecked();
-        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.getByRole("status")).toHaveText("Ready");
     } finally {
@@ -95,10 +120,64 @@ test("failed optional page shows safe diagnostics while Essentials remains edita
         await expect(page.locator("#settings-page b")).toHaveCount(0);
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(id).toHaveValue("my-canvas");
-        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
     } finally {
         await shell.close();
+    }
+});
+
+test("Save validates values, persists edits and reports stale revisions", async ({ page }) => {
+    const workspace = await mkdtemp(join(tmpdir(), "designer-save-e2e-"));
+    const workflow = { selectedPhases: [] };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "test", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    const folder = handoffDirectory(workspace, handoff.handoffId);
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+    const initial = await model();
+    initial.settingsRevision = 0;
+    initial.persisted = false;
+    const shell = await startShell(handoff, initial, workspace);
+    const staleShell = await startShell(handoff, initial, workspace);
+    try {
+        await page.goto(shell.url);
+        const save = page.getByRole("button", { name: "Save", exact: true });
+        await save.click();
+        await expect(page.getByRole("alert")).toContainText("Enter a valid Canvas ID");
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("example-canvas");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Example");
+        await save.click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+        await expect(save).toBeDisabled();
+        await expect(page.locator("#save-help")).toHaveAttribute("title", "No changes to save");
+        await expect(save).toHaveAttribute("aria-description", "No changes to save");
+        expect(await save.evaluate((button) => getComputedStyle(button).cursor)).toBe("default");
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+
+        const reopenedModel = await loadDesignerSettings(workspace, handoff, await model());
+        const reopened = await startShell(handoff, reopenedModel, workspace);
+        try {
+            await page.goto(reopened.url);
+            await expect(page.getByRole("textbox", { name: "Canvas ID (required)" }))
+                .toHaveValue("example-canvas");
+            await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+            await expect(page.locator("#save-help")).toHaveAttribute("title", "No changes to save");
+        } finally {
+            await reopened.close();
+        }
+
+        await page.goto(staleShell.url);
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Changed");
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("stale-canvas");
+        await save.click();
+        await expect(page.getByRole("alert")).toContainText("close and reopen Designer before saving");
+        await expect(page.getByRole("textbox", { name: "Title (required)" })).toHaveValue("Changed");
+    } finally {
+        await shell.close();
+        await staleShell.close();
+        await rm(workspace, { recursive: true, force: true });
     }
 });
 
@@ -125,7 +204,7 @@ test("failed Essentials stays selected when a custom page sorts before it", asyn
     state.pages.push({ page: "custom-settings", id: "custom-settings", title: "Custom",
         order: 5, fields: [] });
     state.pages.sort((a, b) => a.order - b.order);
-    const shell = await startShell({ handoffId: "test" }, state);
+    const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
         await expect(page.getByRole("tab", { name: "canvas-settings-setup (error)" }))

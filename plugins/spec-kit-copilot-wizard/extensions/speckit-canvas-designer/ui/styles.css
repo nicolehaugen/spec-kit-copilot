@@ -51,6 +51,7 @@ p { margin: 0; }
 .toolbar-actions .primary { background: var(--accent-color); color: var(--background-color-elevated);
     border-color: var(--accent-color); }
 .toolbar-actions button:disabled { opacity: .55; cursor: not-allowed; }
+#save-settings:disabled { cursor: default; pointer-events: none; }
 .conn { font-size: 12px; padding: .15rem .55rem; border-radius: 999px; white-space: nowrap; }
 .conn-connecting { color: var(--warn-color); background: rgba(196, 136, 26, .12); }
 .conn-live { color: var(--success-color); background: rgba(23, 140, 78, .12); }
@@ -71,6 +72,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--color-focus
 .availability-note { margin-top: 2rem; }
 #page-error { color: var(--danger-color); border: 1px solid currentColor;
     border-radius: var(--radius-sm); padding: .75rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
+#action-message { color: var(--success-color); margin-bottom: 1rem; }
 .page-diagnostic { border: 1px solid var(--danger-color); border-radius: var(--radius-sm);
     background: var(--background-color-elevated); padding: 1rem; overflow-wrap: anywhere; }
 .page-diagnostic p { margin-top: .7rem; }

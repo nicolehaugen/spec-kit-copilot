@@ -2,7 +2,9 @@ const token = new URL(location.href).searchParams.get("token");
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
-let model, currentPage, draft;
+const saveButton = document.getElementById("save-settings");
+const messageBox = document.getElementById("action-message");
+let model, currentPage, draft, saving = false;
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -16,6 +18,65 @@ function showError(message) {
     errorBox.hidden = !message;
     if (message) errorBox.focus();
 }
+
+function updateSave() {
+    const noChanges = model?.persisted
+        && JSON.stringify(draft) === JSON.stringify(model.values);
+    saveButton.disabled = saving || !model || noChanges;
+    document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
+    if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
+    else saveButton.removeAttribute("aria-description");
+    saveButton.textContent = saving ? "Saving..." : "Save";
+    saveButton.setAttribute("aria-busy", String(saving));
+    root.inert = saving;
+    for (const tab of tabs.children) tab.disabled = saving;
+}
+
+function validateDraft() {
+    for (const [id, rules] of Object.entries(model.constraints)) {
+        const value = draft[id];
+        if (rules.type === "boolean") continue;
+        if (value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
+            || (rules.pattern && !new RegExp(rules.pattern).test(value))) {
+            const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
+            if (page) {
+                renderPage(page.page);
+                root.querySelectorAll("input").forEach((input) => {
+                    if (input.name === id) { input.focus(); input.reportValidity(); }
+                });
+            }
+            showError(`Enter a valid ${page?.fields.find((field) => field.id === id).label ?? id} before saving.`);
+            return false;
+        }
+    }
+    return true;
+}
+
+saveButton.addEventListener("click", async () => {
+    if (saving || !model || !validateDraft()) return;
+    saving = true;
+    messageBox.hidden = true;
+    showError("");
+    updateSave();
+    try {
+        const response = await fetch(`/api/save?token=${encodeURIComponent(token)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modelRevision: model.revision,
+                revision: model.settingsRevision, values: draft }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? `Designer save failed (${response.status})`);
+        model = result;
+        messageBox.textContent = "Settings saved.";
+        messageBox.hidden = false;
+    } catch (error) {
+        showError(`Could not save settings: ${error.message}`);
+    } finally {
+        saving = false;
+        updateSave();
+    }
+});
 
 function renderPage(pageId) {
     const page = model.pages.find((entry) => entry.page === pageId);
@@ -41,7 +102,10 @@ function renderPage(pageId) {
     root.replaceChildren(element("h1", page.title), element("p", page.description ?? "", "muted"));
     const form = element("form");
     form.noValidate = true;
-    form.addEventListener("submit", (event) => event.preventDefault());
+    form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        saveButton.click();
+    });
     if (!page.fields.length) form.append(element("p", "This template defines no fields.", "settings-note"));
     for (const [index, field] of page.fields.entries()) {
         const rules = model.constraints[field.id];
@@ -67,7 +131,12 @@ function renderPage(pageId) {
             if (rules.pattern) input.pattern = rules.pattern;
             if (input.required) label.append(element("span", " (required)", "muted"));
         }
-        input.addEventListener("input", () => { draft[field.id] = checkbox ? input.checked : input.value; });
+        input.addEventListener("input", () => {
+            draft[field.id] = checkbox ? input.checked : input.value;
+            messageBox.hidden = true;
+            showError("");
+            updateSave();
+        });
         wrapper.append(...(checkbox ? [input, label] : [label, input]));
         form.append(wrapper);
     }
@@ -117,6 +186,7 @@ function applyState(next) {
             ?? model.pages.find((page) => page.page === "canvas-settings-setup")
             ?? model.pages[0];
         renderPage(selected.page);
+        updateSave();
     }
 }
 

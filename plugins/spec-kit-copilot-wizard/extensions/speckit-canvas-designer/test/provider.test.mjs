@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdtemp, mkdir, open, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,9 @@ import {
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages } from "../pages.mjs";
+import {
+    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
+} from "../settings.mjs";
 
 const ID = "designer_1";
 
@@ -187,6 +190,156 @@ test("handoff rejects a different opened file even if the path still passes vali
     );
 });
 
+test("settings reject a parent directory replaced during file open, including a missing file", async (t) => {
+    const workspace = await fixture(t);
+    const outside = await fixture(t);
+    const handoff = validHandoff();
+    const directory = await saveHandoff(workspace, handoff);
+    const outsideDirectory = await saveHandoff(outside, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    await saveDesignerSettings(outside, handoff, model, { revision: 0,
+        modelRevision: model.revision, values: { "canvas.id": "outside" } });
+    const backup = `${directory}-original`;
+    for (const existing of [true, false]) {
+        if (!existing) await rm(join(outsideDirectory, "settings.json"));
+        let replaced = false;
+        try {
+            await assert.rejects(loadDesignerSettings(workspace, handoff, model,
+                async (path, flags) => {
+                    await rename(directory, backup);
+                    try {
+                        await symlink(outsideDirectory, directory,
+                            process.platform === "win32" ? "junction" : "dir");
+                    } catch (error) {
+                        await rename(backup, directory);
+                        throw error;
+                    }
+                    replaced = true;
+                    return open(path, flags);
+                }), /Designer settings escape session artifacts/);
+        } catch (error) {
+            if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+            t.diagnostic("Windows symlink creation is not permitted; settings race assertion skipped");
+            return;
+        } finally {
+            if (replaced) {
+                await rm(directory, { recursive: true });
+                await rename(backup, directory);
+            }
+        }
+    }
+});
+
+test("settings reject a different opened file even when their parent remains valid", async (t) => {
+    const workspace = await fixture(t);
+    const outside = await fixture(t);
+    const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
+    const outsideDirectory = await saveHandoff(outside, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    const request = { revision: 0, modelRevision: model.revision,
+        values: { "canvas.id": "saved" } };
+    await saveDesignerSettings(workspace, handoff, model, request);
+    await saveDesignerSettings(outside, handoff, model, request);
+    await assert.rejects(loadDesignerSettings(workspace, handoff, model,
+        (_path, flags) => open(join(outsideDirectory, "settings.json"), flags)),
+    /Invalid saved Designer settings file/);
+});
+
+test("settings use the canonical workspace when the session path is a symlink", async (t) => {
+    const workspace = await fixture(t);
+    const aliasParent = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const alias = join(aliasParent, "linked-session");
+    try {
+        await symlink(workspace, alias, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; workspace alias assertion skipped");
+        return;
+    }
+    try {
+        assert.deepEqual(await readHandoff(alias, ID), handoff);
+        const model = { revision: "snapshot", constraints: {
+            "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+        }, values: { "canvas.id": "" } };
+        assert.equal((await loadDesignerSettings(alias, handoff, model)).settingsRevision, 0);
+        await saveDesignerSettings(alias, handoff, model, { revision: 0,
+            modelRevision: model.revision, values: { "canvas.id": "saved" } });
+        assert.equal((await loadDesignerSettings(alias, handoff, model)).values["canvas.id"], "saved");
+        assert.equal(JSON.parse(await readFile(join(folder, "settings.json"))).values["canvas.id"], "saved");
+    } finally {
+        await rm(alias);
+    }
+});
+
+test("settings reads stay bounded when the file grows after its initial stat", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    await saveDesignerSettings(workspace, handoff, model, { revision: 0,
+        modelRevision: model.revision, values: { "canvas.id": "saved" } });
+    await assert.rejects(loadDesignerSettings(workspace, handoff, model,
+        async (path, flags) => {
+            const file = await open(path, flags);
+            return {
+                stat: async () => {
+                    const before = await file.stat();
+                    await appendFile(join(folder, "settings.json"), "x".repeat(256 * 1024 + 1));
+                    return before;
+                },
+                read: (...args) => file.read(...args),
+                close: () => file.close(),
+            };
+        }), /Saved Designer settings exceed the size limit/);
+});
+
+test("settings reject a swapped temporary-file parent before writing", async (t) => {
+    const workspace = await fixture(t);
+    const outside = await fixture(t);
+    const handoff = validHandoff();
+    const directory = await saveHandoff(workspace, handoff);
+    const outsideDirectory = await saveHandoff(outside, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    const backup = `${directory}-original`;
+    let replaced = false;
+    try {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+            revision: 0, modelRevision: model.revision, values: { "canvas.id": "saved" },
+        }, async (path, flags, mode) => {
+            await rename(directory, backup);
+            try {
+                await symlink(outsideDirectory, directory,
+                    process.platform === "win32" ? "junction" : "dir");
+            } catch (error) {
+                await rename(backup, directory);
+                throw error;
+            }
+            replaced = true;
+            return open(path, flags, mode);
+        }), /Designer settings escape session artifacts/);
+        assert.deepEqual((await readdir(outsideDirectory)).sort(), ["handoff.json"]);
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; settings write race assertion skipped");
+    } finally {
+        if (replaced) {
+            await rm(directory, { recursive: true });
+            await rename(backup, directory);
+        }
+    }
+});
+
 test("handoff rejects a FIFO promptly instead of waiting for a writer", {
     skip: process.platform === "win32",
 }, async (t) => {
@@ -216,11 +369,14 @@ test("handoff rejects a FIFO promptly instead of waiting for a writer", {
 });
 
 test("shell serves validated pages behind its token", async (t) => {
+    const workspace = await fixture(t);
     const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
     const model = { pages: [{ id: "canvas-settings-setup", page: "canvas-settings-setup",
         title: "Essentials", fields: [] }], constraints: {}, values: {}, revision: "test" };
     await assert.rejects(startShell(handoff), /validated before opening/);
-    const shell = await startShell(handoff, model);
+    await assert.rejects(startShell(handoff, model), /session workspace is required/);
+    const shell = await startShell(handoff, model, workspace);
     t.after(() => shell.close());
     const url = new URL(shell.url);
     assert.equal(url.hostname, "127.0.0.1");
@@ -244,6 +400,131 @@ test("shell serves validated pages behind its token", async (t) => {
     ]) {
         assert.equal((await fetch(address, options)).status, 404);
     }
+});
+
+test("Save persists values beside the handoff and rejects stale or invalid changes", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    const initial = await loadDesignerSettings(workspace, handoff, model);
+    assert.equal(initial.settingsRevision, 0);
+    assert.equal(initial.persisted, false);
+    const values = { ...initial.values, "canvas.id": "my-canvas",
+        "canvas.displayName": "My Canvas" };
+    const request = { revision: 0, modelRevision: model.revision, values };
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        ...request, values: { ...values, "canvas.id": "../escape" },
+    }), /Invalid Designer setting: canvas.id/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        ...request, values: { ...values, unexpected: "extra" },
+    }), /unexpected or missing fields/);
+    const saved = await saveDesignerSettings(workspace, handoff, model, request);
+    assert.equal(saved.settingsRevision, 1);
+    assert.equal(saved.persisted, true);
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).values, values);
+    const stored = JSON.parse(await readFile(join(folder, "settings.json"), "utf8"));
+    assert.deepEqual(stored.values, values);
+    assert.equal(stored.revision, 1);
+    assert.deepEqual((await readFile(entries[0].path, "utf8")).includes("my-canvas"), false);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, request),
+        /Copy any unsaved edits, then close and reopen Designer before saving/);
+    const revised = await saveDesignerSettings(workspace, handoff, model,
+        { ...request, revision: 1, values: { ...values, "canvas.description": "Updated" } });
+    assert.equal(revised.settingsRevision, 2);
+    await assert.rejects(loadDesignerSettings(workspace, handoff,
+        { ...model, revision: "new-page-fingerprint" }), /do not match the current handoff or pages/);
+    await writeFile(join(folder, "settings.json"), "{broken");
+    await assert.rejects(loadDesignerSettings(workspace, handoff, model),
+        /Invalid saved Designer settings JSON/);
+});
+
+test("token-gated Save endpoint reports errors without losing the current values", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const changedPage = JSON.parse(await readFile(entries[1].path, "utf8"));
+    changedPage.fields.push({ id: "changed", label: "Changed" });
+    await writeFile(entries[1].path, JSON.stringify(changedPage));
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries));
+    const shell = await startShell(handoff, model, workspace);
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    const saveUrl = new URL("/api/save", url);
+    const values = { ...model.values, "canvas.id": "sample",
+        "canvas.displayName": "Sample" };
+    const payload = { revision: 0, modelRevision: model.revision, values };
+    assert.equal((await fetch(saveUrl, { method: "POST", headers: {
+        "Content-Type": "application/json",
+    }, body: JSON.stringify(payload) })).status, 404);
+    saveUrl.search = url.search;
+    const post = (body) => fetch(saveUrl, { method: "POST", headers: {
+        "Content-Type": "application/json",
+    }, body: JSON.stringify(body) });
+    const accepted = await post(payload);
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).settingsRevision, 1);
+    const stateUrl = new URL("/api/state", url);
+    stateUrl.search = url.search;
+    assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
+    const stale = await post(payload);
+    assert.equal(stale.status, 409);
+    assert.match((await stale.json()).error, /close and reopen Designer before saving/);
+    const invalid = await post({ ...payload, revision: 1, values: { ...values,
+        "canvas.id": "UPPER" } });
+    assert.equal(invalid.status, 422);
+    const invalidNamedChanged = await post({ ...payload, revision: 1,
+        values: { ...values, changed: true } });
+    assert.equal(invalidNamedChanged.status, 422);
+    assert.equal((await invalidNamedChanged.json()).error, "Invalid Designer setting: changed");
+    assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
+});
+
+test("Save reserves space for the stored envelope and rejects larger valid requests", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff("a".repeat(128));
+    const folder = await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    for (const [index, entry] of entries.slice(0, 3).entries()) {
+        const page = JSON.parse(await readFile(entry.path, "utf8"));
+        while (page.fields.length < 100) {
+            const id = `custom.${index}.${page.fields.length}`;
+            page.fields.push({ id, label: id });
+        }
+        await writeFile(entry.path, JSON.stringify(page));
+    }
+    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.equal(Object.keys(model.constraints).length, 300);
+    const values = { ...model.values, "canvas.id": "example", "canvas.displayName": "Example" };
+    const payload = { revision: 0, modelRevision: model.revision, values };
+    let remaining = SAVE_REQUEST_LIMIT - Buffer.byteLength(JSON.stringify(payload));
+    for (const id of Object.keys(values).filter((key) => key.startsWith("custom."))) {
+        const length = Math.min(remaining, model.constraints[id].maxLength);
+        values[id] = "x".repeat(length);
+        remaining -= length;
+    }
+    assert.equal(remaining, 0);
+    const body = JSON.stringify(payload);
+    assert.equal(Buffer.byteLength(body), SAVE_REQUEST_LIMIT);
+    const shell = await startShell(handoff, model, workspace);
+    t.after(() => shell.close());
+    const saveUrl = new URL(shell.url);
+    saveUrl.pathname = "/api/save";
+    const response = await fetch(saveUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: `${body} ` });
+    assert.equal(response.status, 413);
+    assert.match(response.headers.get("content-type"), /application\/json/);
+    assert.deepEqual(await response.json(), { error: "Designer save request is too large" });
+    await assert.rejects(readFile(join(folder, "settings.json")), { code: "ENOENT" });
+    const accepted = await fetch(saveUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body });
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).settingsRevision, 1);
+    assert.ok((await readFile(join(folder, "settings.json"))).length <= SETTINGS_LIMIT);
 });
 
 test("malformed raw request targets return 404 without stopping the shell", async (t) => {
@@ -426,7 +707,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const extension = join(workspace, "provider");
     const sdk = join(extension, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
-    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs"]) {
+    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "settings.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
     await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
@@ -536,6 +817,22 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         assert.equal(brokenState.pages.length, 4);
         assert.match(brokenState.pages[1].error.reason, /Invalid Designer JSON/);
         assert.notEqual(brokenState.revision, updated.revision);
+        const saveUrl = new URL(broken.url);
+        saveUrl.pathname = "/api/save";
+        const savedValues = { ...brokenState.values, "canvas.id": "saved-designer",
+            "canvas.displayName": "Saved Designer" };
+        const savedResponse = await fetch(saveUrl, { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modelRevision: brokenState.revision,
+                revision: brokenState.settingsRevision, values: savedValues }) });
+        assert.equal(savedResponse.status, 200);
+        const restored = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
+        const restoredUrl = new URL(restored.url);
+        restoredUrl.pathname = "/api/state";
+        const restoredState = await (await fetch(restoredUrl)).json();
+        assert.deepEqual(restoredState.values, savedValues);
+        assert.equal(restoredState.settingsRevision, 1);
+        assert.equal(restoredState.persisted, true);
 
         const started = new Promise((resolve) => {
             globalThis.__pauseDesignerShell = async (shell) => {
