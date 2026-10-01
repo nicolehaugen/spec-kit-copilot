@@ -8,7 +8,7 @@
 // Validation is limited to: path well-formedness, directory existence, a
 // parseable manifest, and a well-formed id/name/version extracted from it.
 
-import { readFile, realpath, stat } from "node:fs/promises";
+import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 // js-yaml (deferred import, mirrors composition/preset-loader.mjs and
@@ -134,33 +134,54 @@ async function detectLocalKind(canonical) {
 }
 
 /**
+ * Read a manifest file through a single open file descriptor, bounded to
+ * at most `MANIFEST_SIZE_LIMIT + 1` bytes regardless of what `stat()`
+ * reported or what the file grows/changes to afterward. Opening once and
+ * reading from that same descriptor (rather than `stat()` then a separate
+ * `readFile()`) closes the TOCTOU window where a file could be replaced or
+ * appended to between the size check and the read, which would otherwise
+ * let the loopback server allocate an arbitrarily large buffer despite the
+ * nominal size limit.
+ */
+async function readBoundedManifest(manifestPath, manifest, canonical) {
+    let handle;
+    try {
+        handle = await open(manifestPath, "r");
+    } catch {
+        throw new Error(`Missing ${manifest.file} in ${canonical}`);
+    }
+    try {
+        const fileStat = await handle.stat();
+        if (!fileStat.isFile()) {
+            throw new Error(`Missing ${manifest.file} in ${canonical}`);
+        }
+        if (fileStat.size > MANIFEST_SIZE_LIMIT) {
+            throw new Error(`${manifest.file} is too large (max ${MANIFEST_SIZE_LIMIT} bytes)`);
+        }
+        const buffer = Buffer.alloc(MANIFEST_SIZE_LIMIT + 1);
+        let totalRead = 0;
+        while (totalRead < buffer.length) {
+            const { bytesRead } = await handle.read(buffer, totalRead, buffer.length - totalRead, null);
+            if (bytesRead === 0) break;
+            totalRead += bytesRead;
+        }
+        if (totalRead > MANIFEST_SIZE_LIMIT) {
+            throw new Error(`${manifest.file} is too large (max ${MANIFEST_SIZE_LIMIT} bytes)`);
+        }
+        return buffer.subarray(0, totalRead).toString("utf8");
+    } finally {
+        await handle.close();
+    }
+}
+
+/**
  * Parse and validate the manifest for an already-known `kind` at
  * `canonical`. Resolves with `{ kind, id, name, version, path }`.
  */
 async function validateManifest(kind, canonical) {
     const manifest = MANIFEST[kind];
     const manifestPath = join(canonical, manifest.file);
-    let fileStat;
-    try {
-        fileStat = await stat(manifestPath);
-    } catch {
-        throw new Error(`Missing ${manifest.file} in ${canonical}`);
-    }
-    if (!fileStat.isFile()) {
-        throw new Error(`Missing ${manifest.file} in ${canonical}`);
-    }
-    if (fileStat.size > MANIFEST_SIZE_LIMIT) {
-        throw new Error(`${manifest.file} is too large (max ${MANIFEST_SIZE_LIMIT} bytes)`);
-    }
-    let text;
-    try {
-        text = await readFile(manifestPath, "utf8");
-    } catch {
-        throw new Error(`Missing ${manifest.file} in ${canonical}`);
-    }
-    if (Buffer.byteLength(text, "utf8") > MANIFEST_SIZE_LIMIT) {
-        throw new Error(`${manifest.file} is too large (max ${MANIFEST_SIZE_LIMIT} bytes)`);
-    }
+    const text = await readBoundedManifest(manifestPath, manifest, canonical);
     let data;
     try {
         const yaml = await getYaml();

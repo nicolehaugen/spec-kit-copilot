@@ -8,6 +8,12 @@ const KINDS = [["presets", "Presets"], ["extensions", "Extensions"], ["bundles",
 // included and cannot be unchecked by the user, regardless of hosted catalog
 // availability or any other selection state.
 export const REQUIRED_DESIGNER_EXTENSION_ID = "extension-canvas-design";
+// Only an entry from the sanctioned Copilot catalog we control — never a
+// third-party "community" catalog entry that merely reuses the same ID —
+// can be treated as the required, auto-approved designer extension. A
+// community entry with this ID must still go through the normal
+// community-consent flow like any other optional selection.
+const TRUSTED_DESIGNER_SOURCE = "copilot";
 let confirming = false;
 let selections = null;
 let bundleMembers = new Map();
@@ -103,7 +109,8 @@ export function freshCanvasDesignerSelections() {
 }
 
 function isRequiredDesignerExtension(kind, item) {
-    return kind === "extensions" && item?.id === REQUIRED_DESIGNER_EXTENSION_ID;
+    return kind === "extensions" && item?.id === REQUIRED_DESIGNER_EXTENSION_ID
+        && item?.source === TRUSTED_DESIGNER_SOURCE;
 }
 
 /** Checked local sources, keyed by kind, as `{id, path}` pairs ready for the
@@ -211,7 +218,13 @@ function refreshBundleChoices(root, snapshot) {
     }
 }
 
-function renderLocalList(root) {
+// `focusFlatIndex`, when provided, restores keyboard focus after a Remove
+// click re-renders this list (which otherwise detaches the focused button
+// and silently drops focus to <body>): the removed row's flat position is
+// re-used to focus whichever row now occupies it (the former "next" row),
+// falling back to the previous row, and finally to the path input once the
+// list is empty.
+function renderLocalList(root, focusFlatIndex) {
     const list = root.querySelector("[data-designer-local-list]");
     if (!list) return;
     const rows = LOCAL_KINDS.flatMap((kind) =>
@@ -229,12 +242,18 @@ function renderLocalList(root) {
             localItems[input.dataset.designerLocalKind][Number(input.dataset.designerLocalIndex)].checked = input.checked;
         });
     });
-    list.querySelectorAll("button[data-designer-local-index]").forEach((button) => {
+    const removeButtons = [...list.querySelectorAll("button[data-designer-local-index]")];
+    removeButtons.forEach((button, flatIndex) => {
         button.addEventListener("click", () => {
             localItems[button.dataset.designerLocalKind].splice(Number(button.dataset.designerLocalIndex), 1);
-            renderLocalList(root);
+            renderLocalList(root, flatIndex);
         });
     });
+    if (focusFlatIndex !== undefined) {
+        const target = removeButtons[focusFlatIndex] ?? removeButtons[focusFlatIndex - 1];
+        if (target) target.focus();
+        else root.querySelector("[data-designer-local-path]")?.focus();
+    }
 }
 
 async function addLocalSource(root, pathInput) {
@@ -312,7 +331,7 @@ export function openCanvasDesignerDialog() {
     localItems = { presets: [], extensions: [] };
     requiredInputs = new Set();
     const requiredExtension = canvasDesignEntries(snapshot, "extensions")
-        .find((item) => item.id === REQUIRED_DESIGNER_EXTENSION_ID);
+        .find((item) => item.id === REQUIRED_DESIGNER_EXTENSION_ID && item.source === TRUSTED_DESIGNER_SOURCE);
     if (requiredExtension) {
         selections.extensions.push({
             id: requiredExtension.id, source: requiredExtension.source, approved: true,
