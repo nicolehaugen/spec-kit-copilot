@@ -165,33 +165,36 @@ test("activation failure preserves selections for a one-click retry", async ({ p
     ]));
 });
 
-test("local development section is collapsed, additive, and only on Presets/Extensions", async ({ page }) => {
+test("local development section is a single shared section, collapsed by default, covering presets and extensions only", async ({ page }) => {
     const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
-    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
-    const localSection = presets.locator('[data-designer-local="presets"]');
+    const localSection = dialog.locator("[data-designer-local]");
+    await expect(localSection).toHaveCount(1);
     await expect(localSection).toBeVisible();
     await expect(localSection.locator("summary")).toHaveText("Local development");
     await expect(localSection).not.toHaveJSProperty("open", true);
-    await expect(presets.getByText(/takes precedence over a hosted selection/)).toBeHidden();
+    await expect(dialog.getByText(/takes precedence over a hosted selection/)).toBeHidden();
     await localSection.locator("summary").click();
-    await expect(presets.getByText(/takes precedence over a hosted selection/)).toBeVisible();
-    // Hosted copy, tabs, and bundle behavior are untouched: no local section
-    // on Bundles, and the hosted preset checkbox is still present and
-    // unaffected by the local section existing.
+    await expect(dialog.getByText(/takes precedence over a hosted selection/)).toBeVisible();
+    // Exactly one subgroup per local kind (presets, extensions), none for
+    // bundles, and the section stays visible across tab switches since it
+    // now renders outside the tabpanels rather than nested per tab.
+    await expect(localSection.locator('[data-designer-local-section="presets"]')).toHaveCount(1);
+    await expect(localSection.locator('[data-designer-local-section="extensions"]')).toHaveCount(1);
+    await expect(localSection.locator('[data-designer-local-section="bundles"]')).toHaveCount(0);
     await dialog.getByRole("tab", { name: "Bundles" }).click();
-    const bundles = dialog.getByRole("tabpanel", { name: "Bundles" });
-    await expect(bundles.locator('[data-designer-local]')).toHaveCount(0);
+    await expect(localSection).toBeVisible();
     await dialog.getByRole("tab", { name: "Presets" }).click();
+    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
     await expect(presets.getByRole("checkbox", { name: /Design preset/ })).toBeVisible();
 });
 
 test("adds a local preset via typed absolute path, checks it in automatically, and it wins over a hosted id", async ({ page }) => {
     const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
-    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
-    await presets.locator('[data-designer-local="presets"] summary').click();
-    await presets.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
-    await presets.locator('[data-designer-local-add="presets"]').click();
-    const localItem = presets.locator(".designer-local-item");
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    await localSection.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
+    await localSection.locator('[data-designer-local-add="presets"]').click();
+    const localItem = localSection.locator('[data-designer-local-section="presets"] .designer-local-item');
     await expect(localItem).toHaveCount(1);
     await expect(localItem.getByText("Copilot Sub-Agent Delegation")).toBeVisible();
     await expect(localItem.getByText("copilot-sub-agents · v1.0.0")).toBeVisible();
@@ -208,29 +211,30 @@ test("adds a local preset via typed absolute path, checks it in automatically, a
 
 test("rejects an invalid local path with an explicit error and lets the user retry", async ({ page }) => {
     const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
-    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
-    await presets.locator('[data-designer-local="presets"] summary').click();
-    const pathInput = presets.locator('[data-designer-local-path="presets"]');
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    const pathInput = localSection.locator('[data-designer-local-path="presets"]');
     await pathInput.fill("relative/not-absolute");
-    await presets.locator('[data-designer-local-add="presets"]').click();
-    await expect(presets.locator('[data-designer-local-error="presets"]')).toContainText("must be absolute");
-    await expect(presets.locator(".designer-local-item")).toHaveCount(0);
+    await localSection.locator('[data-designer-local-add="presets"]').click();
+    await expect(localSection.locator('[data-designer-local-error="presets"]')).toContainText("must be absolute");
+    const localItem = localSection.locator('[data-designer-local-section="presets"] .designer-local-item');
+    await expect(localItem).toHaveCount(0);
 
     await pathInput.fill(LOCAL_PRESET_PATH);
-    await presets.locator('[data-designer-local-add="presets"]').click();
-    await expect(presets.locator(".designer-local-item")).toHaveCount(1);
+    await localSection.locator('[data-designer-local-add="presets"]').click();
+    await expect(localItem).toHaveCount(1);
 });
 
 test("accepts a local path pasted with surrounding quotes and displays it canonically unquoted", async ({ page }) => {
     const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
-    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
-    await presets.locator('[data-designer-local="presets"] summary').click();
-    const pathInput = presets.locator('[data-designer-local-path="presets"]');
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    const pathInput = localSection.locator('[data-designer-local-path="presets"]');
     // Mirrors what Windows Explorer's "Copy as path" puts on the clipboard.
     await pathInput.fill(`"${LOCAL_PRESET_PATH}"`);
-    await presets.locator('[data-designer-local-add="presets"]').click();
-    await expect(presets.locator('[data-designer-local-error="presets"]')).toBeHidden();
-    const localItem = presets.locator(".designer-local-item");
+    await localSection.locator('[data-designer-local-add="presets"]').click();
+    await expect(localSection.locator('[data-designer-local-error="presets"]')).toBeHidden();
+    const localItem = localSection.locator('[data-designer-local-section="presets"] .designer-local-item');
     await expect(localItem).toHaveCount(1);
     await expect(localItem.getByText("Copilot Sub-Agent Delegation")).toBeVisible();
 
@@ -245,24 +249,26 @@ test("accepts a local path pasted with surrounding quotes and displays it canoni
 
 test("local sources reset on dialog close/reopen but are retained after a launch failure", async ({ page }) => {
     const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
-    const presets = dialog.getByRole("tabpanel", { name: "Presets" });
-    await presets.locator('[data-designer-local="presets"] summary').click();
-    await presets.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
-    await presets.locator('[data-designer-local-add="presets"]').click();
-    await expect(presets.locator(".designer-local-item")).toHaveCount(1);
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    await localSection.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
+    await localSection.locator('[data-designer-local-add="presets"]').click();
+    const localItem = localSection.locator('[data-designer-local-section="presets"] .designer-local-item');
+    await expect(localItem).toHaveCount(1);
 
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).toHaveCount(0);
     await page.getByRole("button", { name: "Generate canvas" }).click();
     const reopened = page.getByRole("dialog", { name: "Canvas designer setup" });
-    const reopenedPresets = reopened.getByRole("tabpanel", { name: "Presets" });
-    await expect(reopenedPresets.locator('[data-designer-local="presets"]')).not.toHaveJSProperty("open", true);
-    await expect(reopenedPresets.locator(".designer-local-item")).toHaveCount(0);
+    const reopenedLocalSection = reopened.locator("[data-designer-local]");
+    const reopenedLocalItem = reopenedLocalSection.locator('[data-designer-local-section="presets"] .designer-local-item');
+    await expect(reopenedLocalSection).not.toHaveJSProperty("open", true);
+    await expect(reopenedLocalItem).toHaveCount(0);
 
-    await reopenedPresets.locator('[data-designer-local="presets"] summary').click();
-    await reopenedPresets.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
-    await reopenedPresets.locator('[data-designer-local-add="presets"]').click();
-    await expect(reopenedPresets.locator(".designer-local-item")).toHaveCount(1);
+    await reopenedLocalSection.locator("summary").click();
+    await reopenedLocalSection.locator('[data-designer-local-path="presets"]').fill(LOCAL_PRESET_PATH);
+    await reopenedLocalSection.locator('[data-designer-local-add="presets"]').click();
+    await expect(reopenedLocalItem).toHaveCount(1);
 
     await page.route("**/api/designer/launch?*", async (route) => {
         await route.fulfill({
@@ -273,6 +279,6 @@ test("local sources reset on dialog close/reopen but are retained after a launch
     });
     await reopened.getByRole("button", { name: "Launch designer" }).click();
     await expect(reopened.getByRole("alert")).toContainText("activation timed out");
-    await expect(reopenedPresets.locator(".designer-local-item")).toHaveCount(1);
-    await expect(reopenedPresets.locator(".designer-local-item").getByRole("checkbox")).toBeChecked();
+    await expect(reopenedLocalItem).toHaveCount(1);
+    await expect(reopenedLocalItem.getByRole("checkbox")).toBeChecked();
 });

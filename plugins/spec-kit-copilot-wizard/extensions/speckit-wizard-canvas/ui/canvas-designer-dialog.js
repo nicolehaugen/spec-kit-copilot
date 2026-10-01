@@ -4,6 +4,10 @@ import { openCommunityInstallModal } from "./modals.js";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
 
 const KINDS = [["presets", "Presets"], ["extensions", "Extensions"], ["bundles", "Bundles"]];
+// The canvas designer extension renders the designer itself: it is always
+// included and cannot be unchecked by the user, regardless of hosted catalog
+// availability or any other selection state.
+export const REQUIRED_DESIGNER_EXTENSION_ID = "extension-canvas-design";
 let confirming = false;
 let selections = null;
 let bundleMembers = new Map();
@@ -13,6 +17,10 @@ let inspecting = 0;
 let errorMessage = "";
 let processing = false;
 let pendingInspections = new Set();
+// Hosted checkboxes for the required designer extension, forced checked and
+// disabled at render time; `updateLaunch` re-asserts `disabled` here so no
+// later state transition (processing, bundle refresh, etc.) can re-enable it.
+let requiredInputs = new Set();
 // Local development sources (presets/extensions only, never bundles): a
 // session-only, opt-in addition alongside the hosted catalog selections
 // above. Reset whenever the dialog closes or reopens; retained across a
@@ -65,7 +73,7 @@ function updateLaunch(root) {
     submit.setAttribute("aria-busy", String(processing));
     root.querySelectorAll("[data-designer-kind], [data-designer-tab], .wizard-modal-close, .wizard-modal-cancel")
         .forEach((element) => {
-            element.disabled = Boolean(processing || pendingInspections.has(element));
+            element.disabled = Boolean(processing || pendingInspections.has(element)) || requiredInputs.has(element);
         });
     // Local development controls (add/path/checkbox/remove) are a separate
     // additive section that otherwise has no busy guard: without this, a
@@ -92,6 +100,10 @@ export function canvasDesignEntries(snapshot, kind) {
 
 export function freshCanvasDesignerSelections() {
     return { presets: [], extensions: [], bundles: [] };
+}
+
+function isRequiredDesignerExtension(kind, item) {
+    return kind === "extensions" && item?.id === REQUIRED_DESIGNER_EXTENSION_ID;
 }
 
 /** Checked local sources, keyed by kind, as `{id, path}` pairs ready for the
@@ -133,22 +145,36 @@ function closeDialog() {
     pendingInspections = new Set();
     inspecting = 0;
     localItems = { presets: [], extensions: [] };
+    requiredInputs = new Set();
     if (restoreFocus?.isConnected) restoreFocus.focus();
     restoreFocus = null;
 }
 
-function renderLocalSection(kind, label) {
-    const singular = label.slice(0, -1).toLowerCase();
-    return `<details class="designer-local" data-designer-local="${kind}">
-        <summary>Local development</summary>
-        <div class="designer-local-body">
-            <p class="wizard-modal-desc designer-local-desc">Add an uninstalled local ${singular} directory for this session. A local ${singular} takes precedence over a hosted selection with the same ID, including a bundle member.</p>
+// Rendered once, as a sibling of the Presets/Extensions/Bundles tabpanels
+// (not nested inside any one of them), so there is a single "Local
+// development" section regardless of which tab is active. It covers both
+// local kinds that are supported (presets and extensions, never bundles),
+// each as its own labeled subgroup reusing the existing per-kind add/list
+// wiring and data attributes.
+function renderLocalSection() {
+    const groups = LOCAL_KINDS.map((kind) => {
+        const label = KINDS.find(([entryKind]) => entryKind === kind)?.[1] ?? kind;
+        const singular = label.slice(0, -1).toLowerCase();
+        return `<div class="designer-local-kind" data-designer-local-section="${kind}">
+            <h4 class="designer-local-kind-title">${label}</h4>
             <div class="designer-local-add">
                 <input type="text" class="designer-local-path" data-designer-local-path="${kind}" placeholder="Absolute path to ${singular} directory" aria-label="Local ${singular} directory path">
                 <button type="button" class="btn btn-secondary designer-local-add-btn" data-designer-local-add="${kind}">Add</button>
             </div>
             <p class="designer-local-error" data-designer-local-error="${kind}" role="alert" hidden></p>
             <ul class="designer-local-list" data-designer-local-list="${kind}"></ul>
+        </div>`;
+    }).join("");
+    return `<details class="designer-local" data-designer-local>
+        <summary>Local development</summary>
+        <div class="designer-local-body">
+            <p class="wizard-modal-desc designer-local-desc">Add uninstalled local preset or extension directories for this session. A local preset or extension takes precedence over a hosted selection with the same ID, including a bundle member.</p>
+            ${groups}
         </div>
     </details>`;
 }
@@ -156,12 +182,15 @@ function renderLocalSection(kind, label) {
 function renderChoices(snapshot, kind, label) {
     const items = canvasDesignEntries(snapshot, kind);
     return `<fieldset class="designer-group" id="designer-panel-${kind}" data-designer-panel="${kind}" role="tabpanel" aria-labelledby="designer-tab-${kind}" ${kind !== "presets" ? "hidden" : ""}>
-        ${items.length ? items.map((item, index) => `<label class="designer-choice">
-            <input type="checkbox" data-designer-kind="${kind}" data-designer-index="${index}">
+        ${items.length ? items.map((item, index) => {
+            const required = isRequiredDesignerExtension(kind, item);
+            return `<label class="designer-choice${required ? " designer-choice-required" : ""}">
+            <input type="checkbox" data-designer-kind="${kind}" data-designer-index="${index}"${required ? " checked disabled" : ""}>
             <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-included-by" hidden></small></span>
             <span class="badge source designer-source-tag">${escapeHtml((item.source ?? "default").replace(/^./, (c) => c.toUpperCase()))}</span>
-        </label>`).join("") : `<p class="wizard-modal-desc">No ${label.toLowerCase()} tagged canvas-design are available.</p>`}
-        ${LOCAL_KINDS.includes(kind) ? renderLocalSection(kind, label) : ""}
+            ${required ? '<span class="badge designer-required-badge" title="Always included to render the canvas designer">Required</span>' : ""}
+        </label>`;
+        }).join("") : `<p class="wizard-modal-desc">No ${label.toLowerCase()} tagged canvas-design are available.</p>`}
     </fieldset>`;
 }
 
@@ -282,6 +311,14 @@ export function openCanvasDesignerDialog() {
     errorMessage = "";
     pendingInspections = new Set();
     localItems = { presets: [], extensions: [] };
+    requiredInputs = new Set();
+    const requiredExtension = canvasDesignEntries(snapshot, "extensions")
+        .find((item) => item.id === REQUIRED_DESIGNER_EXTENSION_ID);
+    if (requiredExtension) {
+        selections.extensions.push({
+            id: requiredExtension.id, source: requiredExtension.source, approved: true,
+        });
+    }
     root.innerHTML = `<div class="wizard-modal-backdrop designer-backdrop">
         <section class="wizard-modal generation-modal designer-modal" role="dialog" aria-modal="true" aria-labelledby="designer-title" aria-describedby="designer-description">
             <header class="wizard-modal-head"><h3 id="designer-title">Canvas designer setup</h3><button type="button" class="wizard-modal-close" aria-label="Close">✕</button></header>
@@ -293,6 +330,7 @@ export function openCanvasDesignerDialog() {
                     ${KINDS.map(([kind, label]) => `<button type="button" id="designer-tab-${kind}" class="subtab${kind === "presets" ? " is-active" : ""}" role="tab" aria-selected="${kind === "presets"}" aria-controls="designer-panel-${kind}" tabindex="${kind === "presets" ? "0" : "-1"}" data-designer-tab="${kind}">${label}</button>`).join("")}
                 </nav>
                 ${KINDS.map(([kind, label]) => renderChoices(snapshot, kind, label)).join("")}
+                ${renderLocalSection()}
             </div>
             <footer class="wizard-modal-foot"><button type="button" class="btn btn-secondary wizard-modal-cancel">Cancel</button><button type="button" class="btn btn-primary designer-submit">Launch designer</button></footer>
         </section></div>`;
@@ -340,8 +378,16 @@ export function openCanvasDesignerDialog() {
         });
         renderLocalList(root, kind);
     }
-    root.querySelectorAll("[data-designer-kind]").forEach((input) => input.addEventListener("change", async () => {
-        if (confirming || processing || input.disabled) return;
+    root.querySelectorAll("[data-designer-kind]").forEach((input) => {
+        const setupKind = input.dataset.designerKind;
+        const setupItem = canvasDesignEntries(snapshot, setupKind)[Number(input.dataset.designerIndex)];
+        if (isRequiredDesignerExtension(setupKind, setupItem)) {
+            requiredInputs.add(input);
+            input.checked = true;
+            input.disabled = true;
+        }
+        input.addEventListener("change", async () => {
+        if (confirming || processing || input.disabled || requiredInputs.has(input)) return;
         const dialogSelections = selections;
         const kind = input.dataset.designerKind;
         const item = canvasDesignEntries(snapshot, kind)[Number(input.dataset.designerIndex)];
@@ -431,7 +477,8 @@ export function openCanvasDesignerDialog() {
         if (kind === "bundles") refreshBundleChoices(root, snapshot);
         errorMessage = "";
         updateLaunch(root);
-    }));
+    });
+    });
     const sendLaunch = async (checked) => {
         if (processing) return;
         const dialogSelections = selections;
