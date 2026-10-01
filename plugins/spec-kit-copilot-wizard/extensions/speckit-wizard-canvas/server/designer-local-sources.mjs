@@ -62,18 +62,16 @@ export function isSupportedLocalKind(kind) {
 // the whole path in a single balanced pair of double quotes, e.g.
 // `"C:\Users\name\dir"`, which users often paste verbatim. Strip exactly one
 // such surrounding pair (double, or less commonly single) before validating
-// the path. Anything else involving a quote character — an unmatched
-// leading/trailing quote, or one embedded mid-path — is rejected explicitly
-// rather than left to fail the `isAbsolute` check with a confusing message.
+// the path. Quote characters are otherwise left untouched: apostrophes are
+// valid in real paths (e.g. `/home/O'Brien/preset`), and even a raw quote is
+// a legal POSIX filename character, so anything other than that one
+// wrapping pair is left for `realpath()` to accept or reject on its own
+// merits rather than rejected here on sight.
 export function stripSurroundingQuotes(value) {
     const first = value[0];
     const last = value[value.length - 1];
     const wrapped = value.length >= 2 && first === last && (first === "\"" || first === "'");
-    const unwrapped = wrapped ? value.slice(1, -1) : value;
-    if (unwrapped.includes("\"") || unwrapped.includes("'")) {
-        throw new Error("Remove the surrounding or embedded quotes from the path.");
-    }
-    return unwrapped;
+    return wrapped ? value.slice(1, -1) : value;
 }
 
 /**

@@ -25,11 +25,15 @@ test("stripSurroundingQuotes strips exactly one balanced wrapping pair", () => {
     assert.equal(stripSurroundingQuotes("/home/name/dir"), "/home/name/dir");
 });
 
-test("stripSurroundingQuotes rejects unmatched or embedded quotes", () => {
-    assert.throws(() => stripSurroundingQuotes("\"C:\\Users\\name\\dir"), /quotes/);
-    assert.throws(() => stripSurroundingQuotes("C:\\Users\\name\\dir\""), /quotes/);
-    assert.throws(() => stripSurroundingQuotes("C:\\Users\\na\"me\\dir"), /quotes/);
-    assert.throws(() => stripSurroundingQuotes("\"C:\\Users\\name\\dir'"), /quotes/);
+test("stripSurroundingQuotes leaves unmatched or embedded quotes for realpath() to validate", () => {
+    // No balanced outer pair in any of these, so nothing is stripped —
+    // embedded apostrophes (e.g. `O'Brien`) and stray quote characters are
+    // valid POSIX path characters and are left alone rather than rejected.
+    assert.equal(stripSurroundingQuotes("\"C:\\Users\\name\\dir"), "\"C:\\Users\\name\\dir");
+    assert.equal(stripSurroundingQuotes("C:\\Users\\name\\dir\""), "C:\\Users\\name\\dir\"");
+    assert.equal(stripSurroundingQuotes("C:\\Users\\na\"me\\dir"), "C:\\Users\\na\"me\\dir");
+    assert.equal(stripSurroundingQuotes("\"C:\\Users\\name\\dir'"), "\"C:\\Users\\name\\dir'");
+    assert.equal(stripSurroundingQuotes("/home/O'Brien/preset"), "/home/O'Brien/preset");
 });
 
 test("validates a well-formed local preset directory and returns its canonical path", async (t) => {
@@ -67,7 +71,10 @@ test("rejects unsupported kinds, empty/relative paths and missing directories", 
     await assert.rejects(validateLocalSource("presets", "relative\\path"), /must be absolute/);
     await assert.rejects(validateLocalSource("presets", join(dir, "does-not-exist")), /Directory not found/);
     await assert.rejects(validateLocalSource("presets", `${dir}\x00bad`), /path looks invalid/);
-    await assert.rejects(validateLocalSource("presets", `"${dir}`), /quotes/);
+    // An unmatched leading quote isn't a balanced wrapping pair, so it's left
+    // in place rather than stripped — the resulting string no longer looks
+    // absolute (e.g. `"C:\...`), so it fails the absolute-path check instead.
+    await assert.rejects(validateLocalSource("presets", `"${dir}`), /must be absolute/);
 });
 
 test("rejects a directory missing its manifest file", async (t) => {
