@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, open, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -52,6 +52,16 @@ test("accepts a path pasted with surrounding double quotes (Explorer 'Copy as pa
     await writeFile(join(dir, "preset.yml"), "schema_version: 1\npreset:\n  id: my-preset\n  name: My Preset\n  version: 1.2.3\n");
     const result = await validateLocalSource("presets", `"${dir}"`);
     assert.equal(result.path, await realpath(dir));
+});
+
+test("rejects a control character introduced by resolving a symlink", { skip: process.platform === "win32" }, async (t) => {
+    const parent = await fixture(t);
+    const target = join(parent, "preset\nsource");
+    const link = join(parent, "clean-source");
+    await mkdir(target);
+    await symlink(target, link, "dir");
+    await writeFile(join(target, "preset.yml"), "preset:\n  id: my-preset\n  name: My Preset\n");
+    await assert.rejects(validateLocalSource("presets", link), /path looks invalid/);
 });
 
 test("validates a well-formed local extension directory with no version", async (t) => {

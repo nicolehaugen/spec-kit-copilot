@@ -91,11 +91,16 @@ async function resolveCanonicalPath(rawPath) {
     if (!isAbsolute(unquoted)) {
         throw new Error("Local development paths must be absolute (e.g. C:\\path\\to\\dir or /path/to/dir).");
     }
+    let canonical;
     try {
-        return await realpath(unquoted);
+        canonical = await realpath(unquoted);
     } catch {
         throw new Error(`Directory not found: ${unquoted}`);
     }
+    if (canonical.length > PATH_LIMIT || /[\x00-\x1f]/.test(canonical)) {
+        throw new Error("That path looks invalid.");
+    }
+    return canonical;
 }
 
 /**
