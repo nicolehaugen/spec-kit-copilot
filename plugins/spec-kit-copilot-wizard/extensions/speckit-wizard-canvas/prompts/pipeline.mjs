@@ -1,0 +1,92 @@
+// speckit-wizard — LLM prompt builders for the "pipeline" action family.
+//
+// This file (and its `prompts/*.mjs` siblings) is where the wizard stores
+// the text prompts it sends to the Copilot agent. All builders in THIS file
+// dispatch to a `/speckit-<skill>` slash command so Copilot CLI auto-loads
+// the matching SKILL.md into context — none of the pipeline phases use
+// natural-language or CLI slash commands. (For the non-skill outliers, see
+// `composition.mjs` and `setup.mjs`.)
+//
+// This module owns the "pipeline" family — the nine canonical Spec-Driven
+// phase kinds plus the issue-conversion phase:
+//   • constitution / specify / clarify / plan / checklist / tasks / analyze
+//     / implement                    → /speckit-<phase>
+//   • taskstoissues                  → /speckit-taskstoissues
+//
+// See `../prompts.mjs` for the top-level dispatcher and family split.
+
+import { getPhase } from "../canvas-runtime/wizard-phases.mjs";
+import { CANONICAL_PHASES, CANONICAL_UNSEEDED } from "../pipeline/canonical.mjs";
+import { fmtHeader, fmtPayload, STATE_UPDATE_HINT } from "./shared.mjs";
+
+// Canonical Spec-Driven phase kinds are spread from canonical.mjs so this
+// Set auto-tracks both the seeded spine and add-on-demand core commands.
+export const PIPELINE_KINDS = new Set([
+    ...CANONICAL_PHASES,
+    ...CANONICAL_UNSEEDED,
+]);
+
+const ARTIFACT_OWNER_BY_UPDATER_PHASE = {
+    clarify: "specify",
+    converge: "tasks",
+};
+
+function artifactInstruction(kind, artifact) {
+    if (!artifact || artifact === "(none)") {
+        return "This phase does not create a markdown artifact; do not add or rewrite provenance markers in existing files.";
+    }
+    const owner = ARTIFACT_OWNER_BY_UPDATER_PHASE[kind];
+    if (owner) {
+        return `Artifact: \`${artifact}\` (update the existing artifact and preserve its \`<!-- speckit:${owner} v1 -->\` first-line provenance marker).`;
+    }
+    return `Artifact: \`${artifact}\` (first line must be \`<!-- speckit:${kind} v1 -->\`).`;
+}
+
+export function buildPipelinePrompt(kind, payload, context, { workspacePath, skill }) {
+    void context;
+    switch (kind) {
+        // -------- Wizard phases --------
+        case "constitution":
+        case "specify":
+        case "clarify":
+        case "plan":
+        case "checklist":
+        case "tasks":
+        case "analyze":
+        case "converge":
+        case "implement": {
+            const phase = getPhase(kind);
+            const artifact = phase?.artifact ?? "(none)";
+            return (
+                fmtHeader({
+                    skill,
+                    kind,
+                    workspacePath,
+                    boundary: `Run the ${kind} phase only.`,
+                }) +
+                [
+                    artifactInstruction(kind, artifact),
+                    `Payload:\n\`\`\`json\n${fmtPayload(payload)}\n\`\`\``,
+                    STATE_UPDATE_HINT,
+                ].join("\n")
+            );
+        }
+        case "taskstoissues": {
+            return (
+                fmtHeader({
+                    skill,
+                    kind,
+                    workspacePath,
+                    boundary: "File tasks from the most recent `specs/<slug>/tasks.md` as GitHub issues. Do not modify tasks.md.",
+                }) +
+                [
+                    `Payload:\n\`\`\`json\n${fmtPayload(payload)}\n\`\`\``,
+                    "Then briefly summarize the result in chat and update `.speckit-wizard/state.json` for phase `taskstoissues` (status: done, lastRunAt: now).",
+                ].join("\n")
+            );
+        }
+
+        default:
+            throw new Error(`buildPipelinePrompt: unexpected kind ${kind}`);
+    }
+}

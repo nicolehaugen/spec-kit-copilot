@@ -1,0 +1,18 @@
+{
+    "name": "speckit-wizard-canvas",
+    "version": "2.0.0",
+    "private": true,
+    "type": "module",
+    "description": "Copilot canvas extension: dynamic, preset-driven Spec Kit wizard.",
+    "main": "extension.mjs",
+    "scripts": {
+        "test": "node --test ./test/*.test.mjs",
+        "test:e2e": "playwright test"
+    },
+    "dependencies": {
+        "js-yaml": "^5.4.1"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.56.1"
+    }
+}
