@@ -5,9 +5,9 @@ command for a compatible Copilot Canvas Designer.
 
 ## What It Does
 
-Canvas Design **0.1.2** registers four JSON page templates and the
+Canvas Design **0.1.0** registers four JSON page templates and the
 `speckit.extension-canvas-design.load-page` command. The command resolves the
-project's preset-composed pages and opens the Designer with the complete set.
+project's preset-composed pages and submits them to the Designer provider.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ implement canvas generation, persistence, or result evaluation.
 
 - Specify CLI **>=1.0.7** and an initialized Spec Kit project.
 - GitHub Copilot with a separately installed, compatible Canvas Designer
-  provider accepting the resolved pages in its open input.
+  provider exposing `speckit_designer_load_pages`.
 - A launching integration that supplies the Designer handoff.
 
 Installing this extension does not install or open a Designer. Compatibility
@@ -42,7 +42,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.2/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.0/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -61,10 +61,9 @@ or changing composed skills to make them available in the current session.
 
 The [page-loading command](commands/load-page.md) collects the default template
 names and any additional names contributed by presets. It uses
-`specify preset resolve <name>` to find each project's effective page. Only
-after all paths resolve does it open the official Designer provider once with
-the complete set. Missing or invalid pages and an unavailable provider stop
-the operation before an open URL is returned.
+`specify preset resolve <name>` to find each project's effective page, then
+submits the complete set to the compatible Designer provider. Missing pages or
+an unavailable provider stop the operation.
 
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.
