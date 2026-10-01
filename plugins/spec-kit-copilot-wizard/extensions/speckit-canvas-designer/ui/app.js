@@ -2,11 +2,7 @@ const token = new URL(location.href).searchParams.get("token");
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
-const reloadButton = document.getElementById("reload-pages");
-const retryButton = document.getElementById("retry-reload");
-const reloadStatus = document.getElementById("reload-status");
-const confirmation = document.getElementById("reload-confirm");
-let model, currentPage, draft, load = {}, submitting = false, retryRequested = false;
+let model, currentPage, draft;
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -44,7 +40,6 @@ function renderPage(pageId) {
         const input = element("input");
         input.id = `setting-field-${index}`;
         input.name = field.id;
-        input.disabled = Boolean(load.pending);
         label.htmlFor = input.id;
         if (field.description) {
             label.title = field.description;
@@ -89,9 +84,15 @@ tabs.addEventListener("keydown", (event) => {
 });
 
 function applyState(next) {
-    if (!Array.isArray(next.pages) || !next.pages.length) throw new Error("Designer returned no pages");
+    if (!Array.isArray(next.pages) || !next.pages.length) {
+        if (next.load?.error) {
+            root.setAttribute("aria-busy", "false");
+            root.replaceChildren(element("h1", "Settings unavailable"));
+            showError(next.load.error);
+        }
+        return;
+    }
     const changed = !model || next.revision !== model.revision;
-    load = next.load ?? {};
     if (changed) {
         model = next;
         draft = structuredClone(model.values);
@@ -110,54 +111,8 @@ function applyState(next) {
             ?? model.pages[0];
         renderPage(selected.page);
     }
-    reloadButton.disabled = Boolean(load.pending) || submitting;
-    retryButton.hidden = !load.pending;
-    retryButton.disabled = submitting;
-    reloadStatus.hidden = !load.pending;
-    reloadStatus.textContent = load.pending
-        ? "The agent is resolving pages. If it stops without a result, use Retry reload." : "";
-    for (const input of root.querySelectorAll("input")) input.disabled = Boolean(load.pending);
-    showError(load.error ?? "");
+    showError(next.load?.error ?? "");
 }
-
-async function reloadPages(retry) {
-    if (submitting) return;
-    submitting = true;
-    reloadButton.disabled = true;
-    retryButton.disabled = true;
-    try {
-        const response = await fetch(`/api/reload?token=${encodeURIComponent(token)}${retry ? "&retry=1" : ""}`,
-            { method: "POST" });
-        const result = await response.json();
-        if (!response.ok || result.queued !== true) throw new Error(result.error ?? "Page reload was not queued");
-    } catch (error) {
-        showError(error.message);
-    } finally {
-        submitting = false;
-        reloadButton.disabled = Boolean(load.pending);
-        retryButton.disabled = false;
-    }
-}
-
-function requestReload(retry) {
-    retryRequested = retry;
-    if (model && JSON.stringify(draft) !== JSON.stringify(model.values)) {
-        confirmation.hidden = false;
-        document.getElementById("cancel-reload").focus();
-    } else {
-        void reloadPages(retry);
-    }
-}
-reloadButton.addEventListener("click", () => requestReload(false));
-retryButton.addEventListener("click", () => requestReload(true));
-document.getElementById("confirm-reload").addEventListener("click", () => {
-    confirmation.hidden = true;
-    void reloadPages(retryRequested);
-});
-document.getElementById("cancel-reload").addEventListener("click", () => {
-    confirmation.hidden = true;
-    (load.pending ? retryButton : reloadButton).focus();
-});
 
 const events = new EventSource(`/events?token=${encodeURIComponent(token)}`);
 const status = document.getElementById("conn-status");

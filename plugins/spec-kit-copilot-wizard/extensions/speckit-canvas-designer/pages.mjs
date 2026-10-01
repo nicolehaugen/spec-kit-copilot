@@ -216,12 +216,20 @@ async function usingFile(path, folder, text) {
     finally { await file.close(); }
 }
 
-export async function loadDesignerPages(handoff, workspace, project) {
+export async function loadDesignerPages(handoff, workspace, project, { allowMissing = false } = {}) {
     const { checkout, folder, schema } = await context(handoff, workspace, project);
     let saved;
     try { saved = (await boundedJson(join(folder, "pages.json"), folder, MODEL_LIMIT)).document; }
     catch (error) {
         if (error.code === "ENOENT") {
+            if (allowMissing) {
+                try { await lstat(join(folder, "pages.json")); }
+                catch (statError) {
+                    if (statError.code === "ENOENT") return null;
+                    throw statError;
+                }
+                throw error;
+            }
             throw new Error("Designer pages have not been loaded; run speckit-extension-canvas-design-load-page first");
         }
         throw error;

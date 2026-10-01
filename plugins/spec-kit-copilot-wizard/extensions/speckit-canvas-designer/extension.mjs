@@ -1,5 +1,4 @@
 import { createCanvas, CanvasError, joinSession } from "@github/copilot-sdk/extension";
-import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { readHandoff, validateHandoffId } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
@@ -7,7 +6,6 @@ import { assertPageCommand, loadDesignerPages, PAGE_NAME, storeDesignerPages } f
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
 
 const servers = new Map();
-const loads = new Map();
 const writing = new Set();
 const handoffIdSchema = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" };
 let checkout;
@@ -23,82 +21,33 @@ async function getCheckout() {
     return checkout;
 }
 
-function publish(handoffId, model) {
-    for (const entry of servers.values()) {
-        if (entry.handoffId === handoffId) entry.update(model, loads.get(handoffId));
-    }
-}
-
-function failLoad(handoffId, error, requestId) {
-    if (requestId && loads.get(handoffId)?.requestId !== requestId) return;
-    loads.set(handoffId, { pending: false, error });
-    publish(handoffId);
-}
-
-async function requestReload(handoffId, retry = false) {
-    if (writing.has(handoffId)) throw new Error("Designer is applying pages; wait for this load to finish");
-    if (loads.get(handoffId)?.pending && !retry) throw new Error("Designer page reload is already pending");
-    const requestId = randomUUID();
-    loads.set(handoffId, { pending: true, requestId, error: "" });
-    publish(handoffId);
-    try {
-        await readHandoff(session.workspacePath, handoffId);
-        await assertPageCommand(await getCheckout());
-        await reloadSessionSkills();
-        const prompt = `/speckit-extension-canvas-design-load-page
-Invoke the skill tool with name "speckit-extension-canvas-design-load-page" before any other tool call.
-Use the generated, preset-composed skill. Context: ${JSON.stringify({ handoffId, requestId })}.
-Resolve and submit the complete page set once. Report resolution failures with the same custom load tool's error input. Do not open another panel or install packages.`;
-        setImmediate(() => {
-            Promise.resolve().then(() => {
-                if (loads.get(handoffId)?.requestId === requestId) return session.send({ prompt });
-            }).catch((error) => {
-                failLoad(handoffId, error.message, requestId);
-                const message = `Designer reload dispatch failed: ${error.message}`;
-                void Promise.resolve().then(() => session.log(message, { level: "error" }))
-                    .catch((logError) => console.error(message, `Logging failed: ${logError}`));
-            });
-        });
-        return { queued: true };
-    } catch (error) {
-        failLoad(handoffId, error.message, requestId);
-        throw error;
-    }
-}
-
-async function acceptPages(input) {
-    let id, acquired = false, current = false;
+async function acceptPages(ctx) {
+    const input = ctx.input;
+    let id, entry, acquired = false;
     try {
         id = validateHandoffId(input.handoffId);
+        entry = servers.get(ctx.instanceId);
+        if (!entry || entry.handoffId !== id) {
+            throw new Error("Open this Designer handoff before loading its pages");
+        }
         if (writing.has(id)) throw new Error("Designer is already applying a page load");
-        const expected = loads.get(id)?.requestId;
-        if ((expected || input.requestId) && expected !== input.requestId) {
-            throw new Error("Designer page load was superseded; use the current reload request");
-        }
-        current = true;
         const handoff = await readHandoff(session.workspacePath, id);
-        if (Object.hasOwn(input, "error")) throw new Error(input.error);
-        // Recheck after asynchronous handoff reads, before taking the write lock.
-        if (writing.has(id)) {
-            current = false;
-            throw new Error("Designer is already applying a page load");
-        }
+        if (writing.has(id)) throw new Error("Designer is already applying a page load");
         writing.add(id);
         acquired = true;
         const project = await getCheckout();
         await assertPageCommand(project);
         const model = await storeDesignerPages(handoff, session.workspacePath, project, input.pages,
-            () => loads.get(id)?.requestId === expected);
-        loads.set(id, { pending: false, error: "" });
-        publish(id, model);
-        return JSON.stringify({ loaded: true, handoffId: id,
-            pages: model.pages.map((page) => ({ name: page.id, title: page.title })),
-            revision: model.revision });
-    } catch (error) {
-        if (id && current && loads.get(id)?.requestId === input.requestId) {
-            failLoad(id, error.message, input.requestId);
+            () => servers.get(ctx.instanceId) === entry);
+        for (const panel of servers.values()) {
+            if (panel.handoffId === id) panel.update(model, { pending: false, error: "" });
         }
-        return { resultType: "failure", textResultForLlm: error.message };
+        return { loaded: true, handoffId: id,
+            pages: model.pages.map((page) => ({ name: page.id, title: page.title })),
+            revision: model.revision };
+    } catch (error) {
+        if (entry?.handoffId === id) entry.update(null, { pending: false, error: error.message });
+        throw new CanvasError("designer_page_load_failed", error.message);
     } finally {
         if (acquired) writing.delete(id);
     }
@@ -123,37 +72,34 @@ async function reloadSessionSkills() {
 const session = await joinSession({
     tools: [{
         name: "speckit_designer_reload_skills",
-        description: "Reload this session's skills after Spec Kit init or package installation, before opening Designer. Reports reload failures; does not install anything.",
+        description: "Reload this session's skills after package installation. Reports reload failures; does not install anything.",
         parameters: { type: "object", properties: {}, additionalProperties: false },
         handler: async () => JSON.stringify(await reloadSessionSkills()),
-    }, {
-        name: "speckit_designer_load_pages",
-        description: "Validate agent-resolved Designer JSON paths and store the complete page model before opening, or update open panels. Does not resolve templates or install packages. Report resolution failures with error instead of pages.",
-        parameters: {
-            type: "object", additionalProperties: false, required: ["handoffId"],
-            properties: {
-                handoffId: handoffIdSchema,
-                requestId: { type: "string", format: "uuid" },
-                pages: { type: "array", minItems: 1, maxItems: 100, items: {
-                    type: "object", additionalProperties: false, required: ["name", "path"],
-                    properties: { name: { type: "string", pattern: PAGE_NAME },
-                        path: { type: "string", minLength: 1, maxLength: 4096 } },
-                } },
-                error: { type: "string", minLength: 1, maxLength: 32768 },
-            },
-            oneOf: [{ required: ["pages"], not: { required: ["error"] } },
-                { required: ["error"], not: { required: ["pages"] } }],
-        },
-        handler: acceptPages,
     }],
     canvases: [createCanvas({
         id: "speckit-canvas-designer",
         displayName: "Spec Kit Canvas Designer",
-        description: "Open Designer using pages already validated by the composed load-page skill and custom tool.",
+        description: "Open Designer after resolving its pages, then load them through the canvas action.",
         inputSchema: {
             type: "object", additionalProperties: false,
             properties: { handoffId: handoffIdSchema },
         },
+        actions: [{
+            name: "loadPages",
+            description: "Validate and load the complete preset-resolved page set for this open handoff.",
+            inputSchema: {
+                type: "object", additionalProperties: false, required: ["handoffId", "pages"],
+                properties: {
+                    handoffId: handoffIdSchema,
+                    pages: { type: "array", minItems: 1, maxItems: 100, items: {
+                        type: "object", additionalProperties: false, required: ["name", "path"],
+                        properties: { name: { type: "string", pattern: PAGE_NAME },
+                            path: { type: "string", minLength: 1, maxLength: 4096 } },
+                    } },
+                },
+            },
+            handler: acceptPages,
+        }],
         open: async (ctx) => {
             const handoffId = ctx.input?.handoffId;
             let handoff = null;
@@ -169,11 +115,14 @@ const session = await joinSession({
                 return { title: "Spec Kit Canvas Designer", url: previous.url };
             }
             try {
-                const model = handoff
-                    ? await loadDesignerPages(handoff, session.workspacePath, await getCheckout()) : null;
-                if (handoff) await reloadSessionSkills();
-                const next = await startShell(handoff, model,
-                    { reload: (retry) => requestReload(handoffId, retry), load: loads.get(handoffId) });
+                let model = null;
+                if (handoff) {
+                    const project = await getCheckout();
+                    await assertPageCommand(project);
+                    model = await loadDesignerPages(handoff, session.workspacePath, project,
+                        { allowMissing: true });
+                }
+                const next = await startShell(handoff, model);
                 servers.set(ctx.instanceId, { ...next, handoffId });
                 if (previous) await previous.close();
                 return { title: "Spec Kit Canvas Designer", url: next.url };

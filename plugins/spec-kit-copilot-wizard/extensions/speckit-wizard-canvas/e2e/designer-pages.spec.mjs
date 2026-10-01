@@ -25,14 +25,14 @@ async function model(revision = "first") {
     };
 }
 
-async function openDesigner(page, reload) {
-    const shell = await startShell({ handoffId: "test" }, await model(), { reload });
+async function openDesigner(page) {
+    const shell = await startShell({ handoffId: "test" }, await model());
     await page.goto(shell.url);
     return shell;
 }
 
 test("Essentials renders the five registered controls; other pages and actions remain empty", async ({ page }) => {
-    const shell = await openDesigner(page, async () => ({ queued: true }));
+    const shell = await openDesigner(page);
     try {
         await expect(page.getByRole("tab")).toHaveText(["Essentials", "Artifacts", "Appearance", "Result Badges"]);
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
@@ -61,37 +61,20 @@ test("Essentials renders the five registered controls; other pages and actions r
     }
 });
 
-test("explicit reload preserves drafts on error and replaces them only after success", async ({ page }) => {
-    let shell, attempts = 0;
-    shell = await openDesigner(page, async () => {
-        attempts += 1;
-        if (attempts === 1) {
-            setImmediate(() => shell.update(undefined,
-                { pending: false, error: "canvas-settings-extra: not found" }));
-        } else {
-            const next = await model("second");
-            next.pages[0].fields[1].label = "Custom title";
-            setImmediate(() => shell.update(next, { pending: false, error: "" }));
-        }
-        return { queued: true };
-    });
+test("initial loading shows no settings until the complete page model arrives", async ({ page }) => {
+    const shell = await startShell({ handoffId: "test" });
+    await page.goto(shell.url);
     try {
-        const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
-        await id.fill("keep-draft");
-        await page.getByRole("button", { name: "Reload pages", exact: true }).click();
-        await expect(page.getByRole("alertdialog")).toBeVisible();
-        await page.getByRole("button", { name: "Cancel" }).click();
-        expect(attempts).toBe(0);
-        await expect(id).toHaveValue("keep-draft");
-        await page.getByRole("button", { name: "Reload pages", exact: true }).click();
-        await page.getByRole("button", { name: "Discard and reload" }).click();
+        await expect(page.getByRole("heading", { name: "Loading settings..." })).toBeVisible();
+        await expect(page.getByRole("tab")).toHaveCount(0);
+        shell.update(null, { pending: false, error: "canvas-settings-extra: not found" });
         await expect(page.getByRole("alert")).toContainText("not found");
-        await expect(id).toHaveValue("keep-draft");
-        await page.getByRole("button", { name: "Reload pages", exact: true }).click();
-        await page.getByRole("button", { name: "Discard and reload" }).click();
-        await expect(page.getByRole("textbox", { name: "Custom title (required)" })).toBeVisible();
-        await expect(id).toHaveValue("");
-        expect(attempts).toBe(2);
+        await expect(page.getByRole("heading", { name: "Settings unavailable" })).toBeVisible();
+        shell.update(await model(), { pending: false, error: "" });
+        await expect(page.getByRole("tab")).toHaveCount(4);
+        await expect(page.getByRole("textbox", { name: "Canvas ID (required)" })).toBeVisible();
+        await expect(page.getByRole("alert")).toBeHidden();
+        await expect(page.getByRole("button", { name: "Reload pages" })).toHaveCount(0);
     } finally {
         await page.close();
         await shell.close();

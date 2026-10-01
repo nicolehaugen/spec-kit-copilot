@@ -29,17 +29,14 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
 };
 
-export async function startShell(handoff = null, model = null, { reload, load } = {}) {
-    if (handoff && (!Array.isArray(model?.pages) || !model.pages.length)) {
-        throw new Error("Designer pages must be resolved before opening");
-    }
+export async function startShell(handoff = null, model = null) {
     const assets = handoff
         ? new Map(await Promise.all(Object.entries(ASSETS).map(async ([path, [file, type]]) =>
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
     const token = randomBytes(24).toString("hex");
     const clients = new Set();
-    let loadStatus = load ?? { pending: false, error: "" };
+    let loadStatus = { pending: Boolean(handoff && !model), error: "" };
     const state = () => ({ ...model, handoffId: handoff?.handoffId, load: loadStatus });
     const server = createServer((req, res) => {
         let url;
@@ -58,21 +55,6 @@ export async function startShell(handoff = null, model = null, { reload, load } 
         }
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
-        if (handoff && reload && req.method === "POST" && url.pathname === "/api/reload") {
-            const origin = req.headers.origin;
-            if ((origin && origin !== `http://127.0.0.1:${server.address().port}`)
-                || req.headers["sec-fetch-site"] === "cross-site") {
-                res.writeHead(403).end();
-                return;
-            }
-            req.resume();
-            Promise.resolve().then(() => reload(url.searchParams.get("retry") === "1")).then((result) => {
-                res.writeHead(202, { "Content-Type": "application/json" }).end(JSON.stringify(result));
-            }).catch((error) => {
-                res.writeHead(409, { "Content-Type": "application/json" }).end(JSON.stringify({ error: error.message }));
-            });
-            return;
-        }
         if (req.method !== "GET") { res.writeHead(404).end(); return; }
         if (handoff && url.pathname === "/api/state") {
             res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });

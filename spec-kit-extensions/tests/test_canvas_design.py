@@ -111,7 +111,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(entry["tags"], ["copilot", "canvas-design"])
         self.assertEqual(self.manifest["tags"], entry["tags"])
         self.assertIn("Copilot", entry["description"])
-        self.assertIn("speckit_designer_load_pages", entry["description"])
+        self.assertIn("canvas action", entry["description"])
         version = entry["version"]
         self.assertEqual(
             entry["download_url"],
@@ -233,20 +233,22 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(defaults, [f"canvas-settings-{name}" for name in PAGE_NAMES])
         normalized = " ".join(self.command.split())
         for required in (
-            "$ARGUMENTS", "`handoffId`", "`requestId`",
+            "$ARGUMENTS", "`handoffId`",
             "Additional Designer pages", "removing duplicates",
             "specify preset resolve <name>", "Resolve all pages before submitting any",
             "Preserve spaces and drive-letter colons",
             "not found` can return exit code 0",
             "Stop on missing/ambiguous results",
             "Never choose a file by scanning",
-            "Call the custom `speckit_designer_load_pages` tool exactly once",
-            'pages: [{"name": "<template-name>", "path": "<resolved-path>"}, ...]',
-            "Submit the entire collected set",
-            "`error` containing the CLI error/output instead of `pages`",
-            "If the tool is unavailable, report that and stop",
+            'open_canvas({canvasId:"speckit-canvas-designer"',
+            'extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"',
+            "Call `invoke_canvas_action` exactly once",
+            'actionName:"loadPages"',
+            'pages:[{"name":"<template-name>","path":"<resolved-path>"},...]',
+            "Submit the complete collected set",
+            "report the CLI error/output and stop without opening Designer",
             "do not run a Python helper or write the provider's state files yourself",
-            "Do not claim that opening or loading succeeded before the tool succeeds",
+            "Only a successful `loaded:true` result means Designer is ready",
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, normalized)
