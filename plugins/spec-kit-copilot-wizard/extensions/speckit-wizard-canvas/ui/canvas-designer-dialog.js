@@ -242,7 +242,7 @@ function renderLocalList(root, focusFlatIndex) {
                 <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-local-path-text">${escapeHtml(item.path)}</small></span>
             </label>
             <span class="badge source designer-source-tag">${kind === "presets" ? "Preset" : "Extension"}</span>
-            <button type="button" class="btn btn-secondary designer-local-remove" data-designer-local-kind="${kind}" data-designer-local-index="${index}">Remove</button>
+            <button type="button" class="btn btn-secondary designer-local-remove" data-designer-local-kind="${kind}" data-designer-local-index="${index}" aria-label="Remove ${escapeHtml(item.name ?? item.id)}">Remove</button>
         </li>`).join("");
     list.querySelectorAll("input[data-designer-local-index]").forEach((input) => {
         input.addEventListener("change", () => {
