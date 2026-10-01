@@ -131,6 +131,8 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
                 await assertTemporaryFile(file, temporary, folder);
             }
             finally { await file.close(); }
+            // This check cannot pin the directory through rename; a same-user process could swap it between calls.
+            // The local session-artifact directory is not a security boundary against such processes.
             if (await realpath(folder) !== folder) {
                 throw new Error("Designer settings escape session artifacts");
             }
