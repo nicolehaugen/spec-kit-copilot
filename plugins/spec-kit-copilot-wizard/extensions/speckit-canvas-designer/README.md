@@ -21,8 +21,11 @@ individual page errors still appear as tabs once the schema loads.
 
 Essentials displays Canvas ID, Title, Description, Workflow header and Show
 slug field from the resolved template. Artifacts, Appearance and Result Badges
-are empty by default. The controls are temporary; Save and Generate remain
-disabled. Healthy pages remain editable even when another page fails. Essentials
+are empty by default. Save persists validated field values to `settings.json`
+beside the handoff in the Designer session artifacts (never to the page templates);
+reopening the same handoff restores them when its resolved pages are unchanged.
+Save rejects stale revisions and invalid values, and reports failures without
+discarding edits. Generate remains disabled. Healthy pages remain editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
 no Canvas ID or Title values. Tab changes display the in-memory model without re-resolving
 pages; there is no page-reload control or persisted page snapshot. Reopening

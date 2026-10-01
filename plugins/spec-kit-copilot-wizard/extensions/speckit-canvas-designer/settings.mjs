@@ -1,0 +1,116 @@
+import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { handoffDirectory } from "./handoff.mjs";
+
+const LIMIT = 256 * 1024;
+const saves = new Map();
+
+function validateValues(values, constraints) {
+    if (!values || typeof values !== "object" || Array.isArray(values)
+        || Object.keys(values).length !== Object.keys(constraints).length
+        || Object.keys(values).some((key) => !Object.hasOwn(constraints, key))) {
+        throw new Error("Designer settings contain unexpected or missing fields");
+    }
+    for (const [key, rule] of Object.entries(constraints)) {
+        const value = values[key];
+        if (rule.type === "boolean") {
+            if (typeof value !== "boolean") throw new Error(`Invalid Designer setting: ${key}`);
+        } else if (typeof value !== "string" || value.length > rule.maxLength
+            || value.length < (rule.minLength ?? 0)
+            || (rule.pattern && !new RegExp(rule.pattern).test(value))) {
+            throw new Error(`Invalid Designer setting: ${key}`);
+        }
+    }
+}
+
+async function settingsPath(workspacePath, handoff) {
+    const folder = handoffDirectory(workspacePath, handoff.handoffId);
+    if (await realpath(folder) !== folder) throw new Error("Designer settings escape session artifacts");
+    return join(folder, "settings.json");
+}
+
+async function readSettings(path, handoff, model) {
+    let file;
+    try {
+        file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+            | (constants.O_NONBLOCK ?? 0));
+    } catch (error) {
+        if (error.code === "ENOENT") return null;
+        throw error;
+    }
+    let record;
+    try {
+        const [stat, current] = await Promise.all([file.stat(), lstat(path)]);
+        if (!stat.isFile() || !current.isFile() || current.isSymbolicLink()
+            || stat.dev !== current.dev || stat.ino !== current.ino || stat.size > LIMIT) {
+            throw new Error("Invalid saved Designer settings file");
+        }
+        const bytes = await readFile(file);
+        if (bytes.length > LIMIT) throw new Error("Saved Designer settings exceed the size limit");
+        record = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } catch (error) {
+        if (error instanceof SyntaxError || error instanceof TypeError) {
+            throw new Error("Invalid saved Designer settings JSON", { cause: error });
+        }
+        throw error;
+    } finally {
+        await file.close();
+    }
+    if (!record || typeof record !== "object" || Array.isArray(record)
+        || Object.keys(record).sort().join() !== "handoffId,modelRevision,revision,schemaVersion,values"
+        || record.schemaVersion !== 1 || record.handoffId !== handoff.handoffId
+        || !Number.isSafeInteger(record.revision) || record.revision < 1
+        || record.modelRevision !== model.revision) {
+        throw new Error("Saved Designer settings do not match the current handoff or pages");
+    }
+    validateValues(record.values, model.constraints);
+    return record;
+}
+
+export async function loadDesignerSettings(workspacePath, handoff, model) {
+    const record = await readSettings(await settingsPath(workspacePath, handoff), handoff, model);
+    return { ...model, values: record?.values ?? model.values,
+        settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
+}
+
+export async function saveDesignerSettings(workspacePath, handoff, model, request) {
+    if (!request || typeof request !== "object" || Array.isArray(request)
+        || Object.keys(request).sort().join() !== "modelRevision,revision,values"
+        || request.modelRevision !== model.revision
+        || !Number.isSafeInteger(request.revision) || request.revision < 0) {
+        throw new Error("Invalid Designer save request");
+    }
+    validateValues(request.values, model.constraints);
+    const path = await settingsPath(workspacePath, handoff);
+    const prior = saves.get(path) ?? Promise.resolve();
+    const work = prior.catch(() => {}).then(async () => {
+        const current = await readSettings(path, handoff, model);
+        if (request.revision !== (current?.revision ?? 0)) {
+            throw new Error("Designer settings changed; reload before saving");
+        }
+        const record = { schemaVersion: 1, handoffId: handoff.handoffId,
+            modelRevision: model.revision, revision: request.revision + 1, values: request.values };
+        const bytes = JSON.stringify(record);
+        if (Buffer.byteLength(bytes) > LIMIT) throw new Error("Designer settings exceed the size limit");
+        const temporary = join(handoffDirectory(workspacePath, handoff.handoffId),
+            `settings-${randomUUID()}.tmp`);
+        try {
+            const file = await open(temporary, "wx", 0o600);
+            try { await file.writeFile(bytes); }
+            finally { await file.close(); }
+            if (await realpath(handoffDirectory(workspacePath, handoff.handoffId))
+                !== handoffDirectory(workspacePath, handoff.handoffId)) {
+                throw new Error("Designer settings escape session artifacts");
+            }
+            await rename(temporary, path);
+        } finally {
+            await rm(temporary, { force: true });
+        }
+        return { ...model, values: record.values, settingsRevision: record.revision, persisted: true };
+    });
+    saves.set(path, work);
+    try { return await work; }
+    finally { if (saves.get(path) === work) saves.delete(path); }
+}

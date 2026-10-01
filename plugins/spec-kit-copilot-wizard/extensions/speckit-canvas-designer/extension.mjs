@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages, PAGE_NAME } from "./pages.mjs";
+import { loadDesignerSettings } from "./settings.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
 
 const servers = new Map();
@@ -86,8 +87,9 @@ const session = await joinSession({
                     const project = await getCheckout();
                     await assertPageCommand(project);
                     model = await loadResolvedDesignerPages(handoff, project, pages);
+                    model = await loadDesignerSettings(session.workspacePath, handoff, model);
                 }
-                const next = await startShell(handoff, model);
+                const next = await startShell(handoff, model, session.workspacePath);
                 if (opening.get(ctx.instanceId) !== token) {
                     await next.close();
                     throw new CanvasError("designer_open_failed", "Designer panel closed while opening");

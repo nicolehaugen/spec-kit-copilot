@@ -12,6 +12,7 @@ import {
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages } from "../pages.mjs";
+import { loadDesignerSettings, saveDesignerSettings } from "../settings.mjs";
 
 const ID = "designer_1";
 
@@ -246,6 +247,80 @@ test("shell serves validated pages behind its token", async (t) => {
     }
 });
 
+test("Save persists values beside the handoff and rejects stale or invalid changes", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    const initial = await loadDesignerSettings(workspace, handoff, model);
+    assert.equal(initial.settingsRevision, 0);
+    assert.equal(initial.persisted, false);
+    const values = { ...initial.values, "canvas.id": "my-canvas",
+        "canvas.displayName": "My Canvas" };
+    const request = { revision: 0, modelRevision: model.revision, values };
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        ...request, values: { ...values, "canvas.id": "../escape" },
+    }), /Invalid Designer setting: canvas.id/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        ...request, values: { ...values, unexpected: "extra" },
+    }), /unexpected or missing fields/);
+    const saved = await saveDesignerSettings(workspace, handoff, model, request);
+    assert.equal(saved.settingsRevision, 1);
+    assert.equal(saved.persisted, true);
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).values, values);
+    const stored = JSON.parse(await readFile(join(folder, "settings.json"), "utf8"));
+    assert.deepEqual(stored.values, values);
+    assert.equal(stored.revision, 1);
+    assert.deepEqual((await readFile(entries[0].path, "utf8")).includes("my-canvas"), false);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, request),
+        /changed; reload before saving/);
+    const revised = await saveDesignerSettings(workspace, handoff, model,
+        { ...request, revision: 1, values: { ...values, "canvas.description": "Updated" } });
+    assert.equal(revised.settingsRevision, 2);
+    await assert.rejects(loadDesignerSettings(workspace, handoff,
+        { ...model, revision: "new-page-fingerprint" }), /do not match the current handoff or pages/);
+    await writeFile(join(folder, "settings.json"), "{broken");
+    await assert.rejects(loadDesignerSettings(workspace, handoff, model),
+        /Invalid saved Designer settings JSON/);
+});
+
+test("token-gated Save endpoint reports errors without losing the current values", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries));
+    const shell = await startShell(handoff, model, workspace);
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    const saveUrl = new URL("/api/save", url);
+    const values = { ...model.values, "canvas.id": "sample",
+        "canvas.displayName": "Sample" };
+    const payload = { revision: 0, modelRevision: model.revision, values };
+    assert.equal((await fetch(saveUrl, { method: "POST", headers: {
+        "Content-Type": "application/json",
+    }, body: JSON.stringify(payload) })).status, 404);
+    saveUrl.search = url.search;
+    const post = (body) => fetch(saveUrl, { method: "POST", headers: {
+        "Content-Type": "application/json",
+    }, body: JSON.stringify(body) });
+    const accepted = await post(payload);
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).settingsRevision, 1);
+    const stateUrl = new URL("/api/state", url);
+    stateUrl.search = url.search;
+    assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
+    const stale = await post(payload);
+    assert.equal(stale.status, 409);
+    assert.match((await stale.json()).error, /reload before saving/);
+    const invalid = await post({ ...payload, revision: 1, values: { ...values,
+        "canvas.id": "UPPER" } });
+    assert.equal(invalid.status, 422);
+    assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
+});
+
 test("malformed raw request targets return 404 without stopping the shell", async (t) => {
     const shell = await startShell();
     t.after(() => shell.close());
@@ -426,7 +501,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const extension = join(workspace, "provider");
     const sdk = join(extension, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
-    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs"]) {
+    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "settings.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
     await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
@@ -536,6 +611,22 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         assert.equal(brokenState.pages.length, 4);
         assert.match(brokenState.pages[1].error.reason, /Invalid Designer JSON/);
         assert.notEqual(brokenState.revision, updated.revision);
+        const saveUrl = new URL(broken.url);
+        saveUrl.pathname = "/api/save";
+        const savedValues = { ...brokenState.values, "canvas.id": "saved-designer",
+            "canvas.displayName": "Saved Designer" };
+        const savedResponse = await fetch(saveUrl, { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modelRevision: brokenState.revision,
+                revision: brokenState.settingsRevision, values: savedValues }) });
+        assert.equal(savedResponse.status, 200);
+        const restored = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
+        const restoredUrl = new URL(restored.url);
+        restoredUrl.pathname = "/api/state";
+        const restoredState = await (await fetch(restoredUrl)).json();
+        assert.deepEqual(restoredState.values, savedValues);
+        assert.equal(restoredState.settingsRevision, 1);
+        assert.equal(restoredState.persisted, true);
 
         const started = new Promise((resolve) => {
             globalThis.__pauseDesignerShell = async (shell) => {

@@ -1,6 +1,8 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { readHandoff } from "./handoff.mjs";
+import { saveDesignerSettings } from "./settings.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -29,7 +31,7 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
 };
 
-export async function startShell(handoff = null, model = null) {
+export async function startShell(handoff = null, model = null, workspacePath = null) {
     if (handoff && !model) throw new Error("Designer pages must be validated before opening");
     const assets = handoff
         ? new Map(await Promise.all(Object.entries(ASSETS).map(async ([path, [file, type]]) =>
@@ -37,7 +39,7 @@ export async function startShell(handoff = null, model = null) {
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
     const token = randomBytes(24).toString("hex");
     const state = () => ({ ...model, handoffId: handoff?.handoffId });
-    const server = createServer((req, res) => {
+    const server = createServer(async (req, res) => {
         let url;
         try {
             url = new URL(req.url, "http://127.0.0.1");
@@ -54,6 +56,39 @@ export async function startShell(handoff = null, model = null) {
         }
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
+        if (handoff && workspacePath && req.method === "POST" && url.pathname === "/api/save") {
+            if (!req.headers["content-type"]?.startsWith("application/json")) {
+                res.writeHead(415).end("Expected application/json");
+                return;
+            }
+            try {
+                const chunks = [];
+                let size = 0;
+                for await (const chunk of req) {
+                    size += chunk.length;
+                    if (size > 256 * 1024) {
+                        res.writeHead(413).end("Designer save request is too large");
+                        return;
+                    }
+                    chunks.push(chunk);
+                }
+                const request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                const currentHandoff = await readHandoff(workspacePath, handoff.handoffId);
+                if (currentHandoff.sourceFingerprint !== handoff.sourceFingerprint) {
+                    throw new Error("Designer handoff changed; reopen before saving");
+                }
+                model = await saveDesignerSettings(workspacePath, handoff, model, request);
+                res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+                res.end(JSON.stringify(state()));
+            } catch (error) {
+                const invalid = error instanceof SyntaxError || /Invalid Designer|unexpected or missing fields/.test(error.message);
+                const conflict = /changed|do not match/.test(error.message);
+                res.writeHead(conflict ? 409 : invalid ? 422 : 500,
+                    { "Content-Type": "application/json; charset=utf-8" });
+                res.end(JSON.stringify({ error: error.message }));
+            }
+            return;
+        }
         if (req.method !== "GET") { res.writeHead(404).end(); return; }
         if (handoff && url.pathname === "/api/state") {
             res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
