@@ -394,6 +394,15 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
+    await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
+    await writeFile(join(extension, "server.mjs"), `
+        import { startShell as actualStartShell } from "./shell.mjs";
+        export async function startShell(...args) {
+            const shell = await actualStartShell(...args);
+            if (globalThis.__pauseDesignerShell) await globalThis.__pauseDesignerShell(shell);
+            return shell;
+        }
+    `);
     const shared = join(workspace, "speckit-wizard-canvas", "env");
     await mkdir(shared, { recursive: true });
     await copyFile(join(source, "..", "speckit-wizard-canvas", "env", "workspace.mjs"),
@@ -432,6 +441,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.deepEqual(canvas.inputSchema.properties.handoffId.type, "string");
     assert.equal(canvas.inputSchema.properties.pages.maxItems, 100);
 
+    let releaseShell;
     try {
         const empty = await canvas.open({ instanceId: "same", input: {} });
         assert.match(await (await fetch(empty.url)).text(), /No Wizard handoff is attached yet/);
@@ -481,7 +491,27 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         assert.equal(brokenState.pages.length, 4);
         assert.match(brokenState.pages[1].error.reason, /Invalid Designer JSON/);
         assert.notEqual(brokenState.revision, updated.revision);
+
+        const started = new Promise((resolve) => {
+            globalThis.__pauseDesignerShell = async (shell) => {
+                resolve(shell);
+                await new Promise((release) => { releaseShell = release; });
+            };
+        });
+        const pending = canvas.open({ instanceId: "closed-during-open", input: {} });
+        const shell = await started;
+        await canvas.onClose({ instanceId: "closed-during-open" });
+        delete globalThis.__pauseDesignerShell;
+        const reopenedAfterClose = await canvas.open({ instanceId: "closed-during-open", input: {} });
+        releaseShell();
+        releaseShell = null;
+        await assert.rejects(pending, /panel closed while opening/);
+        await assert.rejects(fetch(shell.url));
+        assert.equal((await fetch(reopenedAfterClose.url)).status, 200);
     } finally {
+        releaseShell?.();
+        delete globalThis.__pauseDesignerShell;
+        await canvas.onClose({ instanceId: "closed-during-open" });
         await canvas.onClose({ instanceId: "same" });
     }
 });

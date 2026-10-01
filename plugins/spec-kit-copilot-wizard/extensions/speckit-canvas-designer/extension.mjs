@@ -6,7 +6,7 @@ import { assertPageCommand, loadResolvedDesignerPages, PAGE_NAME } from "./pages
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
 
 const servers = new Map();
-const opening = new Set();
+const opening = new Map();
 const handoffIdSchema = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" };
 let checkout;
 
@@ -63,7 +63,8 @@ const session = await joinSession({
             if (opening.has(ctx.instanceId)) {
                 throw new CanvasError("designer_open_failed", "Designer is already opening this panel");
             }
-            opening.add(ctx.instanceId);
+            const token = Symbol();
+            opening.set(ctx.instanceId, token);
             try {
                 const previous = servers.get(ctx.instanceId);
                 if (previous) {
@@ -87,16 +88,21 @@ const session = await joinSession({
                     model = await loadResolvedDesignerPages(handoff, project, pages);
                 }
                 const next = await startShell(handoff, model);
+                if (opening.get(ctx.instanceId) !== token) {
+                    await next.close();
+                    throw new CanvasError("designer_open_failed", "Designer panel closed while opening");
+                }
                 servers.set(ctx.instanceId, next);
                 return { title: "Spec Kit Canvas Designer", url: next.url };
             } catch (error) {
                 if (error instanceof CanvasError) throw error;
                 throw new CanvasError("designer_open_failed", error.message);
             } finally {
-                opening.delete(ctx.instanceId);
+                if (opening.get(ctx.instanceId) === token) opening.delete(ctx.instanceId);
             }
         },
         onClose: async ({ instanceId }) => {
+            opening.delete(instanceId);
             const entry = servers.get(instanceId);
             if (!entry) return;
             servers.delete(instanceId);
