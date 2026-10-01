@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
 
@@ -55,9 +55,16 @@ async function readSettings(path, handoff, model, openFile = open) {
             || stat.dev !== current.dev || stat.ino !== current.ino || stat.size > LIMIT) {
             throw new Error("Invalid saved Designer settings file");
         }
-        const bytes = await readFile(file);
-        if (bytes.length > LIMIT) throw new Error("Saved Designer settings exceed the size limit");
-        record = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+        const bytes = Buffer.alloc(LIMIT + 1);
+        let length = 0;
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (!bytesRead) break;
+            length += bytesRead;
+        }
+        if (length > LIMIT) throw new Error("Saved Designer settings exceed the size limit");
+        record = JSON.parse(new TextDecoder("utf-8", { fatal: true })
+            .decode(bytes.subarray(0, length)));
     } catch (error) {
         if (error instanceof SyntaxError || error instanceof TypeError) {
             throw new Error("Invalid saved Designer settings JSON", { cause: error });

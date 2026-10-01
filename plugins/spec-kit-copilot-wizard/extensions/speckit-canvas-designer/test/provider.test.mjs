@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFile, mkdtemp, mkdir, open, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdtemp, mkdir, open, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -274,6 +274,30 @@ test("settings use the canonical workspace when the session path is a symlink", 
     } finally {
         await rm(alias);
     }
+});
+
+test("settings reads stay bounded when the file grows after its initial stat", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    await saveDesignerSettings(workspace, handoff, model, { revision: 0,
+        modelRevision: model.revision, values: { "canvas.id": "saved" } });
+    await assert.rejects(loadDesignerSettings(workspace, handoff, model,
+        async (path, flags) => {
+            const file = await open(path, flags);
+            return {
+                stat: async () => {
+                    const before = await file.stat();
+                    await appendFile(join(folder, "settings.json"), "x".repeat(256 * 1024 + 1));
+                    return before;
+                },
+                read: (...args) => file.read(...args),
+                close: () => file.close(),
+            };
+        }), /Saved Designer settings exceed the size limit/);
 });
 
 test("handoff rejects a FIFO promptly instead of waiting for a writer", {
