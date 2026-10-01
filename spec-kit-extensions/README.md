@@ -41,7 +41,7 @@ To publish an extension from the GitHub Actions UI after merging those updates:
 2. Select **Release Extension Trigger**, then **Run workflow**.
 3. Leave **Use workflow from** set to **main**, enter the extension's directory
    name under `spec-kit-extensions/` (for example, `extension-canvas-design`), and enter
-   its manifest version (for example, `0.1.1`; an optional `v` prefix is accepted).
+   its manifest version (for example, `0.1.2`; an optional `v` prefix is accepted).
 4. Click **Run workflow** and monitor its packaging and release jobs.
 
 The manual trigger appears after this workflow is merged into your fork's
