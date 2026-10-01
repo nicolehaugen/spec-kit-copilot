@@ -32,6 +32,10 @@ let requiredInputs = new Set();
 // above. Reset whenever the dialog closes or reopens; retained across a
 // failed launch attempt, matching the hosted `selections` persistence.
 const LOCAL_KINDS = ["presets", "extensions"];
+// Mirrors the server-side per-kind cap enforced in
+// `validateLocalDesignerSelections` (handlers-designer.mjs), so a user
+// discovers the limit inline at Add time instead of only at launch.
+const MAX_LOCAL_ENTRIES_PER_KIND = 20;
 let localItems = { presets: [], extensions: [] };
 
 function phaseIds(snapshot) {
@@ -272,6 +276,16 @@ async function addLocalSource(root, pathInput) {
         errorEl.hidden = false;
         return;
     }
+    // The directory's kind (preset vs. extension) is only known once the
+    // server responds, but if every kind is already at the server's
+    // per-kind cap (handlers-designer.mjs's `validateLocalDesignerSelections`)
+    // there is no possible outcome that could succeed, so reject inline
+    // without a round trip.
+    if (LOCAL_KINDS.every((kind) => localItems[kind].length >= MAX_LOCAL_ENTRIES_PER_KIND)) {
+        errorEl.textContent = `A maximum of ${MAX_LOCAL_ENTRIES_PER_KIND} local presets and ${MAX_LOCAL_ENTRIES_PER_KIND} local extensions are allowed.`;
+        errorEl.hidden = false;
+        return;
+    }
     addBtn.disabled = true;
     pathInput.disabled = true;
     // Track this validation fetch with the same `inspecting` busy counter
@@ -297,6 +311,9 @@ async function addLocalSource(root, pathInput) {
         const kind = item?.kind;
         if (!item?.id || !item?.path || !LOCAL_KINDS.includes(kind)) {
             throw new Error("Local source response was invalid.");
+        }
+        if (localItems[kind].length >= MAX_LOCAL_ENTRIES_PER_KIND) {
+            throw new Error(`A maximum of ${MAX_LOCAL_ENTRIES_PER_KIND} local ${kind} are allowed.`);
         }
         if (localItems[kind].some((entry) => entry.id === item.id)) {
             throw new Error(`A local ${kind.slice(0, -1)} with id "${item.id}" is already added.`);

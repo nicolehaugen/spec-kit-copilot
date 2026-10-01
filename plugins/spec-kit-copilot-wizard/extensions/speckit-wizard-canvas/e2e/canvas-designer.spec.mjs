@@ -327,3 +327,40 @@ test("local controls and hosted launch stay disabled for the whole in-flight add
     await expect(firstItem.getByRole("button", { name: "Remove" })).toBeEnabled();
     await expect(launchBtn).toBeEnabled();
 });
+
+test("rejects adding a 21st local preset, mirroring the server's 20-per-kind cap", async ({ page }) => {
+    // Mirrors the per-kind limit enforced server-side in
+    // handlers-designer.mjs's validateLocalDesignerSelections(); mock the
+    // add endpoint so 20 distinct entries can be accumulated without needing
+    // 20 real manifest directories on disk.
+    let nextId = 0;
+    await page.route("**/api/designer/local-source?*", async (route) => {
+        nextId += 1;
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                item: { id: `fixture-preset-${nextId}`, name: `Fixture preset ${nextId}`, version: "1.0.0", path: `/fixtures/preset-${nextId}`, kind: "presets" },
+            }),
+        });
+    });
+
+    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    const pathInput = localSection.locator("[data-designer-local-path]");
+    const addBtn = localSection.locator("[data-designer-local-add]");
+    const localItems = localSection.locator(".designer-local-item");
+
+    for (let i = 1; i <= 20; i += 1) {
+        await pathInput.fill(`/fixtures/preset-${i}`);
+        await addBtn.click();
+        await expect(localItems).toHaveCount(i);
+    }
+
+    await pathInput.fill("/fixtures/preset-21");
+    await addBtn.click();
+    await expect(localSection.locator("[data-designer-local-error]"))
+        .toContainText("A maximum of 20 local presets are allowed.");
+    await expect(localItems).toHaveCount(20);
+});
