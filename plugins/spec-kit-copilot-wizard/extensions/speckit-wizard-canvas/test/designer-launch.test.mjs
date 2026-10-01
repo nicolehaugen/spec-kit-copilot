@@ -83,7 +83,11 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.deepEqual(response.body, { queued: true });
     assert.equal(sent.length, 1);
     assert.match(sent[0].prompt, /no base_branch \(the project default\)/);
-    assert.match(sent[0].prompt, /Do not edit it afterward or install selected customizations/);
+    assert.match(sent[0].prompt, /Do not edit it afterward/);
+    assert.match(sent[0].prompt, /speckit-extension.*--install-allowed.*extension-canvas-design by ID/);
+    assert.match(sent[0].prompt, /speckit-bundle.*speckit-preset/);
+    assert.match(sent[0].prompt, /speckit-extension-canvas-design-load-page/);
+    assert.match(sent[0].prompt, /Only after page loading succeeds, open/);
     assert.match(sent[0].prompt, /plugin:spec-kit-copilot-wizard:speckit-canvas-designer/);
     assert.doesNotMatch(sent[0].prompt, /extensions_manage|list_canvas_capabilities|extensions_reload/);
     assert.match(sent[0].prompt, /open_canvas\(\{canvasId:"speckit-canvas-designer",extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"/);
