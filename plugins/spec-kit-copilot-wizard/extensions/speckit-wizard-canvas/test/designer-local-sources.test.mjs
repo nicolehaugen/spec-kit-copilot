@@ -160,6 +160,7 @@ test("rejects a local source whose parent directory is replaced during file open
     await writeFile(join(outside, "preset.yml"), "preset:\n  id: swapped-preset\n  name: Swapped Preset\n");
     const backup = `${dir}-original`;
     let replaced = false;
+    let symlinkError;
     try {
         await assert.rejects(validateLocalSource("presets", dir, async (path, flags) => {
             // Simulate a TOCTOU race: between `resolveCanonicalPath`
@@ -172,14 +173,15 @@ test("rejects a local source whose parent directory is replaced during file open
                 await symlink(outside, dir, process.platform === "win32" ? "junction" : "dir");
             } catch (error) {
                 await rename(backup, dir);
+                symlinkError = error;
                 throw error;
             }
             replaced = true;
             return open(path, flags);
         }), /escaped the expected directory/);
     } catch (error) {
-        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
-        t.diagnostic("Windows symlink creation is not permitted; race assertion skipped");
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(symlinkError?.code)) throw error;
+        t.skip("Windows symlink creation is not permitted; race assertion skipped");
     } finally {
         if (replaced) {
             await rm(dir, { recursive: true });
