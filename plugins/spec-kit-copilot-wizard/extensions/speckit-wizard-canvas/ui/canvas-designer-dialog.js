@@ -181,7 +181,14 @@ function renderLocalSection() {
                 <button type="button" class="btn btn-secondary designer-local-add-btn" data-designer-local-add>Add</button>
             </div>
             <p class="designer-local-error" data-designer-local-error role="alert" hidden></p>
-            <ul class="designer-local-list" data-designer-local-list></ul>
+            <!-- aria-live=polite plus aria-relevant=additions: a successful
+                 Add only clears the path input and re-renders this list while
+                 focus stays on the Add button, so without a live region a
+                 screen-reader user gets no confirmation the source was added.
+                 aria-relevant=additions limits announcements to the new
+                 row's text rather than re-reading the whole list on every
+                 render (including Removes, which already move focus). -->
+            <ul class="designer-local-list" data-designer-local-list aria-live="polite" aria-relevant="additions"></ul>
         </div>
     </details>`;
 }
