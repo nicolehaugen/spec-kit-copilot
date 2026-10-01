@@ -1,16 +1,16 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-01T05:00:00Z",
+  "updated_at": "2026-10-01T05:53:00Z",
   "catalog_url": "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json",
   "extensions": {
     "extension-canvas-design": {
       "name": "Canvas Design",
       "id": "extension-canvas-design",
-      "version": "0.1.1",
-      "description": "Settings pages for the Copilot Canvas Designer; loads pages through its canvas action.",
+      "version": "0.1.2",
+      "description": "Settings pages for the Copilot Canvas Designer; loads pages when opening its canvas.",
       "author": "spec-kit-copilot",
       "repository": "https://github.com/nicolehaugen/spec-kit-copilot",
-      "download_url": "https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.1/extension-canvas-design.zip",
+      "download_url": "https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.2/extension-canvas-design.zip",
       "homepage": "https://github.com/nicolehaugen/spec-kit-copilot",
       "documentation": "https://github.com/nicolehaugen/spec-kit-copilot/blob/main/spec-kit-extensions/extension-canvas-design/README.md",
       "license": "MIT",

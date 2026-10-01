@@ -85,12 +85,7 @@ tabs.addEventListener("keydown", (event) => {
 
 function applyState(next) {
     if (!Array.isArray(next.pages) || !next.pages.length) {
-        if (next.load?.error) {
-            root.setAttribute("aria-busy", "false");
-            root.replaceChildren(element("h1", "Settings unavailable"));
-            showError(next.load.error);
-        }
-        return;
+        throw new Error("Designer returned no enabled settings pages");
     }
     const changed = !model || next.revision !== model.revision;
     if (changed) {
@@ -111,34 +106,20 @@ function applyState(next) {
             ?? model.pages[0];
         renderPage(selected.page);
     }
-    showError(next.load?.error ?? "");
 }
 
-const events = new EventSource(`/events?token=${encodeURIComponent(token)}`);
 const status = document.getElementById("conn-status");
-events.onopen = () => {
-    status.className = "conn conn-live";
-    status.textContent = "Live";
-};
-events.onerror = () => {
-    status.className = "conn conn-lost";
-    status.textContent = "Disconnected";
-};
-events.addEventListener("state", (event) => {
-    try { applyState(JSON.parse(event.data)); }
-    catch (error) { showError(error.message); }
-});
-window.addEventListener("pagehide", () => events.close(), { once: true });
-
 try {
     const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);
     const initial = await response.json();
-    if (!model) applyState(initial);
+    applyState(initial);
+    status.className = "conn conn-live";
+    status.textContent = "Ready";
 } catch (error) {
-    if (!model) {
-        root.setAttribute("aria-busy", "false");
-        root.replaceChildren(element("h1", "Settings unavailable"));
-    }
+    root.setAttribute("aria-busy", "false");
+    root.replaceChildren(element("h1", "Settings unavailable"));
+    status.className = "conn conn-lost";
+    status.textContent = "Unavailable";
     showError(error.message);
 }

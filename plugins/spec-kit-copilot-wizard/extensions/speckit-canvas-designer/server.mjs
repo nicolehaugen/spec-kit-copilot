@@ -30,14 +30,13 @@ const ASSETS = {
 };
 
 export async function startShell(handoff = null, model = null) {
+    if (handoff && !model) throw new Error("Designer pages must be validated before opening");
     const assets = handoff
         ? new Map(await Promise.all(Object.entries(ASSETS).map(async ([path, [file, type]]) =>
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
     const token = randomBytes(24).toString("hex");
-    const clients = new Set();
-    let loadStatus = { pending: Boolean(handoff && !model), error: "" };
-    const state = () => ({ ...model, handoffId: handoff?.handoffId, load: loadStatus });
+    const state = () => ({ ...model, handoffId: handoff?.handoffId });
     const server = createServer((req, res) => {
         let url;
         try {
@@ -59,11 +58,6 @@ export async function startShell(handoff = null, model = null) {
         if (handoff && url.pathname === "/api/state") {
             res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
             res.end(JSON.stringify(state()));
-        } else if (handoff && url.pathname === "/events") {
-            res.writeHead(200, { "Content-Type": "text/event-stream", Connection: "keep-alive" });
-            res.write(`event: state\ndata: ${JSON.stringify(state())}\n\n`);
-            clients.add(res);
-            res.on("close", () => clients.delete(res));
         } else if (assets.has(url.pathname)) {
             const { type, content } = assets.get(url.pathname);
             res.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
@@ -76,23 +70,9 @@ export async function startShell(handoff = null, model = null) {
         server.once("error", reject);
         server.listen(0, "127.0.0.1", resolve);
     });
-    const heartbeat = setInterval(() => {
-        for (const client of clients) client.write(": heartbeat\n\n");
-    }, 15_000);
-    heartbeat.unref();
     return {
         url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
-        update(nextModel, nextLoad) {
-            if (nextModel) model = nextModel;
-            if (nextLoad) loadStatus = nextLoad;
-            for (const client of clients) client.write(`event: state\ndata: ${JSON.stringify(state())}\n\n`);
-        },
-        close: () => {
-            clearInterval(heartbeat);
-            for (const client of clients) client.end();
-            clients.clear();
-            return new Promise((resolve, reject) => server.close((error) =>
-                error ? reject(error) : resolve()));
-        },
+        close: () => new Promise((resolve, reject) => server.close((error) =>
+            error ? reject(error) : resolve())),
     };
 }

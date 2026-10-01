@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.1"
+  version: "0.1.2"
   description: Registered settings pages for the Spec Kit Canvas Designer.
   category: process
   author: spec-kit-copilot
@@ -17,7 +17,7 @@ provides:
   commands:
     - name: speckit.extension-canvas-design.load-page
       file: commands/load-page.md
-      description: Resolve Designer settings pages and load them into the Canvas Designer.
+      description: Resolve Designer settings pages and open the Canvas Designer with them.
   templates:
     - name: canvas-settings-setup
       file: pages/setup.json

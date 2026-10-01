@@ -11,7 +11,7 @@ import {
     validateHandoffId,
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
-import { assertPageCommand, loadDesignerPages, storeDesignerPages } from "../pages.mjs";
+import { assertPageCommand, loadResolvedDesignerPages } from "../pages.mjs";
 
 const ID = "designer_1";
 
@@ -215,11 +215,12 @@ test("handoff rejects a FIFO promptly instead of waiting for a writer", {
     assert.equal(result.status, 0, result.stderr);
 });
 
-test("shell serves loading and validated pages behind its token", async (t) => {
+test("shell serves validated pages behind its token", async (t) => {
     const handoff = validHandoff();
     const model = { pages: [{ id: "canvas-settings-setup", page: "canvas-settings-setup",
         title: "Essentials", fields: [] }], constraints: {}, values: {}, revision: "test" };
-    const shell = await startShell(handoff);
+    await assert.rejects(startShell(handoff), /validated before opening/);
+    const shell = await startShell(handoff, model);
     t.after(() => shell.close());
     const url = new URL(shell.url);
     assert.equal(url.hostname, "127.0.0.1");
@@ -231,13 +232,10 @@ test("shell serves loading and validated pages behind its token", async (t) => {
     assert.equal(good.headers.get("x-content-type-options"), "nosniff");
     assert.match(await good.text(), /Spec Kit Canvas Designer/);
     const stateUrl = new URL(`/api/state?token=${url.searchParams.get("token")}`, url);
-    assert.equal((await (await fetch(stateUrl)).json()).load.pending, true);
-    shell.update(null, { pending: false, error: "Invalid page" });
-    assert.equal((await (await fetch(stateUrl)).json()).load.error, "Invalid page");
-    shell.update(model, { pending: false, error: "" });
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.pages[0].title, "Essentials");
     assert.equal(state.handoffId, handoff.handoffId);
+    assert.equal((await fetch(new URL(`/events?token=${url.searchParams.get("token")}`, url))).status, 404);
     for (const [address, options] of [
         [url.origin, undefined],
         [`${url.origin}/?token=wrong`, undefined],
@@ -275,43 +273,59 @@ test("empty shell renders without a handoff and keeps the token gate", async (t)
     assert.equal((await fetch(url.origin)).status, 404);
 });
 
-test("loads the complete effective page set from the child checkout, not extension defaults", async (t) => {
+test("reads the complete effective page set from the child checkout without a snapshot", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
     await assertPageCommand(project);
-    assert.equal(await loadDesignerPages(handoff, workspace, project, { allowMissing: true }), null);
     const override = join(project, ".specify", "presets", "override.json");
     await mkdir(join(project, ".specify", "presets"));
     const changed = JSON.parse(await readFile(entries[0].path, "utf8"));
     changed.fields[1].label = "Custom title";
     await writeFile(override, JSON.stringify(changed));
     const effective = [{ name: entries[0].name, path: override }, ...entries.slice(1)];
-    const model = await storeDesignerPages(handoff, workspace, project, effective);
+    const model = await loadResolvedDesignerPages(handoff, project, effective);
     assert.equal(model.pages[0].fields[1].label, "Custom title");
     assert.equal(model.pages[0].provenance.path, override);
-    assert.equal((await loadDesignerPages(handoff, workspace, project)).revision, model.revision);
-    await assert.rejects(storeDesignerPages(handoff, workspace, project, entries.slice(1)),
+    assert.equal((await loadResolvedDesignerPages(handoff, project, effective)).revision, model.revision);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries.slice(1)),
         /all four Canvas Design pages/);
-    assert.equal((await loadDesignerPages(handoff, workspace, project)).revision, model.revision);
-    await assert.rejects(storeDesignerPages(handoff, workspace, project, [...entries, entries[0]]),
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, [...entries, entries[0]]),
         /duplicate Designer page name/);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [{ name: entries[0].name, path: join(project, ".specify", "missing.json") }, ...entries.slice(1)]),
+    { code: "ENOENT" });
     await writeFile(join(workspace, "outside.json"), JSON.stringify(changed));
-    await assert.rejects(storeDesignerPages(handoff, workspace, project,
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [{ name: entries[0].name, path: join(workspace, "outside.json") }, ...entries.slice(1)]),
     /escapes its allowed directory/);
-    assert.equal((await loadDesignerPages(handoff, workspace, project)).revision, model.revision);
+    const extra = join(project, ".specify", "presets", "extra.json");
+    await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
+        title: "Extra", order: 5, enabled: true, fields: [] }));
+    const withExtra = await loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }]);
+    assert.equal(withExtra.pages[0].title, "Extra");
+    assert.equal(withExtra.pages.length, 5);
+    await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
+        title: "Extra", order: 5, enabled: false, fields: [] }));
+    assert.equal((await loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }])).pages.length, 4);
+    await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
+        title: "Extra", order: "invalid", fields: [] }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }]), /expected integer/);
+    await writeFile(extra, " ".repeat(256 * 1024 + 1));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }]), /Invalid or oversized Designer file/);
     changed.id = "wrong-page";
     await writeFile(override, JSON.stringify(changed));
-    await assert.rejects(storeDesignerPages(handoff, workspace, project, effective), /page id does not match/);
-    assert.equal((await loadDesignerPages(handoff, workspace, project)).revision, model.revision);
-    await writeFile(join(handoffDirectory(workspace, handoff.handoffId), "pages.json"), "{}");
-    await assert.rejects(loadDesignerPages(handoff, workspace, project, { allowMissing: true }),
-        /another handoff or project/);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, effective), /page id does not match/);
+    await assert.rejects(readFile(join(handoffDirectory(workspace, handoff.handoffId), "pages.json")),
+        { code: "ENOENT" });
 });
 
-test("canvas opens a loading handoff and accepts complete pages through its action", async (t) => {
+test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {
     const workspace = await fixture(t);
     const source = fileURLToPath(new URL("../", import.meta.url));
     const extension = join(workspace, "provider");
@@ -353,47 +367,52 @@ test("canvas opens a loading handoff and accepts complete pages through its acti
     const tools = globalThis.__designerTestTools;
     delete globalThis.__designerTestTools;
     assert.deepEqual(tools.map((tool) => tool.name), ["speckit_designer_reload_skills"]);
-    assert.deepEqual(canvas.actions.map((action) => action.name), ["loadPages"]);
-    const load = canvas.actions[0];
-    assert.deepEqual(load.inputSchema.required, ["handoffId", "pages"]);
+    assert.deepEqual(canvas.actions ?? [], []);
     assert.deepEqual(canvas.inputSchema.required, undefined);
     assert.deepEqual(canvas.inputSchema.properties.handoffId.type, "string");
+    assert.equal(canvas.inputSchema.properties.pages.maxItems, 100);
 
     try {
         const empty = await canvas.open({ instanceId: "same", input: {} });
         assert.match(await (await fetch(empty.url)).text(), /No Wizard handoff is attached yet/);
-        assert.equal((await canvas.open({ instanceId: "same" })).url, empty.url);
         await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID } }),
+            /complete page list/);
+        await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } }),
             (error) => error.code === "designer_handoff_invalid");
         await saveHandoff(workspace);
-        const filled = await canvas.open({ instanceId: "same", input: { handoffId: ID } });
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries.slice(1),
+        } }), /all four Canvas Design pages/);
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: [...entries, entries[0]],
+        } }), /duplicate Designer page name/);
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: [{ name: entries[0].name, path: join(project, ".specify", "missing.json") },
+                ...entries.slice(1)],
+        } }), (error) => error.code === "designer_open_failed" && /ENOENT/.test(error.message));
+        const filled = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
         assert.notEqual(filled.url, empty.url);
         assert.match(await (await fetch(filled.url)).text(), /Spec Kit Canvas Designer/);
-        assert.equal((await canvas.open({ instanceId: "same", input: { handoffId: ID } })).url, filled.url);
         const stateUrl = new URL(filled.url);
         stateUrl.pathname = "/api/state";
         const initial = await (await fetch(stateUrl)).json();
-        assert.equal(initial.load.pending, true);
-        assert.equal(initial.pages, undefined);
-        await assert.rejects(load.handler({ instanceId: "other", input: { handoffId: ID, pages: entries } }),
-            /Open this Designer handoff/);
-        await assert.rejects(load.handler({ instanceId: "same", input: {
-            handoffId: "other", pages: entries,
-        } }), /Open this Designer handoff/);
-        await assert.rejects(load.handler({ instanceId: "same", input: {
-            handoffId: ID, pages: entries.slice(1),
-        } }), /all four Canvas Design pages/);
-        const afterFailure = await (await fetch(stateUrl)).json();
-        assert.equal(afterFailure.pages, undefined);
-        assert.match(afterFailure.load.error, /all four Canvas Design pages/);
+        assert.equal(initial.pages.length, 4);
         assert.equal((await fetch(new URL("/api/reload", filled.url), { method: "POST" })).status, 404);
-        const loaded = await load.handler({ instanceId: "same", input: { handoffId: ID, pages: entries } });
-        assert.equal(loaded.loaded, true);
-        assert.equal(loaded.pages.length, 4);
-        const afterSuccess = await (await fetch(stateUrl)).json();
-        assert.equal(afterSuccess.pages.length, 4);
-        assert.equal(afterSuccess.load.pending, false);
-        assert.equal(afterSuccess.load.error, "");
+        const changed = JSON.parse(await readFile(entries[0].path, "utf8"));
+        changed.title = "Updated Essentials";
+        await writeFile(entries[0].path, JSON.stringify(changed));
+        const reopened = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
+        assert.notEqual(reopened.url, filled.url);
+        await assert.rejects(fetch(stateUrl));
+        const latest = new URL(reopened.url);
+        latest.pathname = "/api/state";
+        const updated = await (await fetch(latest)).json();
+        assert.equal(updated.pages[0].title, "Updated Essentials");
+        assert.notEqual(updated.revision, initial.revision);
+        await writeFile(entries[1].path, "{broken");
+        await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } }),
+            /Invalid Designer JSON/);
+        await assert.rejects(fetch(latest));
     } finally {
         await canvas.onClose({ instanceId: "same" });
     }
