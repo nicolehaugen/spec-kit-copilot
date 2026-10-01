@@ -352,6 +352,25 @@ export function createHandler(deps) {
                             enableProviderForSession: deps.enableDesignerProvider,
                         });
                     },
+                    "/api/designer/local-source": async () => {
+                        const { isSupportedLocalKind, validateLocalSource } = await import("./server/designer-local-sources.mjs");
+                        // `kind` is optional: the UI has a single path input and
+                        // relies on auto-detection from whichever manifest
+                        // (preset.yml / extension.yml) is present in the
+                        // directory. An explicit kind is still accepted (and
+                        // still checked against only that manifest) for any
+                        // caller that already knows which it wants.
+                        const hasKind = body?.kind !== undefined && body?.kind !== null && body?.kind !== "";
+                        if ((hasKind && !isSupportedLocalKind(body.kind)) || typeof body?.path !== "string") {
+                            return jsonError(res, 400, "kind must be presets or extensions, and path is required");
+                        }
+                        try {
+                            const item = await validateLocalSource(hasKind ? body.kind : undefined, body.path);
+                            return jsonRes(res, 200, { item });
+                        } catch (err) {
+                            return jsonError(res, 400, err.message);
+                        }
+                    },
                 };
                 const route = postRoutes[url.pathname];
                 if (route) return route();

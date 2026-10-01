@@ -100,6 +100,46 @@ test("handoff validates bounded IDs, shape, URLs and fingerprint", () => {
     assert.throws(() => validateHandoff(changed, ID), /fingerprint mismatch/);
 });
 
+test("handoff accepts additive localSelections (presets/extensions only) and rejects malformed ones", () => {
+    const base = validHandoff();
+    const withLocal = (localSelections) => {
+        const copy = structuredClone(base);
+        copy.localSelections = localSelections;
+        copy.sourceFingerprint = fingerprint({
+            workflow: copy.workflow, selections: copy.selections, localSelections,
+        });
+        return copy;
+    };
+    const goodLocal = withLocal({
+        presets: [{ id: "my-preset", source: "local", approved: true, path: "C:\\dev\\my-preset" }],
+        extensions: [{ id: "extension-canvas-design", source: "local", approved: true, path: "/home/dev/ext" }],
+    });
+    assert.equal(validateHandoff(goodLocal, ID), goodLocal);
+    // A fingerprint computed without localSelections never matches a handoff
+    // that declares localSelections (and vice versa) — the field is part of
+    // the signed payload, not a trailing decoration.
+    const staleFingerprint = structuredClone(goodLocal);
+    staleFingerprint.sourceFingerprint = fingerprint({
+        workflow: staleFingerprint.workflow, selections: staleFingerprint.selections,
+    });
+    assert.throws(() => validateHandoff(staleFingerprint, ID), /fingerprint mismatch/);
+    const invalidLocal = [
+        withLocal({ bundles: [] }),
+        withLocal({ presets: "not-an-array" }),
+        withLocal({ presets: Array(21).fill({ id: "a", source: "local", approved: true, path: "/a" }) }),
+        withLocal({ presets: [{ id: "dup", source: "local", approved: true, path: "/a" },
+            { id: "dup", source: "local", approved: true, path: "/b" }] }),
+        withLocal({ presets: [{ id: "x", source: "copilot", approved: true, path: "/a" }] }),
+        withLocal({ presets: [{ id: "x", source: "local", approved: false, path: "/a" }] }),
+        withLocal({ presets: [{ id: "x", source: "local", approved: true, path: "relative/path" }] }),
+        withLocal({ presets: [{ id: "x", source: "local", approved: true, path: "/a", downloadUrl: null }] }),
+        withLocal({ presets: [{ id: "../escape", source: "local", approved: true, path: "/a" }] }),
+    ];
+    for (const handoff of invalidLocal) {
+        assert.throws(() => validateHandoff(handoff, ID), /Invalid Designer handoff/);
+    }
+});
+
 test("handoff reads only validated artifacts from its session workspace", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();

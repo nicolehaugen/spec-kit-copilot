@@ -6,6 +6,7 @@ import {
     currentCanvasDesignerSelections,
     freshCanvasDesignerSelections,
     openCanvasDesignerDialog,
+    REQUIRED_DESIGNER_EXTENSION_ID,
     submitDesignerLaunch,
 } from "../ui/canvas-designer-dialog.js";
 import { renderPipelineBanner } from "../ui/phase-runtime.js";
@@ -147,6 +148,45 @@ test("dialog shows empty design catalogs and enables launch after catalog loads"
         root.replaceChildren();
         globalThis.document = previousDocument;
         globalThis.fetch = previousFetch;
+        state.snapshot = previousSnapshot;
+    }
+});
+
+test("required canvas design extension is force-checked, locked, and always included in selections", () => {
+    const previousDocument = globalThis.document;
+    const previousSnapshot = state.snapshot;
+    const { root, document } = fakeDialogDocument();
+    globalThis.document = document;
+    state.snapshot = { catalog: { presets: [], extensions: [
+        { id: REQUIRED_DESIGNER_EXTENSION_ID, source: "copilot", name: "Canvas Design", version: "0.1.3", tags: ["canvas-design"] },
+        { id: "other-extension", source: "copilot", name: "Other", tags: ["canvas-design"] },
+    ], bundles: [], designerFingerprint: "ready" } };
+    try {
+        openCanvasDesignerDialog();
+        const requiredInput = root.inputs.find((input) => input.dataset.designerKind === "extensions"
+            && input.dataset.designerIndex === "0");
+        const otherInput = root.inputs.find((input) => input.dataset.designerKind === "extensions"
+            && input.dataset.designerIndex === "1");
+        assert.equal(requiredInput.checked, true);
+        assert.equal(requiredInput.disabled, true);
+        assert.match(root.innerHTML, /designer-required-badge/);
+        assert.deepEqual(currentCanvasDesignerSelections().extensions,
+            [{ id: REQUIRED_DESIGNER_EXTENSION_ID, source: "copilot", approved: true }]);
+        // A forced change event must not clear the required selection (guarded by input.disabled).
+        requiredInput.checked = false;
+        requiredInput.change();
+        assert.deepEqual(currentCanvasDesignerSelections().extensions,
+            [{ id: REQUIRED_DESIGNER_EXTENSION_ID, source: "copilot", approved: true }]);
+        // Toggling an unrelated extension must not disturb the required entry.
+        otherInput.checked = true;
+        otherInput.change();
+        assert.deepEqual(currentCanvasDesignerSelections().extensions, [
+            { id: REQUIRED_DESIGNER_EXTENSION_ID, source: "copilot", approved: true },
+            { id: "other-extension", source: "copilot", approved: true },
+        ]);
+    } finally {
+        root.replaceChildren();
+        globalThis.document = previousDocument;
         state.snapshot = previousSnapshot;
     }
 });

@@ -8,6 +8,7 @@ import {
     fetchSessionRepoPath,
     joinIfPossible,
     pathExists,
+    resolveGenerateCanvas,
     resolveWorkspace,
 } from "../env/workspace.mjs";
 import { isInside, resolveWorkspacePath } from "../server/http-utils.mjs";
@@ -247,6 +248,20 @@ test("workspace helpers preserve explicit path precedence and separators", async
     assert.equal(resolveWorkspace({ workspacePath: "/cached" }, {}, null), "/cached");
     assert.equal(joinIfPossible("C:\\repo\\", ".specify"), "C:\\repo\\.specify");
     assert.equal(joinIfPossible("/repo", ".specify"), "/repo/.specify");
+});
+
+test("resolveGenerateCanvas preserves a prior true across a reopen/focus call that omits the field", () => {
+    // First-ever open with no flag at all: defaults to false.
+    assert.equal(resolveGenerateCanvas({}, {}), false);
+    assert.equal(resolveGenerateCanvas({}, { input: {} }), false);
+    // Explicit true on open sets it.
+    assert.equal(resolveGenerateCanvas({}, { input: { generateCanvas: true } }), true);
+    // A later focus-only call that omits the field must NOT reset a
+    // previously-set true back to false (this was the regression).
+    assert.equal(resolveGenerateCanvas({ generateCanvas: true }, {}), true);
+    assert.equal(resolveGenerateCanvas({ generateCanvas: true }, { input: {} }), true);
+    // An explicit false still clears it.
+    assert.equal(resolveGenerateCanvas({ generateCanvas: true }, { input: { generateCanvas: false } }), false);
 });
 
 test("pathExists reports stat success and failure without leaking errors", async () => {

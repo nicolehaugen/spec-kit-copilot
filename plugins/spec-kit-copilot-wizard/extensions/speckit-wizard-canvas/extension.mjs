@@ -26,7 +26,7 @@ import { createBootTracker } from "./canvas-runtime/boot-progress.mjs";
 // There is deliberately no native import that parses `preset.yml` /
 // `extension.yml` / `.registry` here; catalog interpretation belongs to the
 // skills and scanner.
-import { fetchSessionRepoPath, resolveWorkspace } from "./env/workspace.mjs";
+import { fetchSessionRepoPath, resolveWorkspace, resolveGenerateCanvas } from "./env/workspace.mjs";
 import { fsDeps, sessionState, getInstance, allInstances, sessionAdapter, setSession, getSession } from "./canvas-runtime/instances.mjs";
 import { ensureEnvProbe } from "./env/probe-cache.mjs";
 import { startStateWatcher, stopStateWatcher, startArtifactWatcher, stopArtifactWatcher } from "./canvas-runtime/watchers.mjs";
@@ -71,7 +71,10 @@ const instances = allInstances();
 async function onOpen(ctx) {
     const inst = getInstance(ctx.instanceId);
     inst._session = getSession();
-    inst.generateCanvas = ctx.input?.generateCanvas === true;
+    // Preserve a previously-set flag across a reopen/focus call that omits
+    // `generateCanvas` (e.g. a focus-only open_canvas used just to invoke an
+    // action) — only an explicit value in this call's input should change it.
+    inst.generateCanvas = resolveGenerateCanvas(inst, ctx);
     // If the session repo path wasn't captured at startup (race), try once more.
     if (!sessionState.repoPath && getSession()) {
         sessionState.repoPath = await fetchSessionRepoPath(getSession());
