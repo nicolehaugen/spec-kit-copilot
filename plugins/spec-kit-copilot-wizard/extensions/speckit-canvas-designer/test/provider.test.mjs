@@ -188,6 +188,66 @@ test("handoff rejects a different opened file even if the path still passes vali
     );
 });
 
+test("settings reject a parent directory replaced during file open, including a missing file", async (t) => {
+    const workspace = await fixture(t);
+    const outside = await fixture(t);
+    const handoff = validHandoff();
+    const directory = await saveHandoff(workspace, handoff);
+    const outsideDirectory = await saveHandoff(outside, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    await saveDesignerSettings(outside, handoff, model, { revision: 0,
+        modelRevision: model.revision, values: { "canvas.id": "outside" } });
+    const backup = `${directory}-original`;
+    for (const existing of [true, false]) {
+        if (!existing) await rm(join(outsideDirectory, "settings.json"));
+        let replaced = false;
+        try {
+            await assert.rejects(loadDesignerSettings(workspace, handoff, model,
+                async (path, flags) => {
+                    await rename(directory, backup);
+                    try {
+                        await symlink(outsideDirectory, directory,
+                            process.platform === "win32" ? "junction" : "dir");
+                    } catch (error) {
+                        await rename(backup, directory);
+                        throw error;
+                    }
+                    replaced = true;
+                    return open(path, flags);
+                }), /Designer settings escape session artifacts/);
+        } catch (error) {
+            if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+            t.diagnostic("Windows symlink creation is not permitted; settings race assertion skipped");
+            return;
+        } finally {
+            if (replaced) {
+                await rm(directory, { recursive: true });
+                await rename(backup, directory);
+            }
+        }
+    }
+});
+
+test("settings reject a different opened file even when their parent remains valid", async (t) => {
+    const workspace = await fixture(t);
+    const outside = await fixture(t);
+    const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
+    const outsideDirectory = await saveHandoff(outside, handoff);
+    const model = { revision: "snapshot", constraints: {
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+    }, values: { "canvas.id": "" } };
+    const request = { revision: 0, modelRevision: model.revision,
+        values: { "canvas.id": "saved" } };
+    await saveDesignerSettings(workspace, handoff, model, request);
+    await saveDesignerSettings(outside, handoff, model, request);
+    await assert.rejects(loadDesignerSettings(workspace, handoff, model,
+        (_path, flags) => open(join(outsideDirectory, "settings.json"), flags)),
+    /Invalid saved Designer settings file/);
+});
+
 test("handoff rejects a FIFO promptly instead of waiting for a writer", {
     skip: process.platform === "win32",
 }, async (t) => {

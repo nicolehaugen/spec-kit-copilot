@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readFile, realpath, rename, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
 
 const LIMIT = 256 * 1024;
@@ -31,18 +31,26 @@ async function settingsPath(workspacePath, handoff) {
     return join(folder, "settings.json");
 }
 
-async function readSettings(path, handoff, model) {
+async function readSettings(path, handoff, model, openFile = open) {
     let file;
     try {
-        file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+        file = await openFile(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
             | (constants.O_NONBLOCK ?? 0));
     } catch (error) {
-        if (error.code === "ENOENT") return null;
+        if (error.code === "ENOENT") {
+            if (await realpath(dirname(path)) !== dirname(path)) {
+                throw new Error("Designer settings escape session artifacts");
+            }
+            return null;
+        }
         throw error;
     }
     let record;
     try {
-        const [stat, current] = await Promise.all([file.stat(), lstat(path)]);
+        const [stat, current, folder] = await Promise.all([
+            file.stat(), lstat(path), realpath(dirname(path)),
+        ]);
+        if (folder !== dirname(path)) throw new Error("Designer settings escape session artifacts");
         if (!stat.isFile() || !current.isFile() || current.isSymbolicLink()
             || stat.dev !== current.dev || stat.ino !== current.ino || stat.size > LIMIT) {
             throw new Error("Invalid saved Designer settings file");
@@ -69,8 +77,9 @@ async function readSettings(path, handoff, model) {
     return record;
 }
 
-export async function loadDesignerSettings(workspacePath, handoff, model) {
-    const record = await readSettings(await settingsPath(workspacePath, handoff), handoff, model);
+export async function loadDesignerSettings(workspacePath, handoff, model, openFile = open) {
+    const record = await readSettings(await settingsPath(workspacePath, handoff),
+        handoff, model, openFile);
     return { ...model, values: record?.values ?? model.values,
         settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
 }
