@@ -248,6 +248,34 @@ test("settings reject a different opened file even when their parent remains val
     /Invalid saved Designer settings file/);
 });
 
+test("settings use the canonical workspace when the session path is a symlink", async (t) => {
+    const workspace = await fixture(t);
+    const aliasParent = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const alias = join(aliasParent, "linked-session");
+    try {
+        await symlink(workspace, alias, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; workspace alias assertion skipped");
+        return;
+    }
+    try {
+        assert.deepEqual(await readHandoff(alias, ID), handoff);
+        const model = { revision: "snapshot", constraints: {
+            "canvas.id": { type: "string", minLength: 1, maxLength: 100 },
+        }, values: { "canvas.id": "" } };
+        assert.equal((await loadDesignerSettings(alias, handoff, model)).settingsRevision, 0);
+        await saveDesignerSettings(alias, handoff, model, { revision: 0,
+            modelRevision: model.revision, values: { "canvas.id": "saved" } });
+        assert.equal((await loadDesignerSettings(alias, handoff, model)).values["canvas.id"], "saved");
+        assert.equal(JSON.parse(await readFile(join(folder, "settings.json"))).values["canvas.id"], "saved");
+    } finally {
+        await rm(alias);
+    }
+});
+
 test("handoff rejects a FIFO promptly instead of waiting for a writer", {
     skip: process.platform === "win32",
 }, async (t) => {
@@ -379,6 +407,37 @@ test("token-gated Save endpoint reports errors without losing the current values
         "canvas.id": "UPPER" } });
     assert.equal(invalid.status, 422);
     assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
+});
+
+test("oversized Save requests from valid pages return a JSON error", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    for (const [index, entry] of entries.slice(0, 3).entries()) {
+        const page = JSON.parse(await readFile(entry.path, "utf8"));
+        while (page.fields.length < 100) {
+            const id = `custom.${index}.${page.fields.length}`;
+            page.fields.push({ id, label: id });
+        }
+        await writeFile(entry.path, JSON.stringify(page));
+    }
+    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.equal(Object.keys(model.constraints).length, 300);
+    const values = Object.fromEntries(Object.keys(model.values).map((id) =>
+        [id, model.constraints[id].type === "boolean" ? false
+            : id === "canvas.id" ? "example" : "x".repeat(model.constraints[id].maxLength)]));
+    const shell = await startShell(handoff, model, workspace);
+    t.after(() => shell.close());
+    const saveUrl = new URL(shell.url);
+    saveUrl.pathname = "/api/save";
+    const response = await fetch(saveUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ revision: 0, modelRevision: model.revision, values }) });
+    assert.equal(response.status, 413);
+    assert.match(response.headers.get("content-type"), /application\/json/);
+    assert.deepEqual(await response.json(), { error: "Designer save request is too large" });
+    await assert.rejects(readFile(join(folder, "settings.json")), { code: "ENOENT" });
 });
 
 test("malformed raw request targets return 404 without stopping the shell", async (t) => {

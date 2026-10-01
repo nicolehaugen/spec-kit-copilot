@@ -26,7 +26,7 @@ function validateValues(values, constraints) {
 }
 
 async function settingsPath(workspacePath, handoff) {
-    const folder = handoffDirectory(workspacePath, handoff.handoffId);
+    const folder = handoffDirectory(await realpath(workspacePath), handoff.handoffId);
     if (await realpath(folder) !== folder) throw new Error("Designer settings escape session artifacts");
     return join(folder, "settings.json");
 }
@@ -103,14 +103,13 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
             modelRevision: model.revision, revision: request.revision + 1, values: request.values };
         const bytes = JSON.stringify(record);
         if (Buffer.byteLength(bytes) > LIMIT) throw new Error("Designer settings exceed the size limit");
-        const temporary = join(handoffDirectory(workspacePath, handoff.handoffId),
-            `settings-${randomUUID()}.tmp`);
+        const folder = dirname(path);
+        const temporary = join(folder, `settings-${randomUUID()}.tmp`);
         try {
             const file = await open(temporary, "wx", 0o600);
             try { await file.writeFile(bytes); }
             finally { await file.close(); }
-            if (await realpath(handoffDirectory(workspacePath, handoff.handoffId))
-                !== handoffDirectory(workspacePath, handoff.handoffId)) {
+            if (await realpath(folder) !== folder) {
                 throw new Error("Designer settings escape session artifacts");
             }
             await rename(temporary, path);

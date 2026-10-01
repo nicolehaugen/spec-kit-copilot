@@ -57,8 +57,12 @@ export async function startShell(handoff = null, model = null, workspacePath = n
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
         if (handoff && workspacePath && req.method === "POST" && url.pathname === "/api/save") {
+            const sendError = (status, message) => {
+                res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+                res.end(JSON.stringify({ error: message }));
+            };
             if (!req.headers["content-type"]?.startsWith("application/json")) {
-                res.writeHead(415).end("Expected application/json");
+                sendError(415, "Expected application/json");
                 return;
             }
             try {
@@ -67,7 +71,7 @@ export async function startShell(handoff = null, model = null, workspacePath = n
                 for await (const chunk of req) {
                     size += chunk.length;
                     if (size > 256 * 1024) {
-                        res.writeHead(413).end("Designer save request is too large");
+                        sendError(413, "Designer save request is too large");
                         return;
                     }
                     chunks.push(chunk);
@@ -83,9 +87,7 @@ export async function startShell(handoff = null, model = null, workspacePath = n
             } catch (error) {
                 const invalid = error instanceof SyntaxError || /Invalid Designer|unexpected or missing fields/.test(error.message);
                 const conflict = /changed|do not match/.test(error.message);
-                res.writeHead(conflict ? 409 : invalid ? 422 : 500,
-                    { "Content-Type": "application/json; charset=utf-8" });
-                res.end(JSON.stringify({ error: error.message }));
+                sendError(conflict ? 409 : invalid ? 422 : 500, error.message);
             }
             return;
         }
