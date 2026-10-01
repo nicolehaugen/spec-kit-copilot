@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { readHandoff } from "./handoff.mjs";
-import { saveDesignerSettings } from "./settings.mjs";
+import { SAVE_REQUEST_LIMIT, saveDesignerSettings } from "./settings.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -70,7 +70,7 @@ export async function startShell(handoff = null, model = null, workspacePath = n
                 let size = 0;
                 for await (const chunk of req) {
                     size += chunk.length;
-                    if (size > 256 * 1024) {
+                    if (size > SAVE_REQUEST_LIMIT) {
                         sendError(413, "Designer save request is too large");
                         return;
                     }
@@ -87,7 +87,8 @@ export async function startShell(handoff = null, model = null, workspacePath = n
             } catch (error) {
                 const invalid = error instanceof SyntaxError || /Invalid Designer|unexpected or missing fields/.test(error.message);
                 const conflict = /changed|do not match/.test(error.message);
-                sendError(conflict ? 409 : invalid ? 422 : 500, error.message);
+                const oversized = error.message === "Designer settings exceed the size limit";
+                sendError(conflict ? 409 : oversized ? 413 : invalid ? 422 : 500, error.message);
             }
             return;
         }

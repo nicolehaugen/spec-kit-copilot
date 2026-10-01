@@ -12,7 +12,9 @@ import {
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages } from "../pages.mjs";
-import { loadDesignerSettings, saveDesignerSettings } from "../settings.mjs";
+import {
+    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
+} from "../settings.mjs";
 
 const ID = "designer_1";
 
@@ -433,9 +435,9 @@ test("token-gated Save endpoint reports errors without losing the current values
     assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
 });
 
-test("oversized Save requests from valid pages return a JSON error", async (t) => {
+test("Save reserves space for the stored envelope and rejects larger valid requests", async (t) => {
     const workspace = await fixture(t);
-    const handoff = validHandoff();
+    const handoff = validHandoff("a".repeat(128));
     const folder = await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
     for (const [index, entry] of entries.slice(0, 3).entries()) {
@@ -448,20 +450,33 @@ test("oversized Save requests from valid pages return a JSON error", async (t) =
     }
     const model = await loadResolvedDesignerPages(handoff, project, entries);
     assert.equal(Object.keys(model.constraints).length, 300);
-    const values = Object.fromEntries(Object.keys(model.values).map((id) =>
-        [id, model.constraints[id].type === "boolean" ? false
-            : id === "canvas.id" ? "example" : "x".repeat(model.constraints[id].maxLength)]));
+    const values = { ...model.values, "canvas.id": "example", "canvas.displayName": "Example" };
+    const payload = { revision: 0, modelRevision: model.revision, values };
+    let remaining = SAVE_REQUEST_LIMIT - Buffer.byteLength(JSON.stringify(payload));
+    for (const id of Object.keys(values).filter((key) => key.startsWith("custom."))) {
+        const length = Math.min(remaining, model.constraints[id].maxLength);
+        values[id] = "x".repeat(length);
+        remaining -= length;
+    }
+    assert.equal(remaining, 0);
+    const body = JSON.stringify(payload);
+    assert.equal(Buffer.byteLength(body), SAVE_REQUEST_LIMIT);
     const shell = await startShell(handoff, model, workspace);
     t.after(() => shell.close());
     const saveUrl = new URL(shell.url);
     saveUrl.pathname = "/api/save";
     const response = await fetch(saveUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ revision: 0, modelRevision: model.revision, values }) });
+        body: `${body} ` });
     assert.equal(response.status, 413);
     assert.match(response.headers.get("content-type"), /application\/json/);
     assert.deepEqual(await response.json(), { error: "Designer save request is too large" });
     await assert.rejects(readFile(join(folder, "settings.json")), { code: "ENOENT" });
+    const accepted = await fetch(saveUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body });
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).settingsRevision, 1);
+    assert.ok((await readFile(join(folder, "settings.json"))).length <= SETTINGS_LIMIT);
 });
 
 test("malformed raw request targets return 404 without stopping the shell", async (t) => {

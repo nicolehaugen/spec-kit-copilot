@@ -4,7 +4,8 @@ import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
 
-const LIMIT = 256 * 1024;
+export const SETTINGS_LIMIT = 256 * 1024;
+export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
 
 function validateValues(values, constraints) {
@@ -52,17 +53,17 @@ async function readSettings(path, handoff, model, openFile = open) {
         ]);
         if (folder !== dirname(path)) throw new Error("Designer settings escape session artifacts");
         if (!stat.isFile() || !current.isFile() || current.isSymbolicLink()
-            || stat.dev !== current.dev || stat.ino !== current.ino || stat.size > LIMIT) {
+            || stat.dev !== current.dev || stat.ino !== current.ino || stat.size > SETTINGS_LIMIT) {
             throw new Error("Invalid saved Designer settings file");
         }
-        const bytes = Buffer.alloc(LIMIT + 1);
+        const bytes = Buffer.alloc(SETTINGS_LIMIT + 1);
         let length = 0;
         while (length < bytes.length) {
             const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
             if (!bytesRead) break;
             length += bytesRead;
         }
-        if (length > LIMIT) throw new Error("Saved Designer settings exceed the size limit");
+        if (length > SETTINGS_LIMIT) throw new Error("Saved Designer settings exceed the size limit");
         record = JSON.parse(new TextDecoder("utf-8", { fatal: true })
             .decode(bytes.subarray(0, length)));
     } catch (error) {
@@ -109,7 +110,7 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
         const record = { schemaVersion: 1, handoffId: handoff.handoffId,
             modelRevision: model.revision, revision: request.revision + 1, values: request.values };
         const bytes = JSON.stringify(record);
-        if (Buffer.byteLength(bytes) > LIMIT) throw new Error("Designer settings exceed the size limit");
+        if (Buffer.byteLength(bytes) > SETTINGS_LIMIT) throw new Error("Designer settings exceed the size limit");
         const folder = dirname(path);
         const temporary = join(folder, `settings-${randomUUID()}.tmp`);
         try {
