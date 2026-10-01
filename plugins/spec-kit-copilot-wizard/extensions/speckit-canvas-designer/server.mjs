@@ -72,7 +72,9 @@ export async function startShell(handoff = null, model = null) {
     });
     return {
         url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
-        close: () => new Promise((resolve, reject) => server.close((error) =>
-            error ? reject(error) : resolve())),
+        close: () => new Promise((resolve, reject) => {
+            server.close((error) => error ? reject(error) : resolve());
+            server.closeAllConnections();
+        }),
     };
 }

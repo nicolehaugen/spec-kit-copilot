@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fingerprint } from "./handoff.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
@@ -9,6 +9,9 @@ const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
     "canvas-settings-appearance", "canvas-settings-results"];
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
+const PAGE_PATTERN = new RegExp(PAGE_NAME);
+const ERROR_LIMIT = 512;
+class PageContentError extends Error {}
 const RULES = {
     "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$" },
     "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
@@ -31,10 +34,11 @@ async function boundedJson(path, root, limit, openFile = open) {
         const before = await file.stat();
         const stat = await lstat(target);
         if (!before.isFile() || !stat.isFile() || stat.isSymbolicLink()
-            || stat.dev !== before.dev || stat.ino !== before.ino || before.size > limit
+            || stat.dev !== before.dev || stat.ino !== before.ino
             || await realpath(path) !== target || await realpath(target) !== target) {
-            throw new Error(`Invalid or oversized Designer file: ${path}`);
+            throw new Error(`Invalid Designer file: ${path}`);
         }
+        if (before.size > limit) throw new PageContentError(`Designer file exceeds its size limit: ${path}`);
         const buffer = Buffer.alloc(limit + 1);
         let length = 0;
         while (length < buffer.length) {
@@ -44,15 +48,16 @@ async function boundedJson(path, root, limit, openFile = open) {
         }
         const after = await file.stat();
         const current = await lstat(target);
-        if (length > limit || before.size !== after.size || before.mtimeMs !== after.mtimeMs
+        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs
             || before.ctimeMs !== after.ctimeMs || current.dev !== before.dev || current.ino !== before.ino
             || await realpath(path) !== target || await realpath(target) !== target) {
-            throw new Error(`Designer file changed during loading or exceeds its size limit: ${path}`);
+            throw new Error(`Designer file changed during loading: ${path}`);
         }
+        if (length > limit) throw new PageContentError(`Designer file exceeds its size limit: ${path}`);
         const bytes = buffer.subarray(0, length);
         let document;
         try { document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
-        catch (error) { throw new Error(`Invalid Designer JSON in ${path}: ${error.message}`); }
+        catch (error) { throw new PageContentError(`Invalid Designer JSON in ${path}: ${error.message}`); }
         return { document, path: target, hash: createHash("sha256").update(bytes).digest("hex") };
     } finally {
         await file.close();
@@ -91,47 +96,45 @@ function checkSchema(value, schema, location) {
 }
 
 function buildModel(entries, schema) {
-    if (!Array.isArray(entries) || !entries.length || entries.length > 100) {
-        throw new Error("Designer requires between 1 and 100 pages");
-    }
-    const pages = [], constraints = Object.create(null), values = Object.create(null), names = new Set();
-    for (const entry of entries) {
-        const { name, document, path, hash } = entry;
-        if (typeof name !== "string" || !new RegExp(PAGE_NAME).test(name) || names.has(name)) {
-            throw new Error(`Invalid or duplicate Designer page name: ${name}`);
+    const pages = [], constraints = Object.create(null), values = Object.create(null);
+    for (const [index, entry] of entries.entries()) {
+        const { name, path, document, hash, error } = entry;
+        const fallbackOrder = REQUIRED_PAGES.includes(name)
+            ? (REQUIRED_PAGES.indexOf(name) + 1) * 10 : 100001 + index;
+        const fail = (reason) => {
+            pages.push({ page: name, title: name, order: fallbackOrder,
+                error: { name, path, reason: reason.slice(0, ERROR_LIMIT) } });
+        };
+        if (error) { fail(error); continue; }
+        try {
+            checkSchema(document, schema, name);
+            if (document.id !== name) throw new Error(`${name}: page id does not match template name`);
+            const ids = new Set();
+            for (const field of document.fields) {
+                const type = field.type ?? "string";
+                if (ids.has(field.id) || (Object.hasOwn(field, "default") && type !== "boolean")
+                    || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== type)) {
+                    throw new Error(`${name}: duplicate or invalid field ${field.id}`);
+                }
+                ids.add(field.id);
+                if (document.enabled !== false && Object.hasOwn(constraints, field.id)) {
+                    throw new Error(`${name}: duplicate enabled field ${field.id}`);
+                }
+            }
+        } catch (cause) {
+            fail(cause.message);
+            continue;
         }
-        names.add(name);
-        checkSchema(document, schema, name);
-        if (document.id !== name) throw new Error(`${name}: page id does not match template name`);
-        if (typeof path !== "string" || !isAbsolute(path) || path.length > 4096
-            || typeof hash !== "string" || !/^[a-f0-9]{64}$/.test(hash)) {
-            throw new Error(`${name}: invalid page source metadata`);
-        }
-        const ids = new Set();
+        if (document.enabled === false) continue;
         for (const field of document.fields) {
             const type = field.type ?? "string";
-            if (ids.has(field.id) || (Object.hasOwn(field, "default") && type !== "boolean")
-                || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== type)) {
-                throw new Error(`${name}: duplicate or invalid field ${field.id}`);
-            }
-            ids.add(field.id);
-            if (document.enabled === false) continue;
-            if (Object.hasOwn(constraints, field.id)) throw new Error(`Duplicate enabled field: ${field.id}`);
             constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
                 : { type, ...(type === "string" ? { maxLength: 1000 } : {}) };
             values[field.id] = type === "boolean" ? (field.default ?? false) : "";
         }
-        if (document.enabled !== false) {
-            pages.push({ ...document, page: name, provenance: { template: name, path, fingerprint: hash } });
-        }
+        pages.push({ ...document, page: name, provenance: { template: name, path, fingerprint: hash } });
     }
-    if (REQUIRED_PAGES.some((name) => !names.has(name))) {
-        throw new Error("Designer load must include all four Canvas Design pages");
-    }
-    if (!Object.hasOwn(constraints, "canvas.id") || !Object.hasOwn(constraints, "canvas.displayName")) {
-        throw new Error("Enabled pages must contain Canvas ID and Title");
-    }
-    pages.sort((a, b) => a.order - b.order || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    pages.sort((a, b) => a.order - b.order || a.page.localeCompare(b.page));
     return { pages, constraints, values };
 }
 
@@ -141,6 +144,15 @@ async function context(project) {
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
     const { document: schema } = await boundedJson(join(specify, "extensions",
         "extension-canvas-design", "schemas", "page.schema.json"), specify, FILE_LIMIT);
+    if (schema?.type !== "object" || !Array.isArray(schema.required)
+        || !schema.required.includes("fields") || !schema.required.includes("id")
+        || schema.properties?.fields?.type !== "array"
+        || schema.properties.fields.items?.type !== "object"
+        || !schema.properties.fields.items.properties) {
+        throw new Error("Invalid shared Designer page schema");
+    }
+    checkSchema({ schemaVersion: 1, id: "canvas-settings-setup", title: "Essentials",
+        order: 10, fields: [{ id: "canvas.id", label: "Canvas ID" }] }, schema, "Designer page schema");
     return { checkout, schema };
 }
 
@@ -166,20 +178,43 @@ export async function loadResolvedDesignerPages(handoff, project, input) {
     }
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
-    const entries = [];
-    let size = 0;
-    for (const item of input) {
-        if (!item || Object.keys(item).some((key) => !["name", "path"].includes(key))
-            || typeof item.name !== "string" || !new RegExp(PAGE_NAME).test(item.name)
+    const names = new Set();
+    const paths = input.map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)
+            || Object.keys(item).some((key) => !["name", "path"].includes(key))
+            || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
             || typeof item.path !== "string" || !item.path || item.path.length > 4096
             || /[\x00-\x1f\x7f]/.test(item.path)) throw new Error("Invalid Designer page name/path");
+        if (names.has(item.name)) throw new Error(`Invalid or duplicate Designer page name: ${item.name}`);
+        names.add(item.name);
         const path = resolve(checkout, item.path);
-        if (extname(path).toLowerCase() !== ".json"
-            || extname(await realpath(path)).toLowerCase() !== ".json") {
-            throw new Error(`${item.name}: Designer pages must be .json files; use a local preset for overrides`);
+        if (!inside(specify, path) || extname(path).toLowerCase() !== ".json") {
+            throw new Error(`${item.name}: Designer pages must be .json files inside .specify`);
         }
-        const loaded = await boundedJson(path, specify, FILE_LIMIT);
-        entries.push({ name: item.name, ...loaded });
+        return { name: item.name, path };
+    });
+    if (REQUIRED_PAGES.some((name) => !names.has(name))) {
+        throw new Error("Designer load must include all four Canvas Design pages");
+    }
+    const entries = [];
+    let size = 0;
+    for (const { name, path } of paths) {
+        const parent = await realpath(dirname(path));
+        if (parent !== specify && !inside(specify, parent)) {
+            throw new Error(`${name}: Designer file escapes its allowed directory: ${path}`);
+        }
+        let entry;
+        try {
+            if (extname(await realpath(path)).toLowerCase() !== ".json") {
+                throw new Error(`${name}: Designer pages must be .json files; use a local preset for overrides`);
+            }
+            entry = { name, ...await boundedJson(path, specify, FILE_LIMIT) };
+        } catch (error) {
+            if (!(error instanceof PageContentError) && error.code !== "ENOENT") throw error;
+            entry = { name, path, error: error.code === "ENOENT"
+                ? `${name}: resolved page file is missing` : error.message };
+        }
+        entries.push(entry);
         size += Buffer.byteLength(JSON.stringify(entries.at(-1)));
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }

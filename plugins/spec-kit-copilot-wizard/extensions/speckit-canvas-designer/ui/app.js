@@ -27,6 +27,17 @@ function renderPage(pageId) {
         tab.tabIndex = active ? 0 : -1;
     }
     root.setAttribute("aria-labelledby", `page-tab-${pageId}`);
+    if (page.error) {
+        const { name, path, reason } = page.error;
+        const details = element("div", undefined, "page-diagnostic");
+        details.append(element("h1", `Could not load ${name}`),
+            element("p", "This settings page could not be loaded. Ask your agent to inspect the template and resolve the issue."),
+            element("p", `Template: ${name}`), element("p", `Resolved path: ${path}`),
+            element("p", `Reason: ${reason}`));
+        root.replaceChildren(details);
+        root.setAttribute("aria-busy", "false");
+        return;
+    }
     root.replaceChildren(element("h1", page.title), element("p", page.description ?? "", "muted"));
     const form = element("form");
     form.noValidate = true;
@@ -85,7 +96,7 @@ tabs.addEventListener("keydown", (event) => {
 
 function applyState(next) {
     if (!Array.isArray(next.pages) || !next.pages.length) {
-        throw new Error("Designer returned no enabled settings pages");
+        throw new Error("Designer returned no settings pages");
     }
     const changed = !model || next.revision !== model.revision;
     if (changed) {
@@ -93,7 +104,8 @@ function applyState(next) {
         draft = structuredClone(model.values);
         tabs.replaceChildren();
         for (const page of model.pages) {
-            const tab = element("button", page.title, "tab");
+            const tab = element("button", page.error ? `${page.title} (error)` : page.title,
+                `tab${page.error ? " tab-error" : ""}`);
             tab.type = "button";
             tab.dataset.page = page.page;
             tab.id = `page-tab-${page.page}`;
@@ -102,7 +114,7 @@ function applyState(next) {
             tabs.append(tab);
         }
         const selected = model.pages.find((page) => page.page === currentPage)
-            ?? model.pages.find((page) => page.id === "canvas-settings-setup")
+            ?? model.pages.find((page) => page.page === "canvas-settings-setup")
             ?? model.pages[0];
         renderPage(selected.page);
     }
@@ -114,8 +126,9 @@ try {
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);
     const initial = await response.json();
     applyState(initial);
-    status.className = "conn conn-live";
-    status.textContent = "Ready";
+    const failures = initial.pages.filter((page) => page.error).length;
+    status.className = failures ? "conn conn-connecting" : "conn conn-live";
+    status.textContent = failures ? `Pages need attention (${failures})` : "Ready";
 } catch (error) {
     root.setAttribute("aria-busy", "false");
     root.replaceChildren(element("h1", "Settings unavailable"));

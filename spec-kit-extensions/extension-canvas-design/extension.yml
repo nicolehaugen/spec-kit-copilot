@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.2"
+  version: "0.1.3"
   description: Registered settings pages for the Spec Kit Canvas Designer.
   category: process
   author: spec-kit-copilot

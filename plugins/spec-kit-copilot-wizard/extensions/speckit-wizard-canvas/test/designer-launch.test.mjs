@@ -96,7 +96,9 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /If the generated skill is unavailable after reload, report the concrete error and stop/);
     assert.match(sent[0].prompt, /check the full output and exit status of specify preset resolve/);
     assert.match(sent[0].prompt, /ONCE after all installations/);
-    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.2/);
+    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.3/);
+    assert.match(sent[0].prompt, /identify any page-error tabs by name and reason/);
+    assert.match(sent[0].prompt, /never claim all pages loaded or generation is ready when they have errors/);
     assert.match(sent[0].prompt, /open_canvas exactly once/);
     assert.match(sent[0].prompt, /input:\{handoffId:.*pages:\[\{name,path\}/);
     assert.match(sent[0].prompt, /plugin:spec-kit-copilot-wizard:speckit-canvas-designer/);

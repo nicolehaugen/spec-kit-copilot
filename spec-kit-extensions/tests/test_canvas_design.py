@@ -250,7 +250,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "Submit all four defaults and any additional pages",
             "report the CLI error/output and stop without opening Designer",
             "do not run a Python helper or write the provider's state files yourself",
-            "Only a successful open means Designer is ready",
+            "A successful open means the shell is available",
+            "Report any page errors shown in Designer",
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, normalized)

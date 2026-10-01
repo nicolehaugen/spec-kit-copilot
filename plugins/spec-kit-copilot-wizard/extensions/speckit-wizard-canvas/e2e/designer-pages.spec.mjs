@@ -31,6 +31,24 @@ async function openDesigner(page) {
     return shell;
 }
 
+async function openWithError(page, name) {
+    const state = await model();
+    const index = state.pages.findIndex((item) => item.page === name);
+    state.pages[index] = { page: name, title: name, order: (index + 1) * 10,
+        error: { name, path: "C:\\project\\.specify\\bad.json",
+            reason: "Invalid JSON: <b>unexpected</b>" } };
+    if (index === 0) {
+        for (const field of ["canvas.id", "canvas.displayName", "canvas.description",
+            "canvas.workflowListName", "workflowSlug.userProvided"]) {
+            delete state.constraints[field];
+            delete state.values[field];
+        }
+    }
+    const shell = await startShell({ handoffId: "test" }, state);
+    await page.goto(shell.url);
+    return shell;
+}
+
 test("Essentials renders the five registered controls; other pages and actions remain empty", async ({ page }) => {
     const shell = await openDesigner(page);
     try {
@@ -56,11 +74,65 @@ test("Essentials renders the five registered controls; other pages and actions r
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.getByRole("status")).toHaveText("Ready");
     } finally {
-        await page.close();
         await shell.close();
     }
 });
 
 test("handoff cannot serve a loading shell without validated pages", async () => {
     await expect(startShell({ handoffId: "test" })).rejects.toThrow(/validated before opening/);
+});
+
+test("failed optional page shows safe diagnostics while Essentials remains editable", async ({ page }) => {
+    const shell = await openWithError(page, "canvas-settings-artifacts");
+    try {
+        await expect(page.getByRole("status")).toHaveText("Pages need attention (1)");
+        const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
+        await id.fill("my-canvas");
+        await page.getByRole("tab", { name: "canvas-settings-artifacts (error)" }).click();
+        await expect(page.getByRole("heading", { name: "Could not load canvas-settings-artifacts" })).toBeVisible();
+        await expect(page.getByText("Resolved path: C:\\project\\.specify\\bad.json")).toBeVisible();
+        await expect(page.getByText("Reason: Invalid JSON: <b>unexpected</b>")).toBeVisible();
+        await expect(page.locator("#settings-page b")).toHaveCount(0);
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await expect(id).toHaveValue("my-canvas");
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    } finally {
+        await shell.close();
+    }
+});
+
+test("failed Essentials remains selected with no identity fields; other tabs work", async ({ page }) => {
+    const shell = await openWithError(page, "canvas-settings-setup");
+    try {
+        await expect(page.getByRole("tab", { name: "canvas-settings-setup (error)" }))
+            .toHaveAttribute("aria-selected", "true");
+        await expect(page.getByRole("heading", { name: "Could not load canvas-settings-setup" })).toBeVisible();
+        await expect(page.getByRole("textbox")).toHaveCount(0);
+        await page.getByRole("tab", { name: "Artifacts" }).click();
+        await expect(page.getByText("This template defines no fields.")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    } finally {
+        await shell.close();
+    }
+});
+
+test("failed Essentials stays selected when a custom page sorts before it", async ({ page }) => {
+    const state = await model();
+    state.pages[0] = { page: "canvas-settings-setup", title: "canvas-settings-setup", order: 10,
+        error: { name: "canvas-settings-setup", path: "C:\\project\\.specify\\missing.json",
+            reason: "resolved page file is missing" } };
+    state.pages.push({ page: "custom-settings", id: "custom-settings", title: "Custom",
+        order: 5, fields: [] });
+    state.pages.sort((a, b) => a.order - b.order);
+    const shell = await startShell({ handoffId: "test" }, state);
+    try {
+        await page.goto(shell.url);
+        await expect(page.getByRole("tab", { name: "canvas-settings-setup (error)" }))
+            .toHaveAttribute("aria-selected", "true");
+        await expect(page.getByRole("heading", { name: "Could not load canvas-settings-setup" }))
+            .toBeVisible();
+    } finally {
+        await shell.close();
+    }
 });

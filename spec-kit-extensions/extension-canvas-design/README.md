@@ -5,7 +5,7 @@ command for a compatible Copilot Canvas Designer.
 
 ## What It Does
 
-Canvas Design **0.1.2** registers four JSON page templates and the
+Canvas Design **0.1.3** registers four JSON page templates and the
 `speckit.extension-canvas-design.load-page` command. The command resolves the
 project's preset-composed pages and opens the Designer with the complete set.
 
@@ -42,7 +42,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.2/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.3/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -63,8 +63,11 @@ The [page-loading command](commands/load-page.md) collects the default template
 names and any additional names contributed by presets. It uses
 `specify preset resolve <name>` to find each project's effective page. Only
 after all paths resolve does it open the official Designer provider once with
-the complete set. Missing or invalid pages and an unavailable provider stop
-the operation before an open URL is returned.
+the complete set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
+handoffs, and an unavailable provider stop the operation before an open URL is
+returned. A resolved page whose file is missing or invalid shows an error tab
+with a path and reason; healthy pages stay usable. Opening the shell does not
+mean all pages loaded or that generation is available.
 
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.

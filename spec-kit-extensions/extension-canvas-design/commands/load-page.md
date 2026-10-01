@@ -32,7 +32,7 @@ set; they do not run a second load operation.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\setup.json
-         (top layer from: extension:extension-canvas-design v0.1.2)
+         (top layer from: extension:extension-canvas-design v0.1.3)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
@@ -50,9 +50,12 @@ set; they do not run a second load operation.
    instanceId:"designer-<handoffId>",input:{handoffId:"<handoffId>",
    pages:[{"name":"<template-name>","path":"<resolved-path>"},...]}})`.
    Submit all four defaults and any additional pages in this single call, not
-   individual pages. The provider validates the handoff and every page before
-   returning a URL. Do not substitute another provider or open if resolution
-   failed. Only a successful open means Designer is ready.
+   individual pages. The provider validates the handoff and the complete page
+   list before returning a URL. A resolved page with invalid or missing file
+   contents appears as an error tab with its path and reason; other pages remain
+   available. Do not substitute another provider or open if resolution failed.
+   A successful open means the shell is available, not that every page loaded
+   or that generation is ready. Report any page errors shown in Designer.
 
 If resolution fails before step 4, report the CLI error/output and stop without
 opening Designer. If opening fails, report the error unchanged; do not run a

@@ -11,13 +11,17 @@ Spec Kit skills, and reloads skills once after installation. The composed
 `speckit-extension-canvas-design-load-page` skill resolves every effective
 template with `specify preset resolve` before opening Designer. It opens the
 official provider once with the complete set of page names and paths.
-Preset and project overrides are honored; missing or invalid pages fail
-opening before the provider returns a URL.
+Preset and project overrides are honored. Failed CLI resolution, incomplete
+page lists, unsafe paths and invalid handoffs fail opening. A resolved page
+whose file is missing or invalid instead appears as a marked tab with its
+template name, path and reason so the user can troubleshoot with the agent.
 
 Essentials displays Canvas ID, Title, Description, Workflow header and Show
 slug field from the resolved template. Artifacts, Appearance and Result Badges
 are empty by default. The controls are temporary; Save and Generate remain
-disabled. Tab changes display the validated in-memory model without re-resolving
+disabled. Healthy pages remain editable even when another page fails. Essentials
+is selected first, including when it shows an error; in that case it supplies
+no Canvas ID or Title values. Tab changes display the in-memory model without re-resolving
 pages; there is no page-reload control or persisted page snapshot. Reopening
 with the same handoff ID reads and validates the pages again. Opening `speckit-canvas-designer`
 without input (or with `{}`) still shows an empty shell.

@@ -40,6 +40,8 @@ p { margin: 0; }
 .tab:hover { color: var(--text-color-default); background: var(--background-color-secondary); }
 .tab[aria-selected="true"] { color: var(--accent-color); background: var(--background-color-secondary);
     border-color: var(--border-color-default); }
+.tab-error, .tab-error[aria-selected="true"] { color: var(--danger-color); }
+.tab-error::before { content: "!"; font-weight: 700; margin-right: .4rem; }
 .toolbar-actions { display: flex; align-items: center; gap: .5rem; justify-self: end;
     flex-wrap: wrap; justify-content: flex-end; }
 .toolbar-actions button { min-height: 40px; padding: .5rem 1rem;
@@ -69,6 +71,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--color-focus
 .availability-note { margin-top: 2rem; }
 #page-error { color: var(--danger-color); border: 1px solid currentColor;
     border-radius: var(--radius-sm); padding: .75rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
+.page-diagnostic { border: 1px solid var(--danger-color); border-radius: var(--radius-sm);
+    background: var(--background-color-elevated); padding: 1rem; overflow-wrap: anywhere; }
+.page-diagnostic p { margin-top: .7rem; }
 @media (max-width: 700px) {
     .app-header { padding: .75rem; gap: .5rem; }
     .app-header .brand, .app-header .toolbar-actions { grid-column: 1 / -1; }
