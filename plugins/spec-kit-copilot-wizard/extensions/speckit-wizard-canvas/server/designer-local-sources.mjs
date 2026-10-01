@@ -9,7 +9,7 @@
 // parseable manifest, and a well-formed id/name/version extracted from it.
 
 import { constants } from "node:fs";
-import { open, realpath, stat } from "node:fs/promises";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 // js-yaml (deferred import, mirrors composition/preset-loader.mjs and
@@ -152,19 +152,41 @@ async function detectLocalKind(canonical) {
  * from hanging indefinitely if the path now names a FIFO — a plain `"r"`
  * open blocks until a writer attaches, which would hang the launch request
  * and tie up a libuv worker.
+ *
+ * `openFile` defaults to the real `open` and is only overridden by tests,
+ * which use it to swap the parent directory in the gap between resolving
+ * `canonical` and this function's open — mirroring the `openFile` hook in
+ * speckit-canvas-designer/handoff.mjs's `readHandoff`.
  */
-async function readBoundedManifest(manifestPath, manifest, canonical) {
+async function readBoundedManifest(manifestPath, manifest, canonical, openFile = open) {
     let handle;
     try {
-        handle = await open(manifestPath, constants.O_RDONLY
+        handle = await openFile(manifestPath, constants.O_RDONLY
             | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     } catch (error) {
         if (error.code === "ELOOP") throw new Error(`${manifest.file} in ${canonical} must not be a symlink`);
         throw new Error(`Missing ${manifest.file} in ${canonical}`);
     }
     try {
-        const fileStat = await handle.stat();
-        if (!fileStat.isFile()) {
+        // `O_NOFOLLOW` protects only the final path component
+        // (`manifestPath` itself). `canonical`, its parent directory, was
+        // resolved earlier by `resolveCanonicalPath`/`detectLocalKind`, so a
+        // TOCTOU race remains: the parent can be renamed and replaced by a
+        // symlink to a different location between that earlier resolution
+        // and this `open`, which would silently accept a different manifest
+        // under the original canonical path. Re-check the parent directory's
+        // realpath and the opened file's on-disk identity (dev/ino) against
+        // a path-based `lstat`, mirroring the handoff reader's pre/post-read
+        // identity check (speckit-canvas-designer/handoff.mjs:129-134), so a
+        // swap anywhere along the path is rejected rather than followed.
+        const [fileStat, pathStat, currentFolder] = await Promise.all([
+            handle.stat(), lstat(manifestPath), realpath(canonical),
+        ]);
+        if (currentFolder !== canonical) {
+            throw new Error(`${manifest.file} in ${canonical} escaped the expected directory`);
+        }
+        if (!fileStat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink()
+            || fileStat.dev !== pathStat.dev || fileStat.ino !== pathStat.ino) {
             throw new Error(`Missing ${manifest.file} in ${canonical}`);
         }
         if (fileStat.size > MANIFEST_SIZE_LIMIT) {
@@ -190,10 +212,10 @@ async function readBoundedManifest(manifestPath, manifest, canonical) {
  * Parse and validate the manifest for an already-known `kind` at
  * `canonical`. Resolves with `{ kind, id, name, version, path }`.
  */
-async function validateManifest(kind, canonical) {
+async function validateManifest(kind, canonical, openFile = open) {
     const manifest = MANIFEST[kind];
     const manifestPath = join(canonical, manifest.file);
-    const text = await readBoundedManifest(manifestPath, manifest, canonical);
+    const text = await readBoundedManifest(manifestPath, manifest, canonical, openFile);
     let data;
     try {
         const yaml = await getYaml();
@@ -234,13 +256,18 @@ async function validateManifest(kind, canonical) {
  * manifest, preserving every existing error message verbatim), or omitted /
  * `null` / `""` / `"auto"` to auto-detect the kind from whichever manifest
  * file (`preset.yml` or `extension.yml`) is present in the directory.
+ *
+ * `openFile` is test-only: it defaults to the real `open` and lets tests
+ * inject a parent-directory swap in the gap between resolving `canonical`
+ * and opening the manifest, to exercise the TOCTOU re-check in
+ * `readBoundedManifest`.
  */
-export async function validateLocalSource(kind, rawPath) {
+export async function validateLocalSource(kind, rawPath, openFile = open) {
     const auto = kind === undefined || kind === null || kind === "" || kind === "auto";
     if (!auto && !MANIFEST[kind]) {
         throw new Error("Local development only supports presets and extensions.");
     }
     const canonical = await resolveCanonicalPath(rawPath);
     const resolvedKind = auto ? await detectLocalKind(canonical) : kind;
-    return validateManifest(resolvedKind, canonical);
+    return validateManifest(resolvedKind, canonical, openFile);
 }

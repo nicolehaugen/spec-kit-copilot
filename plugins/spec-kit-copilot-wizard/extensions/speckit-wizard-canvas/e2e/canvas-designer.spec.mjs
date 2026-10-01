@@ -283,3 +283,47 @@ test("local sources reset on dialog close/reopen but are retained after a launch
     await expect(reopenedLocalItem).toHaveCount(1);
     await expect(reopenedLocalItem.getByRole("checkbox")).toBeChecked();
 });
+
+test("local controls and hosted launch stay disabled for the whole in-flight add request", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    const pathInput = localSection.locator("[data-designer-local-path]");
+    const addBtn = localSection.locator("[data-designer-local-add]");
+    const launchBtn = dialog.getByRole("button", { name: "Launch designer" });
+
+    // Add a first local source normally so there is an existing
+    // checkbox/Remove pair to assert stays disabled during a second,
+    // still-pending add — this is what the `inspecting` counter gates
+    // beyond just the Add button/path input.
+    await pathInput.fill(LOCAL_PRESET_PATH);
+    await addBtn.click();
+    const firstItem = localSection.locator(".designer-local-item").first();
+    await expect(firstItem).toHaveCount(1);
+
+    let releaseResponse;
+    const gate = new Promise((resolve) => { releaseResponse = resolve; });
+    await page.route("**/api/designer/local-source?*", async (route) => {
+        await gate;
+        await route.fulfill({
+            status: 400,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "A local preset with id \"copilot-sub-agents\" is already added." }),
+        });
+    });
+    await pathInput.fill(LOCAL_PRESET_PATH);
+    const addClick = addBtn.click();
+    await expect(addBtn).toBeDisabled();
+    await expect(pathInput).toBeDisabled();
+    await expect(firstItem.getByRole("checkbox")).toBeDisabled();
+    await expect(firstItem.getByRole("button", { name: "Remove" })).toBeDisabled();
+    await expect(launchBtn).toBeDisabled();
+
+    releaseResponse();
+    await addClick;
+    await expect(addBtn).toBeEnabled();
+    await expect(pathInput).toBeEnabled();
+    await expect(firstItem.getByRole("checkbox")).toBeEnabled();
+    await expect(firstItem.getByRole("button", { name: "Remove" })).toBeEnabled();
+    await expect(launchBtn).toBeEnabled();
+});

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -144,4 +144,50 @@ test("auto-detect still rejects unsupported explicit kinds and invalid paths", a
     const dir = await fixture(t);
     await assert.rejects(validateLocalSource("bundles", dir), /only supports presets and extensions/);
     await assert.rejects(validateLocalSource("auto", ""), /Enter a local directory path/);
+});
+
+test("rejects a local source whose parent directory is replaced during file open", async (t) => {
+    const dir = await fixture(t);
+    const outside = await fixture(t);
+    await writeFile(join(dir, "preset.yml"), "preset:\n  id: my-preset\n  name: My Preset\n");
+    await writeFile(join(outside, "preset.yml"), "preset:\n  id: swapped-preset\n  name: Swapped Preset\n");
+    const backup = `${dir}-original`;
+    let replaced = false;
+    try {
+        await assert.rejects(validateLocalSource("presets", dir, async (path, flags) => {
+            // Simulate a TOCTOU race: between `resolveCanonicalPath`
+            // resolving `dir` and this `open`, its directory is renamed
+            // away and replaced by a link to a different directory, so the
+            // opened file no longer lives under the originally-resolved
+            // canonical path.
+            await rename(dir, backup);
+            try {
+                await symlink(outside, dir, process.platform === "win32" ? "junction" : "dir");
+            } catch (error) {
+                await rename(backup, dir);
+                throw error;
+            }
+            replaced = true;
+            return open(path, flags);
+        }), /escaped the expected directory/);
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; race assertion skipped");
+    } finally {
+        if (replaced) {
+            await rm(dir, { recursive: true });
+            await rename(backup, dir);
+        }
+    }
+});
+
+test("rejects a different opened file even if the path still passes validation", async (t) => {
+    const dir = await fixture(t);
+    const outside = await fixture(t);
+    await writeFile(join(dir, "preset.yml"), "preset:\n  id: my-preset\n  name: My Preset\n");
+    await writeFile(join(outside, "preset.yml"), "preset:\n  id: swapped-preset\n  name: Swapped Preset\n");
+    await assert.rejects(
+        validateLocalSource("presets", dir, (_path, flags) => open(join(outside, "preset.yml"), flags)),
+        /Missing preset\.yml/,
+    );
 });

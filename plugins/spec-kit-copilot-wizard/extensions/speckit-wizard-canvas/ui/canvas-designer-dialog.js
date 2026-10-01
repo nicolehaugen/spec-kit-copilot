@@ -86,10 +86,13 @@ function updateLaunch(root) {
     // user could add/remove/toggle a local source while a launch request
     // for the *previous* checked state is in flight, racing the payload
     // `sendLaunch` already captured. Disable them for the same `processing`
-    // window as the hosted controls above, without altering hosted behavior.
+    // window as the hosted controls above, plus the shared `inspecting`
+    // counter (also used for bundle-member inspection) so an in-flight
+    // local-source Add validation disables them too, without altering
+    // hosted behavior.
     root.querySelectorAll("[data-designer-local-kind], [data-designer-local-add], [data-designer-local-path]")
         .forEach((element) => {
-            element.disabled = Boolean(processing);
+            element.disabled = Boolean(processing || inspecting);
         });
     const error = root.querySelector(".designer-error");
     error.textContent = errorMessage || (!ready ? "Wait for the catalog to load before launching." : "");
@@ -257,7 +260,7 @@ function renderLocalList(root, focusFlatIndex) {
 }
 
 async function addLocalSource(root, pathInput) {
-    if (processing) return;
+    if (processing || inspecting) return;
     const dialogSelections = selections;
     const errorEl = root.querySelector("[data-designer-local-error]");
     const addBtn = root.querySelector("[data-designer-local-add]");
@@ -271,6 +274,14 @@ async function addLocalSource(root, pathInput) {
     }
     addBtn.disabled = true;
     pathInput.disabled = true;
+    // Track this validation fetch with the same `inspecting` busy counter
+    // used for bundle-member inspection so "Launch designer" (and the
+    // hosted controls it gates) is disabled for the whole round trip, not
+    // just locally on the Add button. Without this, a user could click Add
+    // then immediately Launch before the response lands, racing the
+    // `checkedLocalSelections()` snapshot `sendLaunch` already captured.
+    inspecting += 1;
+    updateLaunch(root);
     try {
         const response = await fetch(`/api/designer/local-source?token=${encodeURIComponent(TOKEN)}`, {
             method: "POST",
@@ -301,6 +312,8 @@ async function addLocalSource(root, pathInput) {
         if (dialogSelections === selections) {
             addBtn.disabled = false;
             pathInput.disabled = false;
+            inspecting -= 1;
+            updateLaunch(root);
         }
     }
 }
