@@ -8,6 +8,7 @@
 // Validation is limited to: path well-formedness, directory existence, a
 // parseable manifest, and a well-formed id/name/version extracted from it.
 
+import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
@@ -142,12 +143,23 @@ async function detectLocalKind(canonical) {
  * appended to between the size check and the read, which would otherwise
  * let the loopback server allocate an arbitrarily large buffer despite the
  * nominal size limit.
+ *
+ * This is reachable from explicit-kind launch revalidation after a
+ * previously added manifest is replaced on disk, so the open itself must
+ * not be able to block or follow a symlink: `O_NOFOLLOW` rejects a manifest
+ * path that was swapped for a symlink (matching the handoff reader in
+ * speckit-canvas-designer/handoff.mjs), and `O_NONBLOCK` prevents `open()`
+ * from hanging indefinitely if the path now names a FIFO — a plain `"r"`
+ * open blocks until a writer attaches, which would hang the launch request
+ * and tie up a libuv worker.
  */
 async function readBoundedManifest(manifestPath, manifest, canonical) {
     let handle;
     try {
-        handle = await open(manifestPath, "r");
-    } catch {
+        handle = await open(manifestPath, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    } catch (error) {
+        if (error.code === "ELOOP") throw new Error(`${manifest.file} in ${canonical} must not be a symlink`);
         throw new Error(`Missing ${manifest.file} in ${canonical}`);
     }
     try {
