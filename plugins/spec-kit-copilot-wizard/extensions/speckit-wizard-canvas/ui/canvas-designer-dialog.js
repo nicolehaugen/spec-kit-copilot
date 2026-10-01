@@ -67,6 +67,16 @@ function updateLaunch(root) {
         .forEach((element) => {
             element.disabled = Boolean(processing || pendingInspections.has(element));
         });
+    // Local development controls (add/path/checkbox/remove) are a separate
+    // additive section that otherwise has no busy guard: without this, a
+    // user could add/remove/toggle a local source while a launch request
+    // for the *previous* checked state is in flight, racing the payload
+    // `sendLaunch` already captured. Disable them for the same `processing`
+    // window as the hosted controls above, without altering hosted behavior.
+    root.querySelectorAll("[data-designer-local-kind], [data-designer-local-add], [data-designer-local-path]")
+        .forEach((element) => {
+            element.disabled = Boolean(processing);
+        });
     const error = root.querySelector(".designer-error");
     error.textContent = errorMessage || (!ready ? "Wait for the catalog to load before launching." : "");
     error.hidden = !error.textContent;

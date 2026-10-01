@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -419,16 +421,23 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     assert.match(prompt, /specify extension add <path> --dev --force/);
     assert.match(prompt, /A local entry always takes precedence over a hosted selection or bundle member sharing the same ID/);
     // No local extension-canvas-design selection here, so the required
-    // hosted install step must NOT be told to skip itself.
-    assert.doesNotMatch(prompt, /skip this required-by-ID install/);
+    // hosted install step must use its unchanged, legacy wording.
+    assert.match(prompt, /install extension-canvas-design by ID/);
+    assert.match(prompt, /Require the installed version to be 0\.1\.3/);
+    assert.doesNotMatch(prompt, /skip the official by-ID install/);
 
     const withLocalCanvasDesignExt = buildDesignerHandoff(snapshot, empty, {
         extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
             path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
     }, randomUUID());
     const promptWithExt = buildDesignerLaunchPrompt(withLocalCanvasDesignExt);
-    assert.match(promptWithExt, /skip this required-by-ID install/);
-    assert.match(promptWithExt, /let the local development step below install it instead/);
+    // With a local core extension approved, the official by-ID install and
+    // its mandatory version-0.1.3 check are skipped entirely (not merely
+    // suffixed with a contradicting note) in favor of the local --dev
+    // --force install producing the generated skill/schema instead.
+    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.3 check entirely/);
+    assert.match(promptWithExt, /the local development step below installs and overwrites it in place with --dev --force instead/);
+    assert.doesNotMatch(promptWithExt, /install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
 });
 
 test("handleDesignerLaunch inlines validated localSelections into the handoff end-to-end", async () => {
@@ -455,4 +464,39 @@ test("handleDesignerLaunch rejects an invalid localSelections payload without di
     } });
     assert.equal(response.statusCode, 422);
     assert.equal(sent.length, 0);
+});
+
+test("handleDesignerLaunch revalidates localSelections at the final pre-dispatch checkpoint and rejects drift", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "designer-local-"));
+    await writeFile(join(dir, "preset.yml"),
+        "preset:\n  id: drift-preset\n  name: Drift Preset\n  version: 1.0.0\n");
+    const provider = { id: DESIGNER_EXTENSION_ID, source: "plugin", status: "running" };
+    const registered = { extensionId: DESIGNER_EXTENSION_ID, canvasId: "speckit-canvas-designer" };
+    const { post, sent } = fixture({
+        session: {
+            rpc: {
+                extensions: { list: async () => ({ extensions: [provider] }) },
+                canvas: {
+                    // Simulate the local directory disappearing during the
+                    // (bounded) readiness wait — i.e. between the initial
+                    // local-selections validation and the final
+                    // pre-dispatch checkpoint re-validation.
+                    list: async () => {
+                        await rm(dir, { recursive: true, force: true });
+                        return { canvases: [registered] };
+                    },
+                },
+            },
+        },
+    });
+    try {
+        const response = await post({ ...request(), localSelections: {
+            presets: [{ id: "drift-preset", path: dir }],
+        } });
+        assert.equal(response.statusCode, 409);
+        assert.match(response.body.error, /Local development sources changed before launch/);
+        assert.equal(sent.length, 0);
+    } finally {
+        await rm(dir, { recursive: true, force: true });
+    }
 });

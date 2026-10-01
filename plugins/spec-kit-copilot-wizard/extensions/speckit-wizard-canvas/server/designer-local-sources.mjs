@@ -8,7 +8,7 @@
 // Validation is limited to: path well-formedness, directory existence, a
 // parseable manifest, and a well-formed id/name/version extracted from it.
 
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 // js-yaml (deferred import, mirrors composition/preset-loader.mjs and
@@ -38,6 +38,10 @@ function getYaml() {
 }
 
 const PATH_LIMIT = 4096;
+// Manifests are small, hand-authored YAML files; cap the read so an
+// unbounded/adversarial file (e.g. a symlink to /dev/zero, or a huge
+// generated file) cannot be read into memory wholesale before parsing.
+const MANIFEST_SIZE_LIMIT = 65536;
 // Same id pattern the Designer handoff schema already uses for catalog ids
 // (handoff.mjs's PACKAGE regex), so local ids round-trip through the same
 // schema without needing a second pattern downstream.
@@ -79,11 +83,26 @@ export async function validateLocalSource(kind, rawPath) {
         throw new Error(`Directory not found: ${trimmed}`);
     }
     const manifestPath = join(canonical, manifest.file);
+    let fileStat;
+    try {
+        fileStat = await stat(manifestPath);
+    } catch {
+        throw new Error(`Missing ${manifest.file} in ${canonical}`);
+    }
+    if (!fileStat.isFile()) {
+        throw new Error(`Missing ${manifest.file} in ${canonical}`);
+    }
+    if (fileStat.size > MANIFEST_SIZE_LIMIT) {
+        throw new Error(`${manifest.file} is too large (max ${MANIFEST_SIZE_LIMIT} bytes)`);
+    }
     let text;
     try {
         text = await readFile(manifestPath, "utf8");
     } catch {
         throw new Error(`Missing ${manifest.file} in ${canonical}`);
+    }
+    if (Buffer.byteLength(text, "utf8") > MANIFEST_SIZE_LIMIT) {
+        throw new Error(`${manifest.file} is too large (max ${MANIFEST_SIZE_LIMIT} bytes)`);
     }
     let data;
     try {

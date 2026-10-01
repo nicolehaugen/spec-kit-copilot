@@ -54,6 +54,13 @@ test("rejects a directory missing its manifest file", async (t) => {
     await assert.rejects(validateLocalSource("extensions", dir), /Missing extension\.yml/);
 });
 
+test("rejects a manifest larger than the bounded read limit", async (t) => {
+    const dir = await fixture(t);
+    const oversized = `preset:\n  id: too-big\n  name: ${"x".repeat(70000)}\n`;
+    await writeFile(join(dir, "preset.yml"), oversized);
+    await assert.rejects(validateLocalSource("presets", dir), /preset\.yml is too large \(max 65536 bytes\)/);
+});
+
 test("rejects an unparsable manifest", async (t) => {
     const dir = await fixture(t);
     await writeFile(join(dir, "preset.yml"), "preset: [this is not: valid: yaml");
