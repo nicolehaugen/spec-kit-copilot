@@ -83,6 +83,11 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.deepEqual(response.body, { queued: true });
     assert.equal(sent.length, 1);
     assert.match(sent[0].prompt, /no base_branch \(the project default\)/);
+    assert.match(sent[0].prompt, /Session folder:" path in the child session context/);
+    assert.match(sent[0].prompt, /session-state ROOT and the parent of its files\/ directory/);
+    assert.match(sent[0].prompt, /Do NOT put it under <Session folder>\/files\//);
+    assert.match(sent[0].prompt, /Before any Designer open, verify the file at that exact root-relative path exists and its bytes equal HANDOFF_JSON/);
+    assert.match(sent[0].prompt, /if the session folder cannot be identified or the verification fails, stop and report the error/);
     assert.match(sent[0].prompt, /Do not edit it afterward/);
     assert.match(sent[0].prompt, /speckit-extension.*--install-allowed.*extension-canvas-design by ID/);
     assert.match(sent[0].prompt, /speckit-bundle.*speckit-preset/);
@@ -100,7 +105,7 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.doesNotMatch(sent[0].prompt, /loadPages canvas action/);
     assert.doesNotMatch(sent[0].prompt, /speckit_designer_load_pages/);
     assert.doesNotMatch(sent[0].prompt, /bootstrap\.mjs|\.github\/extensions\//);
-    assert.match(sent[0].prompt, /handoff\.json under YOUR session-state artifacts/);
+    assert.match(sent[0].prompt, /<Session folder>\/speckit-canvas-designer\/handoffs\/.*\/handoff\.json/);
     const json = sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\nEND_HANDOFF_JSON\n/)[1];
     const handoff = JSON.parse(json);
     assert.deepEqual(handoff.selections, empty);
