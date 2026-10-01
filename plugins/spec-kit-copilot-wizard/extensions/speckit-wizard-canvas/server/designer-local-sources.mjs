@@ -76,14 +76,11 @@ export function stripSurroundingQuotes(value) {
 }
 
 /**
- * Validate a user-typed absolute directory as a local preset/extension
- * source. Resolves with `{ kind, id, name, version, path }` (the canonical,
- * realpath'd directory) or throws an `Error` with an explicit, user-facing
- * message describing exactly what failed.
+ * Resolve a user-typed path to a canonical, realpath'd absolute directory.
+ * Kind-independent: shared by both the explicit-kind and auto-detect paths
+ * through `validateLocalSource`.
  */
-export async function validateLocalSource(kind, rawPath) {
-    const manifest = MANIFEST[kind];
-    if (!manifest) throw new Error("Local development only supports presets and extensions.");
+async function resolveCanonicalPath(rawPath) {
     if (typeof rawPath !== "string" || !rawPath.trim()) {
         throw new Error("Enter a local directory path.");
     }
@@ -95,12 +92,53 @@ export async function validateLocalSource(kind, rawPath) {
     if (!isAbsolute(unquoted)) {
         throw new Error("Local development paths must be absolute (e.g. C:\\path\\to\\dir or /path/to/dir).");
     }
-    let canonical;
     try {
-        canonical = await realpath(unquoted);
+        return await realpath(unquoted);
     } catch {
         throw new Error(`Directory not found: ${unquoted}`);
     }
+}
+
+/**
+ * Does `canonical` contain a given kind's manifest file (as a regular
+ * file, not a directory of the same name)? Used both to auto-detect kind
+ * and to report a clear "missing manifest" error for an explicit kind.
+ */
+async function hasManifestFile(canonical, manifest) {
+    try {
+        const fileStat = await stat(join(canonical, manifest.file));
+        return fileStat.isFile();
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Detect which kind `canonical` is by checking for `preset.yml` /
+ * `extension.yml`. The two manifests are mutually exclusive and
+ * self-identifying, so a directory with neither or both is rejected
+ * explicitly rather than guessed at.
+ */
+async function detectLocalKind(canonical) {
+    const present = [];
+    for (const [kind, manifest] of Object.entries(MANIFEST)) {
+        if (await hasManifestFile(canonical, manifest)) present.push(kind);
+    }
+    if (present.length === 0) {
+        throw new Error(`No preset.yml or extension.yml found in ${canonical}`);
+    }
+    if (present.length > 1) {
+        throw new Error(`Found both preset.yml and extension.yml in ${canonical}; a local source must be exactly one.`);
+    }
+    return present[0];
+}
+
+/**
+ * Parse and validate the manifest for an already-known `kind` at
+ * `canonical`. Resolves with `{ kind, id, name, version, path }`.
+ */
+async function validateManifest(kind, canonical) {
+    const manifest = MANIFEST[kind];
     const manifestPath = join(canonical, manifest.file);
     let fileStat;
     try {
@@ -151,4 +189,25 @@ export async function validateLocalSource(kind, rawPath) {
         version: typeof version === "string" ? version : null,
         path: canonical,
     };
+}
+
+/**
+ * Validate a user-typed absolute directory as a local preset/extension
+ * source. Resolves with `{ kind, id, name, version, path }` (the canonical,
+ * realpath'd directory) or throws an `Error` with an explicit, user-facing
+ * message describing exactly what failed.
+ *
+ * `kind` may be an explicit `"presets"` / `"extensions"` (checks only that
+ * manifest, preserving every existing error message verbatim), or omitted /
+ * `null` / `""` / `"auto"` to auto-detect the kind from whichever manifest
+ * file (`preset.yml` or `extension.yml`) is present in the directory.
+ */
+export async function validateLocalSource(kind, rawPath) {
+    const auto = kind === undefined || kind === null || kind === "" || kind === "auto";
+    if (!auto && !MANIFEST[kind]) {
+        throw new Error("Local development only supports presets and extensions.");
+    }
+    const canonical = await resolveCanonicalPath(rawPath);
+    const resolvedKind = auto ? await detectLocalKind(canonical) : kind;
+    return validateManifest(resolvedKind, canonical);
 }

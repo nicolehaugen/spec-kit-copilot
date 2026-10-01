@@ -177,15 +177,6 @@
 }
 .designer-local-body { margin-top: 8px; display: flex; flex-direction: column; gap: 16px; }
 .designer-local-desc { font-size: 12px; color: var(--text-color-muted); margin: 0; }
-.designer-local-kind { display: flex; flex-direction: column; gap: 8px; }
-.designer-local-kind-title {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: var(--text-color-muted);
-}
 .designer-local-add { display: flex; gap: 8px; }
 .designer-local-path { flex: 1; min-width: 0; }
 .designer-local-error { color: var(--text-color-danger, #cf222e); font-size: 13px; margin: 0; }

@@ -152,29 +152,22 @@ function closeDialog() {
 
 // Rendered once, as a sibling of the Presets/Extensions/Bundles tabpanels
 // (not nested inside any one of them), so there is a single "Local
-// development" section regardless of which tab is active. It covers both
-// local kinds that are supported (presets and extensions, never bundles),
-// each as its own labeled subgroup reusing the existing per-kind add/list
-// wiring and data attributes.
+// development" section regardless of which tab is active. A single path
+// input covers both local kinds that are supported (presets and
+// extensions, never bundles): the kind is auto-detected server-side from
+// whichever manifest (preset.yml / extension.yml) is present in the
+// directory, so the user never has to pick which subgroup to add it to.
 function renderLocalSection() {
-    const groups = LOCAL_KINDS.map((kind) => {
-        const label = KINDS.find(([entryKind]) => entryKind === kind)?.[1] ?? kind;
-        const singular = label.slice(0, -1).toLowerCase();
-        return `<div class="designer-local-kind" data-designer-local-section="${kind}">
-            <h4 class="designer-local-kind-title">${label}</h4>
-            <div class="designer-local-add">
-                <input type="text" class="designer-local-path" data-designer-local-path="${kind}" placeholder="Absolute path to ${singular} directory" aria-label="Local ${singular} directory path">
-                <button type="button" class="btn btn-secondary designer-local-add-btn" data-designer-local-add="${kind}">Add</button>
-            </div>
-            <p class="designer-local-error" data-designer-local-error="${kind}" role="alert" hidden></p>
-            <ul class="designer-local-list" data-designer-local-list="${kind}"></ul>
-        </div>`;
-    }).join("");
     return `<details class="designer-local" data-designer-local>
         <summary>Local development</summary>
         <div class="designer-local-body">
-            <p class="wizard-modal-desc designer-local-desc">Add uninstalled local preset or extension directories for this session. A local preset or extension takes precedence over a hosted selection with the same ID, including a bundle member.</p>
-            ${groups}
+            <p class="wizard-modal-desc designer-local-desc">Add uninstalled local preset or extension directories for this session — the kind is detected automatically from the directory's manifest file. A local preset or extension takes precedence over a hosted selection with the same ID, including a bundle member.</p>
+            <div class="designer-local-add">
+                <input type="text" class="designer-local-path" data-designer-local-path placeholder="Absolute path to a preset or extension directory" aria-label="Local preset or extension directory path">
+                <button type="button" class="btn btn-secondary designer-local-add-btn" data-designer-local-add>Add</button>
+            </div>
+            <p class="designer-local-error" data-designer-local-error role="alert" hidden></p>
+            <ul class="designer-local-list" data-designer-local-list></ul>
         </div>
     </details>`;
 }
@@ -218,34 +211,37 @@ function refreshBundleChoices(root, snapshot) {
     }
 }
 
-function renderLocalList(root, kind) {
-    const list = root.querySelector(`[data-designer-local-list="${kind}"]`);
+function renderLocalList(root) {
+    const list = root.querySelector("[data-designer-local-list]");
     if (!list) return;
-    list.innerHTML = localItems[kind].map((item, index) => `<li class="designer-local-item">
+    const rows = LOCAL_KINDS.flatMap((kind) =>
+        localItems[kind].map((item, index) => ({ kind, index, item })));
+    list.innerHTML = rows.map(({ kind, index, item }) => `<li class="designer-local-item">
             <label class="designer-choice">
                 <input type="checkbox" data-designer-local-kind="${kind}" data-designer-local-index="${index}" ${item.checked ? "checked" : ""}>
                 <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-local-path-text">${escapeHtml(item.path)}</small></span>
             </label>
+            <span class="badge source designer-source-tag">${kind === "presets" ? "Preset" : "Extension"}</span>
             <button type="button" class="btn btn-secondary designer-local-remove" data-designer-local-kind="${kind}" data-designer-local-index="${index}">Remove</button>
         </li>`).join("");
     list.querySelectorAll("input[data-designer-local-index]").forEach((input) => {
         input.addEventListener("change", () => {
-            localItems[kind][Number(input.dataset.designerLocalIndex)].checked = input.checked;
+            localItems[input.dataset.designerLocalKind][Number(input.dataset.designerLocalIndex)].checked = input.checked;
         });
     });
     list.querySelectorAll("button[data-designer-local-index]").forEach((button) => {
         button.addEventListener("click", () => {
-            localItems[kind].splice(Number(button.dataset.designerLocalIndex), 1);
-            renderLocalList(root, kind);
+            localItems[button.dataset.designerLocalKind].splice(Number(button.dataset.designerLocalIndex), 1);
+            renderLocalList(root);
         });
     });
 }
 
-async function addLocalSource(root, kind, pathInput) {
+async function addLocalSource(root, pathInput) {
     if (processing) return;
     const dialogSelections = selections;
-    const errorEl = root.querySelector(`[data-designer-local-error="${kind}"]`);
-    const addBtn = root.querySelector(`[data-designer-local-add="${kind}"]`);
+    const errorEl = root.querySelector("[data-designer-local-error]");
+    const addBtn = root.querySelector("[data-designer-local-add]");
     const path = pathInput.value.trim();
     errorEl.hidden = true;
     errorEl.textContent = "";
@@ -260,21 +256,24 @@ async function addLocalSource(root, kind, pathInput) {
         const response = await fetch(`/api/designer/local-source?token=${encodeURIComponent(TOKEN)}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-Canvas-Token": TOKEN },
-            body: JSON.stringify({ kind, path }),
+            body: JSON.stringify({ path }),
         });
         const body = await response.json().catch(() => null);
         if (dialogSelections !== selections) return;
         if (!response.ok) {
-            throw new Error(body?.error ?? `Could not add local ${kind.slice(0, -1)} (${response.status}).`);
+            throw new Error(body?.error ?? `Could not add local source (${response.status}).`);
         }
         const item = body?.item;
-        if (!item?.id || !item?.path) throw new Error("Local source response was invalid.");
+        const kind = item?.kind;
+        if (!item?.id || !item?.path || !LOCAL_KINDS.includes(kind)) {
+            throw new Error("Local source response was invalid.");
+        }
         if (localItems[kind].some((entry) => entry.id === item.id)) {
             throw new Error(`A local ${kind.slice(0, -1)} with id "${item.id}" is already added.`);
         }
         localItems[kind].push({ ...item, checked: true });
         pathInput.value = "";
-        renderLocalList(root, kind);
+        renderLocalList(root);
     } catch (error) {
         if (dialogSelections !== selections) return;
         errorEl.textContent = error.message;
@@ -366,17 +365,18 @@ export function openCanvasDesignerDialog() {
             tabs[target].focus();
         });
     });
-    for (const kind of LOCAL_KINDS) {
-        const pathInput = root.querySelector(`[data-designer-local-path="${kind}"]`);
-        const addBtn = root.querySelector(`[data-designer-local-add="${kind}"]`);
-        if (!pathInput || !addBtn) continue;
-        addBtn.addEventListener("click", () => addLocalSource(root, kind, pathInput));
-        pathInput.addEventListener("keydown", (event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            addLocalSource(root, kind, pathInput);
-        });
-        renderLocalList(root, kind);
+    {
+        const pathInput = root.querySelector("[data-designer-local-path]");
+        const addBtn = root.querySelector("[data-designer-local-add]");
+        if (pathInput && addBtn) {
+            addBtn.addEventListener("click", () => addLocalSource(root, pathInput));
+            pathInput.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                addLocalSource(root, pathInput);
+            });
+        }
+        renderLocalList(root);
     }
     root.querySelectorAll("[data-designer-kind]").forEach((input) => {
         const setupKind = input.dataset.designerKind;

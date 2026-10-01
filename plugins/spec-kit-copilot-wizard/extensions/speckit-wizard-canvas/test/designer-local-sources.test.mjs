@@ -110,3 +110,38 @@ test("rejects a manifest whose section key does not match the declared kind", as
     await writeFile(join(dir, "preset.yml"), "extension:\n  id: wrong-section\n  name: Wrong Section\n");
     await assert.rejects(validateLocalSource("presets", dir), /missing a valid preset\.id/);
 });
+
+test("auto-detects kind from whichever manifest is present when kind is omitted/null/empty/\"auto\"", async (t) => {
+    const presetDir = await fixture(t);
+    await writeFile(join(presetDir, "preset.yml"), "preset:\n  id: auto-preset\n  name: Auto Preset\n  version: 1.0.0\n");
+    for (const kindArg of [undefined, null, "", "auto"]) {
+        const result = await validateLocalSource(kindArg, presetDir);
+        assert.equal(result.kind, "presets");
+        assert.equal(result.id, "auto-preset");
+    }
+
+    const extensionDir = await fixture(t);
+    await writeFile(join(extensionDir, "extension.yml"), "extension:\n  id: auto-extension\n  name: Auto Extension\n");
+    const extResult = await validateLocalSource(undefined, extensionDir);
+    assert.equal(extResult.kind, "extensions");
+    assert.equal(extResult.id, "auto-extension");
+});
+
+test("auto-detect rejects a directory with neither manifest", async (t) => {
+    const dir = await fixture(t);
+    await assert.rejects(validateLocalSource(undefined, dir), /No preset\.yml or extension\.yml found/);
+});
+
+test("auto-detect rejects a directory with both manifests present", async (t) => {
+    const dir = await fixture(t);
+    await writeFile(join(dir, "preset.yml"), "preset:\n  id: both-preset\n  name: Both Preset\n");
+    await writeFile(join(dir, "extension.yml"), "extension:\n  id: both-extension\n  name: Both Extension\n");
+    await assert.rejects(validateLocalSource(undefined, dir),
+        /Found both preset\.yml and extension\.yml .* a local source must be exactly one/);
+});
+
+test("auto-detect still rejects unsupported explicit kinds and invalid paths", async (t) => {
+    const dir = await fixture(t);
+    await assert.rejects(validateLocalSource("bundles", dir), /only supports presets and extensions/);
+    await assert.rejects(validateLocalSource("auto", ""), /Enter a local directory path/);
+});
