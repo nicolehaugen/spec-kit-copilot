@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
-import { SAVE_REQUEST_LIMIT, saveDesignerSettings } from "./settings.mjs";
+import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, saveDesignerSettings } from "./settings.mjs";
 import { freezeGeneration } from "./generation.mjs";
 
 export function shellHtml() {
@@ -137,13 +137,13 @@ export async function startShell(handoff = null, model = null, { project, worksp
                     throw new Error("Untrusted generation request origin");
                 }
                 if (!req.headers["content-type"]?.startsWith("application/json")) {
-                    throw new Error("Expected JSON Essentials values");
+                    throw new Error("Expected JSON Designer settings");
                 }
                 const chunks = [];
                 let size = 0;
                 for await (const chunk of req) {
                     size += chunk.length;
-                    if (size > 16 * 1024) throw new Error("Generation request exceeds 16KB");
+                    if (size > SETTINGS_LIMIT) throw new Error("Generation request exceeds 256KB");
                     chunks.push(chunk);
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));

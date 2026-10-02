@@ -157,7 +157,8 @@ function buildModel(entries, schema) {
 }
 
 function validateContribution(document, name, slots, fieldOrigins) {
-    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires"];
+    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires",
+        "generatedBinding"];
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).some((key) => !keys.includes(key))
         || document.schemaVersion !== 1 || typeof document.id !== "string"
@@ -175,7 +176,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
     const field = document.field;
     if (!field || typeof field !== "object" || Array.isArray(field)
         || Object.keys(field).some((key) =>
-            !["id", "label", "description", "type", "default", "control"].includes(key))
+            !["id", "label", "description", "type", "default", "control", "maxLength"].includes(key))
         || typeof field.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
         || typeof field.label !== "string" || !field.label || field.label.length > 120
         || (field.description !== undefined
@@ -183,9 +184,28 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || !["string", "boolean"].includes(field.type)
         || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== field.type)
         || field.control !== (field.type === "boolean" ? "stock.checkbox" : "stock.text")
+        || (field.maxLength !== undefined && (field.type !== "string"
+            || !Number.isInteger(field.maxLength) || field.maxLength < 1
+            || field.maxLength > 1000))
         || (Object.hasOwn(field, "default")
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
+    }
+    const binding = document.generatedBinding;
+    if (binding !== undefined
+        && (field.type !== "string" || !binding
+            || typeof binding !== "object" || Array.isArray(binding)
+            || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
+            || binding.presentation !== "stock.readonly"
+            || (binding.section !== undefined
+                && (!binding.section || typeof binding.section !== "object"
+                    || Array.isArray(binding.section)
+                    || Object.keys(binding.section).sort().join() !== "id,title"
+                    || typeof binding.section.id !== "string"
+                    || !/^[a-z][a-z0-9.-]{0,79}$/.test(binding.section.id)
+                    || typeof binding.section.title !== "string"
+                    || !binding.section.title.trim() || binding.section.title.length > 120)))) {
+        throw new Error(`${name}: incompatible generated binding`);
     }
     if (fieldOrigins.has(field.id)) {
         throw new Error(`${name}: duplicate field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
@@ -249,6 +269,15 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     ordered.sort((a, b) => a.document.order - b.document.order
         || compare(a.sourceId.split(":").at(-1), b.sourceId.split(":").at(-1))
         || compare(a.document.id, b.document.id));
+    const sections = new Map();
+    for (const entry of ordered) {
+        const section = entry.document.generatedBinding?.section;
+        if (!section) continue;
+        if (sections.has(section.id) && sections.get(section.id) !== section.title) {
+            throw new Error(`${entry.name}: conflicting generated section ${section.id}`);
+        }
+        sections.set(section.id, section.title);
+    }
     return { loaded, ordered };
 }
 
@@ -361,7 +390,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
                 const { control: _control, ...field } = document.field;
                 page.fields.push(field);
                 model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
-                    : { type: field.type, ...(field.type === "string" ? { maxLength: 1000 } : {}) };
+                    : { type: field.type, ...(field.type === "string"
+                        ? { maxLength: field.maxLength ?? 1000 } : {}) };
                 model.values[field.id] = field.type === "boolean" ? (field.default ?? false) : "";
             }
         }
