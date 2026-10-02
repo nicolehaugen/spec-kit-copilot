@@ -24,6 +24,8 @@
 // job, exposed via the wizard's HTTP surface (see server /api/inference/*).
 
 import { dirname, isAbsolute, join, relative } from "node:path";
+import { artifactPath } from "../artifact-evidence.mjs";
+import { CORE_COMMANDS } from "../pipeline/canonical.mjs";
 import { emptyPhaseSlice } from "../canvas-runtime/wizard-phases.mjs";
 import { toPortable } from "./fs-helpers.mjs";
 import {
@@ -65,7 +67,12 @@ export async function hydrateExtensionArtifactsFromCache({ cwd, phases, slug, de
         // Only prune when we successfully enumerated installed commands
         // (installedCommandKeys is a Set). If it's null we couldn't scan,
         // so leave the entry alone.
-        if (installedCommandKeys && !installedCommandKeys.has(key)) {
+        // The same cache also contains core and preset commands. Extension
+        // enumeration cannot establish that those skills have disappeared.
+        const skill = `.github/skills/${key.slice("commands/".length).replaceAll(".", "-")}/SKILL.md`;
+        if (installedCommandKeys && !installedCommandKeys.has(key)
+            && !CORE_COMMANDS.includes(key.slice("commands/".length))
+            && !(entry?.outputEvidence && await deps.pathExists(join(cwd, skill)))) {
             prunedAny = true;
             continue;
         }
@@ -90,7 +97,8 @@ export async function hydrateExtensionArtifactsFromCache({ cwd, phases, slug, de
     }
 
     for (const [key, entry] of Object.entries(kept)) {
-        const writesTo = typeof entry?.writesTo === "string" ? entry.writesTo : null;
+        const writesTo = typeof entry?.writesTo === "string"
+            && (artifactPath(entry.writesTo) || isAbsolute(entry.writesTo)) ? entry.writesTo : null;
         const description = typeof entry?.description === "string" ? entry.description.trim() : "";
         const argsHint = typeof entry?.argsHint === "string" ? entry.argsHint.trim() : "";
         const argsWhenEmpty = typeof entry?.argsWhenEmpty === "string" ? entry.argsWhenEmpty.trim() : "";

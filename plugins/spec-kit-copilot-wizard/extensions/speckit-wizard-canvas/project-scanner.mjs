@@ -258,6 +258,9 @@ export async function scanWorkspace(workspacePath, deps) {
         preset: stateFromDisk.preset,
         currentPhase: stateFromDisk.currentPhase,
         phases,
+        reportedPhasePaths: Object.fromEntries(Object.entries(stateFromDisk.phases ?? {})
+            .filter(([, phase]) => phase?.lastRunAt && typeof phase.artifactPath === "string")
+            .map(([id, phase]) => [id, phase.artifactPath])),
         pipeline: stateFromDisk.pipeline ?? null,
         slug,
         specsDir,

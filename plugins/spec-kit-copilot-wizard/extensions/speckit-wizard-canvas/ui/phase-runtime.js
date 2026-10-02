@@ -1,6 +1,6 @@
-// Consolidated phase runtime: pipeline state, run-lock, resolver, inference, extension cards.
+// Consolidated phase runtime: pipeline state, run-lock, resolver, extension cards.
 
-import { escapeHtml, dispatchKind } from "./client.js";
+import { escapeHtml } from "./client.js";
 import {
     state,
     commands,
@@ -10,7 +10,7 @@ import {
     bareCommandId,
 } from "./state.js";
 import { popoverConfirm } from "./modals.js";
-import { wireInfoPopover } from "./composition.js";
+import { compositionProgressText, wireInfoPopover } from "./composition.js";
 import {
     canonicalDescription,
     canonicalSpine,
@@ -351,6 +351,12 @@ export function renderPipelineBanner() {
     if (!onPhasesTab) { el.hidden = true; el.innerHTML = ""; return; }
     const items = pipelineItems();
     const edited = pipelineIsEdited();
+    const refresh = compositionProgressText(state.snapshot, state.compositionRequested);
+    const refreshLabel = refresh === "Refreshing…" ? "Refreshing pipeline…"
+        : refresh === "Refresh incomplete — retry" ? "Refresh incomplete"
+            : refresh === "Up to date" ? "Up to date" : "";
+    const refreshState = refresh === "Refreshing…" ? "updating"
+        : refresh === "Refresh incomplete — retry" ? "incomplete" : "idle";
     el.hidden = false;
     // Previously a "Pipeline from <extension name>" hint rendered above
     // the chip strip when the inferred pipeline was extension-standalone.
@@ -359,10 +365,13 @@ export function renderPipelineBanner() {
     el.innerHTML = `
         <header class="panel-header">
             <div>
-                <h2 class="comp-title">
-                    Pipeline
-                    <button type="button" class="comp-info-btn" id="pipeline-info-btn" aria-label="About phases" aria-expanded="false" aria-controls="pipeline-info-popover" title="About phases">i</button>
-                </h2>
+                <div class="pipeline-heading">
+                    <h2 class="comp-title">
+                        Pipeline
+                        <button type="button" class="comp-info-btn" id="pipeline-info-btn" aria-label="About phases" aria-expanded="false" aria-controls="pipeline-info-popover" title="About phases">i</button>
+                    </h2>
+                    <span class="pipeline-refresh-status" role="status" aria-live="polite" data-progress="${refreshState}" title="${refreshState === "incomplete" ? "Retry from the Composition tab" : "Composition refresh status"}">${refreshLabel}</span>
+                </div>
                 <p class="comp-subtitle">Start from this suggested pipeline and shape it to your project by adding or removing commands below.</p>
                 <div id="pipeline-info-popover" class="comp-info-popover" role="dialog" aria-label="About phases" hidden>
                     <p>
@@ -398,64 +407,6 @@ export function renderPipelineBanner() {
     }
     el.querySelector(".pipeline-reset")?.addEventListener("click", async () => {
         await dispatchPipeline("reset");
-    });
-}
-
-
-// -------- Section: phase/inference.js --------
-
-let __TOKEN = "";
-
-export function setInferenceDeps({ TOKEN }) {
-    if (typeof TOKEN === "string") __TOKEN = TOKEN;
-}
-
-export function maybeRequestArtifactInference() {
-    const snap = state.snapshot;
-    if (!snap) return;
-    // Wait until skills have loaded at least once — dispatching before that
-    // produces a prompt the agent can't fulfill. Uses the persisted sticky
-    // flag (not the transient live diagnostic) so a background reload
-    // failure doesn't block inference for a session where skills already
-    // loaded cleanly earlier.
-    if (!snap.setup?.skillsReloaded) return;
-
-    const artifacts = snap.composition?.artifacts ?? [];
-    const phases = snap.phases ?? {};
-    const candidates = [];
-    for (const art of artifacts) {
-        if (art.kind !== "command") continue;
-        const stack = art.stack ?? [];
-        const active = stack.find((l) => l.active) ?? stack[0];
-        if (!active || active.layer !== "extension") continue;
-        const skillPath = active.sourcePath;
-        if (!skillPath) continue;
-        const phaseKey = art.id; // "commands/<full-id>"
-        // Already resolved via cache — skip. Gate on `description` (the
-        // new anchor field) so old cache entries that only carry
-        // `writesTo` re-trigger inference once, backfilling
-        // description/argsHint/argsWhenEmpty. Session-scoped signature
-        // dedupe below prevents loops when the LLM legitimately can't
-        // extract a description from a given skill.
-        if (phases[phaseKey]?.description) continue;
-        candidates.push({ commandId: art.id.replace(/^commands\//, ""), skillPath });
-    }
-    if (!candidates.length) return;
-
-    // Session-scoped dedupe: signature over the sorted skill paths so a
-    // new install re-triggers, but repeat snapshots don't.
-    const signature = candidates.map((c) => c.skillPath).sort().join("|");
-    if (state.artifactInferenceSignature === signature) return;
-    state.artifactInferenceSignature = signature;
-
-    dispatchKind("extension.inferArtifactTargets", {
-        origin: location.origin,
-        token: __TOKEN,
-        commands: candidates,
-    }).catch((err) => {
-        // Reset signature so a manual refresh can retry.
-        state.artifactInferenceSignature = null;
-        console.error(`artifact-target inference dispatch failed: ${err?.message ?? err}`);
     });
 }
 

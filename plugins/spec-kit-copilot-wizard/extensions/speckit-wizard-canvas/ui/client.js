@@ -21,6 +21,7 @@ import {
 import {
     renderComposition,
     updateCompositionRefreshButton,
+    reconcileCompositionRefresh,
 } from "./composition.js";
 import {
     renderCatalog,
@@ -30,7 +31,6 @@ import {
 import {
     observePhaseProgress,
     renderPipelineBanner,
-    maybeRequestArtifactInference,
 } from "./phase-runtime.js";
 
 // -------- Section: client.mjs --------
@@ -231,6 +231,8 @@ export function handleServerMessage(msg) {
             // undefined; the next valid broadcast or refresh will repair it.
             if (!msg.data || typeof msg.data !== "object") break;
             state.snapshot = msg.data;
+            reconcileCompositionRefresh(msg.data);
+            updateCompositionRefreshButton();
             // Forward boot progress to the overlay whenever a state
             // broadcast arrives — SSE state envelopes include boot +
             // depsError as inline fields (snapshot builder overlay).
@@ -248,9 +250,15 @@ export function handleServerMessage(msg) {
                 state.currentPhase = msg.data.currentPhase || null;
             }
             observePhaseProgress();
-            maybeRequestArtifactInference();
             resolveSnapshotWaiters();
             __render();
+            break;
+        case "composition-progress":
+            if (state.snapshot) {
+                state.snapshot.compositionRefreshing = !!msg.refreshing;
+                renderComposition();
+                renderPipelineBanner();
+            }
             break;
         case "invalidate":
             // Server-side data (e.g. artifact-targets cache) changed
@@ -285,8 +293,6 @@ export function handleServerMessage(msg) {
                     delete state.snapshot.composition.executionReports;
                 }
             }
-            state.compositionRequested = false;
-            updateCompositionRefreshButton();
             renderComposition();
             // The pipeline stepper and active phase card read from
             // composition.inferredPipeline via pipelineItems(); refresh
@@ -376,4 +382,3 @@ export function handleServerMessage(msg) {
             break;
     }
 }
-

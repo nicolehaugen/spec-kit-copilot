@@ -38,11 +38,13 @@ import {
 import {
     renderPhaseCard,
     renderGraphPhaseCard,
+    wireGraphPhaseCard,
     renderStepper,
     setPhaseCardDeps,
     setGraphPhaseCardDeps,
 } from "../ui/phase-card.js";
-import { buildExecutionReport } from "../ui/phase-contributors.js";
+import { buildExecutionReport, renderOutputRows } from "../ui/phase-contributors.js";
+import { compositionProgressText, reconcileCompositionRefresh } from "../ui/composition.js";
 import { PHASE_ORDER as RUNTIME_PHASE_ORDER } from "../canvas-runtime/wizard-phases.mjs";
 
 function makeScannerFs(files) {
@@ -87,6 +89,132 @@ function makeScannerFs(files) {
         },
     };
 }
+
+test("phase outputs link only verified files or real browse folders", () => {
+    const evidence = {
+        primaryIndex: 0,
+        candidates: [
+            { kind: "file", path: "specs/<slug>/spec.md", source: "inference" },
+            { kind: "folder", path: "specs/<slug>/checklists/", source: "inference" },
+            { kind: "file", path: "specs/<slug>/missing.md", source: "inference" },
+        ],
+    };
+    const availability = { candidates: [
+        { resolvedPath: "specs/feature/spec.md", filePath: "specs/feature/spec.md", folderPath: "specs/feature" },
+        { resolvedPath: "specs/feature/checklists/", folderPath: "specs/feature/checklists" },
+        { resolvedPath: "specs/feature/missing.md", browsePath: "specs/feature" },
+    ] };
+    const row = (label, parts) => `${label}: ${parts.join(" ")}`;
+    const rows = renderOutputRows({
+        outputEvidence: evidence, availability, defaultPath: "specs/feature/spec.md",
+        cmdName: "speckit.specify", buildRow: row,
+    });
+    assert.match(rows[0], /DEFAULT:.*data-output-path="specs\/feature\/spec\.md"/);
+    assert.match(rows[0], /\+2 more/);
+    state.expandedArtifactChains.add("speckit.specify|output|outputs");
+    try {
+        const expanded = renderOutputRows({
+            outputEvidence: evidence, availability, defaultPath: "specs/feature/spec.md",
+            cmdName: "speckit.specify", buildRow: row,
+        }).join("\n");
+        assert.match(expanded, /data-folder-path="specs\/feature\/checklists"/);
+        assert.match(expanded, /data-folder-path="specs\/feature"/);
+        assert.doesNotMatch(expanded, /data-output-path="specs\/feature\/missing\.md"/);
+    } finally {
+        state.expandedArtifactChains.delete("speckit.specify|output|outputs");
+    }
+});
+
+test("phase outputs show explicit no-file result without stale default links", () => {
+    const rows = renderOutputRows({
+        outputEvidence: { primaryIndex: null,
+            candidates: [{ kind: "none", source: "inference" }] },
+        defaultPath: "specs/old/spec.md",
+        buildRow: (_label, parts) => parts.join(" "),
+    });
+    assert.match(rows[0], /No file output/);
+    assert.doesNotMatch(rows[0], /specs\/old/);
+});
+
+test("phase card browses project root for an unresolved output directory", () => {
+    const el = { innerHTML: "", querySelector: () => null, querySelectorAll: () => [] };
+    const priorDocument = globalThis.document;
+    const priorSnapshot = state.snapshot;
+    globalThis.document = { activeElement: null, getElementById: () => null };
+    state.snapshot = {
+        pipeline: [{ id: "specify" }],
+        composition: { artifacts: [] },
+        artifactEvidence: { specify: {
+            primaryIndex: 0,
+            candidates: [{ kind: "file", path: "spec.md", root: { name: "FEATURE_DIR" } }],
+        } },
+        outputAvailability: { specify: { candidates: [{ browsePath: "" }] } },
+    };
+    try {
+        renderGraphPhaseCard(el, {
+            id: "specify", name: "Specify", commandName: "speckit.specify",
+            status: "empty", artifactPath: null, folderPath: null,
+        });
+        assert.match(el.innerHTML, /phase-cust-row-writes[\s\S]*?data-folder-path=""/);
+        assert.match(el.innerHTML, /FEATURE_DIR\/spec\.md/);
+        assert.match(el.innerHTML, /Output\(s\)[\s\S]*?data-folder-path=""/);
+        assert.doesNotMatch(el.innerHTML, /data-output-path=/);
+    } finally {
+        state.snapshot = priorSnapshot;
+        if (priorDocument === undefined) delete globalThis.document;
+        else globalThis.document = priorDocument;
+    }
+});
+
+test("phase output links open files in the viewer and browse only existing folders", async () => {
+    const listeners = [];
+    const link = (attribute, value) => ({
+        getAttribute: (key) => key === attribute ? value : null,
+        addEventListener: (_event, callback) => listeners.push(callback),
+    });
+    const opened = [];
+    const browsed = [];
+    const priorDocument = globalThis.document;
+    globalThis.document = { getElementById: () => null };
+    setGraphPhaseCardDeps({
+        postJson: async (_url, body) => { browsed.push(body.sub); },
+        openArtifactViewer: (phase) => { opened.push(phase.artifactPath); },
+    });
+    try {
+        wireGraphPhaseCard({
+            querySelector: () => null,
+            querySelectorAll: (selector) => selector === '[data-phase-action="browse-folder"]'
+                ? [link("data-folder-path", "")] : selector === "[data-output-path]"
+                    ? [link("data-output-path", "specs/feature/spec.md")] : [],
+        }, { id: "specify", commandName: "speckit.specify" });
+        for (const callback of listeners) await callback();
+        assert.deepEqual(browsed, [""]);
+        assert.deepEqual(opened, ["specs/feature/spec.md"]);
+    } finally {
+        setGraphPhaseCardDeps({ postJson: async () => {}, openArtifactViewer: () => {} });
+        if (priorDocument === undefined) delete globalThis.document;
+        else globalThis.document = priorDocument;
+    }
+});
+
+test("refresh UI waits for backend completion and shows retry on failure", () => {
+    const priorRequested = state.compositionRequested;
+    const priorId = state.compositionRefreshId;
+    try {
+        state.compositionRequested = true;
+        state.compositionRefreshId = "previous";
+        reconcileCompositionRefresh({ refreshId: "current", refreshStatus: "refreshing" });
+        assert.equal(state.compositionRequested, true);
+        assert.equal(compositionProgressText({ refreshStatus: "refreshing" }, state.compositionRequested), "Refreshing…");
+        reconcileCompositionRefresh({ refreshId: "current", refreshStatus: "incomplete" });
+        assert.equal(state.compositionRequested, false);
+        assert.equal(compositionProgressText({ refreshStatus: "incomplete" }), "Refresh incomplete — retry");
+        assert.equal(compositionProgressText({ refreshStatus: "up-to-date" }), "Up to date");
+    } finally {
+        state.compositionRequested = priorRequested;
+        state.compositionRefreshId = priorId;
+    }
+});
 
 describe("canonical", () => {
 // Tests for ui/canonical.mjs — small surface of pure predicates and a

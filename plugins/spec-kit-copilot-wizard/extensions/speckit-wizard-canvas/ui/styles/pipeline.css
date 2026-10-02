@@ -12,6 +12,9 @@
 .pipeline-banner .panel-header { margin-bottom: 0; flex-wrap: wrap; }
 .pipeline-banner .panel-header > :first-child { flex: 1 1 22rem; min-width: 0; }
 .pipeline-banner .comp-summary { margin: 0.35rem 0 0; }
+.pipeline-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 0.55rem; }
+.pipeline-refresh-status { color: var(--text-color-muted); font-size: 0.78rem; }
+.pipeline-refresh-status[data-progress="incomplete"] { color: var(--warn-color); }
 .pipeline-header {
     display: flex;
     align-items: center;

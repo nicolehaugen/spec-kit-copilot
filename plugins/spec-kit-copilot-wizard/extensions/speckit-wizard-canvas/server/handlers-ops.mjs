@@ -3,6 +3,10 @@
 // extension's canvas action.
 
 import { join } from "node:path";
+import { commandId, effectiveSource, normalizeInferredEvidence, readEvidenceCache,
+    validateCandidates, validatePrimaryIndex } from "../artifact-evidence.mjs";
+import { failOutputInference } from "../canvas-runtime/output-inference.mjs";
+import { finishRefreshPart } from "../canvas-runtime/refresh-status.mjs";
 
 import { applyPatch, writeState } from "../state/store.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
@@ -109,6 +113,10 @@ export async function handlePipelineMutation(res, body, { getState, broadcast, g
 export async function handleArtifactTargets(res, body, { broadcast, getInstance }) {
     const inst = getInstance();
     if (!inst?.workspacePath) return jsonError(res, 400, "workspace path unavailable");
+    const rejectOutput = (key, status, message) => {
+        if (inst.outputInference?.pending.has(commandId(key))) failOutputInference(inst);
+        return jsonError(res, status, message);
+    };
 
     const incoming = body?.entries;
     if (!incoming || typeof incoming !== "object") {
@@ -121,13 +129,37 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
     // optional but at least one must be present and non-empty.
     const cleaned = {};
     for (const [key, entry] of Object.entries(incoming)) {
-        if (typeof key !== "string" || !key.startsWith("commands/")) continue;
+        if (typeof key !== "string" || !/^commands\/(?:speckit\.)?[\w.-]{1,100}$/.test(key)) continue;
         const writesTo = typeof entry?.writesTo === "string" ? entry.writesTo.trim() : "";
         const description = typeof entry?.description === "string" ? entry.description.trim() : "";
         const argsHint = typeof entry?.argsHint === "string" ? entry.argsHint.trim() : "";
         const argsWhenEmpty = typeof entry?.argsWhenEmpty === "string" ? entry.argsWhenEmpty.trim() : "";
-        if (!writesTo && !description && !argsHint && !argsWhenEmpty) continue;
+        let outputEvidence;
+        if (entry?.outputEvidence !== undefined) {
+            try {
+                const current = await effectiveSource(inst.workspacePath, commandId(key));
+                if (!current || entry.outputEvidence?.fingerprint !== current.fingerprint) {
+                    return rejectOutput(key, 409, `Artifact evidence fingerprint mismatch for ${key}`);
+                }
+                const candidates = validateCandidates(entry.outputEvidence.candidates, { inference: true });
+                if (!candidates.length) return rejectOutput(key, 400, "Inference must report a result");
+                const primaryIndex = validatePrimaryIndex(entry.outputEvidence.primaryIndex, candidates);
+                if (primaryIndex === undefined) return rejectOutput(key, 400, "Inference must select a primary file or null");
+                if (candidates.some(({ kind }) => kind === "none")
+                    && candidates.some(({ kind }) => kind === "file" || kind === "folder")) {
+                    return rejectOutput(key, 400, "No-file evidence cannot include file outputs");
+                }
+                // The installed skill is authoritative, not the composition's artifact stack.
+                // Contributors are advisory only when explicitly supported by the skill.
+                outputEvidence = { fingerprint: current.fingerprint,
+                    ...normalizeInferredEvidence(candidates, primaryIndex) };
+            } catch (error) {
+                return rejectOutput(key, 400, `Invalid artifact evidence: ${error.message}`);
+            }
+        }
+        if (!writesTo && !description && !argsHint && !argsWhenEmpty && !outputEvidence) continue;
         cleaned[key] = {
+            ...(outputEvidence ? { outputEvidence } : {}),
             ...(writesTo ? { writesTo } : {}),
             ...(description ? { description } : {}),
             ...(argsHint ? { argsHint } : {}),
@@ -146,14 +178,20 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
     const cachePath = join(cacheDir, "artifact-targets.json");
 
     // Read existing cache (if any) so we merge instead of clobber.
-    let existing = { version: 1, entries: {} };
+    let existing;
     try {
-        const raw = await fsp.readFile(cachePath, "utf8");
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object" && parsed.entries && typeof parsed.entries === "object") {
-            existing = { version: parsed.version ?? 1, entries: parsed.entries, ...(parsed.notes ? { notes: parsed.notes } : {}) };
+        existing = await readEvidenceCache(inst.workspacePath);
+    } catch (error) {
+        return jsonError(res, 500, `Artifact cache was not overwritten: ${error.message}`);
+    }
+    for (const [key, entry] of Object.entries(cleaned)) {
+        const previous = existing.entries[key];
+        cleaned[key] = { ...previous, ...entry };
+        if (entry.outputEvidence && ["manual", "author"].includes(previous?.source)) {
+            cleaned[key].source = previous.source;
+            if (previous.writesTo) cleaned[key].writesTo = previous.writesTo;
         }
-    } catch { /* absent or malformed → start fresh */ }
+    }
 
     const merged = {
         ...existing,
@@ -161,12 +199,26 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
         entries: { ...existing.entries, ...cleaned },
         updatedAt: new Date().toISOString(),
     };
+    if (Buffer.byteLength(JSON.stringify(merged)) > 512 * 1024) {
+        return jsonError(res, 400, "Artifact-target cache exceeds its size limit");
+    }
 
     try {
         await fsp.mkdir(cacheDir, { recursive: true });
         await fsp.writeFile(cachePath, JSON.stringify(merged, null, 2) + "\n", "utf8");
     } catch (err) {
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
+    }
+    for (const [key, entry] of Object.entries(cleaned)) {
+        const id = commandId(key);
+        if (entry.outputEvidence && inst.outputInference?.pending.get(id) === entry.outputEvidence.fingerprint) {
+            inst.outputInference.pending.delete(id);
+        }
+    }
+    if (inst.outputInference && !inst.outputInference.pending.size) {
+        clearTimeout(inst.outputInference.timer);
+        inst.outputInference = null;
+        finishRefreshPart(inst, "outputs");
     }
 
     const added = Object.keys(cleaned).length;

@@ -92,6 +92,17 @@ The agent opens the wizard in a side panel. See
   execute — customize the commands in the pipeline, provide input to
   execute them, and view each artifact produced.
 
+Phase cards list the Markdown files and folders their commands produce,
+including multiple outputs when the installed skill identifies them. The
+default output opens in the artifact viewer when the file exists; folders
+and not-yet-created files offer a link to an existing parent folder instead.
+The **Composition** refresh button rechecks installed skills and refreshes
+the phase output evidence; catalog install/remove actions refresh it as
+part of their normal update. The refresh indicator remains active while
+pipeline or output inference is pending and reports an incomplete refresh
+if that work cannot finish. Merely opening the Phases tab does not start
+an inference turn.
+
 ## Opening the dashboard
 
 This is a **canvas extension**, so it renders in the **GitHub Copilot app**
