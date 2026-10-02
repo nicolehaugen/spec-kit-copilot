@@ -54,15 +54,19 @@ const session = await joinSession({
             properties: {
                 handoffId: handoffIdSchema,
                 pages: { type: "array", minItems: 3, maxItems: 100, items: {
-                    type: "object", additionalProperties: false, required: ["name", "path"],
-                    properties: { name: { type: "string", pattern: PAGE_NAME },
-                        path: { type: "string", minLength: 1, maxLength: 4096 } },
-                } },
-                templates: { type: "array", maxItems: 100, items: {
-                    type: "object", additionalProperties: false, required: ["name", "path", "sourceId"],
+                    type: "object", additionalProperties: false, required: ["name", "path", "kind", "strategy"],
                     properties: { name: { type: "string", pattern: PAGE_NAME },
                         path: { type: "string", minLength: 1, maxLength: 4096 },
-                        sourceId: { type: "string", minLength: 1, maxLength: 160 } },
+                        kind: { const: "designer.page" }, strategy: { const: "replace" } },
+                } },
+                templates: { type: "array", maxItems: 100, items: {
+                    type: "object", additionalProperties: false,
+                    required: ["name", "path", "sourceId", "kind", "strategy"],
+                    properties: { name: { type: "string", pattern: PAGE_NAME },
+                        path: { type: "string", minLength: 1, maxLength: 4096 },
+                        sourceId: { type: "string", minLength: 1, maxLength: 160 },
+                        kind: { type: "string", enum: ["designer.field", "generated.page", "generated.renderer"] },
+                        strategy: { const: "replace" } },
                 } },
             },
         },

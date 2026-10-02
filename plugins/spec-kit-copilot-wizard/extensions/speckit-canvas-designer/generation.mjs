@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validateValues } from "./settings.mjs";
 
@@ -44,6 +44,26 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
+    const generatedPages = [];
+    for (const page of model.generatedPages ?? []) {
+        const definition = model.templates.find((item) => item.name === page.name
+            && item.kind === "generated.page");
+        const renderer = model.templates.find((item) => item.name === page.renderer
+            && item.kind === "generated.renderer");
+        if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
+        const assets = [];
+        for (const item of [definition, renderer]) {
+            if (item.strategy !== "replace") throw new Error(`${item.name}: generated assets must be replace-only`);
+            const bytes = await readFile(item.path);
+            if (bytes.length > 32 * 1024 || await realpath(item.path) !== item.path
+                || createHash("sha256").update(bytes).digest("hex") !== item.hash) {
+                throw new Error(`${item.name}: generated asset changed since Designer opened; reopen Designer`);
+            }
+            assets.push({ name: item.name, kind: item.kind, sourceId: item.sourceId,
+                hash: item.hash, content: bytes.toString("base64") });
+        }
+        generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
+    }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const checkout = await realpath(project);
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -66,6 +86,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         values: { ...essentials,
             ...Object.fromEntries(generatedFields.map(({ id }) => [id, values[id]])) },
         ...(generatedFields.length ? { generatedFields } : {}),
+        ...(generatedPages.length ? { generatedPages } : {}),
     };
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");

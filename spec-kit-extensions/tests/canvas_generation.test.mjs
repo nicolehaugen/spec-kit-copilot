@@ -232,6 +232,39 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId));
 });
 
+test("generation rejects malformed or mismatched frozen page assets before creating a target", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(path, "utf8"));
+    const definition = JSON.stringify({ schemaVersion: 1, id: "canvas-generated-overview",
+        renderer: "canvas-generated-overview-renderer", title: "Overview" });
+    const module = "export function renderPage({ root }) { root.textContent = 'Overview'; }";
+    const asset = (name, kind, content) => ({ name, kind, sourceId: "copilot-generated-page-test",
+        hash: createHash("sha256").update(content).digest("hex"),
+        content: Buffer.from(content).toString("base64") });
+    request.generatedPages = [{ id: "canvas-generated-overview", title: "Overview",
+        renderer: "canvas-generated-overview-renderer", assets: [
+            asset("canvas-generated-overview", "generated.page", definition),
+            asset("canvas-generated-overview-renderer", "generated.renderer", module),
+        ] }];
+    for (const change of [
+        (page) => { page.assets[0].hash = "0".repeat(64); },
+        (page) => { page.assets[1].kind = "script"; },
+        (page) => { page.title = "Changed"; },
+        (page) => { page.renderer = "../escape"; },
+    ]) {
+        const trial = structuredClone(request);
+        change(trial.generatedPages[0]);
+        const { integrity: _old, ...payload } = trial;
+        trial.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(trial));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen generated page assets|frozen generated page definition|Invalid frozen generated pages/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
+});
+
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
     const page = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/essentials.json", import.meta.url)));
     assert.deepEqual(page.fields.find((entry) => entry.id === "workflowSlug.userProvided"), {
