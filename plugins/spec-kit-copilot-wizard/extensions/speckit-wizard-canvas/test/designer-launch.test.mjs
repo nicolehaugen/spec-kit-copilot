@@ -116,6 +116,10 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /running specify extension add separately for each ID or path/);
     assert.match(sent[0].prompt, /running specify preset add separately for each ID or path/);
     assert.match(sent[0].prompt, /composition warning.*is a failure even with exit code 0/);
+    assert.match(sent[0].prompt, /verify ALL handoff\.workflow\.installed presets and extensions/);
+    assert.match(sent[0].prompt, /Verify runtime bundles separately with bundle list --json \(bundle_id and version only\)/);
+    assert.match(sent[0].prompt, /bundle IDs have no enabled state or priority and do not appear in preset\/extension lists/);
+    assert.doesNotMatch(sent[0].prompt, /verify ALL handoff\.workflow\.installed IDs, versions, enabled states/);
     assert.match(sent[0].prompt, /confirm it includes any page and template names registered by the installed Canvas Design presets/);
     assert.match(sent[0].prompt, /speckit-extension-canvas-design-load-page/);
     assert.match(sent[0].prompt, /Invoke the generated, preset-composed speckit-extension-canvas-design-load-page skill with handoffId/);

@@ -13,6 +13,25 @@ const templateRoot = new URL("../../../../../spec-kit-extensions/extension-canva
 const extensionRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 const presetRoot = new URL("../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 
+function supportsSpecifyVersion(output) {
+    const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
+    if (!version) return false;
+    const major = Number(version[1]);
+    const minor = Number(version[2]);
+    const patch = Number(version[3]);
+    return major > 1 || (major === 1 && (minor > 0 || patch >= 7));
+}
+
+test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
+    for (const [version, supported] of [
+        ["0.99.99", false], ["1.0.6", false], ["1.0.7", true],
+        ["1.1.0", true], ["2.0.0", true], ["10.0.0", true],
+    ]) {
+        expect(supportsSpecifyVersion(`specify ${version}`), version).toBe(supported);
+    }
+    expect(supportsSpecifyVersion("unexpected version output")).toBe(false);
+});
+
 async function model(revision = "first") {
     const pages = [];
     for (const name of ["essentials", "artifacts", "appearance"]) {
@@ -68,7 +87,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
         return;
     }
     expect(available.status, available.stderr).toBe(0);
-    expect(available.stdout).toMatch(/specify 1\.(?:[1-9]\d*|0\.(?:[7-9]|[1-9]\d+))/);
+    expect(supportsSpecifyVersion(available.stdout), available.stdout).toBe(true);
     const workspace = await mkdtemp(join(tmpdir(), "designer-preset-e2e-"));
     const project = join(workspace, "project");
     const workflow = { selectedPhases: [] };
