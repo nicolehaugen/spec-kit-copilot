@@ -7,6 +7,39 @@ let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequ
 let viewer = null, timer, saveFailure = null, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
+function wireGeneratedPages() {
+    const root = $("generated-page");
+    if (!root) return;
+    const buttons = [...document.querySelectorAll("[data-canvas-page]")];
+    for (const button of buttons) button.addEventListener("click", async () => {
+        const id = button.dataset.canvasPage;
+        const workflow = id === "workflow";
+        root.hidden = workflow;
+        $("phase-navigation").hidden = !workflow;
+        $("phase-card").hidden = !workflow;
+        for (const candidate of buttons) {
+            if (candidate === button) candidate.setAttribute("aria-current", "page");
+            else candidate.removeAttribute("aria-current");
+        }
+        if (workflow) return;
+        const registration = [...document.querySelectorAll("[data-generated-renderer]")]
+            .find((item) => item.dataset.generatedRenderer === id);
+        try {
+            if (!registration) throw new Error(`Missing generated page ${id}`);
+            const { renderPage } = await import(`${registration.dataset.module}?token=${encodeURIComponent(token)}`);
+            if (typeof renderPage !== "function") throw new Error(`Invalid renderer for ${id}`);
+            root.replaceChildren();
+            await renderPage({ root, canvas: { id: root.dataset.canvasId,
+                displayName: root.dataset.canvasTitle }, values: JSON.parse(root.dataset.values) });
+        } catch (error) {
+            root.textContent = `Generated page could not render: ${error.message}`;
+            root.classList.add("workflow-error");
+            return;
+        }
+        root.classList.remove("workflow-error");
+    });
+}
+
 function currentTheme() {
     const explicit = document.documentElement.getAttribute("data-theme");
     if (explicit === "dark" || explicit === "light") return explicit;
@@ -444,6 +477,7 @@ document.addEventListener("click", (event) => {
 });
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 wireThemeToggle();
+wireGeneratedPages();
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {

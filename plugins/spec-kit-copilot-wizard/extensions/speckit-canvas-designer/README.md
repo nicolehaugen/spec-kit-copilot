@@ -16,7 +16,8 @@ identity, version and priority remain reproducible. The child reloads skills
 once after installation. The composed
 `speckit-extension-canvas-design-load-page` skill resolves every effective
 template with `specify preset resolve` before opening Designer. It opens the
-official provider once with the complete set of page names and paths.
+official provider once with the complete typed inventory of page names,
+paths, asset kinds and replacement strategies.
 Preset and project overrides are honored. Failed CLI resolution, incomplete
 page lists, unsafe paths and invalid handoffs fail opening. A resolved page
 whose file is missing or invalid instead appears as a marked tab with its
@@ -36,7 +37,11 @@ beside the handoff in the Designer session artifacts (never to the page template
 reopening the same handoff restores them when its resolved pages are unchanged.
 Preset-registered stock text and checkbox fields render in their declared
 Designer page slot and are saved alongside built-in values. Custom control
-adapters and generated use of contributed settings are not implemented yet.
+adapters remain deferred. A separately registered generated-host page definition
+and replace-only renderer add a page only to the generated app, not Designer's
+tabs. The provider verifies the executable Specify template stack (and rejects
+native script registrations), validates the page/renderer pair, and freezes
+their bytes for packaging without the originating preset.
 Save rejects stale revisions and invalid values, and reports failures without
 discarding edits. Generate freezes valid Essentials values and dispatches the
 installed Canvas Design generate command to create a new source-owned

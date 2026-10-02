@@ -5,4 +5,4 @@
 
 ## Additional Canvas Design templates
 
-- `canvas-contribution-pr1-test`
+- `canvas-contribution-pr1-test` — `designer.field`, `replace`
