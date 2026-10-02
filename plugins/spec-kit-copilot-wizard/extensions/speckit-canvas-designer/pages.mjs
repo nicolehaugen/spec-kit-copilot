@@ -6,7 +6,7 @@ import { fingerprint } from "./handoff.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
 const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
-    "canvas-settings-appearance", "canvas-settings-results"];
+    "canvas-settings-appearance"];
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
@@ -201,7 +201,7 @@ export async function loadResolvedDesignerPages(handoff, project, input) {
         return { name: item.name, path };
     });
     if (REQUIRED_PAGES.some((name) => !names.has(name))) {
-        throw new Error("Designer load must include all four Canvas Design pages");
+        throw new Error("Designer load must include all three Canvas Design pages");
     }
     const entries = [];
     let size = 0;

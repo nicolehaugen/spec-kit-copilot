@@ -6,8 +6,9 @@ by the **Specify CLI** (`specify extension add`), not by the Copilot plugin
 marketplace. Their `catalog.json` and `extension.yml` manifests live here;
 Copilot canvas providers remain under `plugins/`.
 
-- [Canvas Design](extension-canvas-design/README.md) registers JSON settings pages for
-  a compatible Canvas Designer provider. It does not ship that provider or
+- [Canvas Design](extension-canvas-design/README.md) registers JSON settings
+  pages and an Essentials-driven workflow canvas generation command for a
+  compatible Canvas Designer provider. It does not ship that provider or
   register a Copilot marketplace entry.
 
 ## Installation
@@ -29,8 +30,8 @@ Each extension is versioned independently in its `extension.yml`. Update the
 manifest, catalog entry, and package README version together.
 Package IDs, directory names, and ZIP names use `extension-<name>`.
 Tags use `<extension-id>-vX.Y.Z`, matching the preset version suffix, and release
-titles use `<extension-id> vX.Y.Z`. For example, version `0.1.3` of
-`extension-canvas-design` is tagged `extension-canvas-design-v0.1.3` and ships
+titles use `<extension-id> vX.Y.Z`. For example, version `0.1.4` of
+`extension-canvas-design` is tagged `extension-canvas-design-v0.1.4` and ships
 `extension-canvas-design.zip`. Standard filenames such as `extension.yml` and
 `README.md` are unchanged. The discovery tag `canvas-design` is independent of
 the package ID and remains unchanged.
@@ -41,7 +42,7 @@ To publish an extension from the GitHub Actions UI after merging those updates:
 2. Select **Release Extension Trigger**, then **Run workflow**.
 3. Leave **Use workflow from** set to **main**, enter the extension's directory
    name under `spec-kit-extensions/` (for example, `extension-canvas-design`), and enter
-   its manifest version (for example, `0.1.3`; an optional `v` prefix is accepted).
+   its manifest version (for example, `0.1.4`; an optional `v` prefix is accepted).
 4. Click **Run workflow** and monitor its packaging and release jobs.
 
 The manual trigger appears after this workflow is merged into your fork's

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     checkDesignerProvider, DESIGNER_EXTENSION_ID, enableDesignerProvider,
-    validateDesignerSelections, validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
+    normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
+    readInstalledWorkflowInventory, validateDesignerSelections,
+    validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
 
@@ -52,6 +54,7 @@ function fixture(overrides = {}) {
         log: async (message, level) => { errors.push({ message, level }); },
         getInstance: () => inst,
         getState: async () => current,
+        getInstalledWorkflow: async () => empty,
         registerSse() {}, broadcast() {},
         ...overrides,
         session: { ...session, ...overrides.session },
@@ -99,8 +102,9 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /Session folder:" path in the child session context/);
     assert.match(sent[0].prompt, /session-state ROOT and the parent of its files\/ directory/);
     assert.match(sent[0].prompt, /Do NOT put it under <Session folder>\/files\//);
-    assert.match(sent[0].prompt, /Before any Designer open, verify the file at that exact root-relative path exists and its bytes equal HANDOFF_JSON/);
-    assert.match(sent[0].prompt, /if the session folder cannot be identified or the verification fails, stop and report the error/);
+    assert.match(sent[0].prompt, /Before any Designer open, verify the file exists at that exact root-relative path/);
+    assert.match(sent[0].prompt, /if the session folder cannot be identified or the file is missing, stop and report the error/);
+    assert.doesNotMatch(sent[0].prompt, /bytes equal HANDOFF_JSON/);
     assert.match(sent[0].prompt, /Do not edit it afterward/);
     assert.match(sent[0].prompt, /speckit-extension.*--install-allowed.*extension-canvas-design by ID/);
     assert.match(sent[0].prompt, /speckit-bundle.*speckit-preset/);
@@ -109,9 +113,13 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /If the generated skill is unavailable after reload, report the concrete error and stop/);
     assert.match(sent[0].prompt, /check the full output and exit status of specify preset resolve/);
     assert.match(sent[0].prompt, /ONCE after all installations/);
-    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.3/);
-    assert.match(sent[0].prompt, /identify any page-error tabs by name and reason/);
-    assert.match(sent[0].prompt, /never claim all pages loaded or generation is ready when they have errors/);
+    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.4/);
+    assert.deepEqual(JSON.parse(sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1])
+        .workflow.installed, { presets: [], extensions: [], bundles: [] });
+    assert.match(sent[0].prompt, /Confirm the open_canvas result has the requested canvasId, extensionId, instanceId and input\.handoffId/);
+    assert.match(sent[0].prompt, /Do not use Playwright or inspect page tabs after opening/);
+    assert.match(sent[0].prompt, /Do not claim all pages loaded or generation is ready/);
+    assert.doesNotMatch(sent[0].prompt, /identify any page-error tabs by name and reason/);
     assert.match(sent[0].prompt, /open_canvas exactly once/);
     assert.match(sent[0].prompt, /input:\{handoffId:.*pages:\[\{name,path\}/);
     assert.match(sent[0].prompt, /plugin:spec-kit-copilot-wizard:speckit-canvas-designer/);
@@ -153,6 +161,129 @@ test("selected catalog entries are validated and normalized from the server's ca
     ]) {
         assert.equal((await post(request(invalid))).statusCode, 422);
     }
+});
+
+test("outdated hosted Canvas Design requires a checked local override before dispatch", async () => {
+    const hosted = { ...catalog, extensions: [{
+        id: "extension-canvas-design", source: "copilot", tags: ["canvas-design"],
+        version: "0.1.3", downloadUrl: "https://example.org/extension-canvas-design.zip",
+    }] };
+    const selection = { ...empty, extensions: [{
+        id: "extension-canvas-design", source: "copilot", approved: true,
+    }] };
+    const noLocal = fixture({ getState: async () => ({ ...snapshot, catalog: hosted }) });
+    const response = await noLocal.post(request(selection));
+    assert.equal(response.statusCode, 422);
+    assert.equal(response.body.error,
+        "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.4. Use compatible canvas versions or add a compatible extension under Local development.");
+    assert.equal(noLocal.sent.length, 0);
+
+    const withLocal = fixture({ getState: async () => ({ ...snapshot, catalog: hosted }) });
+    assert.equal((await withLocal.post({ ...request(selection), localSelections: {
+        extensions: [{ id: "extension-canvas-design", path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
+    } })).statusCode, 202);
+    const handoff = JSON.parse(withLocal.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
+    assert.deepEqual(handoff.localSelections.extensions, [{
+        id: "extension-canvas-design", source: "local", approved: true,
+        path: LOCAL_CANVAS_DESIGN_EXT_PATH,
+    }]);
+    assert.match(withLocal.sent[0].prompt, /skip the official by-ID install/);
+    assert.match(withLocal.sent[0].prompt,
+        /do not install its hosted selection even if that selection names an older release/);
+});
+
+test("Designer handoff keeps runtime packages separate from Designer-only selections", async () => {
+    assert.deepEqual(normalizeInstalledBundles([{
+        bundle_id: "workflow-kit", version: "2.0.0",
+        installed_at: "2026-10-01T17:00:00Z", contributed_components: [],
+    }]), [{ id: "workflow-kit", version: "2.0.0" }]);
+    assert.throws(() => normalizeInstalledBundles([{ id: "workflow-kit", version: "2.0.0" }]),
+        /Invalid installed bundle identity/);
+    const installed = normalizeInstalledWorkflowInventory({
+        presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1,
+            enabled: true, source: { kind: "local" } },
+        { id: "disabled", version: "1.0.0", priority: 10, enabled: false }],
+        extensions: [{ id: "extension-writer", version: "0.3.0", priority: 5,
+            enabled: true, source: { kind: "catalog" } }],
+        bundles: [{ bundle_id: "workflow-kit", version: "2.0.0" }],
+    });
+    const runtime = fixture({ getInstalledWorkflow: async () => installed });
+    runtime.setSnapshot({ ...snapshot, composition: {
+        presets: [{ id: "copilot-sub-agents", priority: 10 }],
+        extensions: [{ id: "extension-writer", priority: 10 }],
+        bundles: [{ id: "workflow-kit", version: "2.0.0" }],
+    } });
+    const selection = { presets: [{ id: "theme", source: "copilot", approved: true }],
+        extensions: [], bundles: [] };
+    assert.equal((await runtime.post(request(selection))).statusCode, 202);
+    const handoff = JSON.parse(runtime.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
+    assert.deepEqual(handoff.workflow.installed, installed);
+    assert.match(runtime.sent[0].prompt, /--priority.*set-priority/);
+    assert.match(runtime.sent[0].prompt, /including entries not tagged canvas-design/);
+    assert.deepEqual(handoff.selections.presets.map((item) => item.id), ["theme"]);
+    const invalid = fixture();
+    invalid.setSnapshot({ ...snapshot, composition: { presets: [{ id: "unknown", version: null }],
+        extensions: [], bundles: [] } });
+    assert.equal((await invalid.post(request())).statusCode, 202);
+    assert.deepEqual(JSON.parse(invalid.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1])
+        .workflow.installed, empty);
+    assert.throws(() => validateHandoff({ ...handoff,
+        workflow: { ...handoff.workflow, installed: {
+            ...installed, presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 10 }],
+        } },
+    }, handoff.handoffId), /fingerprint mismatch/);
+});
+
+test("live CLI inventory is read from the Wizard checkout, including priorities", async () => {
+    const path = await mkdtemp(join(tmpdir(), "designer-inventory-"));
+    try {
+        await mkdir(join(path, ".specify"));
+        const calls = [];
+        const installed = await readInstalledWorkflowInventory({ workspacePath: path },
+            async (binary, args, options) => {
+                calls.push({ binary, args, cwd: options.cwd });
+                const item = args[0] === "bundle"
+                    ? [{ bundle_id: "kit", version: "2.0.0" }]
+                    : [{ id: args[0], version: "1.0.0", priority: 1, enabled: true }];
+                return { stdout: JSON.stringify(item) };
+            });
+        assert.deepEqual(calls.map(({ args }) => args), [
+            ["preset", "list", "--json"], ["extension", "list", "--json"],
+            ["bundle", "list", "--json"],
+        ]);
+        assert.ok(calls.every(({ cwd }) => cwd === path));
+        assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0", priority: 1 }]);
+        assert.deepEqual(installed.bundles, [{ id: "kit", version: "2.0.0" }]);
+        await assert.rejects(readInstalledWorkflowInventory({ workspacePath: path },
+            async () => ({ stdout: "not-json" })), /Invalid installed presets inventory/);
+    } finally {
+        await rm(path, { recursive: true, force: true });
+    }
+});
+
+test("invalid or drifting runtime priorities never dispatch a Designer launch", async () => {
+    assert.deepEqual(normalizeInstalledWorkflowInventory({
+        presets: [{ id: "preset", version: "1.0.0", priority: -2 }],
+        extensions: [], bundles: [],
+    }).presets, [{ id: "preset", version: "1.0.0", priority: -2 }]);
+    for (const bad of [
+        { id: "preset", version: "1.0.0" },
+        { id: "preset", version: "1.0.0", priority: Number.MAX_SAFE_INTEGER + 1 },
+        { id: "preset", version: "", priority: 1 },
+    ]) {
+        assert.throws(() => normalizeInstalledWorkflowInventory({
+            presets: [bad], extensions: [], bundles: [],
+        }), /identity, version or priority/);
+    }
+    let reads = 0;
+    const changed = fixture({ getInstalledWorkflow: async () => ({
+        presets: [{ id: "preset", version: "1.0.0", priority: ++reads }],
+        extensions: [], bundles: [],
+    }) });
+    const response = await changed.post(request());
+    assert.equal(response.statusCode, 409);
+    assert.match(response.body.error, /Installed workflow packages changed/);
+    assert.equal(changed.sent.length, 0);
 });
 
 test("stale, unauthenticated and unavailable requests never acknowledge launch", async () => {
@@ -348,7 +479,7 @@ test("oversized Designer handoff returns 413 without dispatching", async () => {
 });
 
 test("invalid fingerprints, oversized handoffs and unsafe IDs are rejected", async () => {
-    const handoff = buildDesignerHandoff(snapshot, empty, undefined, randomUUID());
+    const handoff = buildDesignerHandoff(snapshot, empty, undefined, empty, randomUUID());
     assert.throws(() => validateHandoff({ ...handoff, sourceFingerprint: "0".repeat(64) },
         handoff.handoffId), /fingerprint mismatch/);
     assert.throws(() => validateHandoff({ ...handoff, extra: "x".repeat(65 * 1024) },
@@ -399,7 +530,7 @@ test("validateLocalDesignerSelections rejects malformed, duplicate, mismatched o
 });
 
 test("buildDesignerLaunchPrompt is purely additive: no local-dev step or wording when localSelections is absent", () => {
-    const handoff = buildDesignerHandoff(snapshot, empty, undefined, randomUUID());
+    const handoff = buildDesignerHandoff(snapshot, empty, undefined, empty, randomUUID());
     const prompt = buildDesignerLaunchPrompt(handoff);
     assert.doesNotMatch(prompt, /localSelections/);
     assert.doesNotMatch(prompt, /local development sources/i);
@@ -413,7 +544,7 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     const localSelections = {
         presets: [{ id: "copilot-sub-agents", source: "local", approved: true, path: LOCAL_PRESET_PATH }],
     };
-    const handoff = buildDesignerHandoff(snapshot, empty, localSelections, randomUUID());
+    const handoff = buildDesignerHandoff(snapshot, empty, localSelections, empty, randomUUID());
     assert.deepEqual(handoff.localSelections, localSelections);
     const prompt = buildDesignerLaunchPrompt(handoff);
     assert.match(prompt, /specify preset add --dev <path>/);
@@ -423,19 +554,19 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     // No local extension-canvas-design selection here, so the required
     // hosted install step must use its unchanged, legacy wording.
     assert.match(prompt, /install extension-canvas-design by ID/);
-    assert.match(prompt, /Require the installed version to be 0\.1\.3/);
+    assert.match(prompt, /Require the installed version to be 0\.1\.4/);
     assert.doesNotMatch(prompt, /skip the official by-ID install/);
 
     const withLocalCanvasDesignExt = buildDesignerHandoff(snapshot, empty, {
         extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
             path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
-    }, randomUUID());
+    }, empty, randomUUID());
     const promptWithExt = buildDesignerLaunchPrompt(withLocalCanvasDesignExt);
     // With a local core extension approved, the official by-ID install and
-    // its mandatory version-0.1.3 check are skipped entirely (not merely
+    // its mandatory version-0.1.4 check are skipped entirely (not merely
     // suffixed with a contradicting note) in favor of the local --dev
     // --force install producing the generated skill/schema instead.
-    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.3 check entirely/);
+    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.4 check entirely/);
     assert.match(promptWithExt, /the local development step below installs and overwrites it in place with --dev --force instead/);
     assert.doesNotMatch(promptWithExt, /install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
 });

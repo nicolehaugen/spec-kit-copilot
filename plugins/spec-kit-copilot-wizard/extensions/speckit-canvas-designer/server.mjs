@@ -1,8 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { SAVE_REQUEST_LIMIT, saveDesignerSettings } from "./settings.mjs";
+import { freezeGeneration } from "./generation.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -30,10 +32,21 @@ const ASSETS = {
     "/ui/styles.css": ["styles.css", "text/css"],
     "/ui/app.js": ["app.js", "text/javascript"],
 };
+const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
+const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.4 or the current local source.";
 
-export async function startShell(handoff = null, model = null, workspacePath = null) {
+async function hasGenerateSkill(project) {
+    try {
+        return (await stat(join(project, ".github", "skills", GENERATE_SKILL, "SKILL.md"))).isFile();
+    } catch (error) {
+        if (error.code === "ENOENT") return false;
+        throw error;
+    }
+}
+
+export async function startShell(handoff = null, model = null, { project, workspace, session } = {}) {
     if (handoff && !model) throw new Error("Designer pages must be validated before opening");
-    if (handoff && (typeof workspacePath !== "string" || !workspacePath.trim())) {
+    if (handoff && (typeof workspace !== "string" || !workspace.trim())) {
         throw new Error("Designer session workspace is required to save settings");
     }
     const assets = handoff
@@ -41,7 +54,15 @@ export async function startShell(handoff = null, model = null, workspacePath = n
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
     const token = randomBytes(24).toString("hex");
-    const state = () => ({ ...model, handoffId: handoff?.handoffId });
+    const skillAvailable = project ? await hasGenerateSkill(project) : false;
+    const generationError = handoff?.workflow?.installed && project && !skillAvailable
+        ? GENERATE_UNAVAILABLE : null;
+    const state = () => ({ ...model, handoffId: handoff?.handoffId,
+        generationAvailable: !!handoff?.workflow?.installed && !!session?.send
+            && !!project && skillAvailable,
+        generationError });
+    let generating = false;
+    let queued = false;
     const server = createServer(async (req, res) => {
         let url;
         try {
@@ -59,7 +80,7 @@ export async function startShell(handoff = null, model = null, workspacePath = n
         }
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
-        if (handoff && workspacePath && req.method === "POST" && url.pathname === "/api/save") {
+        if (handoff && workspace && req.method === "POST" && url.pathname === "/api/save") {
             const sendError = (status, message) => {
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
                 res.end(JSON.stringify({ error: message }));
@@ -80,11 +101,11 @@ export async function startShell(handoff = null, model = null, workspacePath = n
                     chunks.push(chunk);
                 }
                 const request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-                const currentHandoff = await readHandoff(workspacePath, handoff.handoffId);
+                const currentHandoff = await readHandoff(workspace, handoff.handoffId);
                 if (currentHandoff.sourceFingerprint !== handoff.sourceFingerprint) {
                     throw new Error("Designer handoff changed; reopen before saving");
                 }
-                model = await saveDesignerSettings(workspacePath, handoff, model, request);
+                model = await saveDesignerSettings(workspace, handoff, model, request);
                 res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
                 res.end(JSON.stringify(state()));
             } catch (error) {
@@ -96,6 +117,59 @@ export async function startShell(handoff = null, model = null, workspacePath = n
                 ].includes(error.message);
                 const oversized = error.message === "Designer settings exceed the size limit";
                 sendError(conflict ? 409 : oversized ? 413 : invalid ? 422 : 500, error.message);
+            }
+            return;
+        }
+        if (handoff && req.method === "POST" && url.pathname === "/api/generate") {
+            if (!session?.send || !project || !workspace) {
+                res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ error: "Generation dispatch is unavailable" }));
+                return;
+            }
+            if (generating || queued) {
+                res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ error: "Generation is already queued for this Designer panel" }));
+                return;
+            }
+            generating = true;
+            try {
+                if (req.headers.origin && req.headers.origin !== `http://127.0.0.1:${server.address().port}`) {
+                    throw new Error("Untrusted generation request origin");
+                }
+                if (!req.headers["content-type"]?.startsWith("application/json")) {
+                    throw new Error("Expected JSON Essentials values");
+                }
+                const chunks = [];
+                let size = 0;
+                for await (const chunk of req) {
+                    size += chunk.length;
+                    if (size > 16 * 1024) throw new Error("Generation request exceeds 16KB");
+                    chunks.push(chunk);
+                }
+                const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                if (!input || typeof input !== "object" || Array.isArray(input)
+                    || Object.keys(input).some((key) => !["revision", "values"].includes(key))
+                    || input.revision !== model.revision) throw new Error("Designer settings changed; reload and retry");
+                if (!await hasGenerateSkill(project)) {
+                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
+                        .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));
+                    return;
+                }
+                const result = await freezeGeneration({ model, values: input.values, handoff, project, workspace });
+                try {
+                    await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });
+                } catch (cause) {
+                    throw new Error(`Generation dispatch failed: ${cause.message}`, { cause });
+                }
+                queued = true;
+                res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify(result));
+            } catch (error) {
+                const status = error.code ? 500 : error.message.startsWith("Generation dispatch failed:") ? 503 : 422;
+                res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ error: error.message }));
+            } finally {
+                generating = false;
             }
             return;
         }
