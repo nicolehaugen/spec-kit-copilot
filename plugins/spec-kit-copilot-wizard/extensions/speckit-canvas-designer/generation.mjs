@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { validateValues } from "./settings.mjs";
 
 const fields = ["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided"];
@@ -34,7 +35,13 @@ export function validateEssentials(model, values) {
 }
 
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
-    const essentials = validateEssentials(model, values);
+    validateValues(values, model.constraints);
+    const essentials = validateEssentials(model,
+        Object.fromEntries(fields.map((id) => [id, values[id]])));
+    const generatedFields = (model.contributions ?? [])
+        .filter((item) => item.generatedBinding?.presentation === "stock.readonly")
+        .map((item) => ({ id: item.field.id, label: item.field.label,
+            maxLength: model.constraints[item.field.id].maxLength }));
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const checkout = await realpath(project);
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -54,7 +61,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
         workflow: { selectedPhases: handoff.workflow.selectedPhases },
         installed: handoff.workflow.installed,
-        values: essentials,
+        values: { ...values, ...essentials },
+        ...(generatedFields.length ? { generatedFields } : {}),
     };
     request.integrity = createHash("sha256").update(JSON.stringify(request)).digest("hex");
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,

@@ -157,7 +157,8 @@ function buildModel(entries, schema) {
 }
 
 function validateContribution(document, name, slots, fieldOrigins) {
-    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires"];
+    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires",
+        "generatedBinding"];
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).some((key) => !keys.includes(key))
         || document.schemaVersion !== 1 || typeof document.id !== "string"
@@ -175,7 +176,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
     const field = document.field;
     if (!field || typeof field !== "object" || Array.isArray(field)
         || Object.keys(field).some((key) =>
-            !["id", "label", "description", "type", "default", "control"].includes(key))
+            !["id", "label", "description", "type", "default", "control", "maxLength"].includes(key))
         || typeof field.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
         || typeof field.label !== "string" || !field.label || field.label.length > 120
         || (field.description !== undefined
@@ -183,9 +184,20 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || !["string", "boolean"].includes(field.type)
         || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== field.type)
         || field.control !== (field.type === "boolean" ? "stock.checkbox" : "stock.text")
+        || (field.maxLength !== undefined && (field.type !== "string"
+            || !Number.isInteger(field.maxLength) || field.maxLength < 1
+            || field.maxLength > 1000))
         || (Object.hasOwn(field, "default")
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
+    }
+    if (document.generatedBinding !== undefined
+        && (field.type !== "string" || !document.generatedBinding
+            || typeof document.generatedBinding !== "object"
+            || Array.isArray(document.generatedBinding)
+            || Object.keys(document.generatedBinding).sort().join() !== "presentation"
+            || document.generatedBinding.presentation !== "stock.readonly")) {
+        throw new Error(`${name}: incompatible generated binding`);
     }
     if (fieldOrigins.has(field.id)) {
         throw new Error(`${name}: duplicate field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
@@ -361,7 +373,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
                 const { control: _control, ...field } = document.field;
                 page.fields.push(field);
                 model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
-                    : { type: field.type, ...(field.type === "string" ? { maxLength: 1000 } : {}) };
+                    : { type: field.type, ...(field.type === "string"
+                        ? { maxLength: field.maxLength ?? 1000 } : {}) };
                 model.values[field.id] = field.type === "boolean" ? (field.default ?? false) : "";
             }
         }

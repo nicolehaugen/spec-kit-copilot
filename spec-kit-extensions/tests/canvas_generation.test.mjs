@@ -72,6 +72,31 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.throws(() => validateEssentials(model, missingToggle), /workflowSlug.userProvided/);
 });
 
+test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, ".github", "extensions", "my-workflow");
+    const { readConfig } = await import(pathToFileURL(join(target, "server.mjs")).href);
+    const defaultConfig = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
+    assert.equal(defaultConfig.readOnlyFields, undefined);
+    assert.doesNotMatch(renderHtml(defaultConfig), /Configured fields|data-field-id/);
+    const config = { ...defaultConfig,
+        readOnlyFields: [{ id: "billing.costCode", label: "Cost code", value: '<script>"CC"</script>' }] };
+    const html = renderHtml(config);
+    assert.match(html, /data-field-id="billing.costCode">&lt;script&gt;&quot;CC&quot;&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<script>"CC"<\/script>|<input[^>]+billing\.costCode/);
+    for (const invalid of [
+        [{ id: "billing.costCode", label: "Cost code", value: 123 }],
+        [{ id: "billing.costCode", label: "Cost code", value: "x".repeat(1001) }],
+        [{ id: "billing.costCode", label: "Cost code", value: "one" },
+            { id: "billing.costCode", label: "Duplicate", value: "two" }],
+    ]) {
+        await writeFile(join(target, "canvas-config.json"),
+            JSON.stringify({ ...defaultConfig, readOnlyFields: invalid }));
+        assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    }
+});
+
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     const result = await materialize(project, workspace, handoff.handoffId, prepared.requestId);

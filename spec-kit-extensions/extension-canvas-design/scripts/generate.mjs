@@ -19,7 +19,7 @@ function within(root, path) {
 }
 
 function configuration(request) {
-    const { canvas, workflow, values, installed } = request;
+    const { canvas, workflow, values, installed, generatedFields } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
@@ -34,6 +34,19 @@ function configuration(request) {
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
         throw new Error("Invalid frozen canvas identity, workflow or runtime inventory");
     }
+    if (generatedFields !== undefined
+        && (!Array.isArray(generatedFields) || generatedFields.length > 100
+            || new Set(generatedFields.map((field) => field?.id)).size !== generatedFields.length
+            || generatedFields.some((field) => !field || typeof field !== "object"
+                || Array.isArray(field) || Object.keys(field).sort().join() !== "id,label,maxLength"
+                || typeof field.id !== "string"
+                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
+                || typeof field.label !== "string" || !field.label || field.label.length > 120
+                || !Number.isInteger(field.maxLength) || field.maxLength < 1
+                || field.maxLength > 1000 || typeof values[field.id] !== "string"
+                || values[field.id].length > field.maxLength))) {
+        throw new Error("Invalid frozen generated fields");
+    }
     const outputs = {
         constitution: ".specify/memory/constitution.md", specify: "specs/<slug>/spec.md",
         clarify: "specs/<slug>/spec.md", plan: "specs/<slug>/plan.md",
@@ -41,6 +54,8 @@ function configuration(request) {
         checklist: "specs/<slug>/checklists/<name>.md",
     };
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"],
+        ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label }) =>
+            ({ id, label, value: values[id] })) } : {}),
         phases: workflow.selectedPhases,
         phaseOutputs: Object.fromEntries(workflow.selectedPhases.map((phase) => {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
