@@ -1,12 +1,36 @@
+import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test, expect } from "@playwright/test";
 import { startShell } from "../../speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../speckit-canvas-designer/handoff.mjs";
+import { loadResolvedDesignerPages } from "../../speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../speckit-canvas-designer/settings.mjs";
 
 const templateRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/pages/", import.meta.url);
+const extensionRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
+const presetRoot = new URL("../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
+
+function supportsSpecifyVersion(output) {
+    const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
+    if (!version) return false;
+    const major = Number(version[1]);
+    const minor = Number(version[2]);
+    const patch = Number(version[3]);
+    return major > 1 || (major === 1 && (minor > 0 || patch >= 7));
+}
+
+test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
+    for (const [version, supported] of [
+        ["0.99.99", false], ["1.0.6", false], ["1.0.7", true],
+        ["1.1.0", true], ["2.0.0", true], ["10.0.0", true],
+    ]) {
+        expect(supportsSpecifyVersion(`specify ${version}`), version).toBe(supported);
+    }
+    expect(supportsSpecifyVersion("unexpected version output")).toBe(false);
+});
 
 async function model(revision = "first") {
     const pages = [];
@@ -55,6 +79,90 @@ async function openDesigner(page) {
     await page.goto(shell.url);
     return shell;
 }
+
+test("isolated test preset resolves through Specify and renders its contributed stock field", async ({ page }) => {
+    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
+    if (available.error?.code === "ENOENT") {
+        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
+        return;
+    }
+    expect(available.status, available.stderr).toBe(0);
+    expect(supportsSpecifyVersion(available.stdout), available.stdout).toBe(true);
+    const workspace = await mkdtemp(join(tmpdir(), "designer-preset-e2e-"));
+    const project = join(workspace, "project");
+    const workflow = { selectedPhases: [] };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "preset-test", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    let shell, reopened;
+    try {
+        await mkdir(project);
+        const run = (...args) => {
+            const result = spawnSync("specify", args, {
+                cwd: project, encoding: "utf8", timeout: 120000,
+                env: { ...process.env, COLUMNS: "500" },
+            });
+            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
+            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
+            return result.stdout;
+        };
+        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
+            "--integration", "copilot", "--integration-options=--skills",
+            "--script", process.platform === "win32" ? "ps" : "sh");
+        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        run("preset", "add", "--dev", fileURLToPath(presetRoot));
+        const command = await readFile(join(project, ".github", "skills",
+            "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
+        expect(command).toContain("## Additional Designer pages\n\n- `canvas-settings-pr1-test`");
+        expect(command).toContain("## Additional Canvas Design templates\n\n- `canvas-contribution-pr1-test`");
+        const resolve = (name) => {
+            const output = run("preset", "resolve", name);
+            const line = output.split(/\r?\n/).map((item) => item.trim())
+                .find((item) => item.startsWith(`${name}: `));
+            expect(line, output).toBeDefined();
+            expect(output).not.toMatch(/not found|composition warning/i);
+            const source = output.match(/\(top layer from: (\S+) v[\d.]+\)/);
+            expect(source, output).not.toBeNull();
+            return { name, path: line.slice(name.length + 2), sourceId: source[1] };
+        };
+        const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
+            "canvas-settings-appearance", "canvas-settings-pr1-test"]
+            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name); return entry; });
+        const templates = [resolve("canvas-contribution-pr1-test")];
+        expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
+        const folder = handoffDirectory(workspace, handoff.handoffId);
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
+        expect(resolved.pages.map((item) => item.title)).toEqual(
+            ["Essentials", "Artifacts", "Appearance", "Test settings"]);
+        expect(resolved.pages[3].fields.map((item) => item.id)).toEqual(["pr1Test.label"]);
+        expect(resolved.values["pr1Test.label"]).toBe("");
+        shell = await startShell(handoff,
+            await loadDesignerSettings(workspace, handoff, resolved), { project, workspace });
+        await page.goto(shell.url);
+        await page.getByRole("tab", { name: "Test settings" }).click();
+        const field = page.getByRole("textbox", { name: "Test label" });
+        await expect(field).toBeVisible();
+        await field.fill("Visible from preset");
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("pr1-test");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("PR1 test");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+        const saved = await loadDesignerSettings(workspace, handoff,
+            await loadResolvedDesignerPages(handoff, project, pages, templates));
+        expect(saved.values["pr1Test.label"]).toBe("Visible from preset");
+        reopened = await startShell(handoff, saved, { project, workspace });
+        await page.goto(reopened.url);
+        await page.getByRole("tab", { name: "Test settings" }).click();
+        await expect(page.getByRole("textbox", { name: "Test label" })).toHaveValue("Visible from preset");
+    } finally {
+        await reopened?.close();
+        await shell?.close();
+        await rm(workspace, { recursive: true, force: true });
+    }
+});
 
 async function openWithError(page, name) {
     const state = await model();
@@ -128,7 +236,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.4 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.5 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();

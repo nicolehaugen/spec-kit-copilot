@@ -58,6 +58,12 @@ const session = await joinSession({
                     properties: { name: { type: "string", pattern: PAGE_NAME },
                         path: { type: "string", minLength: 1, maxLength: 4096 } },
                 } },
+                templates: { type: "array", maxItems: 100, items: {
+                    type: "object", additionalProperties: false, required: ["name", "path", "sourceId"],
+                    properties: { name: { type: "string", pattern: PAGE_NAME },
+                        path: { type: "string", minLength: 1, maxLength: 4096 },
+                        sourceId: { type: "string", minLength: 1, maxLength: 160 } },
+                } },
             },
         },
         open: async (ctx) => {
@@ -72,9 +78,10 @@ const session = await joinSession({
                     servers.delete(ctx.instanceId);
                     await previous.close();
                 }
-                const { handoffId, pages } = ctx.input ?? {};
-                if ((handoffId === undefined) !== (pages === undefined)) {
-                    throw new Error("Designer handoff and complete page list are required together");
+                const { handoffId, pages, templates } = ctx.input ?? {};
+                if ((handoffId === undefined) !== (pages === undefined)
+                    || (handoffId === undefined) !== (templates === undefined)) {
+                    throw new Error("Designer handoff and complete resolved inventory are required together");
                 }
                 let handoff = null;
                 let model = null;
@@ -86,7 +93,7 @@ const session = await joinSession({
                     }
                     const project = await getCheckout();
                     await assertPageCommand(project);
-                    model = await loadResolvedDesignerPages(handoff, project, pages);
+                    model = await loadResolvedDesignerPages(handoff, project, pages, templates);
                     model = await loadDesignerSettings(session.workspacePath, handoff, model);
                 }
                 const next = await startShell(handoff, model, handoff
