@@ -1094,7 +1094,14 @@ test("generated-only page validates typed assets, freezes winners and packages w
     const load = (assets) => loadResolvedDesignerPages(handoff, project, entries, assets, registration);
     const defaults = await loadResolvedDesignerPages(handoff, project, entries);
     assert.deepEqual(defaults.generatedPages, []);
-    const loaded = await load(pages);
+    let loaded;
+    const executable = process.execPath;
+    try {
+        process.execPath = join(workspace, "copilot.exe");
+        loaded = await load(pages);
+    } finally {
+        process.execPath = executable;
+    }
     assert.deepEqual(loaded.pages.map((page) => page.page), defaults.pages.map((page) => page.page));
     assert.deepEqual(loaded.values, defaults.values);
     assert.deepEqual(loaded.generatedPages, [{ name: definition.id, ...definition }]);

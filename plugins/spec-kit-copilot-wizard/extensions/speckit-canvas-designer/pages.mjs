@@ -322,7 +322,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (/(?:^|\n)\s*import\s|(?:^|\n)\s*export\s.*\sfrom\s|(?:^|\W)import\s*\(/m.test(document)) {
                     throw new Error(`${item.name}: generated renderer must be self-contained; module imports are not packaged`);
                 }
-                const check = spawnSync(process.execPath, ["--input-type=module", "-e",
+                const check = spawnSync("node", ["--input-type=module", "-e",
                     "const m=await import(process.argv[1]);if(typeof m.renderPage!=='function')throw new Error('Missing renderPage export')",
                     pathToFileURL(path).href], { encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
                 if (check.error || check.status !== 0) {
