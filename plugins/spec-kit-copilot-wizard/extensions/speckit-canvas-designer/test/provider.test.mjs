@@ -15,6 +15,7 @@ import { assertPageCommand, loadResolvedDesignerPages } from "../pages.mjs";
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
 } from "../settings.mjs";
+import { freezeGeneration } from "../generation.mjs";
 
 const ID = "designer_1";
 
@@ -754,6 +755,89 @@ test("registered contributions validate slots, sources, references and determini
         document: { schemaVersion: 1, id, host: "designer", slot: "essentials.options",
             order: 30, field: { id: fieldId, label: id, type: "string", control: "stock.text" },
             ...overrides },
+    });
+
+    await t.test("Billing fixture resolves only registered pages, and both slots save and freeze the same field", async (t) => {
+        const workspace = await fixture(t);
+        const { project, entries } = await projectFixture(t, workspace);
+        const handoff = validHandoff();
+        handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+        handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+        await saveHandoff(workspace, handoff);
+        const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-billing-canvas-test/",
+            import.meta.url));
+        const directory = join(project, ".specify", "presets");
+        await mkdir(directory);
+        const pagePath = join(directory, "billing-page.json");
+        const contributionPath = join(directory, "billing-contribution.json");
+        await copyFile(join(preset, "pages", "billing.json"), pagePath);
+        const pageEntry = { name: "canvas-settings-billing", path: pagePath };
+        const contribution = JSON.parse(await readFile(join(preset, "contributions", "billing.json")));
+        const templates = [{ name: "canvas-contributions-billing", path: contributionPath,
+            sourceId: "copilot-billing-canvas-test" }];
+        const { materialize } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs",
+            import.meta.url));
+        for (const slot of ["billing.options", "essentials.options"]) {
+            await t.test(slot, async () => {
+                await writeFile(contributionPath, JSON.stringify({ ...contribution, slot }));
+                const unregistered = await loadResolvedDesignerPages(handoff, project, entries);
+                assert.equal(unregistered.pages.length, 3);
+                assert.equal(unregistered.values["billing.costCode"], undefined);
+                const model = await loadResolvedDesignerPages(handoff, project,
+                    [...entries, pageEntry], templates);
+                assert.deepEqual(model.pages.map((page) => page.title),
+                    ["Essentials", "Artifacts", "Appearance", "Billing"]);
+                assert.equal(model.pages.find((page) => page.fields.some((field) =>
+                    field.id === "billing.costCode")).page,
+                slot === "essentials.options" ? "canvas-settings-setup" : "canvas-settings-billing");
+                assert.equal(model.constraints["billing.costCode"].maxLength, 64);
+                const values = { ...model.values, "canvas.id": `cost-${slot.split(".")[0]}`,
+                    "canvas.displayName": "Cost code test", "billing.costCode": "CC-481" };
+                const request = { modelRevision: model.revision, revision: 0, values };
+                await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+                    ...request, values: { ...values, "billing.costCode": "x".repeat(65) },
+                }), /Invalid Designer setting: billing.costCode/);
+                await assert.rejects(freezeGeneration({ model, values: {
+                    ...values, "billing.costCode": "x".repeat(65) },
+                handoff, project, workspace }), /Invalid Designer setting: billing.costCode/);
+                await assert.rejects(freezeGeneration({ model, values: {
+                    ...values, "canvas.displayName": "" },
+                handoff, project, workspace }), /canvas.displayName|Canvas ID and Title/);
+                const saved = await saveDesignerSettings(workspace, handoff, model, request);
+                assert.equal((await loadDesignerSettings(workspace, handoff, model))
+                    .values["billing.costCode"], "CC-481");
+                const prepared = await freezeGeneration({ model: saved, values: saved.values,
+                    handoff, project, workspace });
+                const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+                    "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json")));
+                assert.equal(frozen.values["billing.costCode"], "CC-481");
+                assert.deepEqual(frozen.generatedFields, [{ id: "billing.costCode",
+                    label: "Cost code", maxLength: 64 }]);
+                await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+                const config = JSON.parse(await readFile(join(project, prepared.target,
+                    "canvas-config.json"), "utf8"));
+                assert.deepEqual(config.readOnlyFields, [{ id: "billing.costCode",
+                    label: "Cost code", value: "CC-481" }]);
+            });
+            if (slot === "billing.options") {
+                const model = await loadResolvedDesignerPages(handoff, project, [...entries, pageEntry], templates);
+                await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
+                    /unknown or incompatible Designer slot billing.options/);
+                assert.equal(model.pages.length, 4);
+                await rm(join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                    "settings.json"));
+            }
+        }
+        for (const patch of [
+            { field: { ...contribution.field, maxLength: 1001 } },
+            { field: { ...contribution.field, maxLength: 0 } },
+            { generatedBinding: { presentation: "unknown" } },
+            { generatedBinding: { presentation: "stock.readonly", adapter: "foreign" } },
+        ]) {
+            await writeFile(contributionPath, JSON.stringify({ ...contribution, ...patch }));
+            await assert.rejects(loadResolvedDesignerPages(handoff, project,
+                [...entries, pageEntry], templates), /incompatible/);
+        }
     });
     const beta = make("beta", "zzz", "billing.beta");
     const alpha = make("alpha", "aaa", "billing.alpha");

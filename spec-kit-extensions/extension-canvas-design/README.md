@@ -105,8 +105,13 @@ returned. A resolved page whose file is missing or invalid shows an error tab
 with a path and reason; healthy pages stay usable. Invalid registered field
 contributions stop the open with both names on a field collision; newly
 registered stock text/checkbox fields render on their declared Designer page
-and can be saved, but custom control modules and contributed settings are not
-included in Generate yet. Opening the
+and can be saved. A registered bounded string contribution with
+`generatedBinding: {"presentation": "stock.readonly"}` also freezes its
+validated value into a built-in read-only generated display, regardless of
+which declared Designer slot holds the field. Other contributed settings and
+custom control modules are not included in Generate yet. The repository-local
+`copilot-billing-canvas-test` preset exercises this contract; its README shows
+both Billing and Essentials placements. Opening the
 shell does not mean all pages loaded or that Essentials is valid for generation.
 
 The isolated [test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
