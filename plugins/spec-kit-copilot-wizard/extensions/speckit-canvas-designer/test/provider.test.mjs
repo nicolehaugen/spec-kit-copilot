@@ -596,6 +596,10 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         method: "POST", headers: { "Content-Type": "application/json", Origin: url.origin },
         body: JSON.stringify(body),
     });
+    const wrongType = await fetch(endpoint, { method: "POST",
+        headers: { "Content-Type": "text/plain", Origin: url.origin }, body: "{}" });
+    assert.equal(wrongType.status, 422);
+    assert.equal((await wrongType.json()).error, "Expected JSON Designer settings");
     assert.equal((await post({ revision: "stale", values })).status, 422);
     assert.equal((await post({ revision: model.revision, values: {
         ...values, "canvas.id": "../outside",

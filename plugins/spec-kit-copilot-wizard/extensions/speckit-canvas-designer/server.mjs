@@ -137,7 +137,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                     throw new Error("Untrusted generation request origin");
                 }
                 if (!req.headers["content-type"]?.startsWith("application/json")) {
-                    throw new Error("Expected JSON Essentials values");
+                    throw new Error("Expected JSON Designer settings");
                 }
                 const chunks = [];
                 let size = 0;
