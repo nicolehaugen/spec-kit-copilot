@@ -211,7 +211,9 @@ addition to) the hosted registry entry:
   package install for that step; the official Canvas Designer *canvas
   provider* that ships with this plugin remains unaffected.
 - The Designer child installs the required Canvas Design base first, then
-  bundles, remaining standalone extensions (including local overrides), and
+  bundles; it verifies and, if necessary, restores the required hosted or
+  approved local base before remaining standalone extensions and presets.
+  It installs remaining standalone extensions (including local overrides), then
   standalone presets (including local overrides). This ensures bundled and
   standalone preset command additions have the base available. It stops on
   composition warnings even if Specify exits

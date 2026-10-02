@@ -111,6 +111,13 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /install the required Canvas Design base before any bundle or preset/);
     assert.ok(sent[0].prompt.indexOf("Install extension-canvas-design by ID")
         < sent[0].prompt.indexOf("Then install approved bundles"));
+    assert.ok(sent[0].prompt.indexOf("Immediately after bundles, inspect extension list --json")
+        > sent[0].prompt.indexOf("Then install approved bundles"));
+    assert.ok(sent[0].prompt.indexOf("Immediately after bundles, inspect extension list --json")
+        < sent[0].prompt.indexOf("Install ALL remaining standalone extensions"));
+    assert.match(sent[0].prompt, /even when it is absent from handoff\.workflow\.installed/);
+    assert.match(sent[0].prompt, /Require extension-canvas-design to remain at hosted version 0\.1\.5 from the registered approved catalog/);
+    assert.match(sent[0].prompt, /If a bundle replaced it, reinstall extension-canvas-design by ID with --force.*verify its version and source again/);
     assert.ok(sent[0].prompt.indexOf("remaining standalone extensions")
         < sent[0].prompt.indexOf("Only after ALL extensions"));
     assert.match(sent[0].prompt, /running specify extension add separately for each ID or path/);
@@ -584,6 +591,12 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     assert.match(promptWithExt, /verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force/);
     assert.ok(promptWithExt.indexOf("then install it now with specify extension add <path> --dev --force")
         < promptWithExt.indexOf("Then install approved bundles"));
+    assert.match(promptWithExt, /Verify extension-canvas-design still comes from the approved local path; if a bundle replaced it, restore that local override with specify extension add <path> --dev --force and verify its source again/);
+    assert.ok(promptWithExt.indexOf("Then install approved bundles")
+        < promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path"));
+    assert.ok(promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path")
+        < promptWithExt.indexOf("Only after ALL extensions"));
+    assert.doesNotMatch(promptWithExt, /Require extension-canvas-design to remain at hosted version 0\.1\.5/);
     assert.doesNotMatch(promptWithExt, /Install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
 });
 
