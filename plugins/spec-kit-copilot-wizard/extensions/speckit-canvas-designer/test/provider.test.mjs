@@ -725,11 +725,19 @@ test("reads the complete effective page set from the child checkout without a sn
         title: "Extra", order: 5, enabled: false, fields: [] }));
     assert.equal((await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra }])).pages.length, 3);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }],
+        [{ name: "extra-settings", path: extra, sourceId: "aaa" }]),
+    /Invalid or duplicate Canvas Design template: extra-settings/);
     await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
         title: "Extra", order: "invalid", fields: [] }));
     const invalidOrder = await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra }]);
     assert.match(invalidOrder.pages.at(-1).error.reason, /expected integer/);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }],
+        [{ name: "extra-settings", path: extra, sourceId: "aaa" }]),
+    /Invalid or duplicate Canvas Design template: extra-settings/);
     await writeFile(extra, " ".repeat(256 * 1024 + 1));
     const oversized = await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra }]);

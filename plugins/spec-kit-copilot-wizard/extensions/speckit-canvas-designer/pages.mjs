@@ -193,11 +193,11 @@ function validateContribution(document, name, slots, fieldOrigins) {
     fieldOrigins.set(field.id, name);
 }
 
-async function loadTemplates(templates, pageEntries, fieldOrigins, specify, remainingBytes) {
+async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes) {
     if (!Array.isArray(templates) || templates.length > 100) {
         throw new Error("Invalid Canvas Design template inventory");
     }
-    const names = new Set(pageEntries.map((entry) => entry.page));
+    const names = new Set(pageNames);
     const loaded = [];
     const slots = new Map();
     for (const page of pageEntries.filter((entry) => !entry.error)) {
@@ -350,7 +350,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
     const { loaded, ordered } = await loadTemplates(
-        templates, model.pages, fieldOrigins, specify, MODEL_LIMIT - size - 8192);
+        templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
     for (const page of model.pages) {
