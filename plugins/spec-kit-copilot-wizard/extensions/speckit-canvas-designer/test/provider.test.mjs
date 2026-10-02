@@ -809,30 +809,25 @@ test("registered contributions validate slots, sources, references and determini
         /duplicate Designer slot essentials.options also defined by canvas-settings-setup/);
     delete duplicateSlot.slots;
     await writeFile(entries[1].path, JSON.stringify(duplicateSlot));
-    const controlPath = join(directory, "control.json");
-    await writeFile(controlPath, JSON.stringify({ schemaVersion: 1, id: "new-control",
-        kind: "control", designerAdapter: "canvas-control-new" }));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
-        [...paths, { name: "canvas-control-definition", path: controlPath, sourceId: "aaa" }]),
-    /canvas-control-definition: invalid Canvas Design contribution \(only stock-field JSON is supported in this milestone\)/);
     const modulePath = join(directory, "new-control.mjs");
     await writeFile(modulePath, "export const control = () => null;\n");
     const moduleEntry = { name: "canvas-control-new", path: modulePath, sourceId: "aaa" };
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
-        [...paths, moduleEntry]),
-    /canvas-control-new: only stock-field contribution JSON templates are supported in this milestone/);
+    const withModule = await loadResolvedDesignerPages(handoff, project, entries,
+        [...paths, moduleEntry]);
+    assert.notEqual(withModule.revision, model.revision);
+    assert.deepEqual(withModule.templates.map((item) => item.name),
+        [...paths.map((item) => item.name), moduleEntry.name]);
     await writeFile(modulePath, Buffer.from([0xff]));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
-        [...paths, moduleEntry]), /only stock-field contribution JSON templates are supported/);
+        [...paths, moduleEntry]), /Invalid Designer UTF-8/);
+    await writeFile(modulePath, "export const control = () => null;\n");
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
+        [...paths, { ...moduleEntry, path: join(directory, "missing.mjs") }]), /ENOENT/);
     const oversized = [];
     for (let i = 0; i < 9; i++) {
-        const path = join(directory, `bulk-${i}.json`);
-        await writeFile(path, JSON.stringify({ schemaVersion: 1, id: `bulk-${i}`,
-            host: "designer", slot: "essentials.options", order: i,
-            field: { id: `billing.bulk${i}`, label: "Bulk", type: "string",
-                control: "stock.text" },
-            requires: Array(8500).fill("canvas-contribution-alpha") }));
-        oversized.push({ name: `canvas-bulk-${i}`, path, sourceId: "aaa" });
+        const path = join(directory, `module-${i}.mjs`);
+        await writeFile(path, "a".repeat(245 * 1024));
+        oversized.push({ name: `canvas-module-${i}`, path, sourceId: "aaa" });
     }
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, oversized),
         /template inventory exceeds its size limit/);
