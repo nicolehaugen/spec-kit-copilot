@@ -26,7 +26,7 @@ function inside(root, path) {
     return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-async function boundedJson(path, root, limit, openFile = open, parse = true) {
+async function boundedJson(path, root, limit, openFile = open) {
     const target = await realpath(path);
     if (!inside(root, target)) throw new Error(`Designer file escapes its allowed directory: ${path}`);
     const file = await openFile(target, constants.O_RDONLY
@@ -59,10 +59,10 @@ async function boundedJson(path, root, limit, openFile = open, parse = true) {
         let document;
         try {
             const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-            if (parse) document = JSON.parse(text);
+            document = JSON.parse(text);
         }
         catch (error) {
-            throw new PageContentError(`Invalid Designer ${parse ? "JSON" : "UTF-8"} in ${path}: ${error.message}`);
+            throw new PageContentError(`Invalid Designer JSON in ${path}: ${error.message}`);
         }
         return { document, path: target, size: length,
             hash: createHash("sha256").update(bytes).digest("hex") };
@@ -166,7 +166,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || document.order < -100000 || document.order > 100000
         || typeof document.slot !== "string"
         || !Array.isArray(document.requires ?? [])) {
-        throw new Error(`${name}: invalid Canvas Design contribution`);
+        throw new Error(`${name}: invalid Canvas Design contribution (only stock-field JSON is supported in this milestone)`);
     }
     const slot = slots.get(document.slot)?.slot;
     if (!slot || !slot.accepts.includes("field")) {
@@ -223,19 +223,19 @@ async function loadTemplates(templates, pageEntries, fieldOrigins, specify, rema
         names.add(item.name);
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
-        if (!inside(specify, path) || ![".json", ".mjs"].includes(extension)) {
-            throw new Error(`${item.name}: templates must be .json or .mjs files inside .specify`);
+        if (!inside(specify, path)) {
+            throw new Error(`${item.name}: templates must be inside .specify`);
         }
-        const { document, hash, size: bytes } = await boundedJson(
-            path, specify, FILE_LIMIT, open, extension === ".json");
+        if (extension !== ".json") {
+            throw new Error(`${item.name}: only stock-field contribution JSON templates are supported in this milestone; executable and other asset templates are not yet supported`);
+        }
+        const { document, hash, size: bytes } = await boundedJson(path, specify, FILE_LIMIT);
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
-        if (extension === ".json") {
-            validateContribution(document, item.name, slots, fieldOrigins);
-            if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
-            ids.add(document.id);
-        }
-        loaded.push({ ...item, path, hash, ...(document === undefined ? {} : { document }) });
+        validateContribution(document, item.name, slots, fieldOrigins);
+        if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
+        ids.add(document.id);
+        loaded.push({ ...item, path, hash, document });
     }
     for (const entry of loaded) {
         for (const name of entry.document?.requires ?? []) {
