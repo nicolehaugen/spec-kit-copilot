@@ -106,22 +106,30 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /if the session folder cannot be identified or the file is missing, stop and report the error/);
     assert.doesNotMatch(sent[0].prompt, /bytes equal HANDOFF_JSON/);
     assert.match(sent[0].prompt, /Do not edit it afterward/);
-    assert.match(sent[0].prompt, /speckit-extension.*--install-allowed.*extension-canvas-design by ID/);
-    assert.match(sent[0].prompt, /speckit-bundle.*speckit-preset/);
+    assert.match(sent[0].prompt, /speckit-extension.*--install-allowed/);
+    assert.match(sent[0].prompt, /Install extension-canvas-design by ID/);
+    assert.match(sent[0].prompt, /Install approved bundles .* with speckit-bundle first/);
+    assert.ok(sent[0].prompt.indexOf("install ALL standalone extensions")
+        < sent[0].prompt.indexOf("Only after ALL extensions"));
+    assert.match(sent[0].prompt, /running specify extension add separately for each ID or path/);
+    assert.match(sent[0].prompt, /running specify preset add separately for each ID or path/);
+    assert.match(sent[0].prompt, /composition warning.*is a failure even with exit code 0/);
+    assert.match(sent[0].prompt, /confirm it includes any page and template names registered by the installed Canvas Design presets/);
     assert.match(sent[0].prompt, /speckit-extension-canvas-design-load-page/);
     assert.match(sent[0].prompt, /Invoke the generated, preset-composed speckit-extension-canvas-design-load-page skill with handoffId/);
     assert.match(sent[0].prompt, /If the generated skill is unavailable after reload, report the concrete error and stop/);
-    assert.match(sent[0].prompt, /check the full output and exit status of specify preset resolve/);
+    assert.match(sent[0].prompt, /Follow its entire composed command for the complete named-template resolution/);
     assert.match(sent[0].prompt, /ONCE after all installations/);
-    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.4/);
+    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.5/);
     assert.deepEqual(JSON.parse(sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1])
         .workflow.installed, { presets: [], extensions: [], bundles: [] });
-    assert.match(sent[0].prompt, /Confirm the open_canvas result has the requested canvasId, extensionId, instanceId and input\.handoffId/);
+    assert.match(sent[0].prompt, /Confirm the open_canvas result has the requested canvasId:.*input\.handoffId/);
     assert.match(sent[0].prompt, /Do not use Playwright or inspect page tabs after opening/);
     assert.match(sent[0].prompt, /Do not claim all pages loaded or generation is ready/);
     assert.doesNotMatch(sent[0].prompt, /identify any page-error tabs by name and reason/);
-    assert.match(sent[0].prompt, /open_canvas exactly once/);
-    assert.match(sent[0].prompt, /input:\{handoffId:.*pages:\[\{name,path\}/);
+    assert.match(sent[0].prompt, /single official Designer open/);
+    assert.match(sent[0].prompt, /The composed skill owns the names to resolve and the open_canvas input/);
+    assert.doesNotMatch(sent[0].prompt, /input:\{handoffId:.*pages:\[\{name,path\}/);
     assert.match(sent[0].prompt, /plugin:spec-kit-copilot-wizard:speckit-canvas-designer/);
     assert.doesNotMatch(sent[0].prompt, /extensions_manage|list_canvas_capabilities|extensions_reload/);
     assert.match(sent[0].prompt, /canvasId:"speckit-canvas-designer", extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"/);
@@ -175,7 +183,7 @@ test("outdated hosted Canvas Design requires a checked local override before dis
     const response = await noLocal.post(request(selection));
     assert.equal(response.statusCode, 422);
     assert.equal(response.body.error,
-        "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.4. Use compatible canvas versions or add a compatible extension under Local development.");
+        "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.5. Use compatible canvas versions or add a compatible extension under Local development.");
     assert.equal(noLocal.sent.length, 0);
 
     const withLocal = fixture({ getState: async () => ({ ...snapshot, catalog: hosted }) });
@@ -535,7 +543,7 @@ test("buildDesignerLaunchPrompt is purely additive: no local-dev step or wording
     assert.doesNotMatch(prompt, /localSelections/);
     assert.doesNotMatch(prompt, /local development sources/i);
     assert.doesNotMatch(prompt, /specify preset add --dev/);
-    assert.doesNotMatch(prompt, /specify extension add .* --dev/);
+    assert.doesNotMatch(prompt, /specify extension add <path> --dev/);
     assert.doesNotMatch(prompt, /skip this required-by-ID install/);
     assert.equal(handoff.localSelections, undefined);
 });
@@ -553,8 +561,8 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     assert.match(prompt, /A local entry always takes precedence over a hosted selection or bundle member sharing the same ID/);
     // No local extension-canvas-design selection here, so the required
     // hosted install step must use its unchanged, legacy wording.
-    assert.match(prompt, /install extension-canvas-design by ID/);
-    assert.match(prompt, /Require the installed version to be 0\.1\.4/);
+    assert.match(prompt, /Install extension-canvas-design by ID/);
+    assert.match(prompt, /Require the installed version to be 0\.1\.5/);
     assert.doesNotMatch(prompt, /skip the official by-ID install/);
 
     const withLocalCanvasDesignExt = buildDesignerHandoff(snapshot, empty, {
@@ -563,12 +571,31 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     }, empty, randomUUID());
     const promptWithExt = buildDesignerLaunchPrompt(withLocalCanvasDesignExt);
     // With a local core extension approved, the official by-ID install and
-    // its mandatory version-0.1.4 check are skipped entirely (not merely
+    // its mandatory version-0.1.5 check are skipped entirely (not merely
     // suffixed with a contradicting note) in favor of the local --dev
     // --force install producing the generated skill/schema instead.
-    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.4 check entirely/);
-    assert.match(promptWithExt, /the local development step below installs and overwrites it in place with --dev --force instead/);
-    assert.doesNotMatch(promptWithExt, /install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
+    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.5 check entirely/);
+    assert.match(promptWithExt, /the local extension step below installs and overwrites it in place with --dev --force instead/);
+    assert.doesNotMatch(promptWithExt, /Install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
+});
+
+test("Designer launch installs every extension before standalone presets, including local overrides", () => {
+    const handoff = buildDesignerHandoff(snapshot, empty, {
+        presets: [{ id: "copilot-sub-agents", source: "local", approved: true,
+            path: LOCAL_PRESET_PATH }],
+        extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
+            path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
+    }, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [], bundles: [] }, randomUUID());
+    const prompt = buildDesignerLaunchPrompt(handoff);
+    const extensionStep = prompt.indexOf("install ALL standalone extensions");
+    const localExtension = prompt.indexOf("For each approved entry in localSelections.extensions");
+    const presetStep = prompt.indexOf("Only after ALL extensions");
+    const localPreset = prompt.indexOf("For each approved entry in localSelections.presets");
+    assert.ok(extensionStep > 0 && extensionStep < localExtension
+        && localExtension < presetStep && presetStep < localPreset);
+    assert.match(prompt, /including 'no base command layer'/);
+    assert.match(prompt, /If any registration is missing, stop and report incomplete command composition/);
 });
 
 test("handleDesignerLaunch inlines validated localSelections into the handoff end-to-end", async () => {
