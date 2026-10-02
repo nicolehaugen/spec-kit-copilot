@@ -98,6 +98,42 @@ test("Designer-only values are validated but excluded from frozen and generated 
     assert.equal(Object.hasOwn(setup.values, "designer.note"), false);
 });
 
+test("100 bounded generated fields materialize when the frozen request exceeds 128KB", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const constraints = { ...model.constraints };
+    const contributions = [];
+    const supplied = { ...values };
+    for (let index = 0; index < 100; index++) {
+        const id = `billing.code${index}`;
+        constraints[id] = { type: "string", maxLength: 1000 };
+        supplied[id] = "x".repeat(1000);
+        contributions.push({ field: { id, label: "L".repeat(120) },
+            generatedBinding: { presentation: "stock.readonly",
+                section: { id: `billing-${index}`, title: "S".repeat(120) } } });
+    }
+    const prepared = await freezeGeneration({ model: { ...model, constraints, contributions },
+        values: supplied, handoff, project, workspace });
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const raw = await readFile(path);
+    assert.ok(raw.length > 128 * 1024);
+    assert.ok(raw.length <= 512 * 1024);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-config.json"), "utf8"));
+    assert.equal(config.readOnlyFields.length, 100);
+    assert.equal(config.readOnlyFields[99].value, "x".repeat(1000));
+});
+
+test("the generator rejects a frozen request above its shared size limit", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    await writeFile(path, "x".repeat(512 * 1024 + 1));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Generation request is too large/);
+});
+
 test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);

@@ -12,6 +12,7 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const REQUEST_LIMIT = 512 * 1024;
 
 function within(root, path) {
     const part = relative(root, path);
@@ -98,7 +99,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
         throw new Error("Frozen generation request must be a regular session file");
     }
     const raw = await readFile(requestPath);
-    if (raw.length > 128 * 1024) throw new Error("Generation request is too large");
+    if (raw.length > REQUEST_LIMIT) throw new Error("Generation request is too large");
     const request = JSON.parse(raw.toString("utf8"));
     const { integrity, ...payload } = request;
     const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
