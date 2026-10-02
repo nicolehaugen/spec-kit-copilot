@@ -11,6 +11,19 @@ const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url),
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
+function readOnlySections(fields) {
+    const groups = new Map();
+    const ungrouped = Symbol("ungrouped");
+    for (const field of fields ?? []) {
+        const key = field.section?.id ?? ungrouped;
+        if (!groups.has(key)) groups.set(key, { title: field.section?.title ?? "Configured fields", fields: [] });
+        groups.get(key).fields.push(field);
+    }
+    return [...groups.values()].map(({ title, fields: entries }) =>
+        `<section class="phase-card" aria-label="${escapeHtml(title)}"><h2>${escapeHtml(title)}</h2><dl class="phase-facts">${entries.map(({ id, label, value }) =>
+            `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}">${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
+}
+
 export function readConfig() {
     const config = JSON.parse(readFileSync(new URL("./canvas-config.json", import.meta.url), "utf8"));
     if (config.schemaVersion !== 1 || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(config.canvas?.id)
@@ -23,11 +36,20 @@ export function readConfig() {
             && (!Array.isArray(config.readOnlyFields) || config.readOnlyFields.length > 100
                 || new Set(config.readOnlyFields.map((field) => field?.id)).size !== config.readOnlyFields.length
                 || config.readOnlyFields.some((field) => !field || typeof field !== "object"
-                    || Array.isArray(field) || Object.keys(field).sort().join() !== "id,label,value"
+                    || Array.isArray(field)
+                    || Object.keys(field).some((key) => !["id", "label", "value", "section"].includes(key))
                     || typeof field.id !== "string"
                     || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
                     || typeof field.label !== "string" || !field.label || field.label.length > 120
-                    || typeof field.value !== "string" || field.value.length > 1000)))
+                    || typeof field.value !== "string" || field.value.length > 1000
+                    || (field.section !== undefined
+                        && (!field.section || typeof field.section !== "object"
+                            || Array.isArray(field.section)
+                            || Object.keys(field.section).sort().join() !== "id,title"
+                            || typeof field.section.id !== "string"
+                            || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
+                            || typeof field.section.title !== "string"
+                            || !field.section.title.trim() || field.section.title.length > 120)))))
         || !config.phaseOutputs || typeof config.phaseOutputs !== "object" || Array.isArray(config.phaseOutputs)
         || Object.values(config.phaseOutputs).some((output) => !output
             || typeof output.expectsArtifact !== "boolean"
@@ -37,6 +59,14 @@ export function readConfig() {
             !Array.isArray(config.installed[kind]) || config.installed[kind].some((item) =>
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
         throw new Error("Invalid generated canvas configuration");
+    }
+    const sections = new Map();
+    for (const { section } of config.readOnlyFields ?? []) {
+        if (!section) continue;
+        if (sections.has(section.id) && sections.get(section.id) !== section.title) {
+            throw new Error(`Conflicting generated canvas section: ${section.id}`);
+        }
+        sections.set(section.id, section.title);
     }
     phaseContract(config);
     return config;
@@ -109,8 +139,7 @@ export function renderHtml(config, token = "") {
         <div id="workflow-empty" class="instance-list" hidden><button id="create-first-workflow" class="instance-select empty-workflow" type="button"><span class="empty-workflow-mark" aria-hidden="true">+</span><span class="instance-select-main"><strong>No workflows yet</strong><span class="muted">Create a workflow to see it here.</span></span><span class="empty-workflow-action" aria-hidden="true">Create workflow &#8594;</span></button></div>
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
-    ${config.readOnlyFields?.length ? `<section class="phase-card" aria-label="Configured fields"><h2>Configured fields</h2><dl class="phase-facts">${config.readOnlyFields.map(({ id, label, value }) =>
-        `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}">${escapeHtml(value)}</dd>`).join("")}</dl></section>` : ""}
+    ${readOnlySections(config.readOnlyFields)}
     ${hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
         <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
         <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>

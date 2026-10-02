@@ -72,6 +72,32 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.throws(() => validateEssentials(model, missingToggle), /workflowSlug.userProvided/);
 });
 
+test("Designer-only values are validated but excluded from frozen and generated files", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const contributedModel = { ...model,
+        constraints: { ...model.constraints,
+            "billing.costCode": { type: "string", maxLength: 64 },
+            "designer.note": { type: "string", maxLength: 80 } },
+        contributions: [{ field: { id: "billing.costCode", label: "Cost code" },
+            generatedBinding: { presentation: "stock.readonly",
+                section: { id: "billing", title: "Billing" } } }] };
+    const supplied = { ...values, "billing.costCode": "CC-481", "designer.note": "Designer only" };
+    await assert.rejects(freezeGeneration({ model: contributedModel,
+        values: { ...supplied, "designer.note": "x".repeat(81) },
+        handoff, project, workspace }), /Invalid Designer setting: designer.note/);
+    const prepared = await freezeGeneration({ model: contributedModel, values: supplied,
+        handoff, project, workspace });
+    const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.equal(frozen.values["billing.costCode"], "CC-481");
+    assert.equal(Object.hasOwn(frozen.values, "designer.note"), false);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const setup = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-setup.json"), "utf8"));
+    assert.equal(setup.values["billing.costCode"], "CC-481");
+    assert.equal(Object.hasOwn(setup.values, "designer.note"), false);
+});
+
 test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
@@ -85,15 +111,33 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
     const html = renderHtml(config);
     assert.match(html, /data-field-id="billing.costCode">&lt;script&gt;&quot;CC&quot;&lt;\/script&gt;/);
     assert.doesNotMatch(html, /<script>"CC"<\/script>|<input[^>]+billing\.costCode/);
+    const grouped = renderHtml({ ...defaultConfig, readOnlyFields: [
+        { id: "billing.costCode", label: "Cost code", value: "CC-481",
+            section: { id: "billing", title: "Billing" } },
+        { id: "billing.other", label: "Other code", value: "CC-482",
+            section: { id: "billing", title: "Billing" } },
+        { id: "finance.code", label: "Finance code", value: "CC-483",
+            section: { id: "finance", title: "Billing" } },
+        { id: "note", label: "Note", value: "Untitled" },
+    ] });
+    assert.equal((grouped.match(/<h2>Billing<\/h2>/g) ?? []).length, 2);
+    assert.equal((grouped.match(/<h2>Configured fields<\/h2>/g) ?? []).length, 1);
+    assert.match(grouped, /<h2>Billing<\/h2><dl[^>]*>[\s\S]*?billing\.costCode[\s\S]*?billing\.other[\s\S]*?<\/dl>/);
     for (const invalid of [
         [{ id: "billing.costCode", label: "Cost code", value: 123 }],
         [{ id: "billing.costCode", label: "Cost code", value: "x".repeat(1001) }],
         [{ id: "billing.costCode", label: "Cost code", value: "one" },
             { id: "billing.costCode", label: "Duplicate", value: "two" }],
+        [{ id: "billing.costCode", label: "Cost code", value: "one",
+            section: { id: "billing", title: "" } }],
+        [{ id: "billing.costCode", label: "Cost code", value: "one",
+            section: { id: "billing", title: "Billing" } },
+        { id: "billing.other", label: "Other code", value: "two",
+            section: { id: "billing", title: "Finance" } }],
     ]) {
         await writeFile(join(target, "canvas-config.json"),
             JSON.stringify({ ...defaultConfig, readOnlyFields: invalid }));
-        assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+        assert.throws(() => readConfig(), /Invalid generated canvas configuration|Conflicting generated canvas section/);
     }
 });
 

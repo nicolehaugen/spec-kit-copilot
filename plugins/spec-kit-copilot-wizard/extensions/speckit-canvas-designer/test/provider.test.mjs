@@ -820,12 +820,14 @@ test("registered contributions validate slots, sources, references and determini
                     "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json")));
                 assert.equal(frozen.values["billing.costCode"], "CC-481");
                 assert.deepEqual(frozen.generatedFields, [{ id: "billing.costCode",
-                    label: "Cost code", maxLength: 64 }]);
+                    label: "Cost code", maxLength: 64,
+                    section: { id: "billing", title: "Billing" } }]);
                 await materialize(project, workspace, handoff.handoffId, prepared.requestId);
                 const config = JSON.parse(await readFile(join(project, prepared.target,
                     "canvas-config.json"), "utf8"));
                 assert.deepEqual(config.readOnlyFields, [{ id: "billing.costCode",
-                    label: "Cost code", value: "CC-481" }]);
+                    label: "Cost code", value: "CC-481",
+                    section: { id: "billing", title: "Billing" } }]);
             });
             if (slot === "billing.options") {
                 const model = await loadResolvedDesignerPages(handoff, project, [...entries, pageEntry], templates);
@@ -841,11 +843,35 @@ test("registered contributions validate slots, sources, references and determini
             { field: { ...contribution.field, maxLength: 0 } },
             { generatedBinding: { presentation: "unknown" } },
             { generatedBinding: { presentation: "stock.readonly", adapter: "foreign" } },
+            { generatedBinding: { presentation: "stock.readonly",
+                section: { id: "", title: "Billing" } } },
+            { generatedBinding: { presentation: "stock.readonly",
+                section: { id: "billing", title: " " } } },
+            { generatedBinding: { presentation: "stock.readonly",
+                section: { id: "billing", title: "Billing", extra: true } } },
         ]) {
             await writeFile(contributionPath, JSON.stringify({ ...contribution, ...patch }));
             await assert.rejects(loadResolvedDesignerPages(handoff, project,
                 [...entries, pageEntry], templates), /incompatible/);
         }
+        await writeFile(contributionPath, JSON.stringify(contribution));
+        const secondPath = join(directory, "second.json");
+        const second = { ...contribution, id: "billing-second",
+            field: { ...contribution.field, id: "billing.second" },
+            generatedBinding: { presentation: "stock.readonly",
+                section: { id: "other-billing", title: "Billing" } } };
+        await writeFile(secondPath, JSON.stringify(second));
+        const secondEntry = { name: "canvas-contributions-second", path: secondPath,
+            sourceId: "copilot-billing-canvas-test" };
+        const sameTitle = await loadResolvedDesignerPages(handoff, project,
+            [...entries, pageEntry], [...templates, secondEntry]);
+        assert.deepEqual(sameTitle.contributions.map((item) => item.generatedBinding.section.title),
+            ["Billing", "Billing"]);
+        await writeFile(secondPath, JSON.stringify({ ...second, generatedBinding: {
+            presentation: "stock.readonly", section: { id: "billing", title: "Other title" },
+        } }));
+        await assert.rejects(loadResolvedDesignerPages(handoff, project,
+            [...entries, pageEntry], [...templates, secondEntry]), /conflicting generated section billing/);
     });
     const beta = make("beta", "zzz", "billing.beta");
     const alpha = make("alpha", "aaa", "billing.alpha");

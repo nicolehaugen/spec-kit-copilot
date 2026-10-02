@@ -222,11 +222,13 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
             ["Essentials", "Artifacts", "Appearance", "Billing"]);
+        const costPage = resolved.pages.find((entry) =>
+            entry.fields.some((field) => field.id === "billing.costCode"));
         shell = await startShell(handoff,
             await loadDesignerSettings(workspace, handoff, resolved), { project, workspace,
                 session: { send: async () => {} } });
         await page.goto(shell.url);
-        await page.getByRole("tab", { name: "Billing" }).click();
+        await page.getByRole("tab", { name: costPage.title }).click();
         const code = page.getByRole("textbox", { name: "Cost code" });
         await expect(code).toHaveAttribute("maxlength", "64");
         await code.fill("CC-481");
@@ -241,7 +243,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         reopened = await startShell(handoff, saved, { project, workspace,
             session: { send: async () => {} } });
         await page.goto(reopened.url);
-        await page.getByRole("tab", { name: "Billing" }).click();
+        await page.getByRole("tab", { name: costPage.title }).click();
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveValue("CC-481");
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#conn-status")).toContainText("Generation queued:");
@@ -250,8 +252,11 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         const config = JSON.parse(await readFile(join(project, ".github", "extensions",
             "billing-canvas", "canvas-config.json"), "utf8"));
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
-            label: "Cost code", value: "CC-481" }]);
+            label: "Cost code", value: "CC-481",
+            section: { id: "billing", title: "Billing" } }]);
         await page.setContent(renderHtml(config));
+        await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
         await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveCount(0);
     } finally {

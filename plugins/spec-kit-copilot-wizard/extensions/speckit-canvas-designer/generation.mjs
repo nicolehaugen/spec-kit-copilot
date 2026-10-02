@@ -41,7 +41,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const generatedFields = (model.contributions ?? [])
         .filter((item) => item.generatedBinding?.presentation === "stock.readonly")
         .map((item) => ({ id: item.field.id, label: item.field.label,
-            maxLength: model.constraints[item.field.id].maxLength }));
+            maxLength: model.constraints[item.field.id].maxLength,
+            ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const checkout = await realpath(project);
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -61,7 +62,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
         workflow: { selectedPhases: handoff.workflow.selectedPhases },
         installed: handoff.workflow.installed,
-        values: { ...values, ...essentials },
+        values: { ...essentials,
+            ...Object.fromEntries(generatedFields.map(({ id }) => [id, values[id]])) },
         ...(generatedFields.length ? { generatedFields } : {}),
     };
     request.integrity = createHash("sha256").update(JSON.stringify(request)).digest("hex");

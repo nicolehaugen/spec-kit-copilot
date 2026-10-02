@@ -191,12 +191,20 @@ function validateContribution(document, name, slots, fieldOrigins) {
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
     }
-    if (document.generatedBinding !== undefined
-        && (field.type !== "string" || !document.generatedBinding
-            || typeof document.generatedBinding !== "object"
-            || Array.isArray(document.generatedBinding)
-            || Object.keys(document.generatedBinding).sort().join() !== "presentation"
-            || document.generatedBinding.presentation !== "stock.readonly")) {
+    const binding = document.generatedBinding;
+    if (binding !== undefined
+        && (field.type !== "string" || !binding
+            || typeof binding !== "object" || Array.isArray(binding)
+            || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
+            || binding.presentation !== "stock.readonly"
+            || (binding.section !== undefined
+                && (!binding.section || typeof binding.section !== "object"
+                    || Array.isArray(binding.section)
+                    || Object.keys(binding.section).sort().join() !== "id,title"
+                    || typeof binding.section.id !== "string"
+                    || !/^[a-z][a-z0-9.-]{0,79}$/.test(binding.section.id)
+                    || typeof binding.section.title !== "string"
+                    || !binding.section.title.trim() || binding.section.title.length > 120)))) {
         throw new Error(`${name}: incompatible generated binding`);
     }
     if (fieldOrigins.has(field.id)) {
@@ -261,6 +269,15 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     ordered.sort((a, b) => a.document.order - b.document.order
         || compare(a.sourceId.split(":").at(-1), b.sourceId.split(":").at(-1))
         || compare(a.document.id, b.document.id));
+    const sections = new Map();
+    for (const entry of ordered) {
+        const section = entry.document.generatedBinding?.section;
+        if (!section) continue;
+        if (sections.has(section.id) && sections.get(section.id) !== section.title) {
+            throw new Error(`${entry.name}: conflicting generated section ${section.id}`);
+        }
+        sections.set(section.id, section.title);
+    }
     return { loaded, ordered };
 }
 
