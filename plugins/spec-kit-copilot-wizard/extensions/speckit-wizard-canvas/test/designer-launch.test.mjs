@@ -108,8 +108,10 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /Do not edit it afterward/);
     assert.match(sent[0].prompt, /speckit-extension.*--install-allowed/);
     assert.match(sent[0].prompt, /Install extension-canvas-design by ID/);
-    assert.match(sent[0].prompt, /Install approved bundles .* with speckit-bundle first/);
-    assert.ok(sent[0].prompt.indexOf("install ALL standalone extensions")
+    assert.match(sent[0].prompt, /install the required Canvas Design base before any bundle or preset/);
+    assert.ok(sent[0].prompt.indexOf("Install extension-canvas-design by ID")
+        < sent[0].prompt.indexOf("Then install approved bundles"));
+    assert.ok(sent[0].prompt.indexOf("remaining standalone extensions")
         < sent[0].prompt.indexOf("Only after ALL extensions"));
     assert.match(sent[0].prompt, /running specify extension add separately for each ID or path/);
     assert.match(sent[0].prompt, /running specify preset add separately for each ID or path/);
@@ -575,7 +577,9 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     // suffixed with a contradicting note) in favor of the local --dev
     // --force install producing the generated skill/schema instead.
     assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.5 check entirely/);
-    assert.match(promptWithExt, /the local extension step below installs and overwrites it in place with --dev --force instead/);
+    assert.match(promptWithExt, /verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force/);
+    assert.ok(promptWithExt.indexOf("then install it now with specify extension add <path> --dev --force")
+        < promptWithExt.indexOf("Then install approved bundles"));
     assert.doesNotMatch(promptWithExt, /Install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
 });
 
@@ -588,10 +592,12 @@ test("Designer launch installs every extension before standalone presets, includ
     }, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
         extensions: [], bundles: [] }, randomUUID());
     const prompt = buildDesignerLaunchPrompt(handoff);
-    const extensionStep = prompt.indexOf("install ALL standalone extensions");
+    const extensionStep = prompt.indexOf("Install ALL remaining standalone extensions");
     const localExtension = prompt.indexOf("For each approved entry in localSelections.extensions");
     const presetStep = prompt.indexOf("Only after ALL extensions");
     const localPreset = prompt.indexOf("For each approved entry in localSelections.presets");
+    assert.ok(prompt.indexOf("then install it now with specify extension add <path> --dev --force")
+        < prompt.indexOf("Then install approved bundles"));
     assert.ok(extensionStep > 0 && extensionStep < localExtension
         && localExtension < presetStep && presetStep < localPreset);
     assert.match(prompt, /including 'no base command layer'/);

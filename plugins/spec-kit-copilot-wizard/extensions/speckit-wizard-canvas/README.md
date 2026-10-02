@@ -210,10 +210,11 @@ addition to) the hosted registry entry:
   local `extension-canvas-design` checkout replaces only the official CLI
   package install for that step; the official Canvas Designer *canvas
   provider* that ships with this plugin remains unaffected.
-- The Designer child installs bundles, then all standalone extensions
-  (including local overrides), then standalone presets (including local
-  overrides). This ensures preset command additions have their extension
-  base available. It stops on composition warnings even if Specify exits
+- The Designer child installs the required Canvas Design base first, then
+  bundles, remaining standalone extensions (including local overrides), and
+  standalone presets (including local overrides). This ensures bundled and
+  standalone preset command additions have the base available. It stops on
+  composition warnings even if Specify exits
   successfully, and checks the generated load-page skill for the registered
   preset page/template names before opening Designer. This ordering applies
   only to Designer launch, not the Wizard's Catalogs install actions.
