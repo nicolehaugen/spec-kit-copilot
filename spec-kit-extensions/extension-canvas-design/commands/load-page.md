@@ -69,10 +69,12 @@ Specify script artifacts.
    instanceId:"designer-<handoffId>",input:{handoffId:"<handoffId>",
    pages:[{"name":"<page-name>","path":"<resolved-path>"},...],
    templates:[{"name":"<asset-name>","path":"<resolved-path>","sourceId":"<Specify-reported-source-ID>"},...]}})`.
-   Obtain each `sourceId` (for example `copilot-billing-canvas` for a preset
-   or `extension:extension-canvas-design` for the base extension) from the
-   `top layer from:` metadata in that name's `specify preset resolve`
-   output, excluding the following version; do not infer it from the file path. Use
+   Obtain each `sourceId` from that name's `top layer from:` metadata:
+   map the exact versionless `project override` marker to `project`; for a
+   preset or extension source, strip only its trailing ` v<version>` (for
+   example, keep `copilot-billing-canvas` or
+   `extension:extension-canvas-design`). Stop if neither form matches; do
+   not infer the source from the file path. Use
    an empty `templates` array if none are registered. Submit all defaults,
    additional pages, and registered templates in this single call. The provider
    validates the handoff and complete inventory before returning a URL. A
