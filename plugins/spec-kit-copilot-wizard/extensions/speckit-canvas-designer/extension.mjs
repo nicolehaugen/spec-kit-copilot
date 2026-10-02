@@ -53,7 +53,7 @@ const session = await joinSession({
             type: "object", additionalProperties: false,
             properties: {
                 handoffId: handoffIdSchema,
-                pages: { type: "array", minItems: 4, maxItems: 100, items: {
+                pages: { type: "array", minItems: 3, maxItems: 100, items: {
                     type: "object", additionalProperties: false, required: ["name", "path"],
                     properties: { name: { type: "string", pattern: PAGE_NAME },
                         path: { type: "string", minLength: 1, maxLength: 4096 } },
@@ -89,7 +89,9 @@ const session = await joinSession({
                     model = await loadResolvedDesignerPages(handoff, project, pages);
                     model = await loadDesignerSettings(session.workspacePath, handoff, model);
                 }
-                const next = await startShell(handoff, model, session.workspacePath);
+                const next = await startShell(handoff, model, handoff
+                    ? { project: await getCheckout(), workspace: session.workspacePath, session }
+                    : {});
                 if (opening.get(ctx.instanceId) !== token) {
                     await next.close();
                     throw new CanvasError("designer_open_failed", "Designer panel closed while opening");

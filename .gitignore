@@ -6,7 +6,8 @@ plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/test-results/
 # Session artifacts (canvas runtime state, spec-kit init output, css coverage snapshots)
 .speckit-wizard/
 .specify/
-.github/skills/
+.github/skills/*
+!.github/skills/refresh-generated-canvas/
 specs/
 css-baseline-*.png
 css-c*.png

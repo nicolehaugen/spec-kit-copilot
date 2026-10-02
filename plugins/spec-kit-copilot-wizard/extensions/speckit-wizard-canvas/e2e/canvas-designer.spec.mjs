@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 const LOCAL_PRESET_PATH = fileURLToPath(
     new URL("../../../../../spec-kit-presets/copilot-sub-agents", import.meta.url),
 ).replace(/[\\/]$/, "");
+const LOCAL_CANVAS_DESIGN_PATH = fileURLToPath(
+    new URL("../../../../../spec-kit-extensions/extension-canvas-design", import.meta.url),
+).replace(/[\\/]$/, "");
 
 test.beforeEach(async ({ page }) => {
     await page.goto("/?token=e2e-token");
@@ -16,9 +19,11 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("opens a design-only dialog with an available launch", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole("checkbox", { name: /Design preset/ })).toBeVisible();
+    await expect(dialog.locator(".designer-choice").filter({ hasText: "Design preset" }))
+        .toHaveAttribute("title", 'Preset with "quoted" settings');
     await expect(dialog.getByText("Other preset")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: /Launch designer/ })).toBeEnabled();
     const presetsTab = dialog.getByRole("tab", { name: "Presets" });
@@ -31,6 +36,8 @@ test("opens a design-only dialog with an available launch", async ({ page }) => 
     await page.keyboard.press("ArrowRight");
     await expect(extensionsTab).toBeFocused();
     await expect(dialog.getByRole("tabpanel", { name: "Extensions" })).toBeVisible();
+    await expect(dialog.locator(".designer-choice").filter({ hasText: "Design extension" }))
+        .toHaveAttribute("title", "Extends the designer behavior");
     await page.keyboard.press("End");
     await expect(bundlesTab).toBeFocused();
     await page.keyboard.press("ArrowRight");
@@ -49,7 +56,7 @@ test("opens a design-only dialog with an available launch", async ({ page }) => 
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).toHaveCount(0);
     await page.getByRole("button", { name: "Generate canvas" }).click();
-    await expect(page.getByRole("dialog", { name: "Canvas designer setup" })
+    await expect(page.getByRole("dialog", { name: "Canvas Designer setup" })
         .getByRole("checkbox", { name: /Design preset/ })).not.toBeChecked();
 });
 
@@ -58,7 +65,7 @@ test("confirms community selection and checks only listed design bundle members"
     page.on("request", (request) => {
         if (request.method() !== "GET") writes.push(request.url());
     });
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     await dialog.getByRole("tab", { name: "Bundles" }).click();
     const community = dialog.getByRole("checkbox", { name: /Community bundle/ });
     await community.check();
@@ -99,7 +106,7 @@ test("confirms community selection and checks only listed design bundle members"
 });
 
 test("community presets and extensions retain their selection warnings", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     for (const [tab, name, kind] of [
         ["Presets", "Design preset", "preset"],
         ["Extensions", "Design extension", "extension"],
@@ -121,7 +128,7 @@ test("community presets and extensions retain their selection warnings", async (
 });
 
 test("launch queues a session and closes the dialog", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const responsePromise = page.waitForResponse((response) =>
         response.url().includes("/api/designer/launch") && response.request().method() === "POST");
     await dialog.getByRole("button", { name: "Launch designer" }).click();
@@ -135,7 +142,7 @@ test("launch queues a session and closes the dialog", async ({ page }) => {
 
     await expect(dialog).toHaveCount(0);
     await page.getByRole("button", { name: "Generate canvas" }).click();
-    await expect(page.getByRole("dialog", { name: "Canvas designer setup" })
+    await expect(page.getByRole("dialog", { name: "Canvas Designer setup" })
         .getByRole("checkbox", { name: /Copilot preset/ })).not.toBeChecked();
 });
 
@@ -151,7 +158,7 @@ test("activation failure preserves selections for a one-click retry", async ({ p
                 ? { error: "Designer activation timed out" } : { queued: true }),
         });
     });
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const preset = dialog.getByRole("checkbox", { name: /Copilot preset/ });
     await preset.check();
     await dialog.getByRole("button", { name: "Launch designer" }).click();
@@ -166,15 +173,15 @@ test("activation failure preserves selections for a one-click retry", async ({ p
 });
 
 test("local development section is a single shared section, collapsed by default, covering presets and extensions only", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const localSection = dialog.locator("[data-designer-local]");
     await expect(localSection).toHaveCount(1);
     await expect(localSection).toBeVisible();
     await expect(localSection.locator("summary")).toHaveText("Local development");
     await expect(localSection).not.toHaveJSProperty("open", true);
-    await expect(dialog.getByText(/takes precedence over a hosted selection/)).toBeHidden();
+    await expect(dialog.getByText(/Add local preset or extension directories to the selection/)).toBeHidden();
     await localSection.locator("summary").click();
-    await expect(dialog.getByText(/takes precedence over a hosted selection/)).toBeVisible();
+    await expect(dialog.getByText(/takes precedence over a catalog selection/)).toBeVisible();
     // A single shared path input/add button covers both local kinds (the
     // server auto-detects preset vs. extension from the manifest file), and
     // the section stays visible across tab switches since it renders
@@ -189,7 +196,7 @@ test("local development section is a single shared section, collapsed by default
 });
 
 test("adds a local preset via typed absolute path, checks it in automatically, and it wins over a hosted id", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const localSection = dialog.locator("[data-designer-local]");
     await localSection.locator("summary").click();
     await localSection.locator("[data-designer-local-path]").fill(LOCAL_PRESET_PATH);
@@ -210,8 +217,27 @@ test("adds a local preset via typed absolute path, checks it in automatically, a
     });
 });
 
+test("checked worktree Canvas Design extension is included in the launch request", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    await localSection.locator("[data-designer-local-path]").fill(LOCAL_CANVAS_DESIGN_PATH);
+    await localSection.locator("[data-designer-local-add]").click();
+    await expect(localSection.locator(".designer-local-item")).toContainText("extension-canvas-design · v0.1.4");
+    await expect(localSection.locator(".designer-local-item .designer-choice"))
+        .toHaveAttribute("title", "Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.");
+    await expect(localSection.locator(".designer-local-item").getByRole("checkbox")).toBeChecked();
+    const responsePromise = page.waitForResponse((response) =>
+        response.url().includes("/api/designer/launch") && response.request().method() === "POST");
+    await dialog.getByRole("button", { name: "Launch designer" }).click();
+    const response = await responsePromise;
+    expect(response.request().postDataJSON().localSelections).toEqual({
+        extensions: [{ id: "extension-canvas-design", path: LOCAL_CANVAS_DESIGN_PATH }],
+    });
+});
+
 test("rejects an invalid local path with an explicit error and lets the user retry", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const localSection = dialog.locator("[data-designer-local]");
     await localSection.locator("summary").click();
     const pathInput = localSection.locator("[data-designer-local-path]");
@@ -227,7 +253,7 @@ test("rejects an invalid local path with an explicit error and lets the user ret
 });
 
 test("accepts a local path pasted with surrounding quotes and displays it canonically unquoted", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const localSection = dialog.locator("[data-designer-local]");
     await localSection.locator("summary").click();
     const pathInput = localSection.locator("[data-designer-local-path]");
@@ -249,7 +275,7 @@ test("accepts a local path pasted with surrounding quotes and displays it canoni
 });
 
 test("local sources reset on dialog close/reopen but are retained after a launch failure", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const localSection = dialog.locator("[data-designer-local]");
     await localSection.locator("summary").click();
     await localSection.locator("[data-designer-local-path]").fill(LOCAL_PRESET_PATH);
@@ -260,7 +286,7 @@ test("local sources reset on dialog close/reopen but are retained after a launch
     await dialog.getByRole("button", { name: "Cancel" }).click();
     await expect(dialog).toHaveCount(0);
     await page.getByRole("button", { name: "Generate canvas" }).click();
-    const reopened = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const reopened = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const reopenedLocalSection = reopened.locator("[data-designer-local]");
     const reopenedLocalItem = reopenedLocalSection.locator(".designer-local-item");
     await expect(reopenedLocalSection).not.toHaveJSProperty("open", true);
@@ -285,7 +311,7 @@ test("local sources reset on dialog close/reopen but are retained after a launch
 });
 
 test("local controls and hosted launch stay disabled for the whole in-flight add request", async ({ page }) => {
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const localSection = dialog.locator("[data-designer-local]");
     await localSection.locator("summary").click();
     const pathInput = localSection.locator("[data-designer-local-path]");
@@ -345,7 +371,7 @@ test("rejects adding a 21st local preset, mirroring the server's 20-per-kind cap
         });
     });
 
-    const dialog = page.getByRole("dialog", { name: "Canvas designer setup" });
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     const localSection = dialog.locator("[data-designer-local]");
     await localSection.locator("summary").click();
     const pathInput = localSection.locator("[data-designer-local-path]");

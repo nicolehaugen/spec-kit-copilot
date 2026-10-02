@@ -8,6 +8,7 @@ const KINDS = [["presets", "Presets"], ["extensions", "Extensions"], ["bundles",
 // included and cannot be unchecked by the user, regardless of hosted catalog
 // availability or any other selection state.
 export const REQUIRED_DESIGNER_EXTENSION_ID = "extension-canvas-design";
+const REQUIRED_DESIGNER_DESCRIPTION = "Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.";
 // Only an entry from the sanctioned Copilot catalog we control — never a
 // third-party "community" catalog entry that merely reuses the same ID —
 // can be treated as the required, auto-approved designer extension. A
@@ -66,7 +67,7 @@ export async function submitDesignerLaunch(snapshot, checked, fetcher = fetch, l
             const body = JSON.parse(text);
             detail = body.error ?? text;
         } catch { /* plain response */ }
-        throw new Error(`Designer launch failed (${response?.status ?? "unknown"}): ${detail || "Try again."}`);
+        throw new Error(detail || `Designer launch failed (${response?.status ?? "unknown"}). Try again.`);
     }
     const result = await response.json();
     if (result?.queued !== true) throw new Error("Wizard did not queue the Designer session.");
@@ -105,10 +106,15 @@ function updateLaunch(root) {
 
 export function canvasDesignEntries(snapshot, kind) {
     const items = snapshot?.catalog?.[kind];
-    return (Array.isArray(items) ? items : []).filter((item) =>
+    const entries = (Array.isArray(items) ? items : []).filter((item) =>
         item?.id && (["community", "copilot"].includes(item.source)
             || (kind === "bundles" && item.source === "default"))
         && Array.isArray(item.tags) && item.tags.includes("canvas-design"));
+    if (kind !== "extensions") return entries;
+    return [
+        ...entries.filter((item) => isRequiredDesignerExtension(kind, item)),
+        ...entries.filter((item) => !isRequiredDesignerExtension(kind, item)),
+    ];
 }
 
 export function freshCanvasDesignerSelections() {
@@ -118,6 +124,11 @@ export function freshCanvasDesignerSelections() {
 function isRequiredDesignerExtension(kind, item) {
     return kind === "extensions" && item?.id === REQUIRED_DESIGNER_EXTENSION_ID
         && item?.source === TRUSTED_DESIGNER_SOURCE;
+}
+
+function choiceDescription(kind, item) {
+    return isRequiredDesignerExtension(kind, item) ? REQUIRED_DESIGNER_DESCRIPTION
+        : typeof item.description === "string" ? item.description.trim() : "";
 }
 
 /** Checked local sources, keyed by kind, as `{id, path}` pairs ready for the
@@ -175,7 +186,7 @@ function renderLocalSection() {
     return `<details class="designer-local" data-designer-local>
         <summary>Local development</summary>
         <div class="designer-local-body">
-            <p class="wizard-modal-desc designer-local-desc">Add uninstalled local preset or extension directories for this session — the kind is detected automatically from the directory's manifest file. A local preset or extension takes precedence over a hosted selection with the same ID, including a bundle member.</p>
+            <p class="wizard-modal-desc designer-local-desc">Add local preset or extension directories to the selection. A local preset or extension takes precedence over a catalog selection with the same ID, including a bundle member.</p>
             <div class="designer-local-add">
                 <input type="text" class="designer-local-path" data-designer-local-path placeholder="Absolute path to a preset or extension directory" aria-label="Local preset or extension directory path">
                 <button type="button" class="btn btn-secondary designer-local-add-btn" data-designer-local-add>Add</button>
@@ -198,11 +209,12 @@ function renderChoices(snapshot, kind, label) {
     return `<fieldset class="designer-group" id="designer-panel-${kind}" data-designer-panel="${kind}" role="tabpanel" aria-labelledby="designer-tab-${kind}" ${kind !== "presets" ? "hidden" : ""}>
         ${items.length ? items.map((item, index) => {
             const required = isRequiredDesignerExtension(kind, item);
-            return `<label class="designer-choice${required ? " designer-choice-required" : ""}">
-            <input type="checkbox" data-designer-kind="${kind}" data-designer-index="${index}"${required ? " checked disabled" : ""}>
+            const description = choiceDescription(kind, item);
+            return `<label class="designer-choice${required ? " designer-choice-required" : ""}"${description ? ` title="${escapeHtml(description)}"` : ""}>
+            <input type="checkbox" data-designer-kind="${kind}" data-designer-index="${index}"${required ? " checked disabled" : ""}${description ? ` title="${escapeHtml(description)}"` : ""}>
             <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-included-by" hidden></small></span>
             <span class="badge source designer-source-tag">${escapeHtml((item.source ?? "default").replace(/^./, (c) => c.toUpperCase()))}</span>
-            ${required ? '<span class="badge designer-required-badge" title="Always included to render the canvas designer">Required</span>' : ""}
+            ${required ? '<span class="badge designer-required-badge">Required</span>' : ""}
         </label>`;
         }).join("") : `<p class="wizard-modal-desc">No ${label.toLowerCase()} tagged canvas-design are available.</p>`}
     </fieldset>`;
@@ -224,7 +236,7 @@ function refreshBundleChoices(root, snapshot) {
             const note = input.parentElement.querySelector(".designer-included-by");
             note.textContent = names.length ? `Included by bundle: ${names.join(", ")}` : "";
             note.hidden = !names.length;
-            input.title = note.textContent;
+            input.title = [choiceDescription(kind, item), note.textContent].filter(Boolean).join("\n");
             input.checked = selections[kind].some((entry) =>
                 entry.id === item.id && entry.source === item.source)
                 || (!!names.length && !deselectedMembers.has(`${kind}:${item.source}:${item.id}`));
@@ -244,7 +256,7 @@ function renderLocalList(root, focusFlatIndex) {
     const rows = LOCAL_KINDS.flatMap((kind) =>
         localItems[kind].map((item, index) => ({ kind, index, item })));
     list.innerHTML = rows.map(({ kind, index, item }) => `<li class="designer-local-item">
-            <label class="designer-choice">
+            <label class="designer-choice"${item.description ? ` title="${escapeHtml(item.description)}"` : ""}>
                 <input type="checkbox" data-designer-local-kind="${kind}" data-designer-local-index="${index}" ${item.checked ? "checked" : ""}>
                 <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-local-path-text">${escapeHtml(item.path)}</small></span>
             </label>
@@ -376,9 +388,9 @@ export function openCanvasDesignerDialog() {
     }
     root.innerHTML = `<div class="wizard-modal-backdrop designer-backdrop">
         <section class="wizard-modal generation-modal designer-modal" role="dialog" aria-modal="true" aria-labelledby="designer-title" aria-describedby="designer-description">
-            <header class="wizard-modal-head"><h3 id="designer-title">Canvas designer setup</h3><button type="button" class="wizard-modal-close" aria-label="Close">✕</button></header>
+            <header class="wizard-modal-head"><h3 id="designer-title">Canvas Designer setup</h3><button type="button" class="wizard-modal-close" aria-label="Close">✕</button></header>
             <div class="wizard-modal-body">
-                <p class="wizard-modal-desc" id="designer-description">Select presets, extensions, or bundles to customize the canvas designer's settings and generation behavior. Your selections will be installed in a separate designer session, leaving the wizard's configuration unchanged.</p>
+                <p class="wizard-modal-desc" id="designer-description">Select presets, extensions, or bundles to customize the canvas designer's settings and generation behavior. Your selections will be installed in a separate designer session, leaving the wizard's environment unchanged.</p>
                 <p class="wizard-modal-desc">Choose from the available catalogs.</p>
                 <p class="designer-error" role="alert" hidden></p>
                 <nav class="subtabs designer-tabs" role="tablist" aria-label="Design customization type">
