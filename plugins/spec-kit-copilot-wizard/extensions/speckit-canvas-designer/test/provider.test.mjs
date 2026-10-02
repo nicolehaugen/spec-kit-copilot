@@ -623,6 +623,48 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
 });
 
+test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const page = JSON.parse(await readFile(entries[1].path, "utf8"));
+    for (let index = 0; index < 20; index++) {
+        page.fields.push({ id: `custom.${index}`, label: `Custom ${index}` });
+    }
+    await writeFile(entries[1].path, JSON.stringify(page));
+    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    const values = { ...model.values, "canvas.id": "large-canvas",
+        "canvas.displayName": "Large Canvas" };
+    for (let index = 0; index < 20; index++) values[`custom.${index}`] = "x".repeat(1000);
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { modelRevision: model.revision, revision: 0, values });
+    const body = JSON.stringify({ revision: model.revision, values });
+    assert.ok(Buffer.byteLength(body) > 16 * 1024);
+    assert.ok(Buffer.byteLength(body) < SETTINGS_LIMIT);
+    const skill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-generate", "SKILL.md");
+    await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
+    await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    const prompts = [];
+    const shell = await startShell(handoff, saved, { project, workspace,
+        session: { send: async (value) => prompts.push(value.prompt) } });
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    url.pathname = "/api/generate";
+    const response = await fetch(url, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body });
+    assert.equal(response.status, 202);
+    assert.equal(prompts.length, 1);
+    const { requestId } = await response.json();
+    const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", requestId, "request.json")));
+    assert.equal(frozen.canvas.id, "large-canvas");
+    assert.equal(Object.hasOwn(frozen.values, "custom.0"), false);
+});
+
 test("missing Generate skill disables the button and reports a repair path without preparing a request", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
