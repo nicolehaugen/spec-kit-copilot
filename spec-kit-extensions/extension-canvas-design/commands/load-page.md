@@ -24,13 +24,17 @@ Presets may add pages in sections titled **Additional Designer pages** anywhere
 in this command, including after the Steps. These additions extend the default
 set; they do not run a second load operation.
 
-The extension may list other named assets under **Canvas Design templates**.
-Presets may list theirs under **Additional Canvas Design templates** anywhere
-in this composed command. These sections explicitly register contribution
-definitions and assets; the `canvas-design` tag and files in a package do not
-register themselves. A name must also be declared as a template in a Specify
-manifest. Executable `.mjs` assets are named, replace-only templates, not
-native Specify script artifacts.
+For this milestone, the extension may list stock-field contribution JSON under
+**Canvas Design templates**. Presets may list stock-field contribution JSON
+under **Additional Canvas Design templates** anywhere in this composed command.
+These sections explicitly register field contributions; the `canvas-design`
+tag and files in a package do not register themselves. A name must also be
+declared as a template in a Specify manifest. Do not register control
+definitions, generated-page assets, or executable `.mjs` assets yet: the
+current provider does not validate or activate them as those kinds. Later
+milestones add declared asset kinds and strategies with per-kind validation;
+executable assets will be complete, replace-only templates, not native
+Specify script artifacts.
 
 ## Steps
 
