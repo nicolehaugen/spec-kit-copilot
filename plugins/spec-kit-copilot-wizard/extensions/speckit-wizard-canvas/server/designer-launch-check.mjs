@@ -1,93 +1,13 @@
-import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { constants } from "node:fs";
-import { lstat, open, readdir, realpath } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { lstat, realpath } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { validateLocalSource } from "./designer-local-sources.mjs";
 
 const exec = promisify(execFile);
-const OMIT = new Set([".git", ".specify-dev", "node_modules", "__pycache__"]);
-const MAX_ENTRIES = 512;
-const MAX_DEPTH = 32;
-const MAX_BYTES = 8 * 1024 * 1024;
 const manifestName = { presets: "preset.yml", extensions: "extension.yml" };
-
-export async function packageDigest(root, openFile = open) {
-    const hash = createHash("sha256");
-    let count = 0, bytes = 0;
-    const packageStat = await lstat(root);
-    async function checkDirectory(directory, before) {
-        const [current, canonical] = await Promise.all([lstat(directory), realpath(directory)]);
-        if (!current.isDirectory() || current.dev !== before.dev || current.ino !== before.ino
-            || canonical !== directory) {
-            throw new Error(`Local package directory changed during verification: ${directory}`);
-        }
-    }
-    await checkDirectory(root, packageStat);
-    async function walk(directory, depth) {
-        if (depth > MAX_DEPTH) {
-            throw new Error(`Local package exceeds verification limits: ${root}`);
-        }
-        const directoryStat = await lstat(directory);
-        await checkDirectory(directory, directoryStat);
-        for (const entry of (await readdir(directory, { withFileTypes: true }))
-            .sort((a, b) => a.name.localeCompare(b.name, "en"))) {
-            if (OMIT.has(entry.name)) continue;
-            if (++count > MAX_ENTRIES) {
-                throw new Error(`Local package exceeds verification limits: ${root}`);
-            }
-            const path = join(directory, entry.name);
-            const stat = await lstat(path);
-            if (stat.isSymbolicLink()) throw new Error(`Local package contains a symlink: ${path}`);
-            if (stat.isDirectory()) { await walk(path, depth + 1); continue; }
-            if (!stat.isFile() || (bytes += stat.size) > MAX_BYTES) {
-                throw new Error(`Local package exceeds verification limits: ${root}`);
-            }
-            const file = await openFile(path, constants.O_RDONLY
-                | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
-            try {
-                const opened = await file.stat();
-                const current = await lstat(path);
-                await checkDirectory(directory, directoryStat);
-                await checkDirectory(root, packageStat);
-                if (!opened.isFile() || !current.isFile() || current.isSymbolicLink()
-                    || opened.dev !== stat.dev || opened.ino !== stat.ino
-                    || current.dev !== stat.dev || current.ino !== stat.ino
-                    || opened.size !== stat.size || opened.mtimeMs !== stat.mtimeMs) {
-                    throw new Error(`Local package file changed during verification: ${path}`);
-                }
-                const content = Buffer.alloc(stat.size + 1);
-                let length = 0;
-                while (length < content.length) {
-                    const { bytesRead } = await file.read(content, length, content.length - length, length);
-                    if (!bytesRead) break;
-                    length += bytesRead;
-                }
-                const [after, pathStat] = await Promise.all([file.stat(), lstat(path)]);
-                await checkDirectory(directory, directoryStat);
-                await checkDirectory(root, packageStat);
-                if (!pathStat.isFile() || pathStat.isSymbolicLink()
-                    || pathStat.dev !== stat.dev || pathStat.ino !== stat.ino
-                    || after.dev !== stat.dev || after.ino !== stat.ino
-                    || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs
-                    || after.ctimeMs !== opened.ctimeMs || length !== opened.size) {
-                    throw new Error(`Local package file changed during verification: ${path}`);
-                }
-                hash.update(relative(root, path).split(sep).join("/")).update("\0");
-                hash.update(String(length)).update("\0").update(content.subarray(0, length));
-            } finally {
-                await file.close();
-            }
-        }
-        await checkDirectory(directory, directoryStat);
-    }
-    await walk(root, 0);
-    await checkDirectory(root, packageStat);
-    return hash.digest("hex");
-}
 
 function localEntries(handoff) {
     return Object.entries(manifestName).flatMap(([kind]) =>
@@ -121,31 +41,29 @@ export async function preflight(project, sessionRoot, handoffId, expectedHash, r
         if (checked.id !== entry.id || checked.path !== entry.path) {
             throw new Error(`Approved local ${entry.kind} ${entry.id} changed path or manifest.`);
         }
-        locals.push({ kind: entry.kind, id: entry.id, path: checked.path,
-            digest: await packageDigest(checked.path) });
+        locals.push({ kind: entry.kind, id: entry.id, path: checked.path });
     }
     return { checkout: child, sessionRoot: root, handoffPath: path,
         initialized, specifyVersion: version[0], locals };
 }
 
-export async function verifyLocalInstall(project, handoff, kind, id, expectedDigest, run = exec) {
-    if (!manifestName[kind] || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)
-        || !/^[a-f0-9]{64}$/.test(expectedDigest)) throw new Error("Invalid local package verification request.");
+export async function verifyLocalInstall(project, handoff, kind, id, run = exec) {
+    if (!manifestName[kind] || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)) {
+        throw new Error("Invalid local package verification request.");
+    }
     const entry = handoff.localSelections?.[kind]?.find((item) => item.id === id);
     if (!entry) throw new Error(`Local ${kind} ${id} was not approved in the handoff.`);
     const source = await validateLocalSource(kind, entry.path);
-    if (source.path !== entry.path || source.id !== id
-        || await packageDigest(source.path) !== expectedDigest) {
-        throw new Error(`Approved local ${kind} ${id} changed since preflight.`);
+    if (source.path !== entry.path || source.id !== id) {
+        throw new Error(`Approved local ${kind} ${id} has a different path or manifest id.`);
     }
     const child = await realpath(project);
     const installedPath = join(child, ".specify", kind, id);
     const installed = await validateLocalSource(kind, installedPath);
     const installedRel = relative(join(child, ".specify"), installedPath);
     if (installed.id !== id || installedRel.startsWith("..") || resolve(installedPath) !== installedPath
-        || (installed.path !== installedPath && installed.path !== source.path)
-        || await packageDigest(installed.path) !== expectedDigest) {
-        throw new Error(`Installed local ${kind} ${id} does not match the approved source.`);
+        || (installed.path !== installedPath && installed.path !== source.path)) {
+        throw new Error(`Installed local ${kind} ${id} has an unexpected path or manifest id.`);
     }
     const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
         [kind === "presets" ? "preset" : "extension", "list", "--json"],
@@ -156,7 +74,7 @@ export async function verifyLocalInstall(project, handoff, kind, id, expectedDig
         || (source.version !== null && actual.version !== source.version)) {
         throw new Error(`Installed local ${kind} ${id} has the wrong source or version.`);
     }
-    return { kind, id, source: source.path, installed: installed.path, digest: expectedDigest };
+    return { kind, id, source: source.path, installed: installed.path };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -166,7 +84,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
             ? await preflight(project, root, handoffId, rest[0])
             : mode === "verify-local"
                 ? await verifyLocalInstall(project, await readHandoff(root, handoffId),
-                    rest[0], rest[1], rest[2])
+                    rest[0], rest[1])
                 : (() => { throw new Error("Expected preflight or verify-local mode."); })();
         console.log(JSON.stringify(result));
     } catch (error) {
