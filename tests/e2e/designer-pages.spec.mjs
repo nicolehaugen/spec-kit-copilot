@@ -291,7 +291,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
     handoff.sourceFingerprint = fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
     });
-    let shell, reopened, server;
+    let shell, reopened, broken, incompatible, brokenContext, server;
     try {
         await mkdir(project);
         const run = (...args) => {
@@ -381,8 +381,33 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         await page.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
         await expect(page.getByRole("table", { name: /impact medium, likelihood medium/ })).toBeVisible();
         await expect(page.locator('[data-control-id="risk.rating"] [aria-current="true"]')).toHaveText("Selected");
+        const designerAdapter = await readFile(templates[2].path, "utf8");
+        await writeFile(templates[2].path, "export const mount = null;");
+        broken = await startShell(handoff,
+            await loadResolvedDesignerPages(handoff, project, pages, templates), { project, workspace });
+        await page.goto(broken.url);
+        await expect(page.locator('[data-field-id="risk.rating"][role="alert"]')).toContainText(
+            "Could not load Risk rating: Missing mount export");
+        await expect(page.getByRole("textbox", { name: "Canvas ID (required)" })).toBeVisible();
+        await writeFile(templates[2].path, designerAdapter.replace(
+            'export const controlId = "risk-matrix"', 'export const controlId = "wrong-control"'));
+        incompatible = await startShell(handoff,
+            await loadResolvedDesignerPages(handoff, project, pages, templates), { project, workspace });
+        await page.goto(incompatible.url);
+        await expect(page.locator('[data-field-id="risk.rating"][role="alert"]')).toContainText(
+            "Could not load Risk rating: Incompatible control ID or value contract");
+        const generatedAdapter = join(portable, "controls", `${templates[3].name}.mjs`);
+        await writeFile(generatedAdapter, "export const mount = null;");
+        brokenContext = await page.context().browser().newContext();
+        const brokenPage = await brokenContext.newPage();
+        await brokenPage.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
+        await expect(brokenPage.getByRole("alert")).toContainText(
+            "Generated control could not render: Missing mount export");
     } finally {
+        await brokenContext?.close();
         if (server) await new Promise((resolve) => server.close(resolve));
+        await incompatible?.close();
+        await broken?.close();
         await reopened?.close();
         await shell?.close();
         await rm(workspace, { recursive: true, force: true });

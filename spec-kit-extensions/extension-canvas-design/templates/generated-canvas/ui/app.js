@@ -2,11 +2,18 @@ const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url
 for (const root of document.querySelectorAll("[data-control-id]")) {
     const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
     try {
-        const { mount } = await import(`${root.dataset.module}?token=${encodeURIComponent(
+        const { mount, controlId, valueContract } = await import(`${root.dataset.module}?token=${encodeURIComponent(
             new URL(import.meta.url).searchParams.get("token"))}`);
         if (typeof mount !== "function") throw new Error("Missing mount export");
+        const expected = JSON.parse(root.dataset.contract);
+        if (controlId !== root.dataset.controlType || valueContract?.type !== expected.type
+            || JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
+                !== JSON.stringify(Object.entries(expected.properties).sort())) {
+            throw new Error("Incompatible control ID or value contract");
+        }
         await mount({ root, field, value: JSON.parse(root.dataset.value) });
     } catch (error) {
+        root.setAttribute("role", "alert");
         root.textContent = `Generated control could not render: ${error.message}`;
     }
 }

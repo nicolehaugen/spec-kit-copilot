@@ -1149,6 +1149,8 @@ test("generated-only page validates typed assets, freezes winners and packages w
         "export function renderPage() { return import.meta.url + 'import(\"./helper.mjs\")'; }");
     assert.equal((await load(pages)).generatedPages.length, 1);
     await writeFile(rendererPath, "export const renderPage = null;");
+    assert.equal((await load(pages)).generatedPages.length, 1);
+    await writeFile(rendererPath, "export const renderPage = ;");
     await assert.rejects(load(pages), /invalid generated renderer/);
     await writeFile(rendererPath, renderer);
     const billing = JSON.parse(await readFile(new URL(
@@ -1231,6 +1233,9 @@ test("paired control validates both adapters, typed values and portable generate
     assert.equal(model.adapters["risk-matrix"], "canvas-control-risk-matrix-designer");
     const designerAdapter = templates[2];
     const designerModule = await readFile(designerAdapter.path, "utf8");
+    await writeFile(designerAdapter.path, `${designerModule}\nprocess.exit(57);`);
+    assert.equal((await load()).adapters["risk-matrix"], designerAdapter.name);
+    await writeFile(designerAdapter.path, designerModule);
     const raced = await load(templates, (checkout, name) => {
         if (name === designerAdapter.name) {
             writeFileSync(designerAdapter.path, "export const mount = null;");
@@ -1308,14 +1313,16 @@ test("paired control validates both adapters, typed values and portable generate
     await writeFile(definition.path, original);
     await writeFile(designerAdapter.path, designerModule.replace(
         'export const controlId = "risk-matrix"', 'export const controlId = "other-control"'));
-    await assert.rejects(load(), /incompatible shared control value contract or adapter reference/);
+    assert.equal((await load()).adapters["risk-matrix"], designerAdapter.name);
     await writeFile(designerAdapter.path, designerModule);
     const generated = templates[3];
     const module = await readFile(generated.path, "utf8");
     await writeFile(generated.path, module.replace('"medium", "high"', '"medium", "critical"'));
-    await assert.rejects(load(), /incompatible shared control value contract or adapter reference/);
+    assert.equal((await load()).controls[0].id, "risk-matrix");
     await writeFile(generated.path, module);
     await writeFile(generated.path, "export const mount = null;");
+    assert.equal((await load()).controls[0].id, "risk-matrix");
+    await writeFile(generated.path, "export const mount = ;");
     await assert.rejects(load(), /invalid generated.adapter/);
     await writeFile(generated.path, module);
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });

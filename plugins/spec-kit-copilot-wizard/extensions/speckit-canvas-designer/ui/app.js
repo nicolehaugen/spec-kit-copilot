@@ -184,20 +184,32 @@ function renderPage(pageId) {
             form.append(wrapper);
             const adapter = model.adapters[field.control];
             if (!adapter) {
-                showError(`Missing Designer adapter for ${field.label}`);
+                mount.setAttribute("role", "alert");
+                mount.textContent = `Could not load ${field.label}: missing Designer adapter`;
                 continue;
             }
             import(`/adapters/${adapter}.mjs?token=${encodeURIComponent(token)}`)
-                .then(({ mount: render }) => {
+                .then(({ mount: render, controlId, valueContract }) => {
                     if (typeof render !== "function") throw new Error("Missing mount export");
+                    const expected = model.controls.find((item) => item.id === field.control)?.value;
+                    if (controlId !== field.control || valueContract?.type !== expected?.type
+                        || JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
+                            !== JSON.stringify(Object.entries(expected.properties).sort())) {
+                        throw new Error("Incompatible control ID or value contract");
+                    }
                     if (!mount.isConnected) return;
-                    render({ root: mount, field, value: draft[field.id], onChange(value) {
+                    return render({ root: mount, field, value: draft[field.id], onChange(value) {
                         draft[field.id] = value;
                         messageBox.hidden = true;
                         showError("");
                         updateSave();
                     } });
-                }).catch((error) => showError(`Could not load ${field.label}: ${error.message}`));
+                }).catch((error) => {
+                    if (!mount.isConnected) return;
+                    mount.replaceChildren();
+                    mount.setAttribute("role", "alert");
+                    mount.textContent = `Could not load ${field.label}: ${error.message}`;
+                });
             continue;
         }
         const checkbox = rules.type === "boolean";

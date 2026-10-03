@@ -166,10 +166,12 @@ export function renderHtml(config, token = "") {
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
     ${readOnlySections(config.readOnlyFields)}
-    ${config.generatedControls?.map(({ id, label, adapter, value }) =>
+    ${config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
         `<section class="phase-card" aria-label="${escapeHtml(label)}">
             <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
                 data-field-label="${escapeHtml(label)}"
+                data-control-type="${escapeHtml(control)}"
+                data-contract="${escapeHtml(JSON.stringify({ type: "object", properties }))}"
                 data-module="/controls/${escapeHtml(adapter)}.mjs"
                 data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("") ?? ""}
     ${config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
