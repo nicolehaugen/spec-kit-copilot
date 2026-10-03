@@ -80,8 +80,9 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.10 or the current
-local source, before any generation request is prepared. Healthy pages remain
+A missing skill directs users to launch a new Designer session with a compatible
+Canvas Design extension or the current local source, before any generation
+request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
 no Canvas ID or Title values, so Generate remains unavailable. Tab changes display the in-memory model without re-resolving
