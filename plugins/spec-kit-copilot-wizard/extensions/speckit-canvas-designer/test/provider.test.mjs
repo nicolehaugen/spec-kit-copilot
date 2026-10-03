@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFile, copyFile, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, cp, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1134,6 +1134,18 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await assert.rejects(load(pages), /invalid generated renderer/);
     await writeFile(rendererPath, "import './missing.mjs'; export function renderPage() {}");
     await assert.rejects(load(pages), /renderer must be self-contained/);
+    await writeFile(join(directory, "helper.mjs"), "export function renderPage() {}");
+    await writeFile(rendererPath,
+        "const label = 'Overview'; import { renderPage } from './helper.mjs'; export { renderPage };");
+    await assert.rejects(load(pages), /renderer must be self-contained/);
+    await writeFile(rendererPath, "export { renderPage } from './helper.mjs';");
+    await assert.rejects(load(pages), /renderer must be self-contained/);
+    await writeFile(rendererPath,
+        "export async function renderPage() { return import('./helper.mjs'); }");
+    await assert.rejects(load(pages), /renderer must be self-contained/);
+    await writeFile(rendererPath,
+        "export function renderPage() { return import.meta.url + 'import(\"./helper.mjs\")'; }");
+    assert.equal((await load(pages)).generatedPages.length, 1);
     await writeFile(rendererPath, "export const renderPage = null;");
     await assert.rejects(load(pages), /invalid generated renderer/);
     await writeFile(rendererPath, renderer);
@@ -1209,6 +1221,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const extension = join(workspace, "provider");
     const sdk = join(extension, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
+    await cp(join(source, "node_modules", "es-module-lexer"),
+        join(extension, "node_modules", "es-module-lexer"), { recursive: true });
     for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs",
         "settings.mjs", "generation.mjs"]) {
         await copyFile(join(source, file), join(extension, file));

@@ -52,8 +52,10 @@ artifacts, provide input, and run the matching `speckit-*` skill.
 
 ### Browser tests
 
-From this extension directory, run `npm ci`, `npx playwright install chromium`,
-then `npm run test:e2e`. The browser tests live in the repository's
+From this extension directory, run `npm ci`; also run `npm ci` in the sibling
+`speckit-canvas-designer` extension directory. Then run
+`npx playwright install chromium` and `npm run test:e2e` here.
+The browser tests live in the repository's
 `tests/e2e/` directory and start a local Wizard server with fixed
 catalog data; no `specify` installation or live catalog is required.
 `.github/workflows/wizard-e2e.yml` runs them on PRs targeting `main` only

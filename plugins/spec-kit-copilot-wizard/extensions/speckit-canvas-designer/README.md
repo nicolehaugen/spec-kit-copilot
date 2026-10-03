@@ -41,7 +41,8 @@ adapters remain deferred. A separately registered generated-host page definition
 and replace-only renderer add a page only to the generated app, not Designer's
 tabs. The provider verifies the executable Specify template stack (and rejects
 native script registrations), validates the page/renderer pair, and freezes
-their bytes for packaging without the originating preset.
+their bytes for packaging without the originating preset. Module dependencies
+in generated renderers are rejected because only the renderer is packaged.
 Save rejects stale revisions and invalid values, and reports failures without
 discarding edits. Generate freezes valid Essentials values and dispatches the
 installed Canvas Design generate command to create a new source-owned
@@ -61,7 +62,8 @@ checks the handoff structure, fingerprint, size, and session-artifact boundary.
 A missing or invalid handoff is an error, not an empty shell. The HTTP shell
 binds to loopback and requires an unguessable URL token.
 
-Run the provider tests with:
+Install this extension's dependencies with `npm ci` in its directory, then run
+the provider tests with:
 
 ```bash
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs

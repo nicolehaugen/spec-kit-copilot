@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import { init, parse } from "es-module-lexer/minimal";
 import { fingerprint } from "./handoff.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
@@ -319,7 +320,14 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
             } else {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated renderer exceeds 32 KiB`);
-                if (/(?:^|\n)\s*import\s|(?:^|\n)\s*export\s.*\sfrom\s|(?:^|\W)import\s*\(/m.test(document)) {
+                await init();
+                let imports;
+                try {
+                    [imports] = parse(document);
+                } catch (error) {
+                    throw new Error(`${item.name}: invalid generated renderer: ${error.message}`, { cause: error });
+                }
+                if (imports.some((entry) => entry.d !== -2)) {
                     throw new Error(`${item.name}: generated renderer must be self-contained; module imports are not packaged`);
                 }
                 const check = spawnSync("node", ["--input-type=module", "-e",

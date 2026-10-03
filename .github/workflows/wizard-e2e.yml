@@ -45,6 +45,9 @@ jobs:
           cache: npm
           cache-dependency-path: plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/package-lock.json
       - run: npm ci
+      - name: Install Designer provider dependencies
+        run: npm ci
+        working-directory: plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
