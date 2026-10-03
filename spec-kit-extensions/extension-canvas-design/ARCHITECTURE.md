@@ -141,6 +141,11 @@ and mount points; the packaged adapter renders them without design-time
 dependencies. An absent image retains its prior fallback or empty slot; a
 configured image whose adapter fails displays a local error instead of a
 success-shaped fallback. Scalar text and checkbox remain intentional built-ins.
+Both image adapters accept `mount({ root, field, value, context })`: `value`
+is a renderable image-source string (an editable data URI in Designer, a
+host-authorized packaged URL in the generated app). Host-specific validation,
+upload state, accessible text, and styling live in `context`, not in `value`.
+The adapter neither chooses a slot nor reads packaged files.
 
 **Setup confirm** is a stock boolean/control contribution from the **Canvas Design Specify Extension**. The Designer Canvas displays a checkbox. Generate packages its value and the generated setup-control behavior **inside the app**. The checkbox selects when to invoke **one shell-owned project-setup operation**:
 

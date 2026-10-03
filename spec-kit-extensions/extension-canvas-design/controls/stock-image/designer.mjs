@@ -5,7 +5,8 @@ export const valueContract = {
     mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"],
 };
 
-export function mount({ root, field, value, constraints, inputId, onChange, validateImage, setBusy }) {
+export function mount({ root, field, value, context, onChange }) {
+    const { constraints, inputId, validateImage, setBusy } = context ?? {};
     if (!root || typeof root.replaceChildren !== "function"
         || !field || typeof field.label !== "string"
         || typeof value !== "string" || typeof inputId !== "string" || !inputId

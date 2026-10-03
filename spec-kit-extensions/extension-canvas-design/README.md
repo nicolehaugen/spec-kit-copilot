@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.11** registers three JSON page templates, five ordered
+Canvas Design **0.1.12** registers three JSON page templates, five ordered
 stock field templates, and one shared image control definition with paired
 Designer/generated adapter templates, plus the
 `speckit.extension-canvas-design.load-page` and
@@ -52,6 +52,10 @@ loads its packaged adapter without Canvas Design installed. It rejects missing
 or modified packaged images instead of silently rendering a different logo.
 Without a Header logo the existing brand mark remains; a configured image
 that cannot mount its adapter shows a local error.
+Both adapters receive an image-source string as `value`. Designer supplies
+the editable data URI and upload capabilities in `context`; the generated
+host supplies an authorized packaged URL as `value` and presentation options
+such as alt text in `context`. Neither adapter selects a slot or reads files.
 
 Preset-generated pages can also place a `stock.image` contribution. Declare a
 slot on the generated page, for example
@@ -123,7 +127,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.11/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.12/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.

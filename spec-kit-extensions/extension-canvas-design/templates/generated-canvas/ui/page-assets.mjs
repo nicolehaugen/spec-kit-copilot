@@ -18,10 +18,9 @@ export function createStockImageRenderer(registration, token, loadModule = (url)
                     !== JSON.stringify(Object.entries(imageContract).sort())) {
                 throw new Error("Incompatible stock.image adapter");
             }
-            await mount({ root, field, value: {
-                src: `/assets/${encodeURIComponent(asset.file)}?token=${encodeURIComponent(token)}`,
-                alt, className,
-            } });
+            await mount({ root, field,
+                value: `/assets/${encodeURIComponent(asset.file)}?token=${encodeURIComponent(token)}`,
+                context: { alt, className } });
         } catch (error) {
             root.setAttribute("role", "alert");
             root.textContent = `Generated image could not render: ${error.message}`;

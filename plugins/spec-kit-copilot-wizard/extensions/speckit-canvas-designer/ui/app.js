@@ -261,11 +261,11 @@ function renderPage(pageId) {
                     }
                     if (!mount.isConnected) return;
                     return render({ root: mount, field, value: draft[field.id],
-                        ...(image ? { constraints: rules, inputId: `setting-field-${index}`,
+                        ...(image ? { context: { constraints: rules, inputId: `setting-field-${index}`,
                             validateImage: validImage, setBusy(busy) {
                                 uploading = busy;
                                 updateSave();
-                            } } : {}),
+                            } } } : {}),
                         onChange(value) {
                             if (image && !validImage(value)) {
                                 throw new Error(`Invalid Designer setting: ${field.id}`);

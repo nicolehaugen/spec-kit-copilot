@@ -35,7 +35,9 @@ reason beside their picker, including the actual size when over the limit;
 successful replacement or removal clears the message. All image fields,
 including preset-owned asset slots, require the same resolved `stock.image`
 definition and paired adapters; the host validates saved bytes while the
-Designer adapter renders the picker and preview. The smaller Header
+Designer adapter renders the picker and preview. Both adapters receive an
+image-source string as `value`; host-specific upload capabilities or packaged
+alt text and styling are passed separately as `context`. The smaller Header
 logo replaces the generated header's brand mark; the larger Main page logo appears beside the
 workflow heading. Either can be set alone. Both use the shared field/slot
 validation path and freeze the selected bytes and hashes at Generate. With no
@@ -102,7 +104,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.11 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.12 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

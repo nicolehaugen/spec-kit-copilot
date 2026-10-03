@@ -221,14 +221,16 @@ test("the shared image adapter mounts only its authorized presentation; gallery 
     try {
         const target = { replaceChildren(...children) { this.children = children; } };
         const field = { id: "gallery.logo", label: "Gallery Logo" };
-        const value = { src: "/assets/asset-local.png?token=secret",
-            alt: "Gallery Logo", className: "generated-image" };
-        mount({ root: target, field, value });
+        const value = "/assets/asset-local.png?token=secret";
+        const context = { alt: "Gallery Logo", className: "generated-image" };
+        mount({ root: target, field, value, context });
         assert.deepEqual(target.children, [image]);
-        assert.equal(image.src, value.src);
-        assert.equal(image.alt, value.alt);
-        assert.equal(image.className, value.className);
-        assert.throws(() => mount({ root: target, field, value: null }),
+        assert.equal(image.src, value);
+        assert.equal(image.alt, context.alt);
+        assert.equal(image.className, context.className);
+        assert.throws(() => mount({ root: target, field, value: null, context }),
+            /Invalid packaged image presentation/);
+        assert.throws(() => mount({ root: target, field, value, context: null }),
             /Invalid packaged image presentation/);
         const slot = { dataset: { assetSlot: "gallery.logo" } };
         const content = { querySelectorAll: () => [slot] };
@@ -259,10 +261,11 @@ test("generated host exposes adapter failure rather than hiding or replacing a c
     const render = createStockImageRenderer(registration, "secret", async (url) => {
         calls.push(url);
         return { controlId: "stock.image", valueContract: contract,
-            mount: async ({ value }) => { root.value = value; } };
+            mount: async ({ value, context }) => { root.value = value; root.context = context; } };
     });
     await render(root, field, asset, "", "generated-image");
-    assert.equal(root.value.src, "/assets/logo.png?token=secret");
+    assert.equal(root.value, "/assets/logo.png?token=secret");
+    assert.deepEqual(root.context, { alt: "", className: "generated-image" });
     assert.equal(calls.length, 1);
     await render(root, field, asset, "", "generated-image");
     assert.equal(calls.length, 1);
