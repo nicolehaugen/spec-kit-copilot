@@ -716,6 +716,25 @@ test("local package digest rejects file and parent swaps and bounds a growing fi
     assert.ok(largestRead <= "original".length + 1);
 });
 
+test("local package digest rejects earlier files changed while later entries are read", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "designer-package-race-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const first = join(root, "a-first.txt");
+    const last = join(root, "z-last.txt");
+    await writeFile(first, "original");
+    await writeFile(last, "last");
+    await assert.rejects(packageDigest(root, async (path, flags) => {
+        if (path === last) await writeFile(first, "changed contents");
+        return open(path, flags);
+    }), /file changed during verification/);
+
+    await writeFile(first, "original");
+    await assert.rejects(packageDigest(root, async (path, flags) => {
+        if (path === last) await writeFile(join(root, "new.txt"), "new");
+        return open(path, flags);
+    }), /directory changed during verification/);
+});
+
 test("Designer launch installs every extension before standalone presets, including local overrides", () => {
     const handoff = buildDesignerHandoff(snapshot, empty, {
         presets: [{ id: "copilot-sub-agents", source: "local", approved: true,

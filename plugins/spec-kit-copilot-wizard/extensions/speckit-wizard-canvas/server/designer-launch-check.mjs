@@ -17,6 +17,7 @@ const manifestName = { presets: "preset.yml", extensions: "extension.yml" };
 export async function packageDigest(root, openFile = open) {
     const hash = createHash("sha256");
     let count = 0, bytes = 0;
+    const directories = new Map(), files = new Map();
     const packageStat = await lstat(root);
     async function checkDirectory(directory, before) {
         const [current, canonical] = await Promise.all([lstat(directory), realpath(directory)]);
@@ -29,9 +30,11 @@ export async function packageDigest(root, openFile = open) {
     async function walk(directory) {
         const directoryStat = await lstat(directory);
         await checkDirectory(directory, directoryStat);
-        for (const entry of (await readdir(directory, { withFileTypes: true }))
-            .sort((a, b) => a.name.localeCompare(b.name, "en"))) {
-            if (OMIT.has(entry.name)) continue;
+        const entries = (await readdir(directory, { withFileTypes: true }))
+            .filter((entry) => !OMIT.has(entry.name))
+            .sort((a, b) => a.name.localeCompare(b.name, "en"));
+        directories.set(directory, { stat: directoryStat, names: entries.map((entry) => entry.name) });
+        for (const entry of entries) {
             const path = join(directory, entry.name);
             const stat = await lstat(path);
             if (stat.isSymbolicLink()) throw new Error(`Local package contains a symlink: ${path}`);
@@ -71,6 +74,7 @@ export async function packageDigest(root, openFile = open) {
                 }
                 hash.update(relative(root, path).split(sep).join("/")).update("\0");
                 hash.update(String(length)).update("\0").update(content.subarray(0, length));
+                files.set(path, pathStat);
             } finally {
                 await file.close();
             }
@@ -78,6 +82,34 @@ export async function packageDigest(root, openFile = open) {
         await checkDirectory(directory, directoryStat);
     }
     await walk(root);
+    async function recheck(directory) {
+        const { stat, names } = directories.get(directory);
+        await checkDirectory(directory, stat);
+        const currentNames = (await readdir(directory))
+            .filter((name) => !OMIT.has(name))
+            .sort((a, b) => a.localeCompare(b, "en"));
+        if (currentNames.length !== names.length
+            || currentNames.some((name, index) => name !== names[index])) {
+            throw new Error(`Local package directory changed during verification: ${directory}`);
+        }
+        for (const name of names) {
+            const path = join(directory, name);
+            if (directories.has(path)) {
+                await recheck(path);
+                continue;
+            }
+            const before = files.get(path);
+            const current = await lstat(path);
+            if (!before || !current.isFile() || current.isSymbolicLink()
+                || current.dev !== before.dev || current.ino !== before.ino
+                || current.size !== before.size || current.mtimeMs !== before.mtimeMs
+                || current.ctimeMs !== before.ctimeMs) {
+                throw new Error(`Local package file changed during verification: ${path}`);
+            }
+        }
+        await checkDirectory(directory, stat);
+    }
+    await recheck(root);
     await checkDirectory(root, packageStat);
     return hash.digest("hex");
 }
