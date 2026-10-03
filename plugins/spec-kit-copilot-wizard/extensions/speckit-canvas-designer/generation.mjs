@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 
 const fields = ["canvas.id", "canvas.displayName", "canvas.description",
@@ -44,6 +45,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
+    const checkout = await realpath(project);
+    const specify = join(checkout, ".specify");
     const generatedPages = [];
     for (const page of model.generatedPages ?? []) {
         const definition = model.templates.find((item) => item.name === page.name
@@ -54,18 +57,13 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         const assets = [];
         for (const item of [definition, renderer]) {
             if (item.strategy !== "replace") throw new Error(`${item.name}: generated assets must be replace-only`);
-            const bytes = await readFile(item.path);
-            if (bytes.length > 32 * 1024 || await realpath(item.path) !== item.path
-                || createHash("sha256").update(bytes).digest("hex") !== item.hash) {
-                throw new Error(`${item.name}: generated asset changed since Designer opened; reopen Designer`);
-            }
+            const bytes = await readFrozenAsset(item, specify);
             assets.push({ name: item.name, kind: item.kind, sourceId: item.sourceId,
                 hash: item.hash, content: bytes.toString("base64") });
         }
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
-    const checkout = await realpath(project);
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
     try {
         await stat(target);
