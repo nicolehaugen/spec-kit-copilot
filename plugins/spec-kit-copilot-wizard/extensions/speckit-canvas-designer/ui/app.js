@@ -239,6 +239,17 @@ function renderPage(pageId) {
             input.accept = "image/png,image/jpeg,image/gif,image/webp";
             input.id = `setting-field-${index}`;
             label.htmlFor = input.id;
+            const uploadError = element("p", undefined, "settings-image-error");
+            uploadError.id = `${input.id}-error`;
+            uploadError.setAttribute("role", "alert");
+            uploadError.hidden = true;
+            input.setAttribute("aria-describedby", uploadError.id);
+            const setUploadError = (message) => {
+                uploadError.textContent = message;
+                uploadError.hidden = !message;
+                if (message) input.setAttribute("aria-invalid", "true");
+                else input.removeAttribute("aria-invalid");
+            };
             const preview = element("img");
             preview.alt = `${field.label} preview`;
             const controls = element("div", undefined, "image-controls");
@@ -257,10 +268,13 @@ function renderPage(pageId) {
                 if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type)
                     || !file.size || file.size > rules.maxBytes) {
                     input.value = "";
-                    showError("Logo must be a PNG, JPEG, GIF, or WebP under 32 KiB.");
+                    setUploadError(file.size > rules.maxBytes
+                        ? `${field.label} is too large (${file.size.toLocaleString()} bytes). Maximum: ${rules.maxBytes.toLocaleString()} bytes (32 KiB).`
+                        : `${field.label} must be a nonempty PNG, JPEG, GIF, or WebP image.`);
                     return;
                 }
                 uploading = true;
+                setUploadError("");
                 updateSave();
                 try {
                     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -278,7 +292,7 @@ function renderPage(pageId) {
                     showError("");
                     messageBox.hidden = true;
                 } catch (error) {
-                    showError(`Could not load ${field.label}: ${error.message}`);
+                    setUploadError(`Could not load ${field.label}: ${error.message}`);
                 } finally {
                     input.value = "";
                     uploading = false;
@@ -288,12 +302,13 @@ function renderPage(pageId) {
             remove.addEventListener("click", () => {
                 draft[field.id] = "";
                 refresh();
+                setUploadError("");
                 showError("");
                 messageBox.hidden = true;
                 updateSave();
             });
             controls.append(input, remove);
-            wrapper.append(label, preview, controls);
+            wrapper.append(label, preview, controls, uploadError);
             if (field.description) wrapper.append(element("p", field.description, "settings-hint"));
             form.append(wrapper);
             refresh();

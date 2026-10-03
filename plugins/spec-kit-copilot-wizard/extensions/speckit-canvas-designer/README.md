@@ -30,8 +30,10 @@ Essentials requires Canvas ID and Title from the resolved core page. Description
 Workflow header, Allow custom slug, Header logo, and Main page logo are separate
 ordered stock contributions registered by the composed load-page command. The
 optional image controls upload, preview, replace, and remove independent PNG,
-JPEG, GIF, or WebP images up to 32 KiB each. The smaller Header logo replaces
-the generated header's brand mark; the larger Main page logo appears beside the
+JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
+reason beside their picker, including the actual size when over the limit;
+successful replacement or removal clears the message. The smaller Header
+logo replaces the generated header's brand mark; the larger Main page logo appears beside the
 workflow heading. Either can be set alone. Both use the shared field/slot
 validation path and freeze the selected bytes and hashes at Generate. With no
 Header logo, the existing brand mark remains unchanged. Without optional text

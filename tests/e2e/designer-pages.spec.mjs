@@ -90,6 +90,72 @@ async function openDesigner(page) {
     return shell;
 }
 
+test("Main page Logo upload explains rejection beside the picker and clears on replacement", async ({ page }) => {
+    const state = await model();
+    const { field } = JSON.parse(await readFile(new URL("stock-logo-main-page.json", templateRoot), "utf8"));
+    const { control: _control, ...logoField } = field;
+    const { field: headerField } = JSON.parse(await readFile(new URL("stock-logo.json", templateRoot), "utf8"));
+    const { control: _headerControl, ...headerLogoField } = headerField;
+    state.pages[0].fields.push(headerLogoField);
+    state.constraints[headerField.id] = { type: "image", maxBytes: 32768 };
+    state.values[headerField.id] = "";
+    state.pages.push({ page: "main", title: "Main", description: "", fields: [logoField] });
+    state.constraints[field.id] = { type: "image", maxBytes: 32768 };
+    state.values[field.id] = "";
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        await page.getByRole("tab", { name: "Main" }).click();
+        const picker = page.getByLabel(field.label);
+        const feedback = page.locator(`#${await picker.getAttribute("id")}-error`);
+        await expect(feedback).toHaveAttribute("role", "alert");
+        await expect(picker).toHaveAttribute("aria-describedby", await feedback.getAttribute("id"));
+
+        await picker.setInputFiles({ name: "large.png", mimeType: "image/png",
+            buffer: Buffer.alloc(326439) });
+        await expect(feedback).toBeVisible();
+        await expect(feedback).toContainText("326,439 bytes");
+        await expect(feedback).toContainText("32,768 bytes (32 KiB)");
+        await expect(picker).toHaveAttribute("aria-invalid", "true");
+
+        await picker.setInputFiles({ name: "almost.png", mimeType: "image/png",
+            buffer: Buffer.alloc(32988) });
+        await expect(feedback).toContainText("32,988 bytes");
+        await expect(feedback).toContainText("32,768 bytes (32 KiB)");
+
+        await picker.setInputFiles({ name: "vector.svg", mimeType: "image/svg+xml",
+            buffer: Buffer.from("<svg/>") });
+        await expect(feedback).toContainText("must be a nonempty PNG, JPEG, GIF, or WebP");
+
+        await picker.setInputFiles({ name: "broken.png", mimeType: "image/png",
+            buffer: Buffer.from("not a PNG") });
+        await expect(feedback).toContainText("Image bytes do not match the selected format");
+
+        await picker.setInputFiles({ name: "undecodable.png", mimeType: "image/png",
+            buffer: Buffer.from("89504e470d0a1a0a0000000d494844520000000100000001", "hex") });
+        await expect(feedback).toContainText("Image cannot be displayed");
+
+        await picker.setInputFiles({ name: "good.png", mimeType: "image/png",
+            buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64") });
+        await expect(page.getByAltText(`${field.label} preview`)).toBeVisible();
+        await expect(feedback).toBeHidden();
+        await expect(picker).not.toHaveAttribute("aria-invalid");
+        await page.getByRole("button", { name: "Remove" }).click();
+        await expect(feedback).toBeHidden();
+
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        const headerPicker = page.getByLabel(headerField.label);
+        const headerFeedback = page.locator(`#${await headerPicker.getAttribute("id")}-error`);
+        await headerPicker.setInputFiles({ name: "header-too-large.png", mimeType: "image/png",
+            buffer: Buffer.alloc(32988) });
+        await expect(headerFeedback).toContainText("32,988 bytes");
+        await expect(headerFeedback).toContainText("32,768 bytes (32 KiB)");
+        await expect(headerFeedback).toBeVisible();
+    } finally {
+        await shell.close();
+    }
+});
+
 test("isolated test preset resolves through Specify and renders its contributed stock field", async ({ page }) => {
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
