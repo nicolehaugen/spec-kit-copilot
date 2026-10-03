@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 
 const fields = ["canvas.id", "canvas.displayName", "canvas.description",
@@ -44,14 +45,12 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
+    const checkout = await realpath(project);
+    const specify = join(checkout, ".specify");
     const generatedPages = [];
     const asset = async (item) => {
         if (!item || item.strategy !== "replace") throw new Error("Missing validated replace-only generated asset");
-        const bytes = await readFile(item.path);
-        if (bytes.length > 32 * 1024 || await realpath(item.path) !== item.path
-            || createHash("sha256").update(bytes).digest("hex") !== item.hash) {
-            throw new Error(`${item.name}: generated asset changed since Designer opened; reopen Designer`);
-        }
+        const bytes = await readFrozenAsset(item, specify);
         return { name: item.name, kind: item.kind, sourceId: item.sourceId,
             hash: item.hash, content: bytes.toString("base64") };
     };
@@ -81,7 +80,6 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             value: values[contribution.field.id], assets: await Promise.all(names.map(asset)) });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
-    const checkout = await realpath(project);
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
     try {
         await stat(target);

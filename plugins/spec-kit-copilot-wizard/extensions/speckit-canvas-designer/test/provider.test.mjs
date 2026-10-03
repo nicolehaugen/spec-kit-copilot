@@ -12,7 +12,7 @@ import {
     validateHandoffId,
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
-import { assertPageCommand, loadResolvedDesignerPages } from "../pages.mjs";
+import { assertPageCommand, loadResolvedDesignerPages, readFrozenAsset } from "../pages.mjs";
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
 } from "../settings.mjs";
@@ -1166,6 +1166,10 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await writeFile(rendererPath, `${renderer}\n// changed`);
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
         /changed since Designer opened/);
+    await writeFile(rendererPath, "x".repeat(32 * 1024 + 1));
+    await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
+        /exceeds its size limit/);
+    await writeFile(rendererPath, renderer);
     const { materialize } = await import(new URL(
         "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
@@ -1320,6 +1324,17 @@ test("paired control validates both adapters, typed values and portable generate
     assert.equal(packaged.status, 200);
     assert.equal(await packaged.text(), module);
     assert.equal((await fetch(`${origin}/controls/${generated.name}.mjs`)).status, 401);
+});
+
+test("frozen generated asset read rejects a FIFO without blocking", {
+    skip: process.platform === "win32",
+}, async (t) => {
+    const workspace = await fixture(t);
+    const path = join(workspace, "renderer.mjs");
+    const created = spawnSync("mkfifo", [path], { encoding: "utf8" });
+    assert.equal(created.status, 0, created.stderr);
+    await assert.rejects(readFrozenAsset({ name: "renderer", path, hash: "unused" }, workspace),
+        /Invalid Designer file/);
 });
 
 test("unavailable page schema stops opening with repair guidance; invalid pages remain per-page errors", async (t) => {

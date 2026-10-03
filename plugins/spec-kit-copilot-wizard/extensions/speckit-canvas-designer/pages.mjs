@@ -68,11 +68,23 @@ async function boundedJson(path, root, limit, openFile = open, parse = true) {
         catch (error) {
             throw new PageContentError(`Invalid Designer ${parse ? "JSON" : "UTF-8"} in ${path}: ${error.message}`);
         }
-        return { document, path: target, size: length,
+        return { document, bytes, path: target, size: length,
             hash: createHash("sha256").update(bytes).digest("hex") };
     } finally {
         await file.close();
     }
+}
+
+export async function readFrozenAsset(item, root) {
+    if (await realpath(root) !== root) {
+        throw new Error("Designer .specify directory changed since opening");
+    }
+    const result = await boundedJson(item.path, root, 32 * 1024, open, false);
+    if (result.path !== item.path || await realpath(dirname(item.path)) !== dirname(item.path)
+        || await realpath(root) !== root || result.hash !== item.hash) {
+        throw new Error(`${item.name}: generated asset changed since Designer opened; reopen Designer`);
+    }
+    return result.bytes;
 }
 
 function checkSchema(value, schema, location) {
