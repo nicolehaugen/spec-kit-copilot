@@ -43,14 +43,16 @@ export `mount`, `controlId`, and a matching `valueContract`. Each adapter belong
 to one control definition; multiple fields may reuse that control. The Designer
 mount receives the field, draft value, and change callback; the generated
 mount receives the frozen value and displays it read-only in the declared
-`details.content` slot. Missing or incompatible control assets fail before
-opening rather than falling back to a stock input. A separately registered generated-host page definition
+`details.content` slot. Missing, wrong-kind, non-replace, or multiply owned
+control assets stop Designer opening rather than falling back to a stock input.
+A separately registered generated-host page definition
 and replace-only renderer add a page only to the generated app, not Designer's
 tabs. The provider verifies the executable Specify template stack (and rejects
 native script registrations), checks module syntax and declared exports without executing
 the bytes in Node, and rechecks Designer adapters before serving captured bytes.
-Changed assets require reopening Designer. The browser reports mount or contract failures
-beside the affected control. It validates the page/renderer pair and freezes
+Changed assets require reopening Designer. The browser reports non-function
+`mount` exports, incompatible `controlId` or `valueContract` exports, and mount
+failures beside the affected control. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Save rejects stale revisions and invalid values, and reports failures without
