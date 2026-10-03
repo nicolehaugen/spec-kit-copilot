@@ -14,7 +14,7 @@ const KINDS = ["presets", "extensions", "bundles"];
 const LOCAL_KINDS = ["presets", "extensions"];
 const LOCAL_PATH_LIMIT = 4096;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const REQUIRED_CANVAS_DESIGN_VERSION = "0.1.5";
+const REQUIRED_CANVAS_DESIGN_VERSION = "0.1.6";
 export const DESIGNER_EXTENSION_ID = "plugin:spec-kit-copilot-wizard:speckit-canvas-designer";
 const DESIGNER_CANVAS_ID = "speckit-canvas-designer";
 const READINESS_TIMEOUT_MS = 8000;
@@ -267,7 +267,7 @@ export function buildDesignerLaunchPrompt(handoff) {
     const hasLocal = localPresets.length > 0 || localExtensions.length > 0;
     const hasLocalCanvasDesignExt = localExtensions.some((item) => item.id === "extension-canvas-design");
     const officialCanvasDesignClause = hasLocalCanvasDesignExt
-        ? `Because HANDOFF_JSON.localSelections.extensions includes an approved entry with id "extension-canvas-design", skip the official by-ID install of extension-canvas-design and its required-version-0.1.5 check entirely; verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force. That install supplies the generated load-page and generate skills/schema.`
+        ? `Because HANDOFF_JSON.localSelections.extensions includes an approved entry with id "extension-canvas-design", skip the official by-ID install of extension-canvas-design and its required-version-${REQUIRED_CANVAS_DESIGN_VERSION} check entirely; verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force. That install supplies the generated load-page and generate skills/schema.`
         : `Install extension-canvas-design by ID (a normal install, NOT --dev). Require the installed version to be ${REQUIRED_CANVAS_DESIGN_VERSION}, whose composed load-page and generate commands are installed.`;
     const postBundleCanvasDesignClause = hasLocalCanvasDesignExt
         ? `Verify extension-canvas-design still comes from the approved local path; if a bundle replaced it, restore that local override with specify extension add <path> --dev --force and verify its source again. Stop if it cannot be restored or verified.`

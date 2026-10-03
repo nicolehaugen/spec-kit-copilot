@@ -197,9 +197,11 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || typeof field.label !== "string" || !field.label || field.label.length > 120
         || (field.description !== undefined
             && (typeof field.description !== "string" || field.description.length > 1000))
-        || !["string", "boolean"].includes(field.type)
+        || !["string", "boolean", "object"].includes(field.type)
         || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== field.type)
-        || field.control !== (field.type === "boolean" ? "stock.checkbox" : "stock.text")
+        || (field.type === "object"
+            ? !PAGE_PATTERN.test(field.control)
+            : field.control !== (field.type === "boolean" ? "stock.checkbox" : "stock.text"))
         || (field.maxLength !== undefined && (field.type !== "string"
             || !Number.isInteger(field.maxLength) || field.maxLength < 1
             || field.maxLength > 1000))
@@ -209,10 +211,14 @@ function validateContribution(document, name, slots, fieldOrigins) {
     }
     const binding = document.generatedBinding;
     if (binding !== undefined
-        && (field.type !== "string" || !binding
+        && (!binding
             || typeof binding !== "object" || Array.isArray(binding)
-            || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
-            || binding.presentation !== "stock.readonly"
+            || (field.type === "object"
+                ? Object.keys(binding).sort().join() !== "presentation,slot"
+                    || binding.presentation !== "control" || binding.slot !== "details.content"
+                : field.type !== "string"
+                    || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
+                    || binding.presentation !== "stock.readonly")
             || (binding.section !== undefined
                 && (!binding.section || typeof binding.section !== "object"
                     || Array.isArray(binding.section)
@@ -227,6 +233,27 @@ function validateContribution(document, name, slots, fieldOrigins) {
         throw new Error(`${name}: duplicate field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
     }
     fieldOrigins.set(field.id, name);
+}
+
+function validateControl(document, name) {
+    const properties = document?.value?.properties;
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || Object.keys(document).sort().join() !== "adapters,id,schemaVersion,value"
+        || document.schemaVersion !== 1 || !PAGE_PATTERN.test(document.id)
+        || !document.value || Object.keys(document.value).sort().join() !== "properties,type"
+        || document.value.type !== "object"
+        || !properties || typeof properties !== "object" || Array.isArray(properties)
+        || !Object.keys(properties).length || Object.keys(properties).length > 10
+        || Object.entries(properties).some(([key, allowed]) =>
+            !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
+            || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
+            || new Set(allowed).size !== allowed.length
+            || allowed.some((value) => typeof value !== "string" || !value || value.length > 80))
+        || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
+        || !PAGE_PATTERN.test(document.adapters.designer)
+        || !PAGE_PATTERN.test(document.adapters.generated)) {
+        throw new Error(`${name}: invalid shared control value contract or adapter references`);
+    }
 }
 
 function validateGeneratedPage(document, name) {
@@ -262,7 +289,7 @@ function executableRegistration(project, name) {
             throw new Error(`${name}: unexpected native script registration metadata`);
         }
         if (scriptInfo.kind === "script") {
-            throw new Error(`${name}: native Specify script registrations are not supported for generated renderers`);
+            throw new Error(`${name}: native Specify script registrations are not supported for executable adapters/renderers`);
         }
         return info;
     }
@@ -298,19 +325,21 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || !item.path || item.path.length > 4096 || /[\x00-\x1f\x7f]/.test(item.path)
             || typeof item.sourceId !== "string"
             || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
-            || !["designer.field", "generated.page", "generated.renderer"].includes(item.kind)
+            || !["designer.field", "generated.page", "generated.renderer",
+                "control.definition", "designer.adapter", "generated.adapter"].includes(item.kind)
             || item.strategy !== "replace") {
             throw new Error(`Invalid or duplicate Canvas Design template: ${item?.name ?? ""}`);
         }
         names.add(item.name);
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
-        const expected = item.kind === "generated.renderer" ? ".mjs" : ".json";
+        const executable = ["generated.renderer", "designer.adapter", "generated.adapter"].includes(item.kind);
+        const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
         }
         const { document, hash, size: bytes } = await boundedJson(
-            path, specify, FILE_LIMIT, open, item.kind !== "generated.renderer");
+            path, specify, FILE_LIMIT, open, !executable);
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
         if (item.kind === "designer.field") {
@@ -333,26 +362,34 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             if (item.kind === "generated.page") {
                 validateGeneratedPage(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
+            } else if (item.kind === "control.definition") {
+                validateControl(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: control definition exceeds 32 KiB`);
             } else {
-                if (bytes > 32 * 1024) throw new Error(`${item.name}: generated renderer exceeds 32 KiB`);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: executable adapter exceeds 32 KiB`);
                 const { init, parse } = await import("es-module-lexer/minimal");
                 await init();
                 let imports, exports;
                 try {
                     [imports, exports] = parse(document);
                 } catch (error) {
-                    throw new Error(`${item.name}: invalid generated renderer: ${error.message}`, { cause: error });
+                    throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
+                        ? "generated renderer" : item.kind}: ${error.message}`, { cause: error });
                 }
                 if (imports.some((entry) => entry.d !== -2)) {
-                    throw new Error(`${item.name}: generated renderer must be self-contained; module imports are not packaged`);
+                    throw new Error(`${item.name}: ${item.kind === "generated.renderer"
+                        ? "generated renderer" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
+                const requiredExport = item.kind === "generated.renderer" ? "renderPage" : "mount";
                 const check = spawnSync("node", ["--check", "--input-type=module"],
                     { input: document, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
                 if (check.error || check.status !== 0) {
-                    throw new Error(`${item.name}: invalid generated renderer: ${check.stderr || check.error || "module validation failed"}`);
+                    throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
+                        ? "generated renderer" : item.kind}: ${check.stderr || check.error || "module validation failed"}`);
                 }
-                if (!exports.some((entry) => entry.n === "renderPage")) {
-                    throw new Error(`${item.name}: invalid generated renderer: missing renderPage export`);
+                if (!exports.some((entry) => entry.n === requiredExport)) {
+                    throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
+                        ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
                 }
             }
         }
@@ -378,6 +415,44 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${entry.name}: generated renderer must belong to exactly one page`);
         }
     }
+    const controls = loaded.filter((entry) => entry.kind === "control.definition");
+    const adapterOwners = new Map();
+    for (const control of controls) {
+        const fields = loaded.filter((entry) => entry.kind === "designer.field"
+            && entry.document.field.control === control.document.id);
+        if (!fields.length || controls.some((other) => other !== control
+            && other.document.id === control.document.id)) {
+            throw new Error(`${control.name}: unreferenced or duplicate control definition`);
+        }
+        for (const [host, kind] of [["designer", "designer.adapter"], ["generated", "generated.adapter"]]) {
+            const adapter = loaded.find((item) => item.name === control.document.adapters[host]);
+            if (!adapter || adapter.kind !== kind) {
+                throw new Error(`${control.name}: missing ${host} adapter ${control.document.adapters[host]}`);
+            }
+            const owner = adapterOwners.get(adapter.name);
+            if (owner) {
+                throw new Error(`${adapter.name}: ${host} adapter belongs to both ${owner} and ${control.document.id}`);
+            }
+            adapterOwners.set(adapter.name, control.document.id);
+        }
+        for (const field of fields) {
+            if (!field.document.generatedBinding || field.document.field.type !== "object") {
+                throw new Error(`${field.name}: incompatible shared control value or generated placement`);
+            }
+        }
+    }
+    for (const entry of loaded.filter((item) => ["designer.adapter", "generated.adapter"].includes(item.kind))) {
+        if (!controls.some((control) => Object.values(control.document.adapters).includes(entry.name))) {
+            throw new Error(`${entry.name}: unreferenced control adapter`);
+        }
+    }
+    for (const entry of loaded.filter((item) => item.kind === "designer.field"
+        && item.document.field.type === "object")) {
+        if (!controls.some((control) => control.document.id === entry.document.field.control
+            && entry.document.requires.includes(control.name))) {
+            throw new Error(`${entry.name}: missing or incompatible shared control definition`);
+        }
+    }
     const ordered = loaded.filter((entry) => entry.kind === "designer.field");
     const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     ordered.sort((a, b) => a.document.order - b.document.order
@@ -392,7 +467,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         sections.set(section.id, section.title);
     }
-    return { loaded, ordered };
+    return { loaded, ordered, controls };
 }
 
 async function context(project) {
@@ -494,23 +569,30 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
-    const { loaded, ordered } = await loadTemplates(
+    const { loaded, ordered, controls } = await loadTemplates(
         templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.page")
         .map(({ name, document }) => ({ name, ...document }));
+    model.controls = controls.map(({ document }) => document);
+    model.adapters = Object.fromEntries(controls.map(({ document }) =>
+        [document.id, document.adapters.designer]));
     for (const page of model.pages) {
         if (page.error) continue;
         for (const slot of page.slots ?? []) {
             for (const { document } of ordered.filter((entry) => entry.document.slot === slot.id)) {
                 if (page.fields.length >= 100) throw new Error(`${page.page}: too many resolved fields`);
-                const { control: _control, ...field } = document.field;
-                page.fields.push(field);
+                const field = document.field;
+                const { control: _stockControl, ...scalarField } = field;
+                page.fields.push(field.type === "object" ? field : scalarField);
                 model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
                     : { type: field.type, ...(field.type === "string"
-                        ? { maxLength: field.maxLength ?? 1000 } : {}) };
-                model.values[field.id] = field.type === "boolean" ? (field.default ?? false) : "";
+                        ? { maxLength: field.maxLength ?? 1000 } : field.type === "object"
+                            ? { properties: controls.find((item) =>
+                                item.document.id === field.control).document.value.properties } : {}) };
+                model.values[field.id] = field.type === "boolean" ? (field.default ?? false)
+                    : field.type === "object" ? null : "";
             }
         }
     }
