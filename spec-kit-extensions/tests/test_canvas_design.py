@@ -184,6 +184,44 @@ class CanvasDesignPackageTests(unittest.TestCase):
         field_ids = [field["id"] for page in self.pages for field in page["fields"]]
         self.assertEqual(len(field_ids), len(set(field_ids)))
 
+    def test_minimal_essentials_test_preset_replaces_only_stock_registration(self):
+        fixture = EXTENSIONS.parent / "spec-kit-presets/copilot-minimal-essentials-test"
+        manifest = yaml.safe_load((fixture / "preset.yml").read_text("utf-8"))
+        self.assertEqual(manifest["preset"]["id"], "copilot-minimal-essentials-test")
+        self.assertEqual(manifest["requires"]["extensions"], [EXTENSION_ID])
+        self.assertEqual(manifest["provides"]["templates"], [
+            {
+                "type": "command",
+                "name": "speckit.extension-canvas-design.load-page",
+                "file": "commands/load-page.md",
+                "description": "Resolve only the three default Designer pages without optional stock fields.",
+                "replaces": "speckit.extension-canvas-design.load-page",
+                "strategy": "replace",
+            },
+            {
+                "type": "template",
+                "name": "canvas-settings-setup",
+                "file": "pages/essentials.json",
+                "description": "Replace Essentials with required identity fields only.",
+                "strategy": "replace",
+            },
+        ])
+        page = json.loads((fixture / "pages/essentials.json").read_text("utf-8"))
+        self.validator.validate(page)
+        self.assertEqual(page, self.pages[0])
+        stock_section = (
+            "## Canvas Design templates\n\n"
+            "- `canvas-stock-description` — `designer.field`, `replace`\n"
+            "- `canvas-stock-workflow-heading` — `designer.field`, `replace`\n"
+            "- `canvas-stock-custom-slug` — `designer.field`, `replace`\n\n"
+        )
+        self.assertEqual(self.command.count(stock_section), 1)
+        self.assertEqual((fixture / "commands/load-page.md").read_text("utf-8"),
+                         self.command.replace(stock_section, ""))
+        self.assertNotIn(manifest["preset"]["id"],
+                         json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
+                                    .read_text("utf-8"))["presets"])
+
     def test_schema_rejects_invalid_page_shapes(self):
         mutations = {
             "schema version": {"schemaVersion": 2},
