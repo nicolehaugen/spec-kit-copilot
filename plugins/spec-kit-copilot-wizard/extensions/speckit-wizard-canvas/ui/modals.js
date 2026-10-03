@@ -534,6 +534,11 @@ export async function openArtifactViewer(p) {
     try {
         const url = `/api/artifact?p=${encodeURIComponent(p.artifactPath)}&token=${encodeURIComponent(TOKEN)}`;
         const res = await fetch(url, { headers: __HEADERS });
+        if (res.status === 404) {
+            const body = root.querySelector(".artifact-viewer-body");
+            if (body) body.innerHTML = `<p class="wizard-modal-error">Output not ready or not found at the expected path. Run the phase or check its output folder.</p>`;
+            return;
+        }
         if (!res.ok) throw new Error(`${res.status} ${await res.text().catch(() => "")}`);
         text = await res.text();
     } catch (err) {

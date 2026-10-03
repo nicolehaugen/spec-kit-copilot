@@ -36,8 +36,9 @@ import {
 } from "./phase-runtime.js";
 import { isSetupComplete, renderSetupBody, collectSetupValues, runInit, runReload, installCatalogPreset, performEnvProbe } from "./setup.js";
 import { wireInfoPopover } from "./composition.js";
-import { renderPhaseCustomizations } from "./phase-contributors.js";
+import { outputEvidenceForCommand, renderPhaseCustomizations } from "./phase-contributors.js";
 import { popoverConfirm } from "./modals.js";
+import { displayOutputPath, primaryCandidate } from "../pipeline/output-evidence.mjs";
 
 // -------- Section: render/env.js --------
 
@@ -470,15 +471,23 @@ export function renderGraphPhaseCard(el, p) {
     // the artifact." From there they can inspect the real file, spot a
     // near-miss filename, or open a sibling.
     let artifact;
-    if (p.artifactPath || p.folderPath) {
-        // If we only know the folder, use it. Otherwise derive it from
-        // the artifact path.
-        const parentFolder = p.artifactPath
-            ? parentDirOf(p.artifactPath)
-            : p.folderPath;
-        const displayPath = `${parentFolder}/`;
-        const titleAttr = `title="Open ${escapeHtml(parentFolder)}/ in file explorer"`;
-        artifact = `<button type="button" class="phase-artifact-link" data-phase-action="browse-folder" data-folder-path="${escapeHtml(parentFolder)}" ${titleAttr}><code>${escapeHtml(displayPath)}</code></button>`;
+    const evidence = outputEvidenceForCommand(state.snapshot?.artifactEvidence, p.commandName);
+    const availability = outputEvidenceForCommand(state.snapshot?.outputAvailability, p.commandName);
+    const primary = primaryCandidate(evidence);
+    const primaryAvailability = primary
+        ? availability?.candidates?.[evidence.candidates.indexOf(primary)] : null;
+    const outputPath = primary
+        ? primaryAvailability?.resolvedPath ?? displayOutputPath(primary, state.snapshot?.specsDir) : null;
+    const folder = primary
+        ? primaryAvailability?.folderPath ?? primaryAvailability?.browsePath
+        : availability?.folderPath ?? p.folderPath;
+    const expectedPath = outputPath ?? p.artifactPath ?? (folder ? `${folder}/` : null);
+    const displayFolder = folder ?? (p.artifactPath ? parentDirOf(p.artifactPath)
+        : (primary?.root ? null : p.folderPath) ?? (outputPath ? parentDirOf(outputPath) : null));
+    if (folder != null && expectedPath) {
+        artifact = `<button type="button" class="phase-artifact-link" data-phase-action="browse-folder" data-folder-path="${escapeHtml(folder)}" title="Open ${escapeHtml(folder || "project folder")} in file explorer"><code>${escapeHtml(expectedPath)}</code></button>`;
+    } else if (displayFolder) {
+        artifact = `<code class="muted">${escapeHtml(displayFolder)}/</code>`;
     } else if (p.artifact) {
         artifact = `<code class="muted">${escapeHtml(p.artifact)}</code>`;
     } else {
@@ -718,15 +727,22 @@ export function wireGraphPhaseCard(el, p) {
     // the OS file explorer (via /api/reveal). One predictable behavior
     // regardless of whether the file exists — user always lands in the
     // real folder on disk.
-    const browseLink = el.querySelector('[data-phase-action="browse-folder"]');
-    browseLink?.addEventListener("click", async () => {
-        const folder = browseLink.getAttribute("data-folder-path");
-        if (!folder) return;
-        try {
-            await __postJson("/api/reveal", { sub: folder });
-        } catch (err) {
-            console.error(`reveal failed: ${err?.message ?? err}`);
-        }
+    el.querySelectorAll('[data-phase-action="browse-folder"]').forEach((browseLink) => {
+        browseLink.addEventListener("click", async () => {
+            const folder = browseLink.getAttribute("data-folder-path");
+            if (folder === null) return;
+            try {
+                await __postJson("/api/reveal", { sub: folder });
+            } catch (err) {
+                console.error(`reveal failed: ${err?.message ?? err}`);
+            }
+        });
+    });
+    el.querySelectorAll("[data-output-path]").forEach((link) => {
+        link.addEventListener("click", () => {
+            const path = link.getAttribute("data-output-path");
+            if (path) __openArtifactViewer({ ...p, artifactPath: path });
+        });
     });
     // Customization row targets — reveal the assembled source file (template,
     // command, script, etc.) in the command viewer.
