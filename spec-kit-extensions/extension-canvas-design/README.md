@@ -122,8 +122,9 @@ and `valueContract`. The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
 `{root, field, value}`. Designer validates and persists changes; Generate
 freezes the validated object and packages the effective generated adapter and
-definition into the app. Missing, wrong-kind, non-replace, or multiply owned
-adapters stop Designer opening rather than falling back to a stock control.
+definition into the app, up to 30 generated controls. Missing, wrong-kind,
+non-replace, or multiply owned adapters stop Designer opening rather than
+falling back to a stock control.
 The browser reports incompatible `controlId` or `valueContract` exports,
 non-function `mount` exports, and mount failures beside the affected control.
 For stock read-only fields, an optional `generatedBinding.section` with a

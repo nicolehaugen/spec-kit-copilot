@@ -1359,6 +1359,30 @@ test("paired control validates both adapters, typed values and portable generate
         await assert.rejects(freezeGeneration({ model, values: { ...values, "risk.rating": value },
             handoff, project, workspace }), /Invalid Designer setting: risk.rating/);
     }
+    const controlContribution = model.contributions.find((item) => item.field.id === "risk.rating");
+    const controlId = (index) => index ? `risk.rating${index}` : "risk.rating";
+    const controlValues = { ...values };
+    const controlConstraints = { ...model.constraints };
+    const controls = Array.from({ length: 31 }, (_, index) => {
+        const id = controlId(index);
+        controlValues[id] = values["risk.rating"];
+        controlConstraints[id] = model.constraints["risk.rating"];
+        return { ...controlContribution, field: { ...controlContribution.field, id } };
+    });
+    const controlModel = { ...model, constraints: controlConstraints };
+    await assert.rejects(freezeGeneration({
+        model: { ...controlModel, contributions: controls }, values: controlValues,
+        handoff, project, workspace,
+    }), /Generated controls exceed the 30-control limit/);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
+    const atLimit = await freezeGeneration({
+        model: { ...controlModel, contributions: controls.slice(0, 30) }, values: controlValues,
+        handoff, project, workspace,
+    });
+    const atLimitRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", atLimit.requestId, "request.json")));
+    assert.equal(atLimitRequest.generatedControls.length, 30);
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { modelRevision: model.revision, revision: 0, values });
     const reopened = await loadDesignerSettings(workspace, handoff, await load());

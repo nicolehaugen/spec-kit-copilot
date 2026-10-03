@@ -45,6 +45,11 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
+    const controlContributions = (model.contributions ?? [])
+        .filter((item) => item.generatedBinding?.presentation === "control");
+    if (controlContributions.length > 30) {
+        throw new Error("Generated controls exceed the 30-control limit");
+    }
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
     const generatedPages = [];
@@ -64,8 +69,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
     }
     const generatedControls = [];
-    for (const contribution of model.contributions ?? []) {
-        if (contribution.generatedBinding?.presentation !== "control") continue;
+    for (const contribution of controlContributions) {
         const control = model.controls.find((entry) => entry.id === contribution.field.control);
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
         const names = [
