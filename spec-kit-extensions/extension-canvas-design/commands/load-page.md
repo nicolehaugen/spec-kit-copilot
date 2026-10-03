@@ -64,7 +64,7 @@ themselves. Control definitions and host-specific adapters must each be explicit
    appending executable JavaScript is not. For every registered name,
    inspect `specify artifact info template:<name> --json` and confirm that
    `kind` is `template` and every stack layer has `strategy: replace`
-   (extension templates replace implicitly).    for executable assets also inspect
+   (extension templates replace implicitly). For executable assets, also inspect
    `specify artifact info script:<name> --json`; an unknown-script error is
    expected, but a native script of the same name is unsupported. Reject
    `append`, `prepend`, or `wrap` asset registrations even if Specify

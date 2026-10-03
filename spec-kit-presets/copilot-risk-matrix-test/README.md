@@ -23,9 +23,9 @@ Both complete, self-contained host modules export `mount`. Designer calls
 `mount({root, field, value})`. `root` is an exclusively owned DOM element,
 `field` is the resolved field definition with `id`, and `onChange(nextValue)`
 requests a draft update for host-side validation and persistence. The host
-supplies values by field ID and re-mounts when the value changes; the adapter
-replaces only its owned root's contents. Generate packages the winning
-generated `.mjs` locally with the source-owned app. There are no imports,
+supplies values by field ID but does not re-mount after `onChange`; the adapter
+updates only its owned root to reflect the new selection. Generate packages
+the winning generated `.mjs` locally with the source-owned app. There are no imports,
 external calls, runtime edits, or stock scalar adapter files.
 
 Impact runs across columns and likelihood down rows. Tab enters the selected
