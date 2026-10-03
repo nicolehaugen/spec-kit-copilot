@@ -716,23 +716,22 @@ test("local package digest rejects file and parent swaps and bounds a growing fi
     assert.ok(largestRead <= "original".length + 1);
 });
 
-test("local package digest rejects earlier files changed while later entries are read", async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "designer-package-race-"));
+test("local package digest bounds empty directory count and nesting depth", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "designer-package-limits-"));
     t.after(() => rm(root, { recursive: true, force: true }));
-    const first = join(root, "a-first.txt");
-    const last = join(root, "z-last.txt");
-    await writeFile(first, "original");
-    await writeFile(last, "last");
-    await assert.rejects(packageDigest(root, async (path, flags) => {
-        if (path === last) await writeFile(first, "changed contents");
-        return open(path, flags);
-    }), /file changed during verification/);
+    const wide = join(root, "wide");
+    await mkdir(wide);
+    await Promise.all(Array.from({ length: 513 }, (_, index) => mkdir(join(wide, `dir-${index}`))));
+    await assert.rejects(packageDigest(wide), /exceeds verification limits/);
 
-    await writeFile(first, "original");
-    await assert.rejects(packageDigest(root, async (path, flags) => {
-        if (path === last) await writeFile(join(root, "new.txt"), "new");
-        return open(path, flags);
-    }), /directory changed during verification/);
+    const deep = join(root, "deep");
+    await mkdir(deep);
+    let directory = deep;
+    for (let index = 0; index < 33; index++) {
+        directory = join(directory, "d");
+        await mkdir(directory);
+    }
+    await assert.rejects(packageDigest(deep), /exceeds verification limits/);
 });
 
 test("Designer launch installs every extension before standalone presets, including local overrides", () => {

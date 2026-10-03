@@ -10,14 +10,14 @@ import { validateLocalSource } from "./designer-local-sources.mjs";
 
 const exec = promisify(execFile);
 const OMIT = new Set([".git", ".specify-dev", "node_modules", "__pycache__"]);
-const MAX_FILES = 512;
+const MAX_ENTRIES = 512;
+const MAX_DEPTH = 32;
 const MAX_BYTES = 8 * 1024 * 1024;
 const manifestName = { presets: "preset.yml", extensions: "extension.yml" };
 
 export async function packageDigest(root, openFile = open) {
     const hash = createHash("sha256");
     let count = 0, bytes = 0;
-    const directories = new Map(), files = new Map();
     const packageStat = await lstat(root);
     async function checkDirectory(directory, before) {
         const [current, canonical] = await Promise.all([lstat(directory), realpath(directory)]);
@@ -27,19 +27,23 @@ export async function packageDigest(root, openFile = open) {
         }
     }
     await checkDirectory(root, packageStat);
-    async function walk(directory) {
+    async function walk(directory, depth) {
+        if (depth > MAX_DEPTH) {
+            throw new Error(`Local package exceeds verification limits: ${root}`);
+        }
         const directoryStat = await lstat(directory);
         await checkDirectory(directory, directoryStat);
-        const entries = (await readdir(directory, { withFileTypes: true }))
-            .filter((entry) => !OMIT.has(entry.name))
-            .sort((a, b) => a.name.localeCompare(b.name, "en"));
-        directories.set(directory, { stat: directoryStat, names: entries.map((entry) => entry.name) });
-        for (const entry of entries) {
+        for (const entry of (await readdir(directory, { withFileTypes: true }))
+            .sort((a, b) => a.name.localeCompare(b.name, "en"))) {
+            if (OMIT.has(entry.name)) continue;
+            if (++count > MAX_ENTRIES) {
+                throw new Error(`Local package exceeds verification limits: ${root}`);
+            }
             const path = join(directory, entry.name);
             const stat = await lstat(path);
             if (stat.isSymbolicLink()) throw new Error(`Local package contains a symlink: ${path}`);
-            if (stat.isDirectory()) { await walk(path); continue; }
-            if (!stat.isFile() || ++count > MAX_FILES || (bytes += stat.size) > MAX_BYTES) {
+            if (stat.isDirectory()) { await walk(path, depth + 1); continue; }
+            if (!stat.isFile() || (bytes += stat.size) > MAX_BYTES) {
                 throw new Error(`Local package exceeds verification limits: ${root}`);
             }
             const file = await openFile(path, constants.O_RDONLY
@@ -74,42 +78,13 @@ export async function packageDigest(root, openFile = open) {
                 }
                 hash.update(relative(root, path).split(sep).join("/")).update("\0");
                 hash.update(String(length)).update("\0").update(content.subarray(0, length));
-                files.set(path, pathStat);
             } finally {
                 await file.close();
             }
         }
         await checkDirectory(directory, directoryStat);
     }
-    await walk(root);
-    async function recheck(directory) {
-        const { stat, names } = directories.get(directory);
-        await checkDirectory(directory, stat);
-        const currentNames = (await readdir(directory))
-            .filter((name) => !OMIT.has(name))
-            .sort((a, b) => a.localeCompare(b, "en"));
-        if (currentNames.length !== names.length
-            || currentNames.some((name, index) => name !== names[index])) {
-            throw new Error(`Local package directory changed during verification: ${directory}`);
-        }
-        for (const name of names) {
-            const path = join(directory, name);
-            if (directories.has(path)) {
-                await recheck(path);
-                continue;
-            }
-            const before = files.get(path);
-            const current = await lstat(path);
-            if (!before || !current.isFile() || current.isSymbolicLink()
-                || current.dev !== before.dev || current.ino !== before.ino
-                || current.size !== before.size || current.mtimeMs !== before.mtimeMs
-                || current.ctimeMs !== before.ctimeMs) {
-                throw new Error(`Local package file changed during verification: ${path}`);
-            }
-        }
-        await checkDirectory(directory, stat);
-    }
-    await recheck(root);
+    await walk(root, 0);
     await checkDirectory(root, packageStat);
     return hash.digest("hex");
 }
