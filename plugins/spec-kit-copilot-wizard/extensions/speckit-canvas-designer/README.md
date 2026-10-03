@@ -46,7 +46,9 @@ mount receives the frozen value and displays it read-only in the declared
 opening rather than falling back to a stock input. A separately registered generated-host page definition
 and replace-only renderer add a page only to the generated app, not Designer's
 tabs. The provider verifies the executable Specify template stack (and rejects
-native script registrations), validates the page/renderer pair, and freezes
+native script registrations), checks module exports against the bounded bytes
+it validated, and rechecks Designer adapters before serving captured bytes.
+Changed assets require reopening Designer. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Save rejects stale revisions and invalid values, and reports failures without

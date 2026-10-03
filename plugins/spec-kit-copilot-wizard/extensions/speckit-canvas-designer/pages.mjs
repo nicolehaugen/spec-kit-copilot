@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
 import { init, parse } from "es-module-lexer/minimal";
 import { fingerprint } from "./handoff.mjs";
 
@@ -14,6 +13,8 @@ const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
 const ERROR_LIMIT = 512;
+const IMPORT_VALIDATED_MODULE = "import{readFileSync}from'node:fs';"
+    + "const m=await import('data:text/javascript;base64,'+readFileSync(0).toString('base64'));";
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
 const RULES = {
@@ -305,6 +306,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     const names = new Set(pageNames);
     const loaded = [];
+    const executableBytes = new Map();
     const slots = new Map();
     for (const page of pageEntries.filter((entry) => !entry.error)) {
         for (const slot of page.slots ?? []) {
@@ -337,7 +339,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
         }
-        const { document, hash, size: bytes } = await boundedJson(
+        const { document, hash, size: bytes, bytes: content } = await boundedJson(
             path, specify, FILE_LIMIT, open, !executable);
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
@@ -377,12 +379,14 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                         ? "generated renderer" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
                 const check = spawnSync("node", ["--input-type=module", "-e",
-                    `const m=await import(process.argv[1]);if(typeof m.${item.kind === "generated.renderer" ? "renderPage" : "mount"}!=='function')throw new Error('Missing ${item.kind === "generated.renderer" ? "renderPage" : "mount"} export')`,
-                    pathToFileURL(path).href], { encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
+                    IMPORT_VALIDATED_MODULE
+                    + `if(typeof m.${item.kind === "generated.renderer" ? "renderPage" : "mount"}!=='function')throw new Error('Missing ${item.kind === "generated.renderer" ? "renderPage" : "mount"} export')`],
+                { input: content, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
                 if (check.error || check.status !== 0) {
                     throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
                         ? "generated renderer" : item.kind}: ${check.stderr || check.error || "module validation failed"}`);
                 }
+                executableBytes.set(item.name, content);
             }
         }
         loaded.push({ ...item, path, hash, ...(document === undefined ? {} : { document }) });
@@ -421,13 +425,13 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 throw new Error(`${control.name}: missing ${host} adapter ${control.document.adapters[host]}`);
             }
             const check = spawnSync("node", ["--input-type=module", "-e",
-                "import{isDeepStrictEqual}from'node:util';"
-                + "const m=await import(process.argv[1]);const expected=JSON.parse(process.argv[3]);"
-                + "if(m.controlId!==process.argv[2]||!isDeepStrictEqual(m.valueContract,expected))"
+                IMPORT_VALIDATED_MODULE + "import{isDeepStrictEqual}from'node:util';"
+                + "const expected=JSON.parse(process.argv[2]);"
+                + "if(m.controlId!==process.argv[1]||!isDeepStrictEqual(m.valueContract,expected))"
                 + "throw new Error('Incompatible shared control value contract or adapter reference')",
-                pathToFileURL(adapter.path).href, control.document.id,
+                control.document.id,
                 JSON.stringify(control.document.value)], {
-                encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024,
+                input: executableBytes.get(adapter.name), encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024,
             });
             if (check.error || check.status !== 0) {
                 throw new Error(`${adapter.name}: incompatible shared control value contract or adapter reference: ${check.stderr || check.error || "module validation failed"}`);

@@ -1,8 +1,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
+import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, saveDesignerSettings } from "./settings.mjs";
 import { freezeGeneration } from "./generation.mjs";
 
@@ -54,12 +55,15 @@ export async function startShell(handoff = null, model = null, { project, worksp
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
     if (model) {
-        for (const name of Object.values(model.adapters ?? {})) {
+        const adapters = Object.values(model.adapters ?? {});
+        if (adapters.length && !project) throw new Error("Designer project is required for adapters");
+        const specify = adapters.length ? join(await realpath(project), ".specify") : null;
+        for (const name of adapters) {
             const adapter = model.templates.find((item) => item.name === name
                 && item.kind === "designer.adapter");
             if (!adapter) throw new Error(`${name}: Designer adapter is unavailable`);
             assets.set(`/adapters/${name}.mjs`, {
-                type: "text/javascript", content: await readFile(adapter.path, "utf8"),
+                type: "text/javascript", content: await readFrozenAsset(adapter, specify),
             });
         }
     }

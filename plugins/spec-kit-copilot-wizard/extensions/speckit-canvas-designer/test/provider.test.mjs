@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { appendFile, copyFile, cp, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
@@ -1228,6 +1229,52 @@ test("paired control validates both adapters, typed values and portable generate
     assert.deepEqual(model.values["risk.rating"], null);
     assert.equal(model.generatedPages.length, 0);
     assert.equal(model.adapters["risk-matrix"], "canvas-control-risk-matrix-designer");
+    const designerAdapter = templates[2];
+    const designerModule = await readFile(designerAdapter.path, "utf8");
+    const raced = await load(templates, (checkout, name) => {
+        if (name === designerAdapter.name) {
+            writeFileSync(designerAdapter.path, "export const mount = null;");
+        }
+        return registration(checkout, name);
+    });
+    assert.equal(raced.templates.find((item) => item.name === designerAdapter.name).hash,
+        model.templates.find((item) => item.name === designerAdapter.name).hash);
+    await assert.rejects(startShell(handoff, raced, { project, workspace }),
+        /changed since Designer opened/);
+    await writeFile(designerAdapter.path, "export function mount() { throw new Error('unvalidated'); }");
+    await assert.rejects(startShell(handoff, model, { project, workspace }),
+        /changed since Designer opened/);
+    await writeFile(designerAdapter.path, "x".repeat(32 * 1024 + 1));
+    await assert.rejects(startShell(handoff, model, { project, workspace }),
+        /exceeds its size limit/);
+    await writeFile(designerAdapter.path, designerModule);
+    const shell = await startShell(handoff, model, { project, workspace });
+    t.after(() => shell.close());
+    await writeFile(designerAdapter.path, "export function mount() { throw new Error('unvalidated'); }");
+    const adapterUrl = new URL(shell.url);
+    adapterUrl.pathname = `/adapters/${designerAdapter.name}.mjs`;
+    assert.equal(await (await fetch(adapterUrl)).text(), designerModule);
+    await writeFile(designerAdapter.path, designerModule);
+    const moved = `${directory}-original`;
+    const outside = join(workspace, "untrusted-presets");
+    await mkdir(outside);
+    await writeFile(join(outside, `${designerAdapter.name}.mjs`), "export function mount() {}");
+    await rename(directory, moved);
+    let linked = false;
+    try {
+        try {
+            await symlink(outside, directory, process.platform === "win32" ? "junction" : "dir");
+            linked = true;
+        } catch (error) {
+            if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+            t.diagnostic("Windows symlink creation is not permitted; adapter parent assertion skipped");
+        }
+        if (linked) await assert.rejects(startShell(handoff, model, { project, workspace }),
+            /escapes its allowed directory|changed since Designer opened/);
+    } finally {
+        if (linked) await rm(directory);
+        await rename(moved, directory);
+    }
     const values = { ...model.values, "canvas.id": "risk-demo", "canvas.displayName": "Risk",
         "risk.rating": { impact: "high", likelihood: "medium" } };
     await assert.rejects(saveDesignerSettings(workspace, handoff, model,
@@ -1259,8 +1306,6 @@ test("paired control validates both adapters, typed values and portable generate
     await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
     await assert.rejects(load(), /invalid shared control value contract|incompatible shared control/);
     await writeFile(definition.path, original);
-    const designerAdapter = templates[2];
-    const designerModule = await readFile(designerAdapter.path, "utf8");
     await writeFile(designerAdapter.path, designerModule.replace(
         'export const controlId = "risk-matrix"', 'export const controlId = "other-control"'));
     await assert.rejects(load(), /incompatible shared control value contract or adapter reference/);
