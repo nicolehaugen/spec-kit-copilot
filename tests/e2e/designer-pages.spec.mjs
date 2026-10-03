@@ -28,6 +28,16 @@ function supportsSpecifyVersion(output) {
     return major > 1 || (major === 1 && (minor > 0 || patch >= 7));
 }
 
+function scalarRegistrations(resolve) {
+    return [
+        ["canvas-stock-text", "control.definition"],
+        ["canvas-stock-text-designer", "designer.adapter"],
+        ["canvas-stock-text-generated", "generated.adapter"],
+        ["canvas-stock-checkbox", "control.definition"],
+        ["canvas-stock-checkbox-designer", "designer.adapter"],
+    ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
+}
+
 test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
     for (const [version, supported] of [
         ["0.99.99", false], ["1.0.6", false], ["1.0.7", true],
@@ -46,8 +56,7 @@ async function model(revision = "first") {
     }
     for (const name of ["description", "workflow-heading", "custom-slug"]) {
         const { field } = JSON.parse(await readFile(new URL(`stock-${name}.json`, templateRoot), "utf8"));
-        const { control: _control, ...stockField } = field;
-        pages[0].fields.push(stockField);
+        pages[0].fields.push(field);
     }
     return {
         pages, revision,
@@ -64,6 +73,28 @@ async function model(revision = "first") {
     };
 }
 
+async function prepareScalarAdapters(project, state) {
+    state.controls = [...(state.controls ?? []),
+        ...await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
+            JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extensionRoot), "utf8"))))];
+    state.adapters = { ...state.adapters, "stock.text": "canvas-stock-text-designer",
+        "stock.checkbox": "canvas-stock-checkbox-designer" };
+    state.templates ??= [];
+    for (const [name, file] of [
+        ["canvas-stock-text-designer", "stock-text"],
+        ["canvas-stock-checkbox-designer", "stock-checkbox"],
+    ]) {
+        const path = join(project, ".specify", "extensions", "extension-canvas-design",
+            "controls", file, "designer.mjs");
+        await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
+            "controls", file), { recursive: true });
+        await copyFile(new URL(`controls/${file}/designer.mjs`, extensionRoot), path);
+        const bytes = await readFile(path);
+        state.templates.push({ name, path,
+            hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.adapter" });
+    }
+}
+
 async function startPreparedShell(state) {
     const workspace = await mkdtemp(join(tmpdir(), "designer-pages-e2e-"));
     const workflow = { selectedPhases: [] };
@@ -75,6 +106,7 @@ async function startPreparedShell(state) {
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const project = join(workspace, "project");
+        await prepareScalarAdapters(project, state);
         if (state.adapters?.["stock.image"]) {
             const path = join(project, ".specify", "extensions", "extension-canvas-design",
                 "controls", "stock-image", "designer.mjs");
@@ -82,8 +114,8 @@ async function startPreparedShell(state) {
                 "controls", "stock-image"), { recursive: true });
             await copyFile(new URL("controls/stock-image/designer.mjs", extensionRoot), path);
             const bytes = await readFile(path);
-            state.templates = [{ name: "canvas-stock-image-designer", path,
-                hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.adapter" }];
+            state.templates.push({ name: "canvas-stock-image-designer", path,
+                hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.adapter" });
         }
         const shell = await startShell(handoff, state, { workspace, project });
         return { url: shell.url, close: async () => {
@@ -247,7 +279,8 @@ test("isolated test preset resolves through Specify and renders its contributed 
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.page", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contribution-pr1-test"),
-            kind: "designer.field", strategy: "replace" }];
+            kind: "designer.field", strategy: "replace" },
+        ...scalarRegistrations(resolve)];
         expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -331,7 +364,8 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.page", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contributions-billing"),
-            kind: "designer.field", strategy: "replace" }];
+            kind: "designer.field", strategy: "replace" },
+        ...scalarRegistrations(resolve)];
         expect(templates[0].sourceId).toBe("copilot-billing-canvas-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -384,7 +418,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
 });
 
 test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(150_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -444,6 +478,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             ["canvas-control-risk-matrix-designer", "designer.adapter"],
             ["canvas-control-risk-matrix-generated", "generated.adapter"],
         ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
+        templates.push(...scalarRegistrations(resolve));
+        templates.push(...["canvas-stock-description", "canvas-stock-workflow-heading"]
+            .map((name) => ({ ...resolve(name), kind: "designer.field", strategy: "replace" })));
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
@@ -461,6 +498,8 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("risk-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Risk Canvas");
+        await page.getByRole("textbox", { name: "Description" }).fill("Risk workflow description");
+        await page.getByRole("textbox", { name: "Workflow header" }).fill("Risk workflows");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#action-message")).toHaveText("Settings saved.");
         expect((await load()).values["risk.rating"]).toEqual({
@@ -490,6 +529,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         server = createServer(routes.handle);
         await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
         await page.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
+        await expect(page.locator("#workflow-heading")).toContainText("Risk workflows");
+        await expect(page.locator(".collection-description")).toHaveText("Risk workflow description");
+        await expect(page.locator(".brand-mark")).toContainText(String.fromCodePoint(9671));
         await expect(page.getByRole("table", { name: /impact medium, likelihood medium/ })).toBeVisible();
         await expect(page.locator('[data-control-id="risk.rating"] [aria-current="true"]')).toHaveText("Selected");
         const designerAdapter = await readFile(templates[2].path, "utf8");
@@ -592,12 +634,14 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        shell = await startShell(handoff, await model(), { project, workspace,
+        const state = await model();
+        await prepareScalarAdapters(project, state);
+        shell = await startShell(handoff, state, { project, workspace,
             session: { send: async () => {} } });
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.12 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.13 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
@@ -643,13 +687,16 @@ test("Save validates values, persists edits and reports stale revisions", async 
     const initial = await model();
     initial.settingsRevision = 0;
     initial.persisted = false;
-    const shell = await startShell(handoff, initial, { workspace });
-    const staleShell = await startShell(handoff, initial, { workspace });
+    const project = join(workspace, "project");
+    await prepareScalarAdapters(project, initial);
+    const shell = await startShell(handoff, initial, { project, workspace });
+    const staleShell = await startShell(handoff, initial, { project, workspace });
     try {
         await page.goto(shell.url);
         const save = page.getByRole("button", { name: "Save", exact: true });
         await save.click();
         await expect(page.getByRole("alert")).toContainText("Enter a valid Canvas ID");
+        await expect(page.locator('[name="canvas.id"]')).toBeFocused();
         await expect(page.getByRole("alert")).toContainText("lowercase letters (a–z), numbers (0–9), and hyphens (-)");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("example-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Example");
@@ -662,7 +709,8 @@ test("Save validates values, persists edits and reports stale revisions", async 
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
 
         const reopenedModel = await loadDesignerSettings(workspace, handoff, await model());
-        const reopened = await startShell(handoff, reopenedModel, { workspace });
+        await prepareScalarAdapters(project, reopenedModel);
+        const reopened = await startShell(handoff, reopenedModel, { project, workspace });
         try {
             await page.goto(reopened.url);
             await expect(page.getByRole("textbox", { name: "Canvas ID (required)" }))

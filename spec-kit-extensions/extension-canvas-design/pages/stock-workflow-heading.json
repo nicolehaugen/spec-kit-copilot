@@ -4,6 +4,8 @@
   "host": "designer",
   "slot": "essentials.options",
   "order": 20,
+  "requires": ["canvas-stock-text"],
   "field": {"id": "canvas.workflowListName", "type": "string", "control": "stock.text",
-    "label": "Workflow header"}
+    "label": "Workflow header"},
+  "generatedBinding": {"presentation": "text", "slot": "workflow.heading"}
 }

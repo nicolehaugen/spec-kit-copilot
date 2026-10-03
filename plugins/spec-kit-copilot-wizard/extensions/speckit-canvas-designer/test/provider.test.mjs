@@ -13,7 +13,7 @@ import {
     validateHandoffId,
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
-import { assertPageCommand, loadResolvedDesignerPages, readFrozenAsset } from "../pages.mjs";
+import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAsset } from "../pages.mjs";
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
 } from "../settings.mjs";
@@ -21,6 +21,19 @@ import { freezeGeneration } from "../generation.mjs";
 import { decodeImage } from "../image.mjs";
 
 const ID = "designer_1";
+const scalarFixtures = new Map();
+
+async function loadResolvedDesignerPages(handoff, project, entries, templates = [], registration) {
+    const scalar = scalarFixtures.get(project) ?? [];
+    const present = new Set(templates.map((entry) => entry.name));
+    const complete = [...templates, ...scalar.filter((entry) => !present.has(entry.name))];
+    const verify = (root, name) => name.startsWith("canvas-stock-text")
+        || name.startsWith("canvas-stock-checkbox")
+        ? { kind: "template", stack: [{ active: true, sourceId: "extension-canvas-design",
+            layer: "extension", strategy: "replace" }] }
+        : registration?.(root, name);
+    return loadPages(handoff, project, entries, complete, verify);
+}
 
 function validHandoff(id = ID) {
     const workflow = { selectedPhases: ["specify", "plan"] };
@@ -62,6 +75,7 @@ async function projectFixture(t, workspace) {
         JSON.stringify({ extensions: { "extension-canvas-design": { enabled: true } } }));
     await copyFile(join(source, "schemas", "page.schema.json"),
         join(installed, "schemas", "page.schema.json"));
+    await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
     const pages = [["setup", "essentials"], ["artifacts", "artifacts"],
         ["appearance", "appearance"]];
     const entries = [];
@@ -71,6 +85,24 @@ async function projectFixture(t, workspace) {
         entries.push({ name: `canvas-settings-${name}`, path,
             kind: "designer.page", strategy: "replace" });
     }
+    const scalar = [];
+    for (const [directory, names] of [
+        ["stock-text", [["canvas-stock-text", "control.json", "control.definition"],
+            ["canvas-stock-text-designer", "designer.mjs", "designer.adapter"],
+            ["canvas-stock-text-generated", "generated.mjs", "generated.adapter"]]],
+        ["stock-checkbox", [["canvas-stock-checkbox", "control.json", "control.definition"],
+            ["canvas-stock-checkbox-designer", "designer.mjs", "designer.adapter"]]],
+    ]) {
+        await mkdir(join(installed, "controls", directory), { recursive: true });
+        for (const [name, filename, kind] of names) {
+            const path = join(installed, "controls", directory, filename);
+            await copyFile(join(source, "controls", directory, filename), path);
+            scalar.push({ name, path, sourceId: "extension:extension-canvas-design",
+                kind, strategy: "replace" });
+        }
+    }
+    scalarFixtures.set(project, scalar);
+    t.after(() => scalarFixtures.delete(project));
     t.after(() => rm(project, { recursive: true, force: true }));
     return { project, entries };
 }
@@ -115,6 +147,44 @@ function stockImageRegistration(_root, name) {
         sourceId: stock ? "extension-canvas-design" : "copilot-logo-gallery-test",
         layer: stock ? "extension" : "preset", strategy: "replace" }] };
 }
+
+test("stock scalar definitions mount required fields and reject incomplete visual adapters", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const fields = await stockTemplates(project);
+    const scalar = scalarFixtures.get(project);
+    const verify = () => ({ kind: "template", stack: [{ active: true,
+        sourceId: "extension-canvas-design", layer: "extension", strategy: "replace" }] });
+    const model = await loadResolvedDesignerPages(handoff, project, entries, fields);
+    assert.equal(model.pages[0].fields[0].control, "stock.text");
+    assert.equal(model.pages[0].fields[1].control, "stock.text");
+    assert.equal(model.adapters["stock.text"], "canvas-stock-text-designer");
+    assert.equal(model.adapters["stock.checkbox"], "canvas-stock-checkbox-designer");
+    await assert.rejects(loadPages(handoff, project, entries, [], verify),
+        /missing shared control definition for canvas.id/);
+    await assert.rejects(loadPages(handoff, project, entries,
+        [...fields, ...scalar.filter((item) => item.name !== "canvas-stock-text-generated")],
+        verify), /missing generated adapter canvas-stock-text-generated/);
+    const original = await readFile(fields[0].path, "utf8");
+    const changed = JSON.parse(original);
+    changed.requires = [];
+    await writeFile(fields[0].path, JSON.stringify(changed));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /incompatible shared control value or generated placement/);
+    await writeFile(fields[0].path, original);
+    await writeFile(fields[0].path, JSON.stringify({ ...JSON.parse(original),
+        generatedBinding: { presentation: "text", slot: "workflow.heading" } }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /incompatible generated binding/);
+    await writeFile(fields[0].path, original);
+    const setup = JSON.parse(await readFile(entries[0].path, "utf8"));
+    setup.fields[0].control = "stock.checkbox";
+    await writeFile(entries[0].path, JSON.stringify(setup));
+    const invalid = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.match(invalid.pages[0].error.reason, /duplicate or invalid field canvas.id/);
+});
 
 test("stock image requires one compatible control definition and paired self-contained adapters", async (t) => {
     const workspace = await fixture(t);
@@ -236,6 +306,7 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     await writeFile(templates[0].path, JSON.stringify({
         ...JSON.parse(await readFile(templates[0].path, "utf8")),
         field: { id: "canvas.id", type: "string", label: "Conflicting ID", control: "stock.text" },
+        generatedBinding: undefined,
     }));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
         /canvas-stock-description: duplicate field canvas.id also defined by canvas-settings-setup/);
@@ -935,7 +1006,7 @@ test("token-gated Save endpoint reports errors without losing the current values
     await writeFile(entries[1].path, JSON.stringify(changedPage));
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries));
-    const shell = await startShell(handoff, model, { workspace });
+    const shell = await startShell(handoff, model, { project, workspace });
     t.after(() => shell.close());
     const url = new URL(shell.url);
     const saveUrl = new URL("/api/save", url);
@@ -994,7 +1065,7 @@ test("Save reserves space for the stored envelope and rejects larger valid reque
     assert.equal(remaining, 0);
     const body = JSON.stringify(payload);
     assert.equal(Buffer.byteLength(body), SAVE_REQUEST_LIMIT);
-    const shell = await startShell(handoff, model, { workspace });
+    const shell = await startShell(handoff, model, { project, workspace });
     t.after(() => shell.close());
     const saveUrl = new URL(shell.url);
     saveUrl.pathname = "/api/save";
@@ -1050,7 +1121,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.12/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.13/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -1126,7 +1197,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.12 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.13 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2317,13 +2388,13 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         await writeFile(schema, installedSchema);
         const missing = await canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [{ ...entries[0], path: join(project, ".specify", "missing.json") },
-                ...entries.slice(1)], templates: [],
+                ...entries.slice(1)], templates: scalarFixtures.get(project),
         } });
         const missingStateUrl = new URL(missing.url);
         missingStateUrl.pathname = "/api/state";
         assert.match((await (await fetch(missingStateUrl)).json()).pages[0].error.reason, /missing/);
         const filled = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         assert.notEqual(filled.url, empty.url);
         assert.match(await (await fetch(filled.url)).text(), /Spec Kit Canvas Designer/);
@@ -2342,7 +2413,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         const withTemplate = await canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: entries,
             templates: [{ name: "canvas-contribution-billing", path: templatePath,
-                sourceId: "billing", kind: "designer.field", strategy: "replace" }],
+                sourceId: "billing", kind: "designer.field", strategy: "replace" },
+            ...scalarFixtures.get(project)],
         } });
         const templateStateUrl = new URL(withTemplate.url);
         templateStateUrl.pathname = "/api/state";
@@ -2365,7 +2437,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             pages: [...entries, { name: "canvas-settings-pr1-test", path: testPage,
                 kind: "designer.page", strategy: "replace" }],
             templates: [{ name: "canvas-contribution-pr1-test", path: testField,
-                sourceId: "copilot-canvas-design-test", kind: "designer.field", strategy: "replace" }],
+                sourceId: "copilot-canvas-design-test", kind: "designer.field", strategy: "replace" },
+            ...scalarFixtures.get(project)],
         } });
         const presetStateUrl = new URL(withPreset.url);
         presetStateUrl.pathname = "/api/state";
@@ -2377,7 +2450,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         changed.title = "Updated Essentials";
         await writeFile(entries[0].path, JSON.stringify(changed));
         const reopened = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         assert.notEqual(reopened.url, filled.url);
         await assert.rejects(fetch(stateUrl));
@@ -2388,7 +2461,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         assert.notEqual(updated.revision, initial.revision);
         await writeFile(entries[1].path, "{broken");
         const broken = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         await assert.rejects(fetch(latest));
         const brokenStateUrl = new URL(broken.url);
@@ -2407,7 +2480,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
                 revision: brokenState.settingsRevision, values: savedValues }) });
         assert.equal(savedResponse.status, 200);
         const restored = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         const restoredUrl = new URL(restored.url);
         restoredUrl.pathname = "/api/state";

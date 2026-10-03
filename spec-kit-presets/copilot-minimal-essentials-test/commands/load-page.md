@@ -41,6 +41,12 @@ declares the value IDs it consumes in its `values` list. A processing-only value
 is not automatically presented and is not secret from its declared consumers.
 Providers are packaged, never evaluated by Designer.
 
+## Canvas Design templates
+
+- `canvas-stock-text` — `control.definition`, `replace`
+- `canvas-stock-text-designer` — `designer.adapter`, `replace`
+- `canvas-stock-text-generated` — `generated.adapter`, `replace`
+
 ## Steps
 
 1. Read this entire composed command first. Collect the defaults and every name
@@ -56,7 +62,7 @@ Providers are packaged, never evaluated by Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.9)
+         (top layer from: extension:extension-canvas-design v0.1.13)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
@@ -88,7 +94,7 @@ Providers are packaged, never evaluated by Designer.
    example, keep `copilot-billing-canvas` or
    `extension:extension-canvas-design`). Stop if neither form matches; do
    not infer the source from the file path. Use
-   an empty `templates` array if none are registered. Submit all defaults,
+   the three registered stock-text templates for this minimal page. Submit all defaults,
    additional pages, and registered templates in this single call. The provider
    validates the handoff and complete inventory before returning a URL. A
    resolved page with invalid or missing file contents appears as an error tab

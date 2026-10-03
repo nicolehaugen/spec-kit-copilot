@@ -225,7 +225,7 @@ test("outdated hosted Canvas Design requires a checked local override before dis
     const handoff = JSON.parse(withLocal.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
     assert.deepEqual(handoff.localSelections.extensions, [{
         id: "extension-canvas-design", source: "local", approved: true,
-        path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.12",
+        path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.13",
     }]);
     assert.match(withLocal.sent[0].prompt, /skip the official by-ID install/);
     assert.match(withLocal.sent[0].prompt,
@@ -652,7 +652,7 @@ test("validateLocalDesignerSelections validates real manifests and stays undefin
         presets: [{ id: "copilot-sub-agents", source: "local", approved: true,
             path: LOCAL_PRESET_PATH, version: "1.0.0" }],
         extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
-            path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.12" }],
+            path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.13" }],
     });
 });
 

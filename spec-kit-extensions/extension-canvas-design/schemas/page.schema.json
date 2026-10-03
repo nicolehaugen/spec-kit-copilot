@@ -40,6 +40,7 @@
         "properties": {
           "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,79}$"},
           "label": {"type": "string", "minLength": 1, "maxLength": 120},
+          "control": {"enum": ["stock.text", "stock.checkbox"]},
           "description": {"type": "string", "maxLength": 1000},
           "type": {"enum": ["string", "boolean"]},
           "default": {"type": "boolean"}

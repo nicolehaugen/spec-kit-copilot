@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "stock.checkbox",
+  "value": {"type": "boolean"},
+  "adapters": {
+    "designer": "canvas-stock-checkbox-designer"
+  }
+}

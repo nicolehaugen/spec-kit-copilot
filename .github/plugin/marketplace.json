@@ -35,7 +35,7 @@
     {
       "name": "spec-kit-copilot-wizard",
       "description": "Adds the guided Spec Kit Wizard and an Essentials-driven Designer generator for scaffold-derived workflow canvases; still under development.",
-      "version": "0.4.16",
+      "version": "0.4.17",
       "source": "plugins/spec-kit-copilot-wizard"
     }
   ]

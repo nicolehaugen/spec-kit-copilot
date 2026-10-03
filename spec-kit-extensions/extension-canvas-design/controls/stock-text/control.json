@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "stock.text",
+  "value": {"type": "string"},
+  "adapters": {
+    "designer": "canvas-stock-text-designer",
+    "generated": "canvas-stock-text-generated"
+  }
+}

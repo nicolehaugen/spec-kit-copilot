@@ -59,6 +59,11 @@ Providers are packaged, never evaluated by Designer.
 - `canvas-stock-image` — `control.definition`, `replace`
 - `canvas-stock-image-designer` — `designer.adapter`, `replace`
 - `canvas-stock-image-generated` — `generated.adapter`, `replace`
+- `canvas-stock-text` — `control.definition`, `replace`
+- `canvas-stock-text-designer` — `designer.adapter`, `replace`
+- `canvas-stock-text-generated` — `generated.adapter`, `replace`
+- `canvas-stock-checkbox` — `control.definition`, `replace`
+- `canvas-stock-checkbox-designer` — `designer.adapter`, `replace`
 
 ## Steps
 
@@ -75,7 +80,7 @@ Providers are packaged, never evaluated by Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.12)
+         (top layer from: extension:extension-canvas-design v0.1.13)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on

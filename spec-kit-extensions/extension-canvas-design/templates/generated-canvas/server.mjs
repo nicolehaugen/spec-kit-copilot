@@ -26,7 +26,7 @@ function validImageAsset(asset, basename) {
         && /^[a-f0-9]{64}$/.test(asset.hash);
 }
 
-function readOnlySections(fields) {
+function readOnlySections(fields, textPlacements = []) {
     const groups = new Map();
     const ungrouped = Symbol("ungrouped");
     for (const field of fields ?? []) {
@@ -36,7 +36,8 @@ function readOnlySections(fields) {
     }
     return [...groups.values()].map(({ title, fields: entries }) =>
         `<section class="phase-card" aria-label="${escapeHtml(title)}"><h2>${escapeHtml(title)}</h2><dl class="phase-facts">${entries.map(({ id, label, value }) =>
-            `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}">${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
+            `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}"${textPlacements.some((item) =>
+                item.id === id && item.slot === "details.content") ? ` data-stock-text="details.content" data-text-label="${escapeHtml(label)}"` : ""}>${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
 }
 
 export function readConfig() {
@@ -134,6 +135,33 @@ export function readConfig() {
             || config.generatedPageAssets?.length))
         || (config.imageControl && config.generatedControls?.some((item) =>
             item.adapter === config.imageControl.adapter))
+        || (config.textControl !== undefined && (!config.textControl
+            || Object.keys(config.textControl).sort().join() !== "adapter,definition,definitionHash,hash"
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.textControl.adapter)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.textControl.definition)
+            || !/^[a-f0-9]{64}$/.test(config.textControl.hash)
+            || !/^[a-f0-9]{64}$/.test(config.textControl.definitionHash)))
+        || (!!config.textControl !== !!config.textPlacements?.length)
+        || (config.textPlacements !== undefined && (!Array.isArray(config.textPlacements)
+            || config.textPlacements.length > 100
+            || new Set(config.textPlacements.map((item) => item?.id)).size
+                !== config.textPlacements.length
+            || config.textPlacements.filter((item) => item?.presentation === "text").length
+                !== new Set(config.textPlacements.filter((item) =>
+                    item?.presentation === "text").map((item) => item.slot)).size
+            || config.textPlacements.some((item) => !item
+                || Object.keys(item).sort().join() !== "id,label,presentation,slot"
+                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+                || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+                || (item.presentation === "text"
+                    ? !((item.slot === "workflow.description" && item.id === "canvas.description")
+                        || (item.slot === "workflow.heading" && item.id === "canvas.workflowListName"))
+                    : item.presentation !== "stock.readonly" || item.slot !== "details.content"
+                        || !config.readOnlyFields?.some((field) =>
+                            field.id === item.id && field.label === item.label)))))
+        || (config.textControl && (config.generatedControls?.some((item) =>
+            item.adapter === config.textControl.adapter)
+            || config.imageControl?.adapter === config.textControl.adapter))
         || (config.theme !== undefined && !["light", "dark"].includes(config.theme))
         || !config.installed || ["presets", "extensions", "bundles"].some((kind) =>
             !Array.isArray(config.installed[kind]) || config.installed[kind].some((item) =>
@@ -144,6 +172,7 @@ export function readConfig() {
         if (asset) readImageAsset(asset);
     }
     if (config.imageControl) readImageControl(config.imageControl);
+    if (config.textControl) readTextControl(config.textControl);
     const sections = new Map();
     for (const { section } of config.readOnlyFields ?? []) {
         if (!section) continue;
@@ -179,6 +208,21 @@ function readImageControl(control) {
         || JSON.stringify(Object.entries(parsed.value ?? {}).sort())
             !== JSON.stringify(Object.entries(imageValueContract).sort())) {
         throw new Error("Packaged stock.image definition does not match its frozen contract");
+    }
+    return bytes;
+}
+function readTextControl(control) {
+    const bytes = readFileSync(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
+        throw new Error("Packaged stock.text adapter does not match its frozen hash");
+    }
+    const definition = readFileSync(new URL(`./controls/${control.definition}.json`, import.meta.url));
+    const parsed = JSON.parse(definition);
+    if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
+        || parsed.id !== "stock.text" || parsed.adapters?.generated !== control.adapter
+        || JSON.stringify(parsed.value) !== JSON.stringify({ type: "string" })) {
+        throw new Error("Packaged stock.text definition does not match its frozen contract");
     }
     return bytes;
 }
@@ -219,7 +263,14 @@ export function renderHtml(config, token = "") {
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
     const phases = config.phases.filter((phase) => !isConstitution(phase));
     const hasConstitution = config.phases.some(isConstitution);
-    const intro = `<div><h2 id="workflow-heading">${escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted">${escapeHtml(canvas.description)}</p></div>`;
+    const headingAdapter = config.textPlacements?.find((item) => item.id === "canvas.workflowListName"
+        && item.slot === "workflow.heading");
+    const descriptionAdapter = config.textPlacements?.find((item) => item.id === "canvas.description"
+        && item.slot === "workflow.description");
+    const intro = `<div><h2 id="workflow-heading">${headingAdapter
+        ? `<span data-stock-text="workflow.heading" data-field-id="canvas.workflowListName" data-text-label="${escapeHtml(headingAdapter.label)}">${escapeHtml(canvas.workflowListName)}</span>`
+        : escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted"${descriptionAdapter
+        ? ` data-stock-text="workflow.description" data-field-id="canvas.description" data-text-label="${escapeHtml(descriptionAdapter.label)}"` : ""}>${escapeHtml(canvas.description)}</p></div>`;
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -254,7 +305,7 @@ export function renderHtml(config, token = "") {
         <div id="workflow-empty" class="instance-list" hidden><button id="create-first-workflow" class="instance-select empty-workflow" type="button"><span class="empty-workflow-mark" aria-hidden="true">+</span><span class="instance-select-main"><strong>No workflows yet</strong><span class="muted">Create a workflow to see it here.</span></span><span class="empty-workflow-action" aria-hidden="true">Create workflow &#8594;</span></button></div>
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
-    ${readOnlySections(config.readOnlyFields)}
+    ${readOnlySections(config.readOnlyFields, config.textPlacements)}
     ${config.valueSources?.length ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
     ${config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
         `<section class="phase-card" aria-label="${escapeHtml(label)}">
@@ -297,6 +348,8 @@ export function renderHtml(config, token = "") {
         data-module="/controls/${escapeHtml(config.imageControl.adapter)}.mjs"
         data-assets="${escapeHtml(JSON.stringify([config.brandAsset, config.mainPageAsset,
             ...(config.generatedPageAssets ?? [])].filter(Boolean).map((asset) => asset.file)))}"></span>` : ""}
+    ${config.textControl ? `<span hidden id="stock-text-registration"
+        data-module="/controls/${escapeHtml(config.textControl.adapter)}.mjs"></span>` : ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
@@ -352,10 +405,13 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             const controlName = /^\/controls\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
             if (request.method === "GET" && controlName
                 && (config.generatedControls?.some((item) => item.adapter === controlName)
-                    || config.imageControl?.adapter === controlName)) {
+                    || config.imageControl?.adapter === controlName
+                    || config.textControl?.adapter === controlName)) {
                 const module = config.imageControl?.adapter === controlName
                     ? readImageControl(config.imageControl)
-                    : readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url));
+                    : config.textControl?.adapter === controlName
+                        ? readTextControl(config.textControl)
+                        : readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
                     .end(module);
                 return;
