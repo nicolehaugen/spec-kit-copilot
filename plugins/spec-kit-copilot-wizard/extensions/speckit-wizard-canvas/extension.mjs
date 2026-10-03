@@ -18,7 +18,7 @@ import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 
 import { readState } from "./state/store.mjs";
 import { startServer } from "./server.mjs";
-import { checkDeps, getExtensionDir, installDeps } from "./env/deps-check.mjs";
+import { checkDeps, getDependencyDir, installDeps } from "./env/deps-check.mjs";
 import { createBootTracker } from "./canvas-runtime/boot-progress.mjs";
 // Composition retrieval is entirely LLM-driven via the `speckit-preset` +
 // `speckit-extension` skills — see the `composition.refresh` case in
@@ -167,7 +167,8 @@ export async function bootAsync(inst) {
             const stderrTail = String(installResult.stderr ?? "").split(/\r?\n/).filter(Boolean).slice(-8).join("\n");
             inst.depsError = {
                 ...classified,
-                extDir: getExtensionDir(),
+                extDir: installResult.extDir ?? getDependencyDir(recheck.missing[0]),
+                packageName: installResult.packageName ?? recheck.missing[0],
                 packages: deps.missing,
                 stderrTail,
                 timestamp: new Date().toISOString(),

@@ -3,8 +3,6 @@ import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
-import { init, parse } from "es-module-lexer/minimal";
 import { fingerprint } from "./handoff.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
@@ -13,6 +11,8 @@ const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
+// The generated shell uses "workflow" for its built-in page navigation.
+const RESERVED_GENERATED_PAGE_ID = "workflow";
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
@@ -233,6 +233,7 @@ function validateGeneratedPage(document, name) {
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).sort().join() !== "id,renderer,schemaVersion,title"
         || document.schemaVersion !== 1 || document.id !== name
+        || document.id === RESERVED_GENERATED_PAGE_ID
         || typeof document.title !== "string" || !document.title.trim()
         || document.title.length > 120 || typeof document.renderer !== "string"
         || !PAGE_PATTERN.test(document.renderer)) {
@@ -332,21 +333,24 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
             } else {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated renderer exceeds 32 KiB`);
+                const { init, parse } = await import("es-module-lexer/minimal");
                 await init();
-                let imports;
+                let imports, exports;
                 try {
-                    [imports] = parse(document);
+                    [imports, exports] = parse(document);
                 } catch (error) {
                     throw new Error(`${item.name}: invalid generated renderer: ${error.message}`, { cause: error });
                 }
                 if (imports.some((entry) => entry.d !== -2)) {
                     throw new Error(`${item.name}: generated renderer must be self-contained; module imports are not packaged`);
                 }
-                const check = spawnSync("node", ["--input-type=module", "-e",
-                    "const m=await import(process.argv[1]);if(typeof m.renderPage!=='function')throw new Error('Missing renderPage export')",
-                    pathToFileURL(path).href], { encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
+                const check = spawnSync("node", ["--check", "--input-type=module"],
+                    { input: document, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
                 if (check.error || check.status !== 0) {
                     throw new Error(`${item.name}: invalid generated renderer: ${check.stderr || check.error || "module validation failed"}`);
+                }
+                if (!exports.some((entry) => entry.n === "renderPage")) {
+                    throw new Error(`${item.name}: invalid generated renderer: missing renderPage export`);
                 }
             }
         }

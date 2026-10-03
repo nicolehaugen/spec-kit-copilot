@@ -62,8 +62,11 @@ checks the handoff structure, fingerprint, size, and session-artifact boundary.
 A missing or invalid handoff is an error, not an empty shell. The HTTP shell
 binds to loopback and requires an unguessable URL token.
 
-Install this extension's dependencies with `npm ci` in its directory, then run
-the provider tests with:
+The provider loads without installed npm dependencies. The Wizard's environment
+setup checks and installs the Designer's renderer parser alongside its own YAML
+parser. Opening Designer directly without the parser reports an install instruction
+instead of failing at provider startup. For local tests, install dependencies with
+`npm ci` in this directory, then run:
 
 ```bash
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs

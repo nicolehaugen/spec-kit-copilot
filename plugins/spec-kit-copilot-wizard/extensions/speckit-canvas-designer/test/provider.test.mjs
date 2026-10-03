@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { appendFile, copyFile, cp, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, cp, mkdtemp, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1129,6 +1129,9 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await assert.rejects(load(pages), /missing generated renderer/);
     await writeFile(definitionPath, JSON.stringify({ ...definition, extra: true }));
     await assert.rejects(load(pages), /invalid generated page definition/);
+    await writeFile(definitionPath, JSON.stringify({ ...definition, id: "workflow" }));
+    await assert.rejects(load([{ ...pages[0], name: "workflow" }, pages[1]]),
+        /invalid generated page definition/);
     await writeFile(definitionPath, JSON.stringify(definition));
     await writeFile(rendererPath, "export function renderPage( {");
     await assert.rejects(load(pages), /invalid generated renderer/);
@@ -1146,8 +1149,15 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await writeFile(rendererPath,
         "export function renderPage() { return import.meta.url + 'import(\"./helper.mjs\")'; }");
     assert.equal((await load(pages)).generatedPages.length, 1);
-    await writeFile(rendererPath, "export const renderPage = null;");
+    await writeFile(rendererPath, "export function otherPage() {}");
     await assert.rejects(load(pages), /invalid generated renderer/);
+    await writeFile(rendererPath, "const href = window.location.href; export function renderPage() { return href; }");
+    assert.equal((await load(pages)).generatedPages.length, 1);
+    const sideEffectPath = join(workspace, "renderer-evaluated");
+    await writeFile(rendererPath,
+        `process.getBuiltinModule("node:fs").writeFileSync(${JSON.stringify(sideEffectPath)}, "executed"); export function renderPage() {}`);
+    assert.equal((await load(pages)).generatedPages.length, 1);
+    await assert.rejects(stat(sideEffectPath), { code: "ENOENT" });
     await writeFile(rendererPath, renderer);
     const billing = JSON.parse(await readFile(new URL(
         "../../../../../spec-kit-presets/copilot-billing-canvas-test/contributions/billing.json",
@@ -1234,10 +1244,9 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const workspace = await fixture(t);
     const source = fileURLToPath(new URL("../", import.meta.url));
     const extension = join(workspace, "provider");
-    const sdk = join(extension, "node_modules", "@github", "copilot-sdk");
+    const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
-    await cp(join(source, "node_modules", "es-module-lexer"),
-        join(extension, "node_modules", "es-module-lexer"), { recursive: true });
+    await mkdir(extension);
     for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs",
         "settings.mjs", "generation.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
@@ -1293,6 +1302,12 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
 
     let releaseShell;
     try {
+        await assert.rejects(readFile(join(extension, "node_modules", "es-module-lexer", "package.json")),
+            { code: "ENOENT" });
+        await assert.rejects(canvas.open({ instanceId: "same", input: {} }),
+            /Designer requires es-module-lexer.*Wizard.*environment setup/);
+        await cp(join(source, "node_modules", "es-module-lexer"),
+            join(extension, "node_modules", "es-module-lexer"), { recursive: true });
         const empty = await canvas.open({ instanceId: "same", input: {} });
         assert.match(await (await fetch(empty.url)).text(), /No Wizard handoff is attached yet/);
         await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID } }),
