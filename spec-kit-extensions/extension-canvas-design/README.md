@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.10** registers three JSON page templates and four ordered
+Canvas Design **0.1.10** registers three JSON page templates and five ordered
 stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
@@ -20,7 +20,8 @@ project extension directory, then validates the result in place.
 | `canvas-stock-description` | Essentials slot | Optional Description |
 | `canvas-stock-workflow-heading` | Essentials slot | Optional Workflow header |
 | `canvas-stock-custom-slug` | Essentials slot | Optional Allow custom slug |
-| `canvas-stock-logo` | Essentials slot | Optional Logo image |
+| `canvas-stock-logo` | Essentials slot | Optional small header logo |
+| `canvas-stock-logo-main-page` | Essentials slot | Optional larger main-page logo |
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
@@ -32,11 +33,13 @@ does not remove the required Canvas ID and Title. If absent, generated descripti
 defaults to `Spec Kit workflow canvas.`, heading to `Workflows`, and custom slug
 to off. Generate validates all enabled Designer pages, including custom fields;
 an invalid page blocks generation until repaired.
-The optional Logo control accepts PNG, JPEG, GIF, or WebP images up to 32 KiB.
-Upload, preview, replace, and remove are available in Designer; removing the
-image restores the generated header's existing brand mark. Generate freezes
-the validated image bytes and SHA-256 hash and packages the image within the
-generated extension. The resulting app serves its own image without Canvas
+The independent Header logo and Main page logo controls accept PNG, JPEG, GIF,
+or WebP images up to 32 KiB each. Upload, preview, replace, and remove are
+available for both in Designer. The smaller header logo replaces the existing
+brand mark; the optional larger main-page logo appears next to the workflow
+heading and description. Either image may be used alone. Generate freezes
+each selected image's bytes and SHA-256 hash and packages it within the
+generated extension. The resulting app serves its own images without Canvas
 Design installed and rejects missing or modified packaged images rather than
 silently rendering a different logo.
 

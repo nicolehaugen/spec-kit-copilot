@@ -208,12 +208,19 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
         import.meta.url));
     const path = join(project, ".specify", "extensions", "extension-canvas-design",
         "pages", "stock-logo.json");
+    const mainPath = join(project, ".specify", "extensions", "extension-canvas-design",
+        "pages", "stock-logo-main-page.json");
     await copyFile(join(source, "pages", "stock-logo.json"), path);
-    const templates = [{ name: "canvas-stock-logo", path,
-        sourceId: "extension:extension-canvas-design", kind: "designer.field", strategy: "replace" }];
+    await copyFile(join(source, "pages", "stock-logo-main-page.json"), mainPath);
+    const templates = [path, mainPath].map((file, index) => ({
+        name: index ? "canvas-stock-logo-main-page" : "canvas-stock-logo", path: file,
+        sourceId: "extension:extension-canvas-design", kind: "designer.field", strategy: "replace",
+    }));
     const model = await loadResolvedDesignerPages(handoff, project, entries, templates);
     assert.equal(model.constraints["canvas.logo"].type, "image");
     assert.equal(model.values["canvas.logo"], "");
+    assert.equal(model.constraints["canvas.mainPageLogo"].type, "image");
+    assert.equal(model.values["canvas.mainPageLogo"], "");
     const originalAppearance = await readFile(entries[2].path, "utf8");
     const originalLogo = await readFile(path, "utf8");
     const appearance = JSON.parse(originalAppearance);
@@ -228,10 +235,13 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     await writeFile(path, originalLogo);
     await writeFile(entries[2].path, originalAppearance);
     const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64");
+    const gif = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACAUwAOw==", "base64");
     const logo = `data:image/png;base64,${png.toString("base64")}`;
+    const mainLogo = `data:image/gif;base64,${gif.toString("base64")}`;
     assert.deepEqual(decodeImage(logo).bytes, png);
+    assert.deepEqual(decodeImage(mainLogo).bytes, gif);
     const values = { ...model.values, "canvas.id": "with-logo",
-        "canvas.displayName": "Logo test", "canvas.logo": logo };
+        "canvas.displayName": "Logo test", "canvas.logo": logo, "canvas.mainPageLogo": mainLogo };
     for (const bad of ["data:image/svg+xml;base64,PHN2Zz4=", "data:image/png;base64,AAAA",
         `data:image/png;base64,${Buffer.alloc(32769).toString("base64")}`, "data:image/png;base64,?"]) {
         await assert.rejects(saveDesignerSettings(workspace, handoff, model,
@@ -239,15 +249,19 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
         /Invalid Designer setting: canvas.logo/);
         await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.logo": bad },
             handoff, project, workspace }), /Invalid Designer setting: canvas.logo/);
+        await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.mainPageLogo": bad },
+            handoff, project, workspace }), /Invalid Designer setting: canvas.mainPageLogo/);
     }
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { revision: 0, modelRevision: model.revision, values });
     assert.equal((await loadDesignerSettings(workspace, handoff, model)).values["canvas.logo"], logo);
+    assert.equal((await loadDesignerSettings(workspace, handoff, model)).values["canvas.mainPageLogo"], mainLogo);
     const prepared = await freezeGeneration({ model: saved, values, handoff, project, workspace });
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const frozen = JSON.parse(await readFile(requestPath, "utf8"));
     assert.equal(frozen.generatedAssets[0].hash, createHash("sha256").update(png).digest("hex"));
+    assert.equal(frozen.generatedAssets[1].hash, createHash("sha256").update(gif).digest("hex"));
     const { materialize } = await import(new URL(
         "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
     const tampered = structuredClone(frozen);
@@ -262,9 +276,12 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     const target = join(project, prepared.target);
     const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
     assert.deepEqual(await readFile(join(target, "assets", config.brandAsset.file)), png);
+    assert.deepEqual(await readFile(join(target, "assets", config.mainPageAsset.file)), gif);
     const portable = await import(pathToFileURL(join(target, "server.mjs")).href);
     assert.deepEqual(portable.readConfig().brandAsset, config.brandAsset);
+    assert.deepEqual(portable.readConfig().mainPageAsset, config.mainPageAsset);
     assert.match(portable.renderHtml(config, "secret"), /<img src="\/assets\/logo.png\?token=secret" alt="">/);
+    assert.match(portable.renderHtml(config, "secret"), /class="collection-logo" src="\/assets\/main-page-logo.gif\?token=secret"/);
     assert.match(portable.renderHtml({ ...config, brandAsset: undefined }), /class="brand-mark" aria-hidden="true">&#9671;/);
     const routed = createServer(portable.createWorkflowRoutes(config, { token: "secret" }).handle);
     await new Promise((resolve) => routed.listen(0, "127.0.0.1", resolve));
@@ -275,18 +292,39 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
         assert.equal(image.headers.get("content-type"), "image/png");
         assert.match(image.headers.get("content-security-policy"), /img-src 'self'/);
         assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+        const mainImage = await fetch(`${base}/assets/main-page-logo.gif?token=secret`);
+        assert.equal(mainImage.status, 200);
+        assert.equal(mainImage.headers.get("content-type"), "image/gif");
+        assert.deepEqual(Buffer.from(await mainImage.arrayBuffer()), gif);
         assert.equal((await fetch(`${base}/assets/logo.png`)).status, 401);
     } finally {
         await new Promise((resolve) => routed.close(resolve));
     }
     await writeFile(join(target, "assets", "logo.png"), Buffer.from("changed"));
     assert.throws(() => portable.readConfig(), /Packaged Logo image does not match/);
+    await writeFile(join(target, "assets", "logo.png"), png);
+    await writeFile(join(target, "assets", "main-page-logo.gif"), Buffer.from("changed"));
+    assert.throws(() => portable.readConfig(), /Packaged Logo image does not match/);
+    const onlyMain = { ...values, "canvas.id": "main-only", "canvas.logo": "" };
+    const mainOnly = await freezeGeneration({ model, values: onlyMain, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, mainOnly.requestId);
+    const mainConfig = JSON.parse(await readFile(join(project, mainOnly.target, "canvas-config.json")));
+    assert.equal(mainConfig.brandAsset, undefined);
+    assert.equal(mainConfig.mainPageAsset.file, "main-page-logo.gif");
+    assert.match(portable.renderHtml(mainConfig), /class="brand-mark" aria-hidden="true">&#9671;/);
+    const onlyHeader = { ...values, "canvas.id": "header-only", "canvas.mainPageLogo": "" };
+    const headerOnly = await freezeGeneration({ model, values: onlyHeader, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, headerOnly.requestId);
+    const headerConfig = JSON.parse(await readFile(join(project, headerOnly.target, "canvas-config.json")));
+    assert.equal(headerConfig.mainPageAsset, undefined);
+    assert.doesNotMatch(portable.renderHtml(headerConfig), /class="collection-logo"/);
     const absent = { ...model.values, "canvas.id": "without-logo",
-        "canvas.displayName": "Fallback", "canvas.logo": "" };
+        "canvas.displayName": "Fallback", "canvas.logo": "", "canvas.mainPageLogo": "" };
     const noLogo = await freezeGeneration({ model, values: absent, handoff, project, workspace });
     await materialize(project, workspace, handoff.handoffId, noLogo.requestId);
     const fallback = JSON.parse(await readFile(join(project, noLogo.target, "canvas-config.json")));
     assert.equal(fallback.brandAsset, undefined);
+    assert.equal(fallback.mainPageAsset, undefined);
     assert.match(portable.renderHtml(fallback), /class="brand-mark" aria-hidden="true">&#9671;/);
 });
 

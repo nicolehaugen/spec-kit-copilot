@@ -81,7 +81,7 @@ function within(root, path) {
 
 function frozenImage(item, values, constraints) {
     if (!item || Object.keys(item).sort().join() !== "content,hash,id,mime,slot"
-        || !fieldPattern.test(item.id) || item.slot !== "header.brand"
+        || !fieldPattern.test(item.id) || !["header.brand", "workflow.intro"].includes(item.slot)
         || constraints[item.id]?.type !== "image" || constraints[item.id]?.maxBytes !== 32 * 1024
         || !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(item.mime)
         || typeof item.content !== "string" || item.content.length > 44 * 1024
@@ -114,6 +114,11 @@ function frozenImage(item, values, constraints) {
     return bytes;
 }
 
+const imageFile = (item) => `${item.slot === "header.brand" ? "logo" : "main-page-logo"}.${{
+    "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+    "image/webp": "webp",
+}[item.mime]}`;
+
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
         generatedPages, generatedControls, generatedAssets, valueSources } = request;
@@ -145,7 +150,10 @@ function configuration(request) {
         throw new Error("Invalid frozen canvas identity, workflow or runtime inventory");
     }
     if (generatedAssets !== undefined && (!Array.isArray(generatedAssets)
-        || generatedAssets.length > 1)) throw new Error("Invalid frozen image assets");
+        || generatedAssets.length > 2
+        || new Set(generatedAssets.map((item) => item?.slot)).size !== generatedAssets.length)) {
+        throw new Error("Invalid frozen image assets");
+    }
     for (const [id, rule] of Object.entries(fieldConstraints)) {
         if (rule.type !== "image") continue;
         if (Object.keys(rule).sort().join() !== "maxBytes,type" || rule.maxBytes !== 32 * 1024
@@ -364,12 +372,12 @@ function configuration(request) {
         tasks: "specs/<slug>/tasks.md", analyze: "specs/<slug>/analysis.md",
         checklist: "specs/<slug>/checklists/<name>.md",
     };
+    const headerImage = generatedAssets?.find((item) => item.slot === "header.brand");
+    const mainImage = generatedAssets?.find((item) => item.slot === "workflow.intro");
+    const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
-        ...(generatedAssets?.length ? { brandAsset: { file: `logo.${{
-            "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
-            "image/webp": "webp",
-        }[generatedAssets[0].mime]}`, mime: generatedAssets[0].mime,
-            hash: generatedAssets[0].hash } } : {}),
+        ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
+        ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
         ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer, values: declared }) =>
             ({ id, title, renderer, ...(declared ? { values: declared } : {}) })) } : {}),
         ...(valueSources?.length ? { valueSources: valueSources.map(
@@ -451,10 +459,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
             bytes: Buffer.from(item.assets[1].content, "base64") },
     ])).values()];
     const imageFiles = (request.generatedAssets ?? []).map((item) => ({
-        filename: `logo.${{
-            "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
-            "image/webp": "webp",
-        }[item.mime]}`, bytes: frozenImage(item, request.values, request.fieldConstraints),
+        filename: imageFile(item), bytes: frozenImage(item, request.values, request.fieldConstraints),
     }));
     const distinctControlFiles = new Map();
     for (const file of controlFiles) {

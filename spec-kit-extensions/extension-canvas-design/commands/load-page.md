@@ -31,7 +31,8 @@ Each registration declares its Canvas Design kind (`designer.field`,
 `generated.page`, `generated.renderer`, `control.definition`,
 `designer.adapter`, `generated.adapter`, `value.definition`, or
 `value.provider`) and strategy (`replace`). A `designer.field` can also
-register a `stock.image` Logo asset, bound to the generated `header.brand` slot.
+register `stock.image` assets, bound to the generated `header.brand` or
+`workflow.intro` slot. Each slot accepts one independent image.
 Designer pages have kind `designer.page` and strategy `replace` (implicit for
 the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
@@ -48,6 +49,7 @@ Providers are packaged, never evaluated by Designer.
 - `canvas-stock-workflow-heading` — `designer.field`, `replace`
 - `canvas-stock-custom-slug` — `designer.field`, `replace`
 - `canvas-stock-logo` — `designer.field`, `replace`
+- `canvas-stock-logo-main-page` — `designer.field`, `replace`
 
 ## Steps
 

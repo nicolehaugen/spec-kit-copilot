@@ -27,12 +27,14 @@ Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
 Essentials requires Canvas ID and Title from the resolved core page. Description,
-Workflow header, Allow custom slug, and Logo are separate ordered stock contributions
-registered by the composed load-page command. The optional Logo control uploads,
-previews, replaces, and removes PNG, JPEG, GIF, or WebP images up to 32 KiB.
-It uses the shared field/slot validation path, freezes the selected image bytes
-and hash at Generate, and packages the image with the generated header. With no
-Logo, the existing brand mark remains unchanged. Without optional text fields,
+Workflow header, Allow custom slug, Header logo, and Main page logo are separate
+ordered stock contributions registered by the composed load-page command. The
+optional image controls upload, preview, replace, and remove independent PNG,
+JPEG, GIF, or WebP images up to 32 KiB each. The smaller Header logo replaces
+the generated header's brand mark; the larger Main page logo appears beside the
+workflow heading. Either can be set alone. Both use the shared field/slot
+validation path and freeze the selected bytes and hashes at Generate. With no
+Header logo, the existing brand mark remains unchanged. Without optional text fields,
 generated description,
 heading and custom slug default to `Spec Kit workflow canvas.`, `Workflows` and
 off. Workflow name appears after Phase input in the generated

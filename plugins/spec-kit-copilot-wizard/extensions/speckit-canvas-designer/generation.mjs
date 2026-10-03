@@ -46,7 +46,11 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const imageContributions = (model.contributions ?? [])
         .filter((item) => item.field.type === "image"
             && item.generatedBinding?.presentation === "asset");
-    if (imageContributions.length > 1) throw new Error("Generated header accepts only one image asset");
+    if (imageContributions.length > 2
+        || new Set(imageContributions.map((item) => item.generatedBinding.slot)).size
+            !== imageContributions.length) {
+        throw new Error("Each generated Logo slot accepts only one image asset");
+    }
     const generatedAssets = imageContributions.flatMap((item) => {
         const image = decodeImage(values[item.field.id]);
         return image ? [{ id: item.field.id, slot: item.generatedBinding.slot,

@@ -12,6 +12,17 @@ const RESERVED_GENERATED_PAGE_ID = "workflow";
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
+function validImageAsset(asset, basename) {
+    return asset && typeof asset === "object" && !Array.isArray(asset)
+        && Object.keys(asset).sort().join() === "file,hash,mime"
+        && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(asset.mime)
+        && asset.file === `${basename}.${{
+            "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+            "image/webp": "webp",
+        }[asset.mime]}`
+        && /^[a-f0-9]{64}$/.test(asset.hash);
+}
+
 function readOnlySections(fields) {
     const groups = new Map();
     const ungrouped = Symbol("ungrouped");
@@ -83,21 +94,17 @@ export function readConfig() {
         || Object.values(config.phaseOutputs).some((output) => !output
             || typeof output.expectsArtifact !== "boolean"
             || (output.outputPath !== null && typeof output.outputPath !== "string"))
-        || (config.brandAsset !== undefined && (!config.brandAsset
-            || Object.keys(config.brandAsset).sort().join() !== "file,hash,mime"
-            || !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(config.brandAsset.mime)
-            || config.brandAsset.file !== `logo.${{
-                "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
-                "image/webp": "webp",
-            }[config.brandAsset.mime]}`
-            || !/^[a-f0-9]{64}$/.test(config.brandAsset.hash)))
+        || (config.brandAsset !== undefined && !validImageAsset(config.brandAsset, "logo"))
+        || (config.mainPageAsset !== undefined && !validImageAsset(config.mainPageAsset, "main-page-logo"))
         || (config.theme !== undefined && !["light", "dark"].includes(config.theme))
         || !config.installed || ["presets", "extensions", "bundles"].some((kind) =>
             !Array.isArray(config.installed[kind]) || config.installed[kind].some((item) =>
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
         throw new Error("Invalid generated canvas configuration");
     }
-    if (config.brandAsset) readBrandAsset(config);
+    for (const asset of [config.brandAsset, config.mainPageAsset]) {
+        if (asset) readImageAsset(asset);
+    }
     const sections = new Map();
     for (const { section } of config.readOnlyFields ?? []) {
         if (!section) continue;
@@ -111,10 +118,10 @@ export function readConfig() {
     return config;
 }
 
-function readBrandAsset(config) {
-    const bytes = readFileSync(new URL(`./assets/${config.brandAsset.file}`, import.meta.url));
+function readImageAsset(asset) {
+    const bytes = readFileSync(new URL(`./assets/${asset.file}`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
-        || createHash("sha256").update(bytes).digest("hex") !== config.brandAsset.hash) {
+        || createHash("sha256").update(bytes).digest("hex") !== asset.hash) {
         throw new Error("Packaged Logo image does not match its frozen hash");
     }
     return bytes;
@@ -157,6 +164,7 @@ export function renderHtml(config, token = "") {
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
     const phases = config.phases.filter((phase) => !isConstitution(phase));
     const hasConstitution = config.phases.some(isConstitution);
+    const intro = `<div><h2 id="workflow-heading">${escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted">${escapeHtml(canvas.description)}</p></div>`;
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -171,7 +179,9 @@ export function renderHtml(config, token = "") {
 <main class="app-body workflow-surface">
     <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
         <div class="instance-collection-head">
-            <div><h2 id="workflow-heading">${escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted">${escapeHtml(canvas.description)}</p></div>
+            ${config.mainPageAsset
+                ? `<div class="collection-intro"><img class="collection-logo" src="/assets/${escapeHtml(config.mainPageAsset.file)}?token=${escapeHtml(encodeURIComponent(token))}" alt="${escapeHtml(canvas.displayName)} logo">${intro}</div>`
+                : intro}
             <button class="btn btn-secondary" id="new-workflow" type="button">+ New</button>
         </div>
         <div id="workflow-identity" class="workflow-identity-fields"${phases.length ? "" : " hidden"}>
@@ -258,11 +268,12 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 response.writeHead(200, { "Content-Type": `${url.pathname === "/" ? "text/html" : "text/javascript"}; charset=utf-8` }).end(body);
                 return;
             }
-            if (request.method === "GET" && config.brandAsset
-                && url.pathname === `/assets/${config.brandAsset.file}`) {
-                response.writeHead(200, { "Content-Type": config.brandAsset.mime,
+            const imageAsset = [config.brandAsset, config.mainPageAsset]
+                .find((asset) => asset && url.pathname === `/assets/${asset.file}`);
+            if (request.method === "GET" && imageAsset) {
+                response.writeHead(200, { "Content-Type": imageAsset.mime,
                     "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" })
-                    .end(readBrandAsset(config));
+                    .end(readImageAsset(imageAsset));
                 return;
             }
             const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];

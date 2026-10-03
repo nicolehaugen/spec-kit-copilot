@@ -43,6 +43,9 @@ provides:
     - name: canvas-stock-logo
       file: pages/stock-logo.json
       description: Optional image asset for the generated canvas header.
+    - name: canvas-stock-logo-main-page
+      file: pages/stock-logo-main-page.json
+      description: Optional independent larger logo for the generated workflow page.
 
 tags:
   - copilot

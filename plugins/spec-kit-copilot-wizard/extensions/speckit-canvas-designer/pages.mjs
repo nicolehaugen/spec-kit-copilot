@@ -213,7 +213,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
     }
     const binding = document.generatedBinding;
     if (field.type === "image" && binding === undefined) {
-        throw new Error(`${name}: image asset requires a generated header binding`);
+        throw new Error(`${name}: image asset requires a generated placement`);
     }
     if (binding !== undefined
         && (!binding
@@ -221,7 +221,9 @@ function validateContribution(document, name, slots, fieldOrigins) {
             || (["object", "image"].includes(field.type)
                 ? Object.keys(binding).sort().join() !== "presentation,slot"
                     || binding.presentation !== (field.type === "image" ? "asset" : "control")
-                    || binding.slot !== (field.type === "image" ? "header.brand" : "details.content")
+                    || (field.type === "image"
+                        ? !["header.brand", "workflow.intro"].includes(binding.slot)
+                        : binding.slot !== "details.content")
                 : field.type !== "string"
                     || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
                     || binding.presentation !== "stock.readonly")

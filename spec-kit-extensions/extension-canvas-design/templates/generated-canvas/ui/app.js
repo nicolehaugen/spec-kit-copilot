@@ -36,6 +36,8 @@ function wireGeneratedPages() {
         const currentSelection = ++selection;
         const id = button.dataset.canvasPage;
         const workflow = id === "workflow";
+        const introLogo = document.querySelector(".collection-logo");
+        if (introLogo) introLogo.hidden = !workflow;
         root.hidden = workflow;
         root.replaceChildren();
         root.classList.remove("workflow-error");
