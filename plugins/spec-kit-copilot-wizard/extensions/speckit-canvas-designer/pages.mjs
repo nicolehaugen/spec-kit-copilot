@@ -466,7 +466,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                     const body = document.replace(
                         /(^|\n)\s*export\s+(?=(?:async\s+)?function\s+provideValue\b|const\s+provideValue\b)/g, "$1");
                     try {
-                        new Script(`"use strict"; const workflow = null;\n${body}\nprovideValue({ workflow });`);
+                        new Script(`"use strict"; const workflow = null;\nconst result = ((workflow) => {\n${body}\n`
+                            + "if (typeof provideValue !== 'function') throw new Error('Missing provideValue export');\n"
+                            + "return provideValue({ workflow });\n})(workflow);\n"
+                            + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
+                            + "JSON.stringify(result);");
                     } catch (error) {
                         throw new Error(`${item.name}: value provider cannot run as a generated script: ${error.message}`,
                             { cause: error });

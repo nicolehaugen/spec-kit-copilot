@@ -1459,6 +1459,11 @@ test("named value sources freeze typed values and run from a portable canvas wit
     await assert.rejects(load(), /value provider must use a direct export function provideValue.*named re-exports are not supported/);
     await writeFile(provider.path, "export const provideValue = () => 'ok';\nconst workflow = {};");
     await assert.rejects(load(), /value provider cannot run as a generated script/);
+    const localResultProvider = "const result = 'Provider result';\n"
+        + "export function provideValue({ workflow }) { return `${result}: ${workflow.slug}`; }\n";
+    await writeFile(provider.path, localResultProvider);
+    assert.equal((await load()).valueSources.find((value) => value.id === "demo.workflow").id,
+        "demo.workflow");
     await writeFile(provider.path, originalProvider);
 
     const selected = { ...model.values, "canvas.id": "value-demo",
@@ -1578,6 +1583,18 @@ test("named value sources freeze typed values and run from a portable canvas wit
     assert.equal(second.valueFields.find((field) => field.id === "demo.workflow").value,
         "002-second (002-second)");
     assert.equal(second.valueFields.find((field) => field.id === "demo.note").value, "Changed globally");
+    await writeFile(packagedProvider, localResultProvider);
+    const localResultConfig = structuredClone(config);
+    localResultConfig.valueSources.find((value) => value.id === "demo.workflow").source.hash =
+        createHash("sha256").update(localResultProvider).digest("hex");
+    const localResultRuntime = await createRuntime({
+        config: localResultConfig, cwd: project, workspace, session,
+    });
+    t.after(() => localResultRuntime.close());
+    const localResultSnapshot = await localResultRuntime.snapshot();
+    assert.equal(localResultSnapshot.valueFields.find((field) => field.id === "demo.workflow").value,
+        "Provider result: 002-second");
+    await writeFile(packagedProvider, originalProvider);
     const reopened = await createRuntime({ config, cwd: project, workspace, session });
     t.after(() => reopened.close());
     assert.equal((await reopened.snapshot()).valueFields.find((field) => field.id === "demo.note").value,
