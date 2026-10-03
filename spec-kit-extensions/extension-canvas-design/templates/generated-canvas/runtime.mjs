@@ -230,7 +230,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const entries = await items();
         const item = state.selected;
         const selectedWorkflow = item === "__new__" ? null : entries.find((entry) => entry.id === item);
-        const visibleValues = [], pageValues = {}, valueErrors = {};
+        const visibleValues = [], pageValues = Object.create(null), valueErrors = {};
         const providerDeadline = performance.now() + PROVIDER_REFRESH_LIMIT_MS;
         let reportedDeadline = false;
         for (const field of valueFields) {

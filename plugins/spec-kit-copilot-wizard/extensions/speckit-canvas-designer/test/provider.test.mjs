@@ -1612,9 +1612,20 @@ test("named value sources freeze typed values and run from a portable canvas wit
         config: noConsumer, cwd: project, workspace, session,
     });
     t.after(() => withoutConsumer.close());
-    assert.deepEqual((await withoutConsumer.snapshot()).pageValues, {});
+    assert.deepEqual(Object.keys((await withoutConsumer.snapshot()).pageValues), []);
     assert.equal((await withoutConsumer.snapshot()).valueFields.some(
         (field) => field.id === "demo.processing"), false);
+    const constructorPage = { ...config, generatedPages: config.generatedPages.map((entry) => ({
+        ...entry, id: "constructor",
+    })) };
+    const constructorRuntime = await createRuntime({
+        config: constructorPage, cwd: project, workspace, session,
+    });
+    t.after(() => constructorRuntime.close());
+    const constructorValues = (await constructorRuntime.snapshot()).pageValues;
+    assert.equal(Object.hasOwn(constructorValues, "constructor"), true);
+    assert.deepEqual(JSON.parse(JSON.stringify(constructorValues)),
+        { constructor: { "demo.processing": "private hint" } });
     const slowSource = "export function provideValue() { const end = Date.now() + 150; while (Date.now() < end) {} return 'ok'; }";
     await writeFile(join(portable, "providers", "slow-provider.mjs"), slowSource);
     const workflowField = config.valueSources.find((field) => field.id === "demo.workflow");
