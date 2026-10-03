@@ -321,11 +321,13 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             const info = registration(dirname(specify), item.name);
             const layers = info?.stack;
             const winner = layers?.find((layer) => layer.active);
+            const sourceLayer = item.sourceId === "project" ? "project"
+                : item.sourceId.startsWith("extension:") ? "extension" : "preset";
+            const sourceId = sourceLayer === "project" ? "_"
+                : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
             if (info.kind !== "template" || !Array.isArray(layers) || !layers.length
                 || layers.some((layer) => layer.strategy !== "replace")
-                || !winner || winner.sourceId !== (item.sourceId.startsWith("extension:")
-                    ? item.sourceId.slice("extension:".length) : item.sourceId)
-                || (winner.layer === "extension") !== item.sourceId.startsWith("extension:")) {
+                || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
                 throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
             }
             if (item.kind === "generated.page") {
