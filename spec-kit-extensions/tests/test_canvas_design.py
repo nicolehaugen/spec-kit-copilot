@@ -27,6 +27,10 @@ FILES = {
     "commands/generate.md",
     "scripts/generate.mjs",
     "schemas/page.schema.json",
+    "schemas/setting.schema.json",
+    "schemas/generated-page.schema.json",
+    "schemas/shared-control.schema.json",
+    "schemas/generated-value.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
     *(f"pages/stock-{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "logo", "logo-main-page",
@@ -188,11 +192,57 @@ class CanvasDesignPackageTests(unittest.TestCase):
                           "workflowSlug.userProvided"])
         self.assertEqual(stock[-1]["field"]["default"], False)
         for name in ("description", "workflow-heading", "custom-slug"):
-            self.assertIn(f"`canvas-stock-{name}` — `designer.field`, `replace`",
+            self.assertIn(f"`canvas-stock-{name}` — `designer.setting-definition`, `replace`",
                           self.command)
         self.assertTrue(all(page["fields"] == [] for page in self.pages[1:]))
         field_ids = [field["id"] for page in self.pages for field in page["fields"]]
         self.assertEqual(len(field_ids), len(set(field_ids)))
+
+    def test_all_json_contract_schemas_and_fixtures(self):
+        schemas = {
+            "page": self.schema,
+            **{kind: json.loads((PACKAGE / f"schemas/{name}.schema.json").read_text("utf-8"))
+               for kind, name in (
+                   ("setting", "setting"), ("generated-page", "generated-page"),
+                   ("shared-control", "shared-control"), ("generated-value", "generated-value"),
+               )},
+        }
+        fixtures = {
+            "page": [PACKAGE / f"pages/{name}.json" for name in PAGE_NAMES]
+                    + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/pages/*.json")),
+            "setting": list(PACKAGE.glob("pages/stock-*.json"))
+                       + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/contributions/*.json")),
+            "generated-page": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/pages/*.json")),
+            "shared-control": list(PACKAGE.glob("controls/*/control.json"))
+                              + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
+            "generated-value": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
+        }
+        for kind, schema in schemas.items():
+            Draft202012Validator.check_schema(schema)
+            validator = Draft202012Validator(schema)
+            for path in fixtures[kind]:
+                doc = json.loads(path.read_text("utf-8"))
+                if (kind == "page" and "renderer" in doc
+                        or kind == "generated-page" and "fields" in doc):
+                    continue
+                with self.subTest(kind=kind, path=str(path)):
+                    validator.validate(doc)
+                    if path.is_relative_to(PACKAGE):
+                        self.assertEqual(doc["$schema"], os.path.relpath(
+                            PACKAGE / "schemas" / f"{kind}.schema.json",
+                            path.parent).replace("\\", "/"))
+        value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
+        self.assertEqual(value["source"]["kind"], "computed")
+        validator = Draft202012Validator(schemas["generated-value"])
+        for invalid in (
+            {**value, "source": {"kind": "provider", "module": value["source"]["module"]}},
+            {**value, "presentation": "stock.editable"},
+            {**value, "schemaVersion": 2},
+            {**value, "unexpected": True},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValidationError):
+                    validator.validate(invalid)
 
     def test_minimal_essentials_test_preset_replaces_only_stock_registration(self):
         fixture = EXTENSIONS.parent / "spec-kit-presets/copilot-minimal-essentials-test"
@@ -218,17 +268,18 @@ class CanvasDesignPackageTests(unittest.TestCase):
         ])
         page = json.loads((fixture / "pages/essentials.json").read_text("utf-8"))
         self.validator.validate(page)
-        self.assertEqual(page, self.pages[0])
+        self.assertEqual({key: value for key, value in page.items() if key != "$schema"},
+                         {key: value for key, value in self.pages[0].items() if key != "$schema"})
         stock_section = (
             "## Canvas Design templates\n\n"
-            "- `canvas-stock-description` — `designer.field`, `replace`\n"
-            "- `canvas-stock-workflow-heading` — `designer.field`, `replace`\n"
-            "- `canvas-stock-custom-slug` — `designer.field`, `replace`\n"
-            "- `canvas-stock-logo` — `designer.field`, `replace`\n"
-            "- `canvas-stock-logo-main-page` — `designer.field`, `replace`\n"
-            "- `canvas-stock-image` — `control.definition`, `replace`\n"
-            "- `canvas-stock-image-designer` — `designer.adapter`, `replace`\n"
-            "- `canvas-stock-image-generated` — `generated.adapter`, `replace`\n\n"
+            "- `canvas-stock-description` — `designer.setting-definition`, `replace`\n"
+            "- `canvas-stock-workflow-heading` — `designer.setting-definition`, `replace`\n"
+            "- `canvas-stock-custom-slug` — `designer.setting-definition`, `replace`\n"
+            "- `canvas-stock-logo` — `designer.setting-definition`, `replace`\n"
+            "- `canvas-stock-logo-main-page` — `designer.setting-definition`, `replace`\n"
+            "- `canvas-stock-image` — `shared.control-definition`, `replace`\n"
+            "- `canvas-stock-image-designer` — `designer.control-adapter`, `replace`\n"
+            "- `canvas-stock-image-generated` — `generated.control-adapter`, `replace`\n\n"
         )
         self.assertEqual(self.command.count(stock_section), 1)
         replaced = (fixture / "commands/load-page.md").read_text("utf-8")
@@ -330,7 +381,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             'open_canvas({canvasId:"speckit-canvas-designer"',
             'extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"',
             "open the official installed Copilot provider exactly once",
-            'pages:[{"name":"<page-name>","path":"<resolved-path>","kind":"designer.page","strategy":"replace"},...]',
+            'pages:[{"name":"<default-page-name>","path":"<resolved-path>","kind":"designer.default-tab-definition","strategy":"replace"},',
+            '{"name":"<additional-page-name>","path":"<resolved-path>","kind":"designer.added-tab-definition","strategy":"replace"},...]',
             'templates:[{"name":"<asset-name>","path":"<resolved-path>"',
             '"kind":"<declared-kind>","strategy":"replace"',
             "Submit all defaults, additional pages, and registered templates",

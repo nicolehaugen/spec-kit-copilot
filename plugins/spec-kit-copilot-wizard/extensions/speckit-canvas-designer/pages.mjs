@@ -12,6 +12,13 @@ const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
+const contractKeys = (document) => Object.keys(document).filter((key) => key !== "$schema");
+function schemaMetadata(document, name) {
+    if (document && typeof document === "object"
+        && Object.hasOwn(document, "$schema") && typeof document.$schema !== "string") {
+        throw new Error(`${name}: invalid $schema reference`);
+    }
+}
 // The generated shell uses "workflow" for its built-in page navigation.
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const ERROR_LIMIT = 512;
@@ -174,10 +181,11 @@ function buildModel(entries, schema) {
 }
 
 function validateContribution(document, name, slots, fieldOrigins) {
+    schemaMetadata(document, name);
     const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires",
         "generatedBinding"];
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || Object.keys(document).some((key) => !keys.includes(key))
+        || contractKeys(document).some((key) => !keys.includes(key))
         || document.schemaVersion !== 1 || typeof document.id !== "string"
         || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.id)
         || document.host !== "designer" || !Number.isInteger(document.order)
@@ -251,10 +259,11 @@ function validateContribution(document, name, slots, fieldOrigins) {
 }
 
 function validateControl(document, name) {
+    schemaMetadata(document, name);
     const properties = document?.value?.properties;
     const image = document?.value?.type === "image";
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || Object.keys(document).sort().join() !== "adapters,id,schemaVersion,value"
+        || contractKeys(document).sort().join() !== "adapters,id,schemaVersion,value"
         || document.schemaVersion !== 1
         || (image ? document.id !== "stock.image" : !PAGE_PATTERN.test(document.id))
         || !document.value || (image
@@ -279,8 +288,9 @@ function validateControl(document, name) {
 }
 
 function validateGeneratedPage(document, name) {
+    schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || Object.keys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
+        || contractKeys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
         || document.schemaVersion !== 1 || document.id !== name
         || document.id === RESERVED_GENERATED_PAGE_ID
         || typeof document.title !== "string" || !document.title.trim()
@@ -302,11 +312,12 @@ function validateGeneratedPage(document, name) {
 }
 
 function validateValueSource(document, name, fieldOrigins) {
+    schemaMetadata(document, name);
     const schema = document?.schema;
     const source = document?.source;
     const section = document?.section;
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || Object.keys(document).some((key) => !["schemaVersion", "id", "label", "schema",
+        || contractKeys(document).some((key) => !["schemaVersion", "id", "label", "schema",
             "source", "presentation", "section"].includes(key))
         || document.schemaVersion !== 1
         || typeof document.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.id)
@@ -327,10 +338,10 @@ function validateValueSource(document, name, fieldOrigins) {
                     && allowed.every((value) => typeof value === "string" && value.length >= 1 && value.length <= 80)))
         || !source || typeof source !== "object" || Array.isArray(source)
         || !(source.kind === "constant" && Object.keys(source).sort().join() === "kind,value"
-            || source.kind === "provider" && Object.keys(source).sort().join() === "kind,module"
+            || source.kind === "computed" && Object.keys(source).sort().join() === "kind,module"
                 && PAGE_PATTERN.test(source.module))
         || !["stock.readonly", "stock.editable", "processing-only"].includes(document.presentation)
-        || (source.kind === "provider" && document.presentation === "stock.editable")
+        || (source.kind === "computed" && document.presentation === "stock.editable")
         || (section !== undefined && (!section || typeof section !== "object"
             || Object.keys(section).sort().join() !== "id,title"
             || typeof section.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(section.id)
@@ -410,17 +421,17 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || !item.path || item.path.length > 4096 || /[\x00-\x1f\x7f]/.test(item.path)
             || typeof item.sourceId !== "string"
             || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
-            || !["designer.field", "generated.page", "generated.renderer",
-                "control.definition", "designer.adapter", "generated.adapter",
-                "value.definition", "value.provider"].includes(item.kind)
+            || !["designer.setting-definition", "generated.added-page-definition", "generated.added-page-renderer",
+                "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
+                "generated.value-definition", "generated.computed-value-provider"].includes(item.kind)
             || item.strategy !== "replace") {
             throw new Error(`Invalid or duplicate Canvas Design template: ${item?.name ?? ""}`);
         }
         names.add(item.name);
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
-        const executable = ["generated.renderer", "designer.adapter", "generated.adapter",
-            "value.provider"].includes(item.kind);
+        const executable = ["generated.added-page-renderer", "designer.control-adapter", "generated.control-adapter",
+            "generated.computed-value-provider"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
@@ -429,14 +440,14 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             path, specify, FILE_LIMIT, open, !executable);
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
-        if (item.kind === "designer.field") {
+        if (item.kind === "designer.setting-definition") {
             validateContribution(document, item.name, slots, fieldOrigins);
             if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
             ids.add(document.id);
-        } else if (item.kind === "value.definition") {
+        } else if (item.kind === "generated.value-definition") {
             validateValueSource(document, item.name, fieldOrigins);
         }
-        if (item.kind !== "designer.field") {
+        if (item.kind !== "designer.setting-definition") {
             const info = registration(dirname(specify), item.name);
             const layers = info?.stack;
             const winner = layers?.find((layer) => layer.active);
@@ -449,13 +460,13 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
                 throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
             }
-            if (item.kind === "generated.page") {
+            if (item.kind === "generated.added-page-definition") {
                 validateGeneratedPage(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
-            } else if (item.kind === "control.definition") {
+            } else if (item.kind === "shared.control-definition") {
                 validateControl(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: control definition exceeds 32 KiB`);
-            } else if (item.kind === "value.definition") {
+            } else if (item.kind === "generated.value-definition") {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: value definition exceeds 32 KiB`);
             } else {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: executable adapter exceeds 32 KiB`);
@@ -465,26 +476,26 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 try {
                     [imports, exports] = parse(document);
                 } catch (error) {
-                    throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
+                    throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: ${error.message}`, { cause: error });
                 }
                 if (imports.some((entry) => entry.d !== -2)) {
-                    throw new Error(`${item.name}: ${item.kind === "generated.renderer"
+                    throw new Error(`${item.name}: ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
-                const requiredExport = item.kind === "generated.renderer" ? "renderPage"
-                    : item.kind === "value.provider" ? "provideValue" : "mount";
+                const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
+                    : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
                 const check = spawnSync("node", ["--check", "--input-type=module"],
                     { input: document, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
                 if (check.error || check.status !== 0) {
-                    throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
+                    throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: ${check.stderr || check.error || "module validation failed"}`);
                 }
                 if (!exports.some((entry) => entry.n === requiredExport)) {
-                    throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
+                    throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
                 }
-                if (item.kind === "value.provider") {
+                if (item.kind === "generated.computed-value-provider") {
                     const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:function|const)\s+provideValue\b/g)];
                     if (exports.length !== 1 || declarations.length !== 1
                         || declarations[0].index + declarations[0][0].lastIndexOf("provideValue")
@@ -511,48 +522,48 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             }
         }
     }
-    for (const entry of loaded.filter((item) => item.kind === "generated.page")) {
+    for (const entry of loaded.filter((item) => item.kind === "generated.added-page-definition")) {
         const renderer = loaded.find((item) => item.name === entry.document.renderer);
-        if (!renderer || renderer.kind !== "generated.renderer") {
+        if (!renderer || renderer.kind !== "generated.added-page-renderer") {
             throw new Error(`${entry.name}: missing generated renderer ${entry.document.renderer}`);
         }
     }
-    for (const entry of loaded.filter((item) => item.kind === "generated.renderer")) {
-        const uses = loaded.filter((item) => item.kind === "generated.page"
+    for (const entry of loaded.filter((item) => item.kind === "generated.added-page-renderer")) {
+        const uses = loaded.filter((item) => item.kind === "generated.added-page-definition"
             && item.document.renderer === entry.name);
         if (uses.length !== 1) {
             throw new Error(`${entry.name}: generated renderer must belong to exactly one page`);
         }
     }
-    const sources = loaded.filter((entry) => entry.kind === "value.definition");
+    const sources = loaded.filter((entry) => entry.kind === "generated.value-definition");
     for (const entry of sources) {
-        const module = entry.document.source.kind === "provider" && entry.document.source.module;
-        if (module && !loaded.some((item) => item.name === module && item.kind === "value.provider")) {
+        const module = entry.document.source.kind === "computed" && entry.document.source.module;
+        if (module && !loaded.some((item) => item.name === module && item.kind === "generated.computed-value-provider")) {
             throw new Error(`${entry.name}: missing registered value provider ${module}`);
         }
     }
-    for (const entry of loaded.filter((item) => item.kind === "value.provider")) {
+    for (const entry of loaded.filter((item) => item.kind === "generated.computed-value-provider")) {
         if (!sources.some((source) => source.document.source.module === entry.name)) {
             throw new Error(`${entry.name}: unreferenced value provider`);
         }
     }
     const generatedIds = new Set([
         ...sources.map((entry) => entry.document.id),
-        ...loaded.filter((entry) => entry.kind === "designer.field"
+        ...loaded.filter((entry) => entry.kind === "designer.setting-definition"
             && entry.document.generatedBinding?.presentation === "stock.readonly")
             .map((entry) => entry.document.field.id),
     ]);
-    for (const page of loaded.filter((entry) => entry.kind === "generated.page")) {
+    for (const page of loaded.filter((entry) => entry.kind === "generated.added-page-definition")) {
         for (const id of page.document.values ?? []) {
             if (!generatedIds.has(id)) throw new Error(`${page.name}: undeclared generated value ${id}`);
         }
     }
     const occupiedAssetSlots = new Set();
-    for (const entry of loaded.filter((item) => item.kind === "designer.field"
+    for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition"
         && item.document.generatedBinding?.presentation === "asset")) {
         const binding = entry.document.generatedBinding;
         if (binding.page) {
-            const page = loaded.find((item) => item.kind === "generated.page"
+            const page = loaded.find((item) => item.kind === "generated.added-page-definition"
                 && item.document.id === binding.page);
             if (!page?.document.slots?.some((slot) =>
                 slot.id === binding.slot && slot.accepts.includes("asset"))) {
@@ -565,16 +576,16 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         occupiedAssetSlots.add(key);
     }
-    const controls = loaded.filter((entry) => entry.kind === "control.definition");
+    const controls = loaded.filter((entry) => entry.kind === "shared.control-definition");
     const adapterOwners = new Map();
     for (const control of controls) {
-        const fields = loaded.filter((entry) => entry.kind === "designer.field"
+        const fields = loaded.filter((entry) => entry.kind === "designer.setting-definition"
             && entry.document.field.control === control.document.id);
         if (!fields.length || controls.some((other) => other !== control
             && other.document.id === control.document.id)) {
             throw new Error(`${control.name}: unreferenced or duplicate control definition`);
         }
-        for (const [host, kind] of [["designer", "designer.adapter"], ["generated", "generated.adapter"]]) {
+        for (const [host, kind] of [["designer", "designer.control-adapter"], ["generated", "generated.control-adapter"]]) {
             const adapter = loaded.find((item) => item.name === control.document.adapters[host]);
             if (!adapter || adapter.kind !== kind) {
                 throw new Error(`${control.name}: missing ${host} adapter ${control.document.adapters[host]}`);
@@ -592,26 +603,26 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             }
         }
     }
-    for (const entry of loaded.filter((item) => ["designer.adapter", "generated.adapter"].includes(item.kind))) {
+    for (const entry of loaded.filter((item) => ["designer.control-adapter", "generated.control-adapter"].includes(item.kind))) {
         if (!controls.some((control) => Object.values(control.document.adapters).includes(entry.name))) {
             throw new Error(`${entry.name}: unreferenced control adapter`);
         }
     }
-    for (const entry of loaded.filter((item) => item.kind === "designer.field"
+    for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition"
         && ["object", "image"].includes(item.document.field.type))) {
         if (!controls.some((control) => control.document.id === entry.document.field.control
             && entry.document.requires.includes(control.name))) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
         }
     }
-    const ordered = loaded.filter((entry) => entry.kind === "designer.field");
+    const ordered = loaded.filter((entry) => entry.kind === "designer.setting-definition");
     const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     ordered.sort((a, b) => a.document.order - b.document.order
         || compare(a.sourceId.split(":").at(-1), b.sourceId.split(":").at(-1))
         || compare(a.document.id, b.document.id));
     const sections = new Map();
     for (const entry of [...ordered, ...sources]) {
-        const section = entry.kind === "value.definition"
+        const section = entry.kind === "generated.value-definition"
             ? entry.document.section : entry.document.generatedBinding?.section;
         if (!section) continue;
         if (sections.has(section.id) && sections.get(section.id) !== section.title) {
@@ -675,7 +686,9 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (!item || typeof item !== "object" || Array.isArray(item)
             || Object.keys(item).some((key) => !["name", "path", "kind", "strategy"].includes(key))
             || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
-            || item.kind !== "designer.page" || item.strategy !== "replace"
+            || item.kind !== (REQUIRED_PAGES.includes(item.name)
+                ? "designer.default-tab-definition" : "designer.added-tab-definition")
+            || item.strategy !== "replace"
             || typeof item.path !== "string" || !item.path || item.path.length > 4096
             || /[\x00-\x1f\x7f]/.test(item.path)) throw new Error("Invalid Designer page name/path");
         if (names.has(item.name)) throw new Error(`Invalid or duplicate Designer page name: ${item.name}`);
@@ -725,9 +738,9 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
-    model.generatedPages = loaded.filter((entry) => entry.kind === "generated.page")
+    model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")
         .map(({ name, document }) => ({ name, ...document }));
-    model.valueSources = loaded.filter((entry) => entry.kind === "value.definition")
+    model.valueSources = loaded.filter((entry) => entry.kind === "generated.value-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.controls = controls.map(({ document }) => document);
     model.adapters = Object.fromEntries(controls.map(({ document }) =>

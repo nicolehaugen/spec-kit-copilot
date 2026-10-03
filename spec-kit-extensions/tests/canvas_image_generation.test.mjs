@@ -31,12 +31,12 @@ async function setup(t, selected = [logo, logo, logo]) {
     await mkdir(handoffFolder, { recursive: true });
     await writeFile(join(handoffFolder, "handoff.json"), JSON.stringify(handoff));
     const names = [
-        ["canvas-stock-image", "control.definition", "controls/stock-image/control.json"],
-        ["canvas-stock-image-generated", "generated.adapter", "controls/stock-image/generated.mjs"],
+        ["canvas-stock-image", "shared.control-definition", "controls/stock-image/control.json"],
+        ["canvas-stock-image-generated", "generated.control-adapter", "controls/stock-image/generated.mjs"],
     ];
     const templates = [];
     for (const [name, kind, file] of names) {
-        const path = join(specify, `${name}.${kind === "control.definition" ? "json" : "mjs"}`);
+        const path = join(specify, `${name}.${kind === "shared.control-definition" ? "json" : "mjs"}`);
         const bytes = await readFile(new URL(file, source));
         await writeFile(path, bytes);
         templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
@@ -45,12 +45,12 @@ async function setup(t, selected = [logo, logo, logo]) {
     const page = { schemaVersion: 1, id: "gallery", title: "Gallery", renderer: "gallery-renderer",
         slots: [{ id: "gallery.logo", accepts: ["asset"] }] };
     const pageFiles = [
-        ["gallery", "generated.page", JSON.stringify(page)],
-        ["gallery-renderer", "generated.renderer",
+        ["gallery", "generated.added-page-definition", JSON.stringify(page)],
+        ["gallery-renderer", "generated.added-page-renderer",
             'export function renderPage({ root }) { const el = document.createElement("div"); el.dataset.assetSlot = "gallery.logo"; root.append(el); }'],
     ];
     for (const [name, kind, text] of pageFiles) {
-        const path = join(specify, `${name}.${kind === "generated.page" ? "json" : "mjs"}`);
+        const path = join(specify, `${name}.${kind === "generated.added-page-definition" ? "json" : "mjs"}`);
         await writeFile(path, text);
         templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
             strategy: "replace", path: await realpath(path), hash: digest(text) });

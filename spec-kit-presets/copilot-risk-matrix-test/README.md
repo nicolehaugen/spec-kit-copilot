@@ -2,8 +2,8 @@
 
 This repository-local fixture is intentionally absent from `catalog.json`.
 Its appended `load-page` command registers four distinct, replace-only
-Specify named templates: `control.definition`, `designer.field`,
-`designer.adapter`, and `generated.adapter`. Only the command is appended;
+Specify named templates: `shared.control-definition`, `designer.setting-definition`,
+`designer.control-adapter`, and `generated.control-adapter`. Only the command is appended;
 the JSON files and complete `.mjs` modules are never appended, merged, or
 registered as Specify scripts. Resolve all four names before opening
 Designer. There is no separate Designer tab: the field is placed in

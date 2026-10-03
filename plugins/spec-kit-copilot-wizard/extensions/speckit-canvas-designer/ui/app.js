@@ -93,7 +93,7 @@ generate.addEventListener("click", async () => {
             return;
         }
     }
-    const providers = model.templates.filter((item) => item.kind === "value.provider")
+    const providers = model.templates.filter((item) => item.kind === "generated.computed-value-provider")
         .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
     updateGenerate();

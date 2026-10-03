@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.12** registers three JSON page templates, five ordered
+Canvas Design **0.1.13** registers three JSON page templates, five ordered
 stock field templates, and one shared image control definition with paired
 Designer/generated adapter templates, plus the
 `speckit.extension-canvas-design.load-page` and
@@ -127,7 +127,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.12/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.13/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -159,15 +159,15 @@ and can be saved. A registered bounded string contribution with
 `generatedBinding: {"presentation": "stock.readonly"}` also freezes its
 validated value into a built-in read-only generated display, regardless of
 which declared Designer slot holds the field. A separately registered
-`generated.page` definition and `generated.renderer` `.mjs` template add a
+`generated.added-page-definition` definition and `generated.added-page-renderer` `.mjs` template add a
 generated-only page without a Designer tab. The renderer is a complete
 replace-only Specify template exporting `renderPage({ root, canvas, values })`;
 the definition must name that registered renderer. Invalid kinds, references,
 strategies, syntax or Specify template-layer metadata stop Designer opening.
 The frozen definition and module are copied into the generated app, which
 needs no design-time packages to render them. A typed object field can use a
-shared `control.definition` naming separate replace-only `designer.adapter`
-and `generated.adapter` templates; each module exports `mount`, `controlId`,
+shared `shared.control-definition` naming separate replace-only `designer.control-adapter`
+and `generated.control-adapter` templates; each module exports `mount`, `controlId`,
 and `valueContract`. The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
 `{root, field, value}`. Designer validates and persists changes; Generate
@@ -176,14 +176,14 @@ definition into the app, up to 30 generated controls. Missing, wrong-kind,
 non-replace, or multiply owned adapters stop Designer opening rather than
 falling back to a stock control.
 
-Canvas-wide values can also be declared in a registered `value.definition`
+Canvas-wide values can also be declared in a registered `generated.value-definition`
 replace-only JSON template. Its `schemaVersion: 1`, stable `id`, `label`,
 `schema` (bounded string, boolean, or enumerated object), `source`, and
 `presentation` are validated against the same field registry, including
 collisions with Designer fields. A constant uses
 `"source":{"kind":"constant","value":...}`; a workflow-derived value uses
-`"source":{"kind":"provider","module":"<registered-template-name>"}` and a
-separate `value.provider` replace-only `.mjs` template exporting
+`"source":{"kind":"computed","module":"<registered-template-name>"}` and a
+separate `generated.computed-value-provider` replace-only `.mjs` template exporting
 `provideValue({workflow})` with a direct `export function` or `export const`
 declaration (synchronous and without imports). Named re-exports are unsupported.
 Designer checks that the transformed script parses, but **does not run it**.
@@ -228,7 +228,110 @@ canvases are not updated.
 
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.
-Page definitions must follow the [page schema](schemas/page.schema.json).
+
+## Template taxonomy and schemas
+
+Register each named Specify template as a complete replace-only layer (extension
+defaults are implicitly replace-only). The kind belongs to the *registration*,
+not the JSON document. No kind is inferred from a filename.
+
+| Kind | Shape | JSON Schema |
+| --- | --- | --- |
+| `designer.default-tab-definition` | Built-in Designer tab | [page](schemas/page.schema.json) |
+| `designer.added-tab-definition` | Additional Designer tab | [page](schemas/page.schema.json) |
+| `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/setting.schema.json) |
+| `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated-page.schema.json) |
+| `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
+| `shared.control-definition` | Shared typed control | [shared control](schemas/shared-control.schema.json) |
+| `designer.control-adapter` | Designer `.mjs` control adapter | Module contract below |
+| `generated.control-adapter` | Generated `.mjs` control adapter | Module contract below |
+| `generated.value-definition` | Generated constant or computed value | [generated value](schemas/generated-value.schema.json) |
+| `generated.computed-value-provider` | Generated `.mjs` provider | Module contract below |
+
+The five JSON Schemas describe document shapes, not the entire loader:
+the loader additionally verifies template-name/ID equality where applicable,
+cross-template references and slots, field collisions, schema-dependent constant
+values, matching adapter exports, and runtime integrity. `$schema` is optional;
+in extension-owned fixtures its relative path resolves to `schemas/`. Preset
+fixtures intentionally omit `$schema`: after Specify installs the extension and
+preset separately, a relative path between their package roots is not portable.
+Use the kind-to-schema table above when editing preset JSON.
+
+### Executable module contracts
+
+Modules are self-contained UTF-8 `.mjs` replace-only templates. Register every
+module under its own name as well as its referencing JSON template. The generated
+app packages the winning generated-host modules; it does not load source presets
+at runtime. Do not import another module from a renderer or provider.
+
+`generated.added-page-renderer` exports
+`renderPage({ root, canvas, values })`. `root` is the owned DOM element;
+`canvas` contains frozen canvas configuration, and `values` contains only
+explicitly declared value IDs from the page definition. Asset bindings need a
+matching `<div data-asset-slot="hero.logo"></div>` in the renderer:
+
+```js
+export function renderPage({ root, canvas, values }) {
+  const heading = document.createElement("h2");
+  heading.textContent = `${canvas.displayName}: ${values["demo.heading"] ?? ""}`;
+  root.replaceChildren(heading);
+}
+```
+
+Both adapters export a `controlId` string matching the control definition
+`id`, a `valueContract` object matching its `value`, and
+`mount({ root, field, value, context, onChange })`. `root` is exclusively owned,
+`field` contains the resolved field definition, and `value` is host validated.
+`onChange(nextValue)` is provided only in Designer and requests a draft update;
+the adapter updates its own DOM after the call (the host does not remount it).
+`context` provides host-specific image capabilities: Designer's `inputId`,
+`constraints`, `validateImage` and `setBusy`, or generated `alt` and
+`className`. Ordinary object controls need not use `context`. A minimal pair
+for a control with `{type:"object",properties:{level:["low","high"]}}`:
+
+```js
+export const controlId = "rating";
+export const valueContract = { type: "object", properties: { level: ["low", "high"] } };
+export function mount({ root, field, value, onChange }) {
+  const select = document.createElement("select");
+  for (const level of valueContract.properties.level) {
+    const option = document.createElement("option");
+    option.value = option.textContent = level;
+    select.append(option);
+  }
+  select.value = value?.level ?? "low";
+  select.setAttribute("aria-label", field.label);
+  select.onchange = () => onChange({ level: select.value });
+  root.replaceChildren(select);
+}
+```
+
+```js
+export const controlId = "rating";
+export const valueContract = { type: "object", properties: { level: ["low", "high"] } };
+export function mount({ root, field, value }) {
+  const output = document.createElement("span");
+  output.textContent = `${field.label}: ${value.level}`;
+  root.replaceChildren(output);
+}
+```
+
+`generated.computed-value-provider` exports a *direct*
+`export function provideValue({ workflow })` or
+`export const provideValue = ({ workflow }) => ...`. It must return a
+synchronous value matching the declared schema. `workflow` is the selected
+existing workflow; no selected workflow means the provider cannot run.
+
+```js
+export function provideValue({ workflow }) {
+  return workflow.label;
+}
+```
+
+Designer parses but never runs provider code. Generate requires explicit
+confirmation of its resolved name, provenance and hash; approved code is trusted
+with the local user's privileges. Providers have a shared three-second refresh
+budget; `node:vm` and hash checking do not sandbox malicious approved code.
 
 ## License
 

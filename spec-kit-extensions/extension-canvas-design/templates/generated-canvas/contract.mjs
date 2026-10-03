@@ -122,7 +122,7 @@ export function valueContract(config) {
             }
         } else throw new UserError(`Invalid value schema for ${field.id}.`);
         const source = field.source;
-        if (source.kind === "provider") {
+        if (source.kind === "computed") {
             if (Object.keys(source).sort().join() !== "hash,kind,module"
                 || typeof source.module !== "string" || !moduleId.test(source.module)
                 || typeof source.hash !== "string" || !/^[a-f0-9]{64}$/.test(source.hash)

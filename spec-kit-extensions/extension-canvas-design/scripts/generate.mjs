@@ -17,6 +17,15 @@ const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 512 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 
+function withoutSchema(document) {
+    if (!document || typeof document !== "object" || Array.isArray(document)) return document;
+    const { $schema, ...definition } = document;
+    if ($schema !== undefined && typeof $schema !== "string") {
+        throw new Error("Invalid frozen definition $schema reference");
+    }
+    return definition;
+}
+
 function validateFrozenValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
         || !constraints || typeof constraints !== "object" || Array.isArray(constraints)
@@ -130,8 +139,8 @@ const imageContract = { type: "image", maxBytes: 32768,
 function frozenImageControl(item) {
     if (!item || Object.keys(item).sort().join() !== "assets,control"
         || item.control !== "stock.image" || !Array.isArray(item.assets) || item.assets.length !== 2
-        || item.assets[0]?.kind !== "control.definition"
-        || item.assets[1]?.kind !== "generated.adapter") {
+        || item.assets[0]?.kind !== "shared.control-definition"
+        || item.assets[1]?.kind !== "generated.control-adapter") {
         throw new Error("Invalid frozen stock.image control registration");
     }
     for (const asset of item.assets) {
@@ -147,7 +156,7 @@ function frozenImageControl(item) {
         }
     }
     let definition;
-    try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+    try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid stock.image control definition"); }
     if (!definition || Object.keys(definition).sort().join() !== "adapters,id,schemaVersion,value"
         || definition.schemaVersion !== 1 || definition.id !== item.control
@@ -282,7 +291,7 @@ function configuration(request) {
             || !["stock.readonly", "stock.editable", "processing-only"].includes(item.presentation)
             || !item.source || typeof item.source !== "object" || Array.isArray(item.source)
             || !(item.source.kind === "constant" && Object.keys(item.source).sort().join() === "kind,value"
-                || item.source.kind === "provider" && Object.keys(item.source).sort().join() === "kind,module"
+                || item.source.kind === "computed" && Object.keys(item.source).sort().join() === "kind,module"
                     && typeof item.source.module === "string"
                     && /^[a-z][a-z0-9-]{0,79}$/.test(item.source.module))
             || (item.section !== undefined && (!item.section || typeof item.section !== "object"
@@ -290,11 +299,11 @@ function configuration(request) {
                 || typeof item.section.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(item.section.id)
                 || typeof item.section.title !== "string" || !item.section.title.trim()
                 || item.section.title.length > 120))
-            || !Array.isArray(item.assets) || item.assets.length !== (item.source?.kind === "provider" ? 2 : 1)
-            || item.assets[0]?.kind !== "value.definition"
-            || item.assets[1] && (item.assets[1].kind !== "value.provider"
+            || !Array.isArray(item.assets) || item.assets.length !== (item.source?.kind === "computed" ? 2 : 1)
+            || item.assets[0]?.kind !== "generated.value-definition"
+            || item.assets[1] && (item.assets[1].kind !== "generated.computed-value-provider"
                 || item.assets[1].name !== item.source.module)
-            || item.source?.kind === "provider" && item.presentation === "stock.editable") {
+            || item.source?.kind === "computed" && item.presentation === "stock.editable") {
             throw new Error("Invalid frozen value source registration");
         }
         for (const asset of item.assets) {
@@ -309,7 +318,7 @@ function configuration(request) {
             }
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+        try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
         catch { throw new Error(`${item.id}: invalid frozen value definition`); }
         if (!isDeepStrictEqual(definition, {
             schemaVersion: 1, id: item.id, label: item.label, schema: item.schema,
@@ -322,7 +331,7 @@ function configuration(request) {
                     : Object.fromEntries(Object.entries(item.schema.properties ?? {})
                         .map(([key, allowed]) => [key, allowed[0]])) },
         { [item.id]: item.schema });
-        if (item.source.kind === "provider") {
+        if (item.source.kind === "computed") {
             const prior = valueModules.get(item.source.module);
             if (prior && prior !== item.assets[1].hash) {
                 throw new Error(`Conflicting frozen value provider: ${item.source.module}`);
@@ -360,8 +369,8 @@ function configuration(request) {
                     || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
                     || JSON.stringify(slot.accepts) !== '["asset"]')))
             || !Array.isArray(page.assets) || page.assets.length !== 2
-            || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.page"
-            || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.renderer"
+            || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.added-page-definition"
+            || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.added-page-renderer"
             || page.assets.some((asset) => !asset || typeof asset !== "object"
                 || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
                 || typeof asset.sourceId !== "string"
@@ -374,7 +383,7 @@ function configuration(request) {
             throw new Error("Invalid frozen generated page assets");
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8")); }
+        try { definition = withoutSchema(JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8"))); }
         catch { throw new Error(`${page.id}: invalid frozen generated page definition`); }
         if (!definition || Object.keys(definition).some((key) =>
             !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
@@ -404,8 +413,8 @@ function configuration(request) {
             || !item.label || typeof item.label !== "string" || item.label.length > 120
             || item.slot !== "details.content" || !Array.isArray(item.assets)
             || item.assets.length !== 2
-            || item.assets[0]?.kind !== "control.definition"
-            || item.assets[1]?.kind !== "generated.adapter") {
+            || item.assets[0]?.kind !== "shared.control-definition"
+            || item.assets[1]?.kind !== "generated.control-adapter") {
             throw new Error("Invalid frozen generated control registration");
         }
         for (const asset of item.assets) {
@@ -422,7 +431,7 @@ function configuration(request) {
             }
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+        try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
         catch { throw new Error(`${item.id}: invalid control definition`); }
         if (definition?.schemaVersion !== 1 || definition.id !== item.control
             || definition.adapters?.generated !== item.assets[1].name
@@ -469,7 +478,7 @@ function configuration(request) {
             ...(declared ? { values: declared } : {}), ...(slots ? { slots } : {}) })) } : {}),
         ...(valueSources?.length ? { valueSources: valueSources.map(
             ({ id, label, schema, source, presentation, section, assets }) => ({
-                id, label, schema, source: source.kind === "provider"
+                id, label, schema, source: source.kind === "computed"
                     ? { ...source, hash: assets[1].hash } : source,
                 presentation, provenance: assets[0].sourceId,
                 ...(section ? { section } : {}),
@@ -542,12 +551,12 @@ export async function materialize(project, workspace, handoffId, requestId) {
     ]);
     if (request.generatedImageControl) {
         controlFiles.push(...request.generatedImageControl.assets.map((asset) => ({
-            filename: `${asset.name}.${asset.kind === "control.definition" ? "json" : "mjs"}`,
+            filename: `${asset.name}.${asset.kind === "shared.control-definition" ? "json" : "mjs"}`,
             bytes: Buffer.from(asset.content, "base64"),
         })));
     }
     const providerFiles = [...new Map((request.valueSources ?? []).filter(
-        (item) => item.source.kind === "provider").map((item) => [
+        (item) => item.source.kind === "computed").map((item) => [
         item.source.module, { filename: `${item.source.module}.mjs`,
             bytes: Buffer.from(item.assets[1].content, "base64") },
     ])).values()];

@@ -65,8 +65,8 @@ beside the handoff in the Designer session artifacts (never to the page template
 reopening the same handoff restores them when its resolved pages are unchanged.
 Preset-registered stock text and checkbox fields render in their declared
 Designer page slot and are saved alongside built-in values. A registered
-`control.definition` for a typed object or image field must reference both a
-`designer.adapter` and `generated.adapter` replace-only template. Both modules
+`shared.control-definition` for a typed object or image field must reference both a
+`designer.control-adapter` and `generated.control-adapter` replace-only template. Both modules
 export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
 to one control definition; multiple fields may reuse that control. The Designer
 mount receives the field, draft value, and change callback; the generated
@@ -83,10 +83,10 @@ Changed assets require reopening Designer. The browser reports non-function
 failures beside the affected control. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
-Registered `value.definition` JSON templates join the same field-ID collision
+Registered `generated.value-definition` JSON templates join the same field-ID collision
 registry and declare a typed constant or a workflow-scoped provider, plus
 read-only, runtime-editable, or processing-only presentation. A provider must
-have its own replace-only `value.provider` `.mjs` registration with a direct
+have its own replace-only `generated.computed-value-provider` `.mjs` registration with a direct
 `export function provideValue` or `export const provideValue` declaration
 (named re-exports are unsupported). Designer validates the actual declaration
 and checks that the transformed script parses,
@@ -104,7 +104,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.12 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.13 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
@@ -127,3 +127,9 @@ instead of failing at provider startup. For local tests, install dependencies wi
 ```bash
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
 ```
+
+Canvas Design's [taxonomy, five JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
+define the registration and authoring surface. Both default and added Designer
+tabs use the same page schema. Preset fixture JSON omits `$schema` because its
+installed package cannot reliably resolve a relative path into a separately
+installed extension; see the mapping in the extension README.

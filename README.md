@@ -39,11 +39,11 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) to get star
 
 | Plugin | Version | Surface | Purpose |
 | --- | --- | --- | --- |
-| `spec-kit-copilot` | 0.16.0 | Copilot CLI and App agent | Core skills that teach Copilot how to run `specify` |
+| `spec-kit-copilot` | 0.16.1 | Copilot CLI and App agent | Core skills that teach Copilot how to run `specify` |
 | `spec-kit-copilot-assess` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the Spec Kit `assess` extension |
 | `spec-kit-copilot-bugfix` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the Spec Kit `bug` extension |
 | `spec-kit-copilot-sdd` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the core spec-driven development workflow |
-| `spec-kit-copilot-wizard` | 0.4.16 | Copilot App canvases | Guided wizard and a composable Designer generator (under development) |
+| `spec-kit-copilot-wizard` | 0.4.17 | Copilot App canvases | Guided wizard and a composable Designer generator (under development) |
 
 The plugins are independently installable and versioned. Install the core skills,
 the assessment canvas, the bug fix canvas, the spec-driven development canvas, the

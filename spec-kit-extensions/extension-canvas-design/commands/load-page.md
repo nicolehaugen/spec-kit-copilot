@@ -27,10 +27,11 @@ set; they do not run a second load operation.
 The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
-Each registration declares its Canvas Design kind (`designer.field`,
-`generated.page`, `generated.renderer`, `control.definition`,
-`designer.adapter`, `generated.adapter`, `value.definition`, or
-`value.provider`) and strategy (`replace`). A `designer.field` can also
+Each registration declares its Canvas Design kind (`designer.setting-definition`,
+`generated.added-page-definition`, `generated.added-page-renderer`,
+`shared.control-definition`, `designer.control-adapter`, `generated.control-adapter`,
+`generated.value-definition`, or `generated.computed-value-provider`) and strategy
+(`replace`). A `designer.setting-definition` can also
 register `stock.image` assets, bound to the generated `header.brand` or
 `workflow.intro` slot, or to a named `asset` slot on a registered generated
 page via `generatedBinding.page` and `.slot`. Each slot accepts one independent
@@ -39,26 +40,28 @@ the image belongs. The `stock.image` control definition and its paired
 Designer/generated adapters must be resolved alongside any image field.
 Generate packages the frozen image and winning generated adapter into the
 generated app; it never loads Specify at runtime.
-Designer pages have kind `designer.page` and strategy `replace` (implicit for
-the extension's default page templates). A name must be a Specify template
+The three default Designer tabs have kind `designer.default-tab-definition`;
+explicit additional tabs have kind `designer.added-tab-definition`. Both use
+strategy `replace` (implicit for the extension's default page templates).
+A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions, host-specific adapters, value definitions,
-and provider modules must each be explicitly registered. `value.definition`
-declares a typed constant or a workflow-scoped provider; a generated page
+and computed-value modules must each be explicitly registered. `generated.value-definition`
+declares a typed constant or a workflow-scoped computed value; a generated page
 declares the value IDs it consumes in its `values` list. A processing-only value
 is not automatically presented and is not secret from its declared consumers.
-Providers are packaged, never evaluated by Designer.
+Computed-value providers are packaged, never evaluated by Designer.
 
 ## Canvas Design templates
 
-- `canvas-stock-description` — `designer.field`, `replace`
-- `canvas-stock-workflow-heading` — `designer.field`, `replace`
-- `canvas-stock-custom-slug` — `designer.field`, `replace`
-- `canvas-stock-logo` — `designer.field`, `replace`
-- `canvas-stock-logo-main-page` — `designer.field`, `replace`
-- `canvas-stock-image` — `control.definition`, `replace`
-- `canvas-stock-image-designer` — `designer.adapter`, `replace`
-- `canvas-stock-image-generated` — `generated.adapter`, `replace`
+- `canvas-stock-description` — `designer.setting-definition`, `replace`
+- `canvas-stock-workflow-heading` — `designer.setting-definition`, `replace`
+- `canvas-stock-custom-slug` — `designer.setting-definition`, `replace`
+- `canvas-stock-logo` — `designer.setting-definition`, `replace`
+- `canvas-stock-logo-main-page` — `designer.setting-definition`, `replace`
+- `canvas-stock-image` — `shared.control-definition`, `replace`
+- `canvas-stock-image-designer` — `designer.control-adapter`, `replace`
+- `canvas-stock-image-generated` — `generated.control-adapter`, `replace`
 
 ## Steps
 
@@ -75,7 +78,7 @@ Providers are packaged, never evaluated by Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.12)
+         (top layer from: extension:extension-canvas-design v0.1.13)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
@@ -99,7 +102,8 @@ Providers are packaged, never evaluated by Designer.
    `open_canvas({canvasId:"speckit-canvas-designer",
    extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer",
    instanceId:"designer-<handoffId>",input:{handoffId:"<handoffId>",
-   pages:[{"name":"<page-name>","path":"<resolved-path>","kind":"designer.page","strategy":"replace"},...],
+   pages:[{"name":"<default-page-name>","path":"<resolved-path>","kind":"designer.default-tab-definition","strategy":"replace"},
+          {"name":"<additional-page-name>","path":"<resolved-path>","kind":"designer.added-tab-definition","strategy":"replace"},...],
    templates:[{"name":"<asset-name>","path":"<resolved-path>","sourceId":"<Specify-reported-source-ID>","kind":"<declared-kind>","strategy":"replace"},...]}})`.
    Obtain each `sourceId` from that name's `top layer from:` metadata:
    map the exact versionless `project override` marker to `project`; for a

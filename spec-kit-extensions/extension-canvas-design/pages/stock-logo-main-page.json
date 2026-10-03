@@ -1,4 +1,5 @@
 {
+  "$schema": "../schemas/setting.schema.json",
   "schemaVersion": 1,
   "id": "stock.logo-main-page",
   "host": "designer",

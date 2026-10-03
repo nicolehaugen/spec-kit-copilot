@@ -253,8 +253,8 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         content: Buffer.from(content).toString("base64") });
     request.generatedPages = [{ id: "canvas-generated-overview", title: "Overview",
         renderer: "canvas-generated-overview-renderer", assets: [
-            asset("canvas-generated-overview", "generated.page", definition),
-            asset("canvas-generated-overview-renderer", "generated.renderer", module),
+            asset("canvas-generated-overview", "generated.added-page-definition", definition),
+            asset("canvas-generated-overview-renderer", "generated.added-page-renderer", module),
         ] }];
     for (const change of [
         (page) => { page.assets[0].hash = "0".repeat(64); },
@@ -262,7 +262,7 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         (page) => { page.title = "Changed"; },
         (page) => { page.renderer = "../escape"; },
         (page) => { page.id = "workflow"; },
-        (page) => { page.assets[1] = asset(page.renderer, "generated.renderer",
+        (page) => { page.assets[1] = asset(page.renderer, "generated.added-page-renderer",
             module.padEnd(32 * 1024 + 1, " ")); },
     ]) {
         const trial = structuredClone(request);
@@ -276,7 +276,7 @@ test("generation rejects malformed or mismatched frozen page assets before creat
     }
     const boundary = structuredClone(request);
     boundary.generatedPages[0].assets[1] = asset("canvas-generated-overview-renderer",
-        "generated.renderer", module.padEnd(32 * 1024, " "));
+        "generated.added-page-renderer", module.padEnd(32 * 1024, " "));
     const { integrity: _old, ...payload } = boundary;
     boundary.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     await writeFile(path, JSON.stringify(boundary));
@@ -307,9 +307,9 @@ test("frozen named values reject tampered modules and package independently of t
     ];
     const valueSources = await Promise.all(definitions.map(async ([file, name]) => {
         const definition = JSON.parse(await readFile(new URL(`values/${file}.json`, preset)));
-        const assets = [await asset(name, "value.definition", `values/${file}.json`)];
-        if (definition.source.kind === "provider") {
-            assets.push(await asset(definition.source.module, "value.provider", "values/workflow.mjs"));
+        const assets = [await asset(name, "generated.value-definition", `values/${file}.json`)];
+        if (definition.source.kind === "computed") {
+            assets.push(await asset(definition.source.module, "generated.computed-value-provider", "values/workflow.mjs"));
         }
         const { schemaVersion: _version, ...source } = definition;
         return { ...source, assets };
@@ -318,8 +318,8 @@ test("frozen named values reject tampered modules and package independently of t
     const request = { ...original, valueSources, generatedPages: [{
         id: page.id, title: page.title, renderer: page.renderer, values: page.values,
         assets: [
-            await asset(page.id, "generated.page", "pages/values.json"),
-            await asset(page.renderer, "generated.renderer", "pages/values.mjs"),
+            await asset(page.id, "generated.added-page-definition", "pages/values.json"),
+            await asset(page.renderer, "generated.added-page-renderer", "pages/values.mjs"),
         ],
     }] };
     const persist = async (candidate) => {

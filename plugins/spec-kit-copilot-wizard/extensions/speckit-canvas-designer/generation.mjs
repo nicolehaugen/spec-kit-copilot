@@ -55,9 +55,9 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     let generatedImageControl;
     if (imageContributions.length) {
         const control = model.controls?.find((entry) => entry.id === "stock.image");
-        const definition = model.templates?.find((entry) => entry.kind === "control.definition"
+        const definition = model.templates?.find((entry) => entry.kind === "shared.control-definition"
             && imageContributions.every((item) => item.requires?.includes(entry.name)));
-        const adapter = model.templates?.find((entry) => entry.kind === "generated.adapter"
+        const adapter = model.templates?.find((entry) => entry.kind === "generated.control-adapter"
             && entry.name === control?.adapters?.generated);
         if (!control || !definition || !adapter
             || imageContributions.some((item) => item.field.control !== control.id
@@ -96,9 +96,9 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     };
     for (const page of model.generatedPages ?? []) {
         const definition = model.templates.find((item) => item.name === page.name
-            && item.kind === "generated.page");
+            && item.kind === "generated.added-page-definition");
         const renderer = model.templates.find((item) => item.name === page.renderer
-            && item.kind === "generated.renderer");
+            && item.kind === "generated.added-page-renderer");
         if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
         const assets = await Promise.all([definition, renderer].map(asset));
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer,
@@ -108,12 +108,12 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const valueSources = [];
     for (const value of model.valueSources ?? []) {
         const definition = model.templates.find((entry) => entry.name === value.name
-            && entry.kind === "value.definition");
+            && entry.kind === "generated.value-definition");
         if (!definition) throw new Error(`${value.name}: missing validated value definition`);
-        const provider = value.source.kind === "provider"
+        const provider = value.source.kind === "computed"
             ? model.templates.find((entry) => entry.name === value.source.module
-                && entry.kind === "value.provider") : null;
-        if (value.source.kind === "provider" && !provider) {
+                && entry.kind === "generated.computed-value-provider") : null;
+        if (value.source.kind === "computed" && !provider) {
             throw new Error(`${value.name}: missing validated value provider`);
         }
         valueSources.push({ id: value.id, label: value.label, schema: value.schema,
@@ -126,11 +126,11 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         const control = model.controls.find((entry) => entry.id === contribution.field.control);
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
         const names = [
-            model.templates.find((entry) => entry.kind === "control.definition"
+            model.templates.find((entry) => entry.kind === "shared.control-definition"
                 && entry.name === contribution.requires.find((name) =>
-                    model.templates.some((item) => item.name === name && item.kind === "control.definition"))),
+                    model.templates.some((item) => item.name === name && item.kind === "shared.control-definition"))),
             model.templates.find((entry) => entry.name === control.adapters.generated
-                && entry.kind === "generated.adapter"),
+                && entry.kind === "generated.control-adapter"),
         ];
         generatedControls.push({ id: contribution.field.id, label: contribution.field.label,
             control: control.id, slot: contribution.generatedBinding.slot,

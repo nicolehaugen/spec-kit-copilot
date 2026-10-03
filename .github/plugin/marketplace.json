@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Spec Kit integrations for GitHub Copilot CLI and the GitHub Copilot App.",
-    "version": "0.21.12"
+    "version": "0.21.13"
   },
   "plugins": [
     {
       "name": "spec-kit-copilot",
       "description": "Exposes the Spec Kit (specify) CLI to GitHub Copilot CLI as skills for spec-driven development.",
-      "version": "0.16.0",
+      "version": "0.16.1",
       "source": "."
     },
     {
@@ -35,7 +35,7 @@
     {
       "name": "spec-kit-copilot-wizard",
       "description": "Adds the guided Spec Kit Wizard and an Essentials-driven Designer generator for scaffold-derived workflow canvases; still under development.",
-      "version": "0.4.16",
+      "version": "0.4.17",
       "source": "plugins/spec-kit-copilot-wizard"
     }
   ]

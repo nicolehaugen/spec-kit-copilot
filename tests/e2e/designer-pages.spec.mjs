@@ -83,7 +83,7 @@ async function startPreparedShell(state) {
             await copyFile(new URL("controls/stock-image/designer.mjs", extensionRoot), path);
             const bytes = await readFile(path);
             state.templates = [{ name: "canvas-stock-image-designer", path,
-                hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.adapter" }];
+                hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.control-adapter" }];
         }
         const shell = await startShell(handoff, state, { workspace, project });
         return { url: shell.url, close: async () => {
@@ -245,9 +245,10 @@ test("isolated test preset resolves through Specify and renders its contributed 
         const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
             "canvas-settings-appearance", "canvas-settings-pr1-test"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: "designer.page", strategy: "replace" }; });
+                return { ...entry, kind: name === "canvas-settings-pr1-test" || name === "canvas-settings-billing"
+                    ? "designer.added-tab-definition" : "designer.default-tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contribution-pr1-test"),
-            kind: "designer.field", strategy: "replace" }];
+            kind: "designer.setting-definition", strategy: "replace" }];
         expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -329,9 +330,10 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
             "canvas-settings-appearance", "canvas-settings-billing"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: "designer.page", strategy: "replace" }; });
+                return { ...entry, kind: name === "canvas-settings-pr1-test" || name === "canvas-settings-billing"
+                    ? "designer.added-tab-definition" : "designer.default-tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contributions-billing"),
-            kind: "designer.field", strategy: "replace" }];
+            kind: "designer.setting-definition", strategy: "replace" }];
         expect(templates[0].sourceId).toBe("copilot-billing-canvas-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -437,12 +439,12 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         };
         const pages = ["canvas-settings-setup", "canvas-settings-artifacts", "canvas-settings-appearance"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: "designer.page", strategy: "replace" }; });
+                return { ...entry, kind: "designer.default-tab-definition", strategy: "replace" }; });
         const templates = [
-            ["canvas-control-risk-matrix", "control.definition"],
-            ["canvas-contributions-risk-designer", "designer.field"],
-            ["canvas-control-risk-matrix-designer", "designer.adapter"],
-            ["canvas-control-risk-matrix-generated", "generated.adapter"],
+            ["canvas-control-risk-matrix", "shared.control-definition"],
+            ["canvas-contributions-risk-designer", "designer.setting-definition"],
+            ["canvas-control-risk-matrix-designer", "designer.control-adapter"],
+            ["canvas-control-risk-matrix-generated", "generated.control-adapter"],
         ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -597,7 +599,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.12 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.13 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
