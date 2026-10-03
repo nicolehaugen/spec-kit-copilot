@@ -8,6 +8,26 @@ for (const root of document.querySelectorAll("[data-stock-image]")) {
     void renderStockImage(root, { id: root.dataset.stockImage, label: root.dataset.imageAlt },
         { file: root.dataset.imageFile }, root.dataset.imageAlt, root.dataset.imageClass);
 }
+const textRegistration = document.getElementById("stock-text-registration");
+if (textRegistration) {
+    for (const root of document.querySelectorAll("[data-stock-text]")) {
+        void (async () => {
+            try {
+                const { mount, controlId, valueContract } = await import(
+                    `${textRegistration.dataset.module}?token=${encodeURIComponent(token)}`);
+                if (controlId !== "stock.text" || JSON.stringify(valueContract) !== '{"type":"string"}'
+                    || typeof mount !== "function") throw new Error("Incompatible stock.text adapter");
+                const field = { id: root.dataset.fieldId, label: root.dataset.textLabel };
+                const value = root.textContent;
+                await mount({ root, field, value,
+                    context: { slot: root.dataset.stockText, className: "" } });
+            } catch (error) {
+                root.setAttribute("role", "alert");
+                root.textContent = `Generated text could not render: ${error.message}`;
+            }
+        })();
+    }
+}
 async function mountGeneratedControl(root) {
     const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
     try {

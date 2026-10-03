@@ -6,8 +6,12 @@
   "properties": {
     "$schema": {"type": "string"},
     "schemaVersion": {"const": 1},
-    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$|^stock\\.image$"},
+    "id": {"type": "string", "pattern": "^(?:[a-z][a-z0-9-]{0,79}|stock\\.(?:image|text|checkbox))$"},
     "value": {"oneOf": [
+      {"type": "object", "additionalProperties": false, "required": ["type"],
+        "properties": {"type": {"const": "string"}}},
+      {"type": "object", "additionalProperties": false, "required": ["type"],
+        "properties": {"type": {"const": "boolean"}}},
       {"type": "object", "additionalProperties": false, "required": ["type", "maxBytes", "mimeTypes"],
         "properties": {"type": {"const": "image"}, "maxBytes": {"const": 32768},
           "mimeTypes": {"const": ["image/png", "image/jpeg", "image/gif", "image/webp"]}}},
@@ -16,7 +20,7 @@
           "properties": {"$ref": "#/$defs/properties"}}}
     ]},
     "adapters": {"type": "object", "additionalProperties": false,
-      "required": ["designer", "generated"],
+      "required": ["designer"],
       "properties": {
         "designer": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"},
         "generated": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"}
@@ -25,8 +29,15 @@
   "allOf": [
     {"if": {"properties": {"value": {"properties": {"type": {"const": "image"}}}}},
       "then": {"properties": {"id": {"const": "stock.image"}}}},
+    {"if": {"properties": {"value": {"properties": {"type": {"const": "string"}}}}},
+      "then": {"properties": {"id": {"const": "stock.text"}}}},
+    {"if": {"properties": {"value": {"properties": {"type": {"const": "boolean"}}}}},
+      "then": {"properties": {"id": {"const": "stock.checkbox"},
+        "adapters": {"not": {"required": ["generated"]}}}}},
     {"if": {"properties": {"value": {"properties": {"type": {"const": "object"}}}}},
-      "then": {"properties": {"id": {"pattern": "^[a-z][a-z0-9-]{0,79}$"}}}}
+      "then": {"properties": {"id": {"pattern": "^[a-z][a-z0-9-]{0,79}$"}}}},
+    {"if": {"properties": {"value": {"properties": {"type": {"enum": ["image", "string", "object"]}}}}},
+      "then": {"properties": {"adapters": {"required": ["designer", "generated"]}}}}
   ],
   "$defs": {
     "properties": {"type": "object", "minProperties": 1, "maxProperties": 10,

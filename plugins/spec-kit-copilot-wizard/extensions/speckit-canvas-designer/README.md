@@ -29,6 +29,14 @@ individual page errors still appear as tabs once the schema loads.
 Essentials requires Canvas ID and Title from the resolved core page. Description,
 Workflow header, Allow custom slug, Header logo, and Main page logo are separate
 ordered stock contributions registered by the composed load-page command. The
+two required fields stay fixed but mount the same registered `stock.text`
+Designer adapter as optional text fields. `stock.checkbox` similarly provides
+the optional boolean editor. Their field-specific constraints and saved values
+remain host-owned. Generate packages the winning stock-text generated adapter
+for visible Description, Workflow header, or read-only text placements. The
+custom-slug boolean is consumed by the generated shell, so it needs no
+generated visual adapter or display toggle. A future Setup confirm checkbox
+can follow this pattern without delegating project setup to adapter code. The
 optional image controls upload, preview, replace, and remove independent PNG,
 JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
 reason beside their picker, including the actual size when over the limit;
@@ -63,8 +71,8 @@ directory remains authoritative.
 Artifacts and Appearance are empty by default. Save persists validated field values to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff restores them when its resolved pages are unchanged.
-Preset-registered stock text and checkbox fields render in their declared
-Designer page slot and are saved alongside built-in values. A registered
+Preset-registered stock text and checkbox fields mount their shared adapters
+in their declared Designer page slot and are saved alongside required values. A registered
 `shared.control-definition` for a typed object or image field must reference both a
 `designer.control-adapter` and `generated.control-adapter` replace-only template. Both modules
 export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
@@ -104,7 +112,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.13 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.14 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

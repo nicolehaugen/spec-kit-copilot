@@ -62,6 +62,11 @@ Computed-value providers are packaged, never evaluated by Designer.
 - `canvas-stock-image` — `shared.control-definition`, `replace`
 - `canvas-stock-image-designer` — `designer.control-adapter`, `replace`
 - `canvas-stock-image-generated` — `generated.control-adapter`, `replace`
+- `canvas-stock-text` — `shared.control-definition`, `replace`
+- `canvas-stock-text-designer` — `designer.control-adapter`, `replace`
+- `canvas-stock-text-generated` — `generated.control-adapter`, `replace`
+- `canvas-stock-checkbox` — `shared.control-definition`, `replace`
+- `canvas-stock-checkbox-designer` — `designer.control-adapter`, `replace`
 
 ## Steps
 
@@ -78,7 +83,7 @@ Computed-value providers are packaged, never evaluated by Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.13)
+         (top layer from: extension:extension-canvas-design v0.1.14)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on

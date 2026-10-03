@@ -144,8 +144,10 @@ function buildModel(entries, schema) {
             const ids = new Set();
             for (const field of document.fields) {
                 const type = field.type ?? "string";
+                const scalarControl = type === "boolean" ? "stock.checkbox" : "stock.text";
                 if (ids.has(field.id) || (Object.hasOwn(field, "default") && type !== "boolean")
-                    || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== type)) {
+                    || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== type)
+                    || (field.control !== undefined && field.control !== scalarControl)) {
                     throw new Error(`${name}: duplicate or invalid field ${field.id}`);
                 }
                 ids.add(field.id);
@@ -174,7 +176,10 @@ function buildModel(entries, schema) {
             values[field.id] = type === "boolean" ? (field.default ?? false) : "";
             fieldOrigins.set(field.id, name);
         }
-        pages.push({ ...document, page: name, provenance: { template: name, path, fingerprint: hash } });
+        pages.push({ ...document, fields: document.fields.map((field) => ({
+            ...field, control: field.control ?? (field.type === "boolean"
+                ? "stock.checkbox" : "stock.text") })),
+            page: name, provenance: { template: name, path, fingerprint: hash } });
     }
     pages.sort((a, b) => a.order - b.order || a.page.localeCompare(b.page));
     return { pages, constraints, values, fieldOrigins };
@@ -240,8 +245,12 @@ function validateContribution(document, name, slots, fieldOrigins) {
                                 || !/^[a-z][a-z0-9.-]{0,79}$/.test(binding.slot)
                         : binding.slot !== "details.content")
                 : field.type !== "string"
-                    || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
-                    || binding.presentation !== "stock.readonly")
+                    || !(binding.presentation === "stock.readonly"
+                        && Object.keys(binding).every((key) => ["presentation", "section"].includes(key))
+                        || binding.presentation === "text"
+                        && Object.keys(binding).sort().join() === "presentation,slot"
+                        && ((field.id === "canvas.description" && binding.slot === "workflow.description")
+                            || (field.id === "canvas.workflowListName" && binding.slot === "workflow.heading"))))
             || (binding.section !== undefined
                 && (!binding.section || typeof binding.section !== "object"
                     || Array.isArray(binding.section)
@@ -262,15 +271,23 @@ function validateControl(document, name) {
     schemaMetadata(document, name);
     const properties = document?.value?.properties;
     const image = document?.value?.type === "image";
+    const scalar = document?.value?.type === "string"
+        || document?.value?.type === "boolean";
+    const checkbox = document?.id === "stock.checkbox";
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).sort().join() !== "adapters,id,schemaVersion,value"
         || document.schemaVersion !== 1
-        || (image ? document.id !== "stock.image" : !PAGE_PATTERN.test(document.id))
+        || (image ? document.id !== "stock.image"
+            : scalar ? document.id !== (checkbox ? "stock.checkbox" : "stock.text")
+                : !PAGE_PATTERN.test(document.id))
         || !document.value || (image
             ? Object.keys(document.value).sort().join() !== "maxBytes,mimeTypes,type"
                 || document.value.maxBytes !== 32 * 1024
                 || JSON.stringify(document.value.mimeTypes)
                     !== '["image/png","image/jpeg","image/gif","image/webp"]'
+            : scalar
+                ? Object.keys(document.value).sort().join() !== "type"
+                    || document.value.type !== (checkbox ? "boolean" : "string")
             : Object.keys(document.value).sort().join() !== "properties,type"
                 || document.value.type !== "object"
                 || !properties || typeof properties !== "object" || Array.isArray(properties)
@@ -280,9 +297,10 @@ function validateControl(document, name) {
                     || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
                     || new Set(allowed).size !== allowed.length
                     || allowed.some((value) => typeof value !== "string" || !value || value.length > 80)))
-        || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
+        || !document.adapters
+        || Object.keys(document.adapters).sort().join() !== (checkbox ? "designer" : "designer,generated")
         || !PAGE_PATTERN.test(document.adapters.designer)
-        || !PAGE_PATTERN.test(document.adapters.generated)) {
+        || (!checkbox && !PAGE_PATTERN.test(document.adapters.generated))) {
         throw new Error(`${name}: invalid shared control value contract or adapter references`);
     }
 }
@@ -469,7 +487,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             } else if (item.kind === "generated.value-definition") {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: value definition exceeds 32 KiB`);
             } else {
-                if (bytes > 32 * 1024) throw new Error(`${item.name}: executable adapter exceeds 32 KiB`);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: executable module exceeds 32 KiB`);
                 const { init, parse } = await import("es-module-lexer/minimal");
                 await init();
                 let imports, exports;
@@ -481,7 +499,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 }
                 if (imports.some((entry) => entry.d !== -2)) {
                     throw new Error(`${item.name}: ${item.kind === "generated.added-page-renderer"
-                        ? "generated renderer" : "control adapter"} must be self-contained; module imports are not packaged`);
+                        ? "generated renderer" : item.kind === "generated.computed-value-provider"
+                            ? "computed value provider" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
                 const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
                     : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
@@ -576,19 +595,35 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         occupiedAssetSlots.add(key);
     }
+    const occupiedTextSlots = new Set();
+    for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition"
+        && item.document.generatedBinding?.presentation === "text")) {
+        const slot = entry.document.generatedBinding.slot;
+        if (occupiedTextSlots.has(slot)) {
+            throw new Error(`${entry.name}: duplicate generated text slot ${slot}`);
+        }
+        occupiedTextSlots.add(slot);
+    }
     const controls = loaded.filter((entry) => entry.kind === "shared.control-definition");
     const adapterOwners = new Map();
     for (const control of controls) {
         const fields = loaded.filter((entry) => entry.kind === "designer.setting-definition"
             && entry.document.field.control === control.document.id);
-        if (!fields.length || controls.some((other) => other !== control
+        const pageFields = pageEntries.filter((page) => !page.error)
+            .flatMap((page) => page.fields ?? [])
+            .filter((field) => field.control === control.document.id);
+        if ((!fields.length && !pageFields.length
+            && !["stock.text", "stock.checkbox"].includes(control.document.id))
+            || controls.some((other) => other !== control
             && other.document.id === control.document.id)) {
             throw new Error(`${control.name}: unreferenced or duplicate control definition`);
         }
-        for (const [host, kind] of [["designer", "designer.control-adapter"], ["generated", "generated.control-adapter"]]) {
-            const adapter = loaded.find((item) => item.name === control.document.adapters[host]);
+        for (const [host, name] of Object.entries(control.document.adapters)) {
+            const kind = host === "designer" ? "designer.control-adapter"
+                : "generated.control-adapter";
+            const adapter = loaded.find((item) => item.name === name);
             if (!adapter || adapter.kind !== kind) {
-                throw new Error(`${control.name}: missing ${host} adapter ${control.document.adapters[host]}`);
+                throw new Error(`${control.name}: missing ${host} adapter ${name}`);
             }
             const owner = adapterOwners.get(adapter.name);
             if (owner) {
@@ -597,8 +632,13 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             adapterOwners.set(adapter.name, control.document.id);
         }
         for (const field of fields) {
-            if (!field.document.generatedBinding
-                || field.document.field.type !== control.document.value.type) {
+            if (field.document.field.type !== control.document.value.type
+                || (["object", "image"].includes(field.document.field.type)
+                    && !field.document.generatedBinding)
+                || (field.document.generatedBinding?.presentation === "text"
+                    && !field.document.requires.includes(control.name))
+                || (field.document.generatedBinding?.presentation === "control"
+                    && !control.document.adapters.generated)) {
                 throw new Error(`${field.name}: incompatible shared control value or generated placement`);
             }
         }
@@ -608,11 +648,19 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${entry.name}: unreferenced control adapter`);
         }
     }
-    for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition"
-        && ["object", "image"].includes(item.document.field.type))) {
+    for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition")) {
         if (!controls.some((control) => control.document.id === entry.document.field.control
-            && entry.document.requires.includes(control.name))) {
+            && (["string", "boolean"].includes(entry.document.field.type)
+                || entry.document.requires.includes(control.name)))) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
+        }
+    }
+    for (const page of pageEntries.filter((entry) => !entry.error)) {
+        for (const field of page.fields ?? []) {
+            if (!controls.some((control) => control.document.id === field.control
+                && control.document.value.type === (field.type ?? "string"))) {
+                throw new Error(`${page.page}: missing shared control definition for ${field.id}`);
+            }
         }
     }
     const ordered = loaded.filter((entry) => entry.kind === "designer.setting-definition");
@@ -751,8 +799,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
             for (const { document } of ordered.filter((entry) => entry.document.slot === slot.id)) {
                 if (page.fields.length >= 100) throw new Error(`${page.page}: too many resolved fields`);
                 const field = document.field;
-                const { control: _stockControl, ...scalarField } = field;
-                page.fields.push(["object", "image"].includes(field.type) ? field : scalarField);
+                page.fields.push(field);
                 model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
                     : { type: field.type, ...(field.type === "string"
                         ? { maxLength: field.maxLength ?? 1000 } : field.type === "object"

@@ -5,9 +5,9 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.13** registers three JSON page templates, five ordered
-stock field templates, and one shared image control definition with paired
-Designer/generated adapter templates, plus the
+Canvas Design **0.1.14** registers three JSON page templates, five ordered
+stock field templates, reusable text and checkbox definitions with Designer
+adapters, and a shared image definition with paired adapters, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -26,11 +26,25 @@ project extension directory, then validates the result in place.
 | `canvas-stock-image` | Shared control | Image value contract and paired adapter names |
 | `canvas-stock-image-designer` | Designer | Upload, preview, replace, and remove images |
 | `canvas-stock-image-generated` | Generated app | Render packaged images in authorized slots |
+| `canvas-stock-text` | Shared control | String value contract and adapter names |
+| `canvas-stock-text-designer` | Designer | Edit text, including required Canvas ID and Title |
+| `canvas-stock-text-generated` | Generated app | Render visible text in authorized placements |
+| `canvas-stock-checkbox` | Shared control | Boolean value contract and Designer adapter name |
+| `canvas-stock-checkbox-designer` | Designer | Edit boolean settings |
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
 The Essentials core template lives in `pages/essentials.json`; its
 `canvas-settings-setup` ID stays stable for preset resolution.
+Its required Canvas ID and Title are fixed fields that share the `stock.text`
+editor with optional text contributions; a preset cannot remove them by
+omitting an optional contribution. Field-specific length, requiredness, and
+identifier rules remain enforced by the Designer host. Description and
+Workflow header use the packaged stock-text adapter for their visible
+generated presentation. Allow custom slug uses the stock-checkbox editor
+but only its boolean value is consumed by the generated shell; it does not
+need an empty generated visual adapter. A future Setup confirm checkbox can
+reuse this pattern without moving privileged setup into an adapter.
 The composed load-page command explicitly resolves each stock contribution into
 `essentials.options` in the order shown. Omitting or replacing a stock contribution
 does not remove the required Canvas ID and Title. If absent, generated description
@@ -127,7 +141,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.13/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.14/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -154,10 +168,10 @@ handoffs, and an unavailable provider stop the operation before an open URL is
 returned. A resolved page whose file is missing or invalid shows an error tab
 with a path and reason; healthy pages stay usable. Invalid registered field
 contributions stop the open with both names on a field collision; newly
-registered stock text/checkbox fields render on their declared Designer page
-and can be saved. A registered bounded string contribution with
+registered stock text/checkbox fields mount their resolved Designer adapters on
+their declared Designer page and can be saved. A registered bounded string contribution with
 `generatedBinding: {"presentation": "stock.readonly"}` also freezes its
-validated value into a built-in read-only generated display, regardless of
+validated value into a read-only generated display, regardless of
 which declared Designer slot holds the field. A separately registered
 `generated.added-page-definition` definition and `generated.added-page-renderer` `.mjs` template add a
 generated-only page without a Designer tab. The renderer is a complete
@@ -278,13 +292,14 @@ export function renderPage({ root, canvas, values }) {
 }
 ```
 
-Both adapters export a `controlId` string matching the control definition
+Each registered control adapter exports a `controlId` string matching the control definition
 `id`, a `valueContract` object matching its `value`, and
 `mount({ root, field, value, context, onChange })`. `root` is exclusively owned,
 `field` contains the resolved field definition, and `value` is host validated.
 `onChange(nextValue)` is provided only in Designer and requests a draft update;
 the adapter updates its own DOM after the call (the host does not remount it).
-`context` provides host-specific image capabilities: Designer's `inputId`,
+`stock.checkbox` has only a Designer adapter; generated presentation is
+required for image, text and object controls. `context` provides host-specific image capabilities: Designer's `inputId`,
 `constraints`, `validateImage` and `setBusy`, or generated `alt` and
 `className`. Ordinary object controls need not use `context`. A minimal pair
 for a control with `{type:"object",properties:{level:["low","high"]}}`:

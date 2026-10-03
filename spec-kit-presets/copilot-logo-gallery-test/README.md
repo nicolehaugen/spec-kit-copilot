@@ -8,7 +8,7 @@ description, centered in a 240 px-wide container. This tests custom-page
 placement without relying on the header or workflow intro slots.
 
 Use an initialized Spec Kit project with the **current worktree's** Canvas
-Design extension (version 0.1.13 or newer) and this preset installed for local
+Design extension (version 0.1.14 or newer) and this preset installed for local
 development. From the project root:
 
 ```powershell

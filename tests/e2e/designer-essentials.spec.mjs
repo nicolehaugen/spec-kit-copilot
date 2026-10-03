@@ -3,6 +3,7 @@ import { test, expect } from "./playwright.mjs";
 
 const ui = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/ui/",
     import.meta.url);
+const extension = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 
 async function openDesigner(page, fields, extraPage) {
     const constraints = {
@@ -18,8 +19,12 @@ async function openDesigner(page, fields, extraPage) {
         "canvas.description": "", "canvas.workflowListName": "",
         "workflowSlug.userProvided": false, "billing.costCode": "" };
     const ids = [...fields, ...(extraPage?.fields ?? [])].map((field) => field.id);
+    const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
+        JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extension), "utf8"))));
     const state = { handoffId: "test", revision: "test", generationAvailable: true,
-        settingsRevision: 0, persisted: false, adapters: {},
+        settingsRevision: 0, persisted: false, templates: [], controls,
+        adapters: { "stock.text": "canvas-stock-text-designer",
+            "stock.checkbox": "canvas-stock-checkbox-designer" },
         pages: [{ page: "canvas-settings-setup", title: "Essentials", order: 10,
             description: "Configure your canvas.", fields },
         ...(extraPage ? [extraPage] : [])],
@@ -33,6 +38,11 @@ async function openDesigner(page, fields, extraPage) {
         } else if (path === "/api/generate") {
             requests.push(route.request().postDataJSON());
             await route.fulfill({ status: 202, json: { target: ".github/extensions/test/" } });
+        } else if (path === "/adapters/canvas-stock-text-designer.mjs"
+            || path === "/adapters/canvas-stock-checkbox-designer.mjs") {
+            const name = path.includes("checkbox") ? "stock-checkbox" : "stock-text";
+            await route.fulfill({ body: await readFile(new URL(`controls/${name}/designer.mjs`, extension)),
+                contentType: "text/javascript" });
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css") {
             const file = path === "/" ? "index.html" : path.slice(4);
             await route.fulfill({ body: await readFile(new URL(file, ui)), contentType:

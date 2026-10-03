@@ -176,6 +176,45 @@ function frozenImageControl(item) {
         definitionHash: item.assets[0].hash };
 }
 
+function frozenTextControl(item) {
+    if (!item || Object.keys(item).sort().join() !== "assets,control"
+        || item.control !== "stock.text" || !Array.isArray(item.assets) || item.assets.length !== 2
+        || item.assets[0]?.kind !== "shared.control-definition"
+        || item.assets[1]?.kind !== "generated.control-adapter") {
+        throw new Error("Invalid frozen stock.text control registration");
+    }
+    for (const asset of item.assets) {
+        if (!asset || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
+            || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+            || typeof asset.content !== "string" || asset.content.length > 44 * 1024
+            || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+            || Buffer.from(asset.content, "base64").length > 32 * 1024
+            || Buffer.from(asset.content, "base64").toString("base64") !== asset.content
+            || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash) {
+            throw new Error("Invalid frozen stock.text control asset or hash");
+        }
+    }
+    let definition;
+    try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
+    catch { throw new Error("Invalid stock.text control definition"); }
+    if (!definition || Object.keys(definition).sort().join() !== "adapters,id,schemaVersion,value"
+        || definition.schemaVersion !== 1 || definition.id !== "stock.text"
+        || Object.keys(definition.adapters ?? {}).sort().join() !== "designer,generated"
+        || !/^[a-z][a-z0-9-]{0,79}$/.test(definition.adapters.designer)
+        || definition.adapters.generated !== item.assets[1].name
+        || item.assets[0].name === item.assets[1].name
+        || !isDeepStrictEqual(definition.value, { type: "string" })) {
+        throw new Error("Incompatible frozen stock.text value contract or adapters");
+    }
+    const module = Buffer.from(item.assets[1].content, "base64").toString("utf8");
+    if (/\bimport\b|\bexport\s+(?:\*|\{[^}]*\})\s+from\b/.test(module)) {
+        throw new Error("Frozen stock.text adapter must be self-contained");
+    }
+    return { adapter: item.assets[1].name, definition: item.assets[0].name,
+        hash: item.assets[1].hash, definitionHash: item.assets[0].hash };
+}
+
 const imageFile = (item) => `${item.page
     ? `asset-${createHash("sha256").update(item.id).digest("hex").slice(0,24)}`
     : item.slot === "header.brand" ? "logo" : "main-page-logo"}.${{
@@ -185,7 +224,8 @@ const imageFile = (item) => `${item.page
 
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
-        generatedPages, generatedControls, generatedAssets, generatedImageControl, valueSources } = request;
+        generatedPages, generatedControls, generatedAssets, generatedImageControl,
+        generatedTextControl, generatedTextPlacements, valueSources } = request;
     validateFrozenValues(values, fieldConstraints);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -238,6 +278,35 @@ function configuration(request) {
         item.assets?.[1]?.name === imageControl.adapter
         || item.assets?.[0]?.name === imageControl.definition)) {
         throw new Error("Stock image assets conflict with another generated control");
+    }
+    const textControl = generatedTextControl && frozenTextControl(generatedTextControl);
+    if (!!textControl !== !!generatedTextPlacements?.length
+        || generatedTextPlacements !== undefined && (!Array.isArray(generatedTextPlacements)
+            || generatedTextPlacements.length > 100
+            || new Set(generatedTextPlacements.map((item) => item?.id)).size
+                !== generatedTextPlacements.length
+            || generatedTextPlacements.filter((item) => item?.presentation === "text")
+                .length !== new Set(generatedTextPlacements.filter((item) =>
+                    item?.presentation === "text").map((item) => item.slot)).size
+            || generatedTextPlacements.some((item) => !item
+                || Object.keys(item).sort().join() !== "id,label,presentation,slot"
+                || !fieldPattern.test(item.id)
+                || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+                || fieldConstraints[item.id]?.type !== "string"
+                || (item.presentation === "text"
+                    ? !((item.id === "canvas.description" && item.slot === "workflow.description")
+                        || (item.id === "canvas.workflowListName" && item.slot === "workflow.heading"))
+                    : item.presentation !== "stock.readonly" || item.slot !== "details.content"
+                        || !generatedFields?.some((field) => field.id === item.id
+                            && field.label === item.label))))) {
+        throw new Error("Invalid frozen stock.text placements");
+    }
+    if (textControl && (generatedControls?.some((item) =>
+        [textControl.adapter, textControl.definition].includes(item.assets?.[1]?.name)
+        || [textControl.adapter, textControl.definition].includes(item.assets?.[0]?.name))
+        || imageControl && [imageControl.adapter, imageControl.definition]
+            .some((name) => [textControl.adapter, textControl.definition].includes(name)))) {
+        throw new Error("Stock text assets conflict with another generated control");
     }
     if (generatedFields !== undefined
         && (!Array.isArray(generatedFields) || generatedFields.length > 100
@@ -473,6 +542,7 @@ function configuration(request) {
             ({ id: item.id, label: item.label, page: item.page, slot: item.slot,
                 ...imageConfig(item) })) } : {}),
         ...(imageControl ? { imageControl } : {}),
+        ...(textControl ? { textControl, textPlacements: generatedTextPlacements } : {}),
         ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer,
             values: declared, slots }) => ({ id, title, renderer,
             ...(declared ? { values: declared } : {}), ...(slots ? { slots } : {}) })) } : {}),
@@ -551,6 +621,12 @@ export async function materialize(project, workspace, handoffId, requestId) {
     ]);
     if (request.generatedImageControl) {
         controlFiles.push(...request.generatedImageControl.assets.map((asset) => ({
+            filename: `${asset.name}.${asset.kind === "shared.control-definition" ? "json" : "mjs"}`,
+            bytes: Buffer.from(asset.content, "base64"),
+        })));
+    }
+    if (request.generatedTextControl) {
+        controlFiles.push(...request.generatedTextControl.assets.map((asset) => ({
             filename: `${asset.name}.${asset.kind === "shared.control-definition" ? "json" : "mjs"}`,
             bytes: Buffer.from(asset.content, "base64"),
         })));

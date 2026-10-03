@@ -10,6 +10,7 @@ let generating = false;
 let queued = false;
 let uploading = false;
 const required = ["canvas.id", "canvas.displayName"];
+const scalarAdapters = new Map();
 
 function validImage(value) {
     if (value === "") return true;
@@ -157,6 +158,8 @@ function validateDraft(action = "saving") {
             : (typeof value !== "string" || value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
             || (rules.pattern && !new RegExp(rules.pattern).test(value)))) {
             const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
+            const field = page?.fields.find((item) => item.id === id);
+            showError(`Enter a valid ${field?.label ?? id} before ${action}.${rules.type === "image" ? " Use a PNG, JPEG, GIF, or WebP under 32 KiB." : id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
             if (page) {
                 renderPage(page.page);
                 root.querySelectorAll("input").forEach((input) => {
@@ -166,8 +169,6 @@ function validateDraft(action = "saving") {
                     root.querySelector(`[data-field-id="${CSS.escape(id)}"] [role="radio"]`)?.focus();
                 }
             }
-            const field = page?.fields.find((item) => item.id === id);
-            showError(`Enter a valid ${field?.label ?? id} before ${action}.${rules.type === "image" ? " Use a PNG, JPEG, GIF, or WebP under 32 KiB." : id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
             return false;
         }
     }
@@ -229,99 +230,80 @@ function renderPage(pageId) {
         saveButton.click();
     });
     if (!page.fields.length) form.append(element("p", "This template defines no fields.", "settings-note"));
+    root.append(form);
     for (const [index, field] of page.fields.entries()) {
         const rules = model.constraints[field.id];
-        if (rules.type === "object" || rules.type === "image") {
-            const image = rules.type === "image";
-            const wrapper = element("div", undefined,
-                `settings-field${image ? " settings-image" : ""}`);
-            if (!image) wrapper.append(element("p", field.label));
-            const mount = element("div");
-            if (!image) mount.setAttribute("aria-label", field.label);
-            mount.dataset.fieldId = field.id;
-            wrapper.append(mount);
-            form.append(wrapper);
-            const adapter = model.adapters[field.control];
-            if (!adapter) {
-                mount.setAttribute("role", "alert");
-                mount.textContent = `Could not load ${field.label}: missing Designer adapter`;
-                continue;
-            }
-            import(`/adapters/${adapter}.mjs?token=${encodeURIComponent(token)}`)
-                .then(({ mount: render, controlId, valueContract }) => {
-                    if (typeof render !== "function") throw new Error("Missing mount export");
-                    const expected = model.controls.find((item) => item.id === field.control)?.value;
-                    if (controlId !== field.control || valueContract?.type !== expected?.type
-                        || (image
-                            ? valueContract.maxBytes !== expected.maxBytes
-                                || JSON.stringify(valueContract.mimeTypes) !== JSON.stringify(expected.mimeTypes)
-                            : JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
-                                !== JSON.stringify(Object.entries(expected.properties).sort()))) {
-                        throw new Error("Incompatible control ID or value contract");
-                    }
-                    if (!mount.isConnected) return;
-                    return render({ root: mount, field, value: draft[field.id],
-                        ...(image ? { context: { constraints: rules, inputId: `setting-field-${index}`,
-                            validateImage: validImage, setBusy(busy) {
-                                uploading = busy;
-                                updateSave();
-                            } } } : {}),
-                        onChange(value) {
-                            if (image && !validImage(value)) {
-                                throw new Error(`Invalid Designer setting: ${field.id}`);
-                            }
-                            draft[field.id] = value;
-                            messageBox.hidden = true;
-                            showError("");
-                            updateSave();
-                        } });
-                }).catch((error) => {
-                    if (!mount.isConnected) return;
-                    mount.replaceChildren();
-                    mount.setAttribute("role", "alert");
-                    mount.textContent = `Could not load ${field.label}: ${error.message}`;
-                });
+        const image = rules.type === "image";
+        const object = rules.type === "object";
+        const wrapper = element("div", undefined, `settings-field${image ? " settings-image"
+            : rules.type === "boolean" ? " settings-checkbox" : ""}`);
+        if (object) wrapper.append(element("p", field.label));
+        const mount = element("div");
+        if (object) mount.setAttribute("aria-label", field.label);
+        mount.dataset.fieldId = field.id;
+        wrapper.append(mount);
+        form.append(wrapper);
+        const control = field.control ?? (rules.type === "boolean" ? "stock.checkbox" : "stock.text");
+        const adapter = model.adapters[control];
+        if (!adapter) {
+            mount.setAttribute("role", "alert");
+            mount.textContent = `Could not load ${field.label}: missing Designer adapter`;
             continue;
         }
-        const checkbox = rules.type === "boolean";
-        const wrapper = element("div", undefined, `settings-field${checkbox ? " settings-checkbox" : ""}`);
-        const label = element("label", field.label);
-        const input = element("input");
-        input.id = `setting-field-${index}`;
-        input.name = field.id;
-        label.htmlFor = input.id;
-        if (field.description) label.title = field.description;
-        if (checkbox) {
-            input.type = "checkbox";
-            input.checked = draft[field.id];
+        const mountAdapter = ({ mount: render, controlId, valueContract }) => {
+                if (typeof render !== "function") throw new Error("Missing mount export");
+                const expected = model.controls.find((item) => item.id === control)?.value;
+                if (controlId !== control || valueContract?.type !== expected?.type
+                    || (image
+                        ? valueContract.maxBytes !== expected.maxBytes
+                            || JSON.stringify(valueContract.mimeTypes) !== JSON.stringify(expected.mimeTypes)
+                        : object
+                            ? JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
+                                !== JSON.stringify(Object.entries(expected.properties).sort())
+                            : Object.keys(valueContract).sort().join() !== "type")) {
+                    throw new Error("Incompatible control ID or value contract");
+                }
+                if (!mount.isConnected) return;
+                return render({ root: mount, field, value: draft[field.id],
+                    context: { constraints: rules, inputId: `setting-field-${index}`,
+                        ...(image ? { validateImage: validImage, setBusy(busy) {
+                            uploading = busy;
+                            updateSave();
+                        } } : {}) },
+                    onChange(value) {
+                        if (image ? !validImage(value)
+                            : rules.type === "boolean" ? typeof value !== "boolean"
+                                : rules.type === "string" ? typeof value !== "string"
+                                    : false) {
+                            throw new Error(`Invalid Designer setting: ${field.id}`);
+                        }
+                        draft[field.id] = value;
+                        messageBox.hidden = true;
+                        showError("");
+                        updateSave();
+                        updateGenerate();
+                    } });
+        };
+        const showAdapterError = (error) => {
+            if (!mount.isConnected) return;
+            mount.replaceChildren();
+            mount.setAttribute("role", "alert");
+            mount.textContent = `Could not load ${field.label}: ${error.message}`;
+        };
+        if (rules.type === "string" || rules.type === "boolean") {
+            try {
+                const loaded = scalarAdapters.get(control);
+                if (loaded instanceof Error) throw loaded;
+                if (!loaded) throw new Error("Missing Designer adapter");
+                Promise.resolve(mountAdapter(loaded)).catch(showAdapterError);
+            } catch (error) {
+                showAdapterError(error);
+            }
         } else {
-            input.type = "text";
-            input.value = draft[field.id];
-            input.required = rules.minLength > 0;
-            input.maxLength = rules.maxLength;
-            if (rules.pattern) input.pattern = rules.pattern;
-            if (input.required) label.append(element("span", " (required)", "muted"));
+            import(`/adapters/${adapter}.mjs?token=${encodeURIComponent(token)}`)
+                .then(mountAdapter).catch(showAdapterError);
         }
-        if (field.description) {
-            if (checkbox) input.setAttribute("aria-description", field.description);
-            else input.setAttribute("aria-describedby", `${input.id}-hint`);
-        }
-        input.addEventListener("input", () => {
-            draft[field.id] = checkbox ? input.checked : input.value;
-            messageBox.hidden = true;
-            showError("");
-            updateSave();
-            updateGenerate();
-        });
-        wrapper.append(...(checkbox ? [input, label] : [label, input]));
-        if (field.description && !checkbox) {
-            const hint = element("p", field.description, "settings-hint");
-            hint.id = `${input.id}-hint`;
-            wrapper.append(hint);
-        }
-        form.append(wrapper);
     }
-    root.append(form);
     root.setAttribute("aria-busy", "false");
 }
 
@@ -377,6 +359,15 @@ try {
     const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);
     const initial = await response.json();
+    await Promise.all(["stock.text", "stock.checkbox"].filter((id) => initial.adapters?.[id])
+        .map(async (id) => {
+            try {
+                scalarAdapters.set(id, await import(
+                    `/adapters/${initial.adapters[id]}.mjs?token=${encodeURIComponent(token)}`));
+            } catch (error) {
+                scalarAdapters.set(id, error);
+            }
+        }));
     applyState(initial);
     const failures = initial.pages.filter((page) => page.error).length;
     status.className = failures ? "conn conn-connecting" : "conn conn-live";

@@ -39,10 +39,16 @@ export function validateEssentials(model, values) {
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
     const generatedFields = (model.contributions ?? [])
-        .filter((item) => item.generatedBinding?.presentation === "stock.readonly")
+        .filter((item) => item.generatedBinding?.presentation === "stock.readonly"
+            && !["canvas.description", "canvas.workflowListName"].includes(item.field.id))
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
+    const textContributions = (model.contributions ?? []).filter((item) =>
+        item.field.control === "stock.text"
+        && (item.generatedBinding?.presentation === "text"
+            || item.generatedBinding?.presentation === "stock.readonly"
+                && !["canvas.description", "canvas.workflowListName"].includes(item.field.id)));
     const imageContributions = (model.contributions ?? [])
         .filter((item) => item.field.type === "image"
             && item.generatedBinding?.presentation === "asset");
@@ -94,6 +100,47 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         return { name: item.name, kind: item.kind, sourceId: item.sourceId,
             hash: item.hash, content: bytes.toString("base64") };
     };
+    let generatedTextControl;
+    let generatedTextPlacements;
+    if (textContributions.length) {
+        generatedTextPlacements = textContributions.map((item) => ({
+            id: item.field.id, label: item.field.label,
+            presentation: item.generatedBinding.presentation,
+            slot: item.generatedBinding.slot ?? "details.content",
+        }));
+        const visual = generatedTextPlacements.filter((item) => item.presentation === "text");
+        if (generatedTextPlacements.length > 100
+            || new Set(generatedTextPlacements.map((item) => item.id)).size
+                !== generatedTextPlacements.length
+            || new Set(visual.map((item) => item.slot)).size !== visual.length
+            || generatedTextPlacements.some((item) => item.presentation === "text"
+                ? !((item.id === "canvas.description" && item.slot === "workflow.description")
+                    || (item.id === "canvas.workflowListName" && item.slot === "workflow.heading"))
+                : item.slot !== "details.content")) {
+            throw new Error("Invalid or duplicate generated stock.text placement");
+        }
+        const control = model.controls?.find((entry) => entry.id === "stock.text");
+        const definitions = await Promise.all((model.templates ?? [])
+            .filter((entry) => entry.kind === "shared.control-definition").map(async (entry) => {
+                const bytes = await readFrozenAsset(entry, specify);
+                let document;
+                try { document = JSON.parse(bytes.toString("utf8")); }
+                catch { throw new Error(`${entry.name}: invalid frozen control definition`); }
+                return { entry, document };
+            }));
+        const matches = definitions.filter(({ document }) => document.id === control?.id);
+        const definition = matches.length === 1 ? matches[0].entry : null;
+        const adapter = model.templates?.find((entry) => entry.kind === "generated.control-adapter"
+            && entry.name === control?.adapters?.generated);
+        if (!control || !definition || !adapter
+            || matches[0].document.adapters?.generated !== adapter.name
+            || textContributions.some((item) => item.generatedBinding.presentation === "text"
+                && !item.requires?.includes(definition.name))) {
+            throw new Error("Missing paired stock.text definition or generated adapter");
+        }
+        generatedTextControl = { control: control.id,
+            assets: await Promise.all([definition, adapter].map(asset)) };
+    }
     for (const page of model.generatedPages ?? []) {
         const definition = model.templates.find((item) => item.name === page.name
             && item.kind === "generated.added-page-definition");
@@ -161,6 +208,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedControls.length ? { generatedControls } : {}),
         ...(generatedAssets.length ? { generatedAssets } : {}),
         ...(generatedImageControl ? { generatedImageControl } : {}),
+        ...(generatedTextControl ? { generatedTextControl, generatedTextPlacements } : {}),
         ...(valueSources.length ? { valueSources } : {}),
     };
     const payload = JSON.stringify(request);

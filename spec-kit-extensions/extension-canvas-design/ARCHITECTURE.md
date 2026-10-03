@@ -23,7 +23,7 @@ The `canvas-design` tag identifies Specify presets offered for **customizing the
 Evolve the **Wizard Canvas → Designer Canvas → Generate → Generated Workflow Canvas app** journey with three goals:
 
 1. **Consistent customization:** Contributors use the same authoring concepts for the Designer Canvas and Generated Workflow Canvas app—named contributions, host targets, pages, slots, controls, value contracts, Specify-owned file precedence, semantic validation, and diagnostics.
-2. **Shared extensibility:** The Canvas Design Specify Extension and approved **Canvas Design Presets tagged `canvas-design`** share declarative field, slot, and value contracts. The Designer and generated app keep their built-in scalar text/checkbox rendering; a preset introducing a previously unknown control type supplies host-specific adapters where it renders.
+2. **Shared extensibility:** The Canvas Design Specify Extension and approved **Canvas Design Presets tagged `canvas-design`** share declarative field, slot, and value contracts. Stock text, checkbox, and image editors use registered control definitions and Designer adapters; visible generated presentations use generated adapters. Shell-owned behavior driven by a field value does not require a visual adapter.
 3. **Packaged design contributions:** In the Designer child, the Specify CLI resolves the effective extension and tagged-preset templates, including named replace-only templates containing JavaScript adapters. Generate validates and **packages the resulting generated-host code, assets, and configuration into the Generated Workflow Canvas app**. The finished app does **not** need `extension-canvas-design` or the originating `canvas-design`-tagged presets installed to render those contributions.
 
 **The Specify CLI can still be required.** A portable Generated Workflow Canvas app uses it, as needed, to initialize its active project, install or verify **Workflow Runtime Packages**, and run the selected phase skills. Not needing the *Canvas Design Specify Extension* is not the same as not needing the *Specify CLI*.
@@ -57,12 +57,12 @@ Each contribution has a stable ID, contract version, target host (`designer`, `g
 | **Add page content** | Add fields or controls to an ordered page slot. | Add controls to an ordered page or shell slot. | Same slot targeting, display ordering, and semantic collision rules for surviving contributions. |
 | **Replace a default** | Replace the named resolved file defining a page or contribution. | Replace the named resolved file defining a page or contribution. | Specify applies whole-file replacement and precedence; shell invariants remain protected. |
 | **Provide a value** | Collect a typed input or configure a value source. | Consume a frozen value or run its packaged provider. | Same field ID, type, scope, ownership, and diagnostics. |
-| **Provide a control type** | Use built-in scalar rendering or supply a Designer adapter for a new type. | Use built-in scalar rendering or supply a generated adapter for a new type. | Same control ID and value contract; new-type adapters may differ. |
+| **Provide a control type** | Resolve its definition and Designer adapter, including stock text and checkbox. | Resolve a generated adapter for visible presentation; let shell-owned behavior consume nonvisual values. | Same control ID and value contract across hosts; adapter contexts may differ. |
 | **Provide behavior** | Configure or preview a feature. | Render it or request an allowed shell action. | Same contribution identity; privileged execution remains shell-owned. |
 
 A tagged preset can register a **control type previously unknown to either canvas**. To render in both, it supplies a Designer adapter, a generated adapter, and a compatible typed value or action contract. A Designer adapter does not automatically render in the generated host. Missing adapters, incompatible schemas, or unavailable host capabilities produce clear errors—not an unrelated fallback widget.
 
-The **Canvas Design Specify Extension is the base contributor to declarative fields, slots, and values**. Preserve the existing built-in Designer text/checkbox rendering and generated scalar presentation; those controls do not need separate `.mjs` adapter registrations or a new lifecycle. Use replace-only named JS template assets only for genuinely new control types such as the risk matrix, or later features whose needs are proved by their own milestones.
+The **Canvas Design Specify Extension is the base contributor to declarative fields, slots, and values**. Its stock text, checkbox, and image types each have a replace-only definition and Designer adapter. A generated adapter is registered for a visual placement, not for a behavior-only setting such as custom-slug availability. The required identity fields remain fixed in Essentials but use the same stock text editor; the shell still enforces their presence and validity. Presets can reuse stock contracts and supply their own types, such as the risk matrix, through the same resolution path.
 
 **Specify’s role:** Specify already supports overriding and composing **commands, scripts, and templates**, but `specify preset resolve <name>` resolves named **templates**, not native script artifacts. First-version executable Canvas Design adapters and generated page/presentation modules are `.mjs` files declared as named `provides.templates` entries (`type: template`), not `type: script` entries. Extension-provided templates have implicit replace semantics; preset-provided executable templates explicitly set `strategy: replace`. Specify applies named-file precedence and whole-file replacement; a winning `replace` replaces the lower-layer file in full. Registering a **new logical name** adds to the resolved inventory regardless of replace semantics, which affect only layers sharing that name. The **Canvas Design integration** interprets only final resolved files as slots, fields, controls, and adapter registrations; it does not replay preset stacks or arbitrate preset precedence. Specify does not need a native “slot” or “control” feature.
 
@@ -145,7 +145,12 @@ Both image adapters accept `mount({ root, field, value, context })`: `value`
 is a renderable image-source string (an editable data URI in Designer, a
 host-authorized packaged URL in the generated app). Host-specific validation,
 upload state, accessible text, and styling live in `context`, not in `value`.
-The adapter neither chooses a slot nor reads packaged files.
+The adapter neither chooses a slot nor reads packaged files. Stock text and
+checkbox editors now follow the same definition/Designer-adapter authoring
+pattern. The generated text adapter handles visible Description and Workflow
+header presentation; the generated shell retains identity and custom-slug
+policy. Setup confirm is not yet implemented; its future Designer checkbox
+can reuse `stock.checkbox` without a no-op generated presentation adapter.
 
 **Setup confirm** is a stock boolean/control contribution from the **Canvas Design Specify Extension**. The Designer Canvas displays a checkbox. Generate packages its value and the generated setup-control behavior **inside the app**. The checkbox selects when to invoke **one shell-owned project-setup operation**:
 
@@ -210,7 +215,7 @@ An **adapter** is JavaScript supplied for a particular control or presentation *
 | **Value-provider module** | Generated app runtime | Return a validated value for a declared field, using context such as selected workflow. |
 | **Feature/presentation adapter** | Usually the generated app | Render a larger feature such as the pipeline. It requests actions from the shell rather than executing them itself. |
 
-For a **new** control type targeting both canvases, provide an adapter for each host. The two adapters share a control ID and value contract; they may render differently. Billing reuses existing built-in text and read-only scalar rendering without JS adapters; the risk matrix in section 14 needs its own interactive Designer adapter and read-only generated adapter.
+For a **new** control type with visible presentation in both canvases, provide an adapter for each host. The two adapters share a control ID and value contract; they may render differently. Stock text, checkbox, and image use definitions and Designer adapters; stock text and image also supply generated visual adapters. A value used only by shell behavior has no generated visual adapter. The risk matrix in section 14 has its own interactive Designer adapter and read-only generated adapter.
 
 In the earlier example, **“host” meant the canvas code that mounts the adapter and supplies a documented API**. To avoid ambiguity, call these the **Designer adapter API** and the **Generated-app adapter API**:
 
@@ -252,13 +257,13 @@ plugins/spec-kit-copilot-wizard/
       pages.mjs                        loads resolved pages
       settings.mjs                     validates and saves settings
       generation.mjs                   freezes validated fields across enabled pages
-      ui/app.js                        today's text/checkbox renderer
+      ui/app.js                        mounts resolved control adapters
 
 spec-kit-extensions/extension-canvas-design/
   extension.yml
   commands/load-page.md
   commands/generate.md
-  pages/essentials.json                currently contains five fields
+  pages/essentials.json                required identity fields and an optional-field slot
   pages/artifacts.json                 currently empty placeholder
   pages/appearance.json                currently empty placeholder
   schemas/page.schema.json             currently string/boolean fields
@@ -415,7 +420,7 @@ An optional stock field targets that slot:
 }
 ```
 
-Billing declares `billing.costCode` as a bounded string field with `control: "stock.text"` and a stock read-only generated binding. These names select the existing built-in scalar renderers; there are no stock adapter files to resolve or package. For a **new** control such as the risk matrix in section 14, its control definition instead names Designer and generated adapters by Specify-resolvable IDs; Generate packages the resolved generated adapter and the app imports its local module.
+Billing declares `billing.costCode` as a bounded string field with `control: "stock.text"` and a stock read-only generated binding. The base extension resolves `stock.text` and its Designer/generated adapters; Billing reuses those registrations without per-field adapter files. Generate packages the winning generated adapter once. A **new** control such as the risk matrix in section 14 instead registers its own definition and paired adapters.
 
 The Canvas Design schemas should distinguish **ordinary fields**, **asset fields** such as Logo, and **feature settings** such as Setup confirm. A slot declares which kinds it accepts; providing JSON does not grant a page arbitrary capabilities.
 
@@ -426,9 +431,9 @@ This is a **proposed sample preset to build and test**, not an example already p
 1. In the **Wizard Canvas**, the user selects the approved Specify preset tagged `canvas-design` named `copilot-billing-canvas`.
 2. In the **Designer child**, Specify installs and composes that preset with the Canvas Design Specify Extension. The preset appends instructions to the existing `load-page` command.
 3. The **composed command** explicitly names the Billing Designer page and Billing contribution assets. The base command resolves every named item through Specify and opens the Designer Canvas once with the complete resolved set.
-4. In the **Designer Canvas**, the Billing tab renders `billing.costCode` with the existing built-in text renderer, and Designer validates and saves the edited value.
-5. At **Generate**, the generator freezes the value, definitions, generated Billing page module, hashes, and provenance. It writes the generated page and configuration **into the Generated Workflow Canvas app**; no stock scalar adapter is copied.
-6. The **Generated Workflow Canvas app** registers its packaged Billing page, reads `billing.costCode` through its field API, and renders the value with its built-in read-only scalar presentation.
+4. In the **Designer Canvas**, the Billing tab mounts the shared stock-text Designer adapter for `billing.costCode`; Designer validates and saves the edited value.
+5. At **Generate**, the generator freezes the value, definitions, generated Billing page module, hashes, and provenance. It writes the generated page, shared generated text adapter, and configuration **into the Generated Workflow Canvas app**.
+6. The **Generated Workflow Canvas app** registers its packaged Billing page, reads `billing.costCode` through its field API, and mounts its packaged stock-text adapter for the read-only presentation.
 7. When opened elsewhere as a standalone Copilot plugin, Billing still works **without installing `copilot-billing-canvas` into that project**. Specify CLI and Workflow Runtime Packages remain separate requirements for running phases.
 
 The preset’s proposed `commands/load-page.md` content is **an addition to the existing command**, not a second copy of the complete load workflow:
@@ -452,7 +457,7 @@ Designer child project root. Do not use files directly from this preset's source
 directory or infer their paths from the names.
 
 The resolved `canvas-contributions-billing` definition must refer to the resolved
-Billing page, field definition, generated page, and built-in scalar control IDs. Missing
+Billing page, field definition, generated page, and stock scalar control IDs. Missing
 or conflicting names must stop the Designer open; do not omit Billing and report
 the complete design as ready.
 ```
@@ -573,8 +578,8 @@ provides:
     - name: canvas-contributions-stock-generated
       file: contributions/stock-generated.json
       description: Default generated-host contributions.
-  # Existing text/checkbox renderers remain built into the canvas hosts;
-  # no executable stock scalar adapters are registered as templates.
+  # Current base manifests register stock-text and stock-checkbox definitions
+  # and Designer adapters; visible text placements also register a generated adapter.
 
 tags:
   - copilot
@@ -633,7 +638,7 @@ tags:
   - billing
 ```
 
-The appended command matches the base `load-page` command by its `type: command` and `name`, then names what that command must resolve; no `replaces` key is involved. Logical template names have no file extension even when the backing file is `.mjs`. Billing's new logical names add a page, field definition, and generated renderer to the inventory while using built-in scalar rendering; their `strategy: replace` determines the winner only if another layer declares the **same name**. The later risk preset supplies the two new adapters shown in section 14. The `canvas-design` tag makes the preset discoverable in the Wizard Canvas; it does **not** activate Billing by itself. **Specify resolves effective templates; the Canvas Design integration interprets them.** Native script-kind adapters and `wrap` are deferred until Specify offers a CLI resolve/materialize interface for executable artifacts.
+The appended command matches the base `load-page` command by its `type: command` and `name`, then names what that command must resolve; no `replaces` key is involved. Logical template names have no file extension even when the backing file is `.mjs`. Billing's new logical names add a page, field definition, and generated renderer to the inventory while reusing base stock-text adapters; their `strategy: replace` determines the winner only if another layer declares the **same name**. The later risk preset supplies its own two adapters shown in section 14. The `canvas-design` tag makes the preset discoverable in the Wizard Canvas; it does **not** activate Billing by itself. **Specify resolves effective templates; the Canvas Design integration interprets them.** Native script-kind adapters and `wrap` are deferred until Specify offers a CLI resolve/materialize interface for executable artifacts.
 
 ## 16. How Artifacts and Appearance fit
 
@@ -671,7 +676,7 @@ The proposed Appearance editor lets the canvas creator select or configure a val
 
 These details extend the implementation sequence in section 9; they do not replace its goals:
 
-1. Keep built-in scalar rendering for the two baseline fixtures; specify the **smallest Designer adapter API, Generated-app adapter API, and lifecycle** needed by the distinct risk-matrix control fixture, then refine them before publishing a broader contract.
+1. Resolve stock scalar definitions and Designer adapters in the baseline fixtures. Require a generated visual adapter for stock text presentations, but keep shell behavior driven by booleans (such as custom-slug availability) outside the adapter. Preserve the distinct risk-matrix control fixture and its paired adapters.
 2. Publish slot contracts so contributors know which IDs exist, what they accept, and how items are ordered. Reject unknown or incompatible targets.
 3. Use Specify’s command composition and replace-only named-template resolution for executable adapters, including its native project overrides; do not recheck each winner's package or layer against handoff approvals. Reject native script-kind adapters and non-replace executable contributions; defer `wrap` until Specify provides a CLI resolve/materialize interface. Have Canvas Design validate normal content/path safety, semantic conflicts, and effective JSON and module contracts among surviving files; do not assume Specify structurally merges JSON fields or repeat its precedence logic. For generated pages, the resolved artifact's declared kind, replace-only strategy, and winning template registration are acceptance gates: they establish which definition and renderer can be frozen and packaged. Other artifact metadata remains diagnostic, not a general import or packaging gate.
 4. Freeze **resolved module bytes and declared transitive assets**, not only paths or preset IDs. Validate hashes when generating.

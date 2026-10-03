@@ -38,6 +38,11 @@ FILES = {
     "controls/stock-image/control.json",
     "controls/stock-image/designer.mjs",
     "controls/stock-image/generated.mjs",
+    "controls/stock-text/control.json",
+    "controls/stock-text/designer.mjs",
+    "controls/stock-text/generated.mjs",
+    "controls/stock-checkbox/control.json",
+    "controls/stock-checkbox/designer.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
         "phase-response.mjs",
@@ -105,6 +110,15 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 ("canvas-stock-image", "control.json"),
                 ("canvas-stock-image-designer", "designer.mjs"),
                 ("canvas-stock-image-generated", "generated.mjs"),
+            )]
+            + [(name, f"controls/stock-text/{file}") for name, file in (
+                ("canvas-stock-text", "control.json"),
+                ("canvas-stock-text-designer", "designer.mjs"),
+                ("canvas-stock-text-generated", "generated.mjs"),
+            )]
+            + [(name, f"controls/stock-checkbox/{file}") for name, file in (
+                ("canvas-stock-checkbox", "control.json"),
+                ("canvas-stock-checkbox-designer", "designer.mjs"),
             )],
         )
         actual_files = set()
@@ -179,8 +193,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             self.pages[0]["fields"],
             [
-                {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
-                {"id": "canvas.displayName", "label": "Title"},
+                {"id": "canvas.id", "label": "Canvas ID", "control": "stock.text", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
+                {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
             ],
         )
         stock = [json.loads((PACKAGE / f"pages/stock-{name}.json").read_text("utf-8"))
@@ -279,12 +293,19 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "- `canvas-stock-logo-main-page` — `designer.setting-definition`, `replace`\n"
             "- `canvas-stock-image` — `shared.control-definition`, `replace`\n"
             "- `canvas-stock-image-designer` — `designer.control-adapter`, `replace`\n"
-            "- `canvas-stock-image-generated` — `generated.control-adapter`, `replace`\n\n"
+            "- `canvas-stock-image-generated` — `generated.control-adapter`, `replace`\n"
+            "- `canvas-stock-text` — `shared.control-definition`, `replace`\n"
+            "- `canvas-stock-text-designer` — `designer.control-adapter`, `replace`\n"
+            "- `canvas-stock-text-generated` — `generated.control-adapter`, `replace`\n"
+            "- `canvas-stock-checkbox` — `shared.control-definition`, `replace`\n"
+            "- `canvas-stock-checkbox-designer` — `designer.control-adapter`, `replace`\n\n"
         )
         self.assertEqual(self.command.count(stock_section), 1)
         replaced = (fixture / "commands/load-page.md").read_text("utf-8")
         self.assertIn("canvas-settings-setup", replaced)
-        self.assertNotIn("## Canvas Design templates", replaced)
+        self.assertIn("## Canvas Design templates", replaced)
+        self.assertIn("canvas-stock-text-designer", replaced)
+        self.assertNotIn("canvas-stock-custom-slug", replaced)
         self.assertNotIn("canvas-stock-image", replaced)
         self.assertNotIn(manifest["preset"]["id"],
                          json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
