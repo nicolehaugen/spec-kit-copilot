@@ -5,7 +5,8 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.6** registers three JSON page templates and the
+Canvas Design **0.1.7** registers three JSON page templates and three ordered
+stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -15,12 +16,21 @@ project extension directory, then validates the result in place.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
-| `canvas-settings-setup` | Essentials | Canvas ID, Title, Description, Workflow header, Allow custom slug |
+| `canvas-settings-setup` | Essentials | Required Canvas ID and Title |
+| `canvas-stock-description` | Essentials slot | Optional Description |
+| `canvas-stock-workflow-heading` | Essentials slot | Optional Workflow header |
+| `canvas-stock-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
-The Essentials template lives in `pages/essentials.json`; its
+The Essentials core template lives in `pages/essentials.json`; its
 `canvas-settings-setup` ID stays stable for preset resolution.
+The composed load-page command explicitly resolves each stock contribution into
+`essentials.options` in the order shown. Omitting or replacing a stock contribution
+does not remove the required Canvas ID and Title. If absent, generated description
+defaults to `Spec Kit workflow canvas.`, heading to `Workflows`, and custom slug
+to off. Generate validates all enabled Designer pages, including custom fields;
+an invalid page blocks generation until repaired.
 
 The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
@@ -77,7 +87,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.6/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.7/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.

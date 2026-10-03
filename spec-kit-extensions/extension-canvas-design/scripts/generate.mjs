@@ -14,6 +14,58 @@ const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 512 * 1024;
+const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
+
+function validateFrozenValues(values, constraints) {
+    if (!values || typeof values !== "object" || Array.isArray(values)
+        || !constraints || typeof constraints !== "object" || Array.isArray(constraints)
+        || Object.keys(constraints).length > 10000
+        || Object.keys(values).length !== Object.keys(constraints).length
+        || Object.keys(values).some((id) => !Object.hasOwn(constraints, id))) {
+        throw new Error("Invalid frozen Designer fields");
+    }
+    for (const [id, rule] of Object.entries(constraints)) {
+        if (!fieldPattern.test(id) || !rule || typeof rule !== "object"
+            || Array.isArray(rule)) throw new Error(`Invalid frozen Designer field: ${id}`);
+        const value = values[id];
+        if (rule.type === "string") {
+            if (Object.keys(rule).some((key) =>
+                !["type", "maxLength", "minLength", "pattern"].includes(key))
+                || !Number.isInteger(rule.maxLength) || rule.maxLength < 1
+                || rule.maxLength > 1000
+                || (rule.minLength !== undefined && (!Number.isInteger(rule.minLength)
+                    || rule.minLength < 0 || rule.minLength > rule.maxLength))
+                || (rule.pattern !== undefined && (typeof rule.pattern !== "string"
+                    || rule.pattern.length > 120))
+                || typeof value !== "string" || value.length > rule.maxLength
+                || value.length < (rule.minLength ?? 0)
+                || (rule.pattern && !new RegExp(rule.pattern).test(value))) {
+                throw new Error(`Invalid frozen Designer field: ${id}`);
+            }
+        } else if (rule.type === "boolean") {
+            if (Object.keys(rule).sort().join() !== "type" || typeof value !== "boolean") {
+                throw new Error(`Invalid frozen Designer field: ${id}`);
+            }
+        } else if (rule.type === "object") {
+            const properties = rule.properties;
+            if (Object.keys(rule).sort().join() !== "properties,type"
+                || !properties || typeof properties !== "object" || Array.isArray(properties)
+                || !Object.keys(properties).length || Object.keys(properties).length > 10
+                || Object.entries(properties).some(([key, allowed]) =>
+                    !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
+                    || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
+                    || new Set(allowed).size !== allowed.length
+                    || allowed.some((option) => typeof option !== "string"
+                        || !option || option.length > 80))
+                || !value || typeof value !== "object" || Array.isArray(value)
+                || Object.keys(value).sort().join() !== Object.keys(properties).sort().join()
+                || Object.entries(properties).some(([key, allowed]) =>
+                    !allowed.includes(value[key]))) {
+                throw new Error(`Invalid frozen Designer field: ${id}`);
+            }
+        } else throw new Error(`Invalid frozen Designer field: ${id}`);
+    }
+}
 
 function within(root, path) {
     const part = relative(root, path);
@@ -21,12 +73,26 @@ function within(root, path) {
 }
 
 function configuration(request) {
-    const { canvas, workflow, values, installed, generatedFields, generatedPages, generatedControls } = request;
+    const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
+        generatedPages, generatedControls } = request;
+    validateFrozenValues(values, fieldConstraints);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]
-        || typeof values?.["workflowSlug.userProvided"] !== "boolean"
+        || fieldConstraints["canvas.id"]?.type !== "string"
+        || fieldConstraints["canvas.displayName"]?.type !== "string"
+        || !values["canvas.displayName"].trim()
+        || (Object.hasOwn(values, "canvas.description")
+            && fieldConstraints["canvas.description"]?.type !== "string")
+        || (Object.hasOwn(values, "canvas.workflowListName")
+            && fieldConstraints["canvas.workflowListName"]?.type !== "string")
+        || (Object.hasOwn(values, "workflowSlug.userProvided")
+            && fieldConstraints["workflowSlug.userProvided"]?.type !== "boolean")
+        || canvas.description !== (values["canvas.description"] || "Spec Kit workflow canvas.")
+        || canvas.workflowListName !== (values["canvas.workflowListName"] || "Workflows")
+        || (values["workflowSlug.userProvided"] !== undefined
+            && typeof values["workflowSlug.userProvided"] !== "boolean")
         || !workflow || !Array.isArray(workflow.selectedPhases) || !workflow.selectedPhases.length
         || workflow.selectedPhases.length > 30 || new Set(workflow.selectedPhases).size !== workflow.selectedPhases.length
         || workflow.selectedPhases.some((phase) => typeof phase !== "string"
@@ -164,7 +230,7 @@ function configuration(request) {
         tasks: "specs/<slug>/tasks.md", analyze: "specs/<slug>/analysis.md",
         checklist: "specs/<slug>/checklists/<name>.md",
     };
-    return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"],
+    return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
         ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer }) =>
             ({ id, title, renderer })) } : {}),
         ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>

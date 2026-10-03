@@ -35,12 +35,6 @@ the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions and host-specific adapters must each be explicitly registered.
 
-## Canvas Design templates
-
-- `canvas-stock-description` — `designer.field`, `replace`
-- `canvas-stock-workflow-heading` — `designer.field`, `replace`
-- `canvas-stock-custom-slug` — `designer.field`, `replace`
-
 ## Steps
 
 1. Read this entire composed command first. Collect the defaults and every name

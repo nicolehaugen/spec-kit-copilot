@@ -28,6 +28,9 @@ FILES = {
     "scripts/generate.mjs",
     "schemas/page.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
+    *(f"pages/stock-{name}.json" for name in (
+        "description", "workflow-heading", "custom-slug",
+    )),
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
         "phase-response.mjs",
@@ -86,7 +89,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [(template["name"], template["file"])
              for template in self.manifest["provides"]["templates"]],
             [(f"canvas-settings-{page}", f"pages/{filename}.json")
-             for page, filename in zip(PAGE_IDS, PAGE_NAMES)],
+             for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
+            + [(f"canvas-stock-{name}", f"pages/stock-{name}.json")
+               for name in ("description", "workflow-heading", "custom-slug")],
         )
         actual_files = set()
         for path in PACKAGE.rglob("*"):
@@ -162,16 +167,60 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [
                 {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
                 {"id": "canvas.displayName", "label": "Title"},
-                {"id": "canvas.description", "label": "Description"},
-                {"id": "canvas.workflowListName", "label": "Workflow header"},
-                {"id": "workflowSlug.userProvided", "type": "boolean", "default": False,
-                 "label": "Allow custom slug",
-                 "description": "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default."},
             ],
         )
+        stock = [json.loads((PACKAGE / f"pages/stock-{name}.json").read_text("utf-8"))
+                 for name in ("description", "workflow-heading", "custom-slug")]
+        self.assertEqual([item["order"] for item in stock], [10, 20, 30])
+        self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 3)
+        self.assertEqual([item["field"]["id"] for item in stock],
+                         ["canvas.description", "canvas.workflowListName",
+                          "workflowSlug.userProvided"])
+        self.assertEqual(stock[-1]["field"]["default"], False)
+        for name in ("description", "workflow-heading", "custom-slug"):
+            self.assertIn(f"`canvas-stock-{name}` — `designer.field`, `replace`",
+                          self.command)
         self.assertTrue(all(page["fields"] == [] for page in self.pages[1:]))
         field_ids = [field["id"] for page in self.pages for field in page["fields"]]
         self.assertEqual(len(field_ids), len(set(field_ids)))
+
+    def test_minimal_essentials_test_preset_replaces_only_stock_registration(self):
+        fixture = EXTENSIONS.parent / "spec-kit-presets/copilot-minimal-essentials-test"
+        manifest = yaml.safe_load((fixture / "preset.yml").read_text("utf-8"))
+        self.assertEqual(manifest["preset"]["id"], "copilot-minimal-essentials-test")
+        self.assertEqual(manifest["requires"]["extensions"], [EXTENSION_ID])
+        self.assertEqual(manifest["provides"]["templates"], [
+            {
+                "type": "command",
+                "name": "speckit.extension-canvas-design.load-page",
+                "file": "commands/load-page.md",
+                "description": "Resolve only the three default Designer pages without optional stock fields.",
+                "replaces": "speckit.extension-canvas-design.load-page",
+                "strategy": "replace",
+            },
+            {
+                "type": "template",
+                "name": "canvas-settings-setup",
+                "file": "pages/essentials.json",
+                "description": "Replace Essentials with required identity fields only.",
+                "strategy": "replace",
+            },
+        ])
+        page = json.loads((fixture / "pages/essentials.json").read_text("utf-8"))
+        self.validator.validate(page)
+        self.assertEqual(page, self.pages[0])
+        stock_section = (
+            "## Canvas Design templates\n\n"
+            "- `canvas-stock-description` — `designer.field`, `replace`\n"
+            "- `canvas-stock-workflow-heading` — `designer.field`, `replace`\n"
+            "- `canvas-stock-custom-slug` — `designer.field`, `replace`\n\n"
+        )
+        self.assertEqual(self.command.count(stock_section), 1)
+        self.assertEqual((fixture / "commands/load-page.md").read_text("utf-8"),
+                         self.command.replace(stock_section, ""))
+        self.assertNotIn(manifest["preset"]["id"],
+                         json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
+                                    .read_text("utf-8"))["presets"])
 
     def test_schema_rejects_invalid_page_shapes(self):
         mutations = {
