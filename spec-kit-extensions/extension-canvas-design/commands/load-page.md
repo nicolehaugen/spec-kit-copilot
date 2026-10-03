@@ -35,8 +35,10 @@ register `stock.image` assets, bound to the generated `header.brand` or
 `workflow.intro` slot, or to a named `asset` slot on a registered generated
 page via `generatedBinding.page` and `.slot`. Each slot accepts one independent
 image; the generated page renderer places a `data-asset-slot` element where
-the image belongs. Its image file and stock rendering are packaged into the
-generated app, not loaded from Specify at runtime.
+the image belongs. The `stock.image` control definition and its paired
+Designer/generated adapters must be resolved alongside any image field.
+Generate packages the frozen image and winning generated adapter into the
+generated app; it never loads Specify at runtime.
 Designer pages have kind `designer.page` and strategy `replace` (implicit for
 the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
@@ -54,6 +56,9 @@ Providers are packaged, never evaluated by Designer.
 - `canvas-stock-custom-slug` — `designer.field`, `replace`
 - `canvas-stock-logo` — `designer.field`, `replace`
 - `canvas-stock-logo-main-page` — `designer.field`, `replace`
+- `canvas-stock-image` — `control.definition`, `replace`
+- `canvas-stock-image-designer` — `designer.adapter`, `replace`
+- `canvas-stock-image-generated` — `generated.adapter`, `replace`
 
 ## Steps
 
@@ -70,7 +75,7 @@ Providers are packaged, never evaluated by Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.10)
+         (top layer from: extension:extension-canvas-design v0.1.11)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on

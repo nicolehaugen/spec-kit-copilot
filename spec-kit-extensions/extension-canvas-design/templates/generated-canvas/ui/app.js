@@ -1,5 +1,13 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
-const { mountPageAssets } = await import(`./page-assets.mjs${new URL(import.meta.url).search}`);
+const { mountPageAssets, createStockImageRenderer } = await import(
+    `./page-assets.mjs${new URL(import.meta.url).search}`);
+const token = new URL(location.href).searchParams.get("token");
+const imageRegistration = document.getElementById("stock-image-registration");
+const renderStockImage = createStockImageRenderer(imageRegistration, token);
+for (const root of document.querySelectorAll("[data-stock-image]")) {
+    void renderStockImage(root, { id: root.dataset.stockImage, label: root.dataset.imageAlt },
+        { file: root.dataset.imageFile }, root.dataset.imageAlt, root.dataset.imageClass);
+}
 async function mountGeneratedControl(root) {
     const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
     try {
@@ -21,7 +29,6 @@ async function mountGeneratedControl(root) {
     }
 }
 const $ = (id) => document.getElementById(id);
-const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
@@ -37,7 +44,7 @@ function wireGeneratedPages() {
         const currentSelection = ++selection;
         const id = button.dataset.canvasPage;
         const workflow = id === "workflow";
-        const introLogo = document.querySelector(".collection-logo");
+        const introLogo = document.querySelector('[data-stock-image="workflow.intro"]');
         if (introLogo) introLogo.hidden = !workflow;
         root.hidden = workflow;
         root.replaceChildren();
@@ -61,8 +68,11 @@ function wireGeneratedPages() {
                 displayName: root.dataset.canvasTitle },
                 values: { ...JSON.parse(root.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
             if (currentSelection !== selection) return;
-            mountPageAssets(content, JSON.parse(registration.dataset.assetSlots),
-                JSON.parse(registration.dataset.assets), token);
+            await mountPageAssets(content, JSON.parse(registration.dataset.assetSlots),
+                JSON.parse(registration.dataset.assets),
+                (target, asset) => renderStockImage(target,
+                    { id: asset.id, label: asset.label }, asset, asset.label, "generated-image"));
+            if (currentSelection !== selection) return;
             root.replaceChildren(...content.childNodes);
         } catch (error) {
             if (currentSelection !== selection) return;

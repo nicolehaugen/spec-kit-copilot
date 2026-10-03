@@ -32,7 +32,10 @@ ordered stock contributions registered by the composed load-page command. The
 optional image controls upload, preview, replace, and remove independent PNG,
 JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
 reason beside their picker, including the actual size when over the limit;
-successful replacement or removal clears the message. The smaller Header
+successful replacement or removal clears the message. All image fields,
+including preset-owned asset slots, require the same resolved `stock.image`
+definition and paired adapters; the host validates saved bytes while the
+Designer adapter renders the picker and preview. The smaller Header
 logo replaces the generated header's brand mark; the larger Main page logo appears beside the
 workflow heading. Either can be set alone. Both use the shared field/slot
 validation path and freeze the selected bytes and hashes at Generate. With no
@@ -44,7 +47,11 @@ Preset-generated pages can publish `asset` slots and receive any registered
 `stock.image` field by `generatedBinding.page` and `.slot`, independent of the
 field's Designer page. The renderer places a `data-asset-slot` element where it
 wants the image; the generated host mounts the packaged asset. Missing,
-incompatible, and duplicate placements fail explicitly.
+incompatible, and duplicate placements fail explicitly. The generated host
+supplies an authorized URL and mount node to the packaged image adapter, which
+is shared across Header, Main, and preset placements. An absent Header logo
+retains the brand mark; a configured image with a failing adapter reports a
+visible error rather than falling back.
 
 Workflow name appears after Phase input in the generated canvas's first
 workflow-creation phase and labels the workflow there. Essentials' default-off
@@ -56,7 +63,7 @@ beside the handoff in the Designer session artifacts (never to the page template
 reopening the same handoff restores them when its resolved pages are unchanged.
 Preset-registered stock text and checkbox fields render in their declared
 Designer page slot and are saved alongside built-in values. A registered
-`control.definition` for a typed object field must reference both a
+`control.definition` for a typed object or image field must reference both a
 `designer.adapter` and `generated.adapter` replace-only template. Both modules
 export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
 to one control definition; multiple fields may reuse that control. The Designer
@@ -95,7 +102,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.10 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.11 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

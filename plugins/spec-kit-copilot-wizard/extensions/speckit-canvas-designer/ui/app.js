@@ -231,94 +231,13 @@ function renderPage(pageId) {
     if (!page.fields.length) form.append(element("p", "This template defines no fields.", "settings-note"));
     for (const [index, field] of page.fields.entries()) {
         const rules = model.constraints[field.id];
-        if (rules.type === "image") {
-            const wrapper = element("div", undefined, "settings-field settings-image");
-            const label = element("label", field.label);
-            const input = element("input");
-            input.type = "file";
-            input.accept = "image/png,image/jpeg,image/gif,image/webp";
-            input.id = `setting-field-${index}`;
-            label.htmlFor = input.id;
-            const uploadError = element("p", undefined, "settings-image-error");
-            uploadError.id = `${input.id}-error`;
-            uploadError.setAttribute("role", "alert");
-            uploadError.hidden = true;
-            input.setAttribute("aria-describedby", uploadError.id);
-            const setUploadError = (message) => {
-                uploadError.textContent = message;
-                uploadError.hidden = !message;
-                if (message) input.setAttribute("aria-invalid", "true");
-                else input.removeAttribute("aria-invalid");
-            };
-            const preview = element("img");
-            preview.alt = `${field.label} preview`;
-            const controls = element("div", undefined, "image-controls");
-            const remove = element("button", "Remove", "image-remove");
-            remove.type = "button";
-            const refresh = () => {
-                const selected = !!draft[field.id];
-                preview.hidden = !selected;
-                if (selected) preview.src = draft[field.id];
-                else preview.removeAttribute("src");
-                remove.hidden = !selected;
-            };
-            input.addEventListener("change", async () => {
-                const file = input.files?.[0];
-                if (!file) return;
-                if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type)
-                    || !file.size || file.size > rules.maxBytes) {
-                    input.value = "";
-                    setUploadError(file.size > rules.maxBytes
-                        ? `${field.label} is too large (${file.size.toLocaleString()} bytes). Maximum: ${rules.maxBytes.toLocaleString()} bytes (32 KiB).`
-                        : `${field.label} must be a nonempty PNG, JPEG, GIF, or WebP image.`);
-                    return;
-                }
-                uploading = true;
-                setUploadError("");
-                updateSave();
-                try {
-                    const bytes = new Uint8Array(await file.arrayBuffer());
-                    const content = `data:${file.type};base64,${btoa(
-                        Array.from(bytes, (byte) => String.fromCharCode(byte)).join(""))}`;
-                    if (!validImage(content)) throw new Error("Image bytes do not match the selected format.");
-                    await new Promise((resolve, reject) => {
-                        const image = new Image();
-                        image.onload = resolve;
-                        image.onerror = () => reject(new Error("Image cannot be displayed."));
-                        image.src = content;
-                    });
-                    draft[field.id] = content;
-                    refresh();
-                    showError("");
-                    messageBox.hidden = true;
-                } catch (error) {
-                    setUploadError(`Could not load ${field.label}: ${error.message}`);
-                } finally {
-                    input.value = "";
-                    uploading = false;
-                    updateSave();
-                }
-            });
-            remove.addEventListener("click", () => {
-                draft[field.id] = "";
-                refresh();
-                setUploadError("");
-                showError("");
-                messageBox.hidden = true;
-                updateSave();
-            });
-            controls.append(input, remove);
-            wrapper.append(label, preview, controls, uploadError);
-            if (field.description) wrapper.append(element("p", field.description, "settings-hint"));
-            form.append(wrapper);
-            refresh();
-            continue;
-        }
-        if (rules.type === "object") {
-            const wrapper = element("div", undefined, "settings-field");
-            wrapper.append(element("p", field.label));
+        if (rules.type === "object" || rules.type === "image") {
+            const image = rules.type === "image";
+            const wrapper = element("div", undefined,
+                `settings-field${image ? " settings-image" : ""}`);
+            if (!image) wrapper.append(element("p", field.label));
             const mount = element("div");
-            mount.setAttribute("aria-label", field.label);
+            if (!image) mount.setAttribute("aria-label", field.label);
             mount.dataset.fieldId = field.id;
             wrapper.append(mount);
             form.append(wrapper);
@@ -333,17 +252,29 @@ function renderPage(pageId) {
                     if (typeof render !== "function") throw new Error("Missing mount export");
                     const expected = model.controls.find((item) => item.id === field.control)?.value;
                     if (controlId !== field.control || valueContract?.type !== expected?.type
-                        || JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
-                            !== JSON.stringify(Object.entries(expected.properties).sort())) {
+                        || (image
+                            ? valueContract.maxBytes !== expected.maxBytes
+                                || JSON.stringify(valueContract.mimeTypes) !== JSON.stringify(expected.mimeTypes)
+                            : JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
+                                !== JSON.stringify(Object.entries(expected.properties).sort()))) {
                         throw new Error("Incompatible control ID or value contract");
                     }
                     if (!mount.isConnected) return;
-                    return render({ root: mount, field, value: draft[field.id], onChange(value) {
-                        draft[field.id] = value;
-                        messageBox.hidden = true;
-                        showError("");
-                        updateSave();
-                    } });
+                    return render({ root: mount, field, value: draft[field.id],
+                        ...(image ? { constraints: rules, inputId: `setting-field-${index}`,
+                            validateImage: validImage, setBusy(busy) {
+                                uploading = busy;
+                                updateSave();
+                            } } : {}),
+                        onChange(value) {
+                            if (image && !validImage(value)) {
+                                throw new Error(`Invalid Designer setting: ${field.id}`);
+                            }
+                            draft[field.id] = value;
+                            messageBox.hidden = true;
+                            showError("");
+                            updateSave();
+                        } });
                 }).catch((error) => {
                     if (!mount.isConnected) return;
                     mount.replaceChildren();

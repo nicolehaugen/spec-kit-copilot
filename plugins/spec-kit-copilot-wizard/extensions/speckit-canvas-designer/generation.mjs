@@ -52,6 +52,26 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             !== imageContributions.length) {
         throw new Error("Generated asset slots must be unique and at most ten");
     }
+    let generatedImageControl;
+    if (imageContributions.length) {
+        const control = model.controls?.find((entry) => entry.id === "stock.image");
+        const definition = model.templates?.find((entry) => entry.kind === "control.definition"
+            && imageContributions.every((item) => item.requires?.includes(entry.name)));
+        const adapter = model.templates?.find((entry) => entry.kind === "generated.adapter"
+            && entry.name === control?.adapters?.generated);
+        if (!control || !definition || !adapter
+            || imageContributions.some((item) => item.field.control !== control.id
+                || !item.requires?.includes(definition.name))) {
+            throw new Error("Missing paired stock.image definition or generated adapter");
+        }
+        generatedImageControl = { control: control.id,
+            assets: await Promise.all([definition, adapter].map(async (item) => {
+                if (item.strategy !== "replace") throw new Error("Missing validated replace-only image control asset");
+                const bytes = await readFrozenAsset(item, join(await realpath(project), ".specify"));
+                return { name: item.name, kind: item.kind, sourceId: item.sourceId,
+                    hash: item.hash, content: bytes.toString("base64") };
+            })) };
+    }
     const generatedAssets = imageContributions.flatMap((item) => {
         const image = decodeImage(values[item.field.id]);
         return image ? [{ id: item.field.id, label: item.field.label,
@@ -140,6 +160,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedPages.length ? { generatedPages } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),
         ...(generatedAssets.length ? { generatedAssets } : {}),
+        ...(generatedImageControl ? { generatedImageControl } : {}),
         ...(valueSources.length ? { valueSources } : {}),
     };
     const payload = JSON.stringify(request);

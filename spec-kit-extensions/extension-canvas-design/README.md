@@ -5,8 +5,9 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.10** registers three JSON page templates and five ordered
-stock field templates, plus the
+Canvas Design **0.1.11** registers three JSON page templates, five ordered
+stock field templates, and one shared image control definition with paired
+Designer/generated adapter templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -22,6 +23,9 @@ project extension directory, then validates the result in place.
 | `canvas-stock-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `canvas-stock-logo` | Essentials slot | Optional small header logo |
 | `canvas-stock-logo-main-page` | Essentials slot | Optional larger main-page logo |
+| `canvas-stock-image` | Shared control | Image value contract and paired adapter names |
+| `canvas-stock-image-designer` | Designer | Upload, preview, replace, and remove images |
+| `canvas-stock-image-generated` | Generated app | Render packaged images in authorized slots |
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
@@ -39,14 +43,21 @@ available for both in Designer. The smaller header logo replaces the existing
 brand mark; the optional larger main-page logo appears next to the workflow
 heading and description. Either image may be used alone. Generate freezes
 each selected image's bytes and SHA-256 hash and packages it within the
-generated extension. The resulting app serves its own images without Canvas
-Design installed and rejects missing or modified packaged images rather than
-silently rendering a different logo.
+generated extension, together with the frozen, shared generated adapter.
+Each image contribution lists `"requires": ["canvas-stock-image"]` and
+uses `"control": "stock.image"`; its `generatedBinding` declares the target
+slot. Presets reuse that definition and both adapters rather than supplying
+per-placement image renderers. The resulting app serves its own images and
+loads its packaged adapter without Canvas Design installed. It rejects missing
+or modified packaged images instead of silently rendering a different logo.
+Without a Header logo the existing brand mark remains; a configured image
+that cannot mount its adapter shows a local error.
 
 Preset-generated pages can also place a `stock.image` contribution. Declare a
 slot on the generated page, for example
 `"slots": [{"id": "hero.logo", "accepts": ["asset"]}]`, and bind the image
-field with `"generatedBinding": {"presentation": "asset",
+field with `"requires": ["canvas-stock-image"]` and
+`"generatedBinding": {"presentation": "asset",
 "page": "canvas-generated-gallery", "slot": "hero.logo"}`. The page renderer
 puts a `<div data-asset-slot="hero.logo"></div>` at the desired location; the
 generated host mounts the packaged image there, with the field label as its
@@ -112,7 +123,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.10/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.11/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.

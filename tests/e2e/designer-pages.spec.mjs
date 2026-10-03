@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,7 +74,18 @@ async function startPreparedShell(state) {
     try {
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        const shell = await startShell(handoff, state, { workspace });
+        const project = join(workspace, "project");
+        if (state.adapters?.["stock.image"]) {
+            const path = join(project, ".specify", "extensions", "extension-canvas-design",
+                "controls", "stock-image", "designer.mjs");
+            await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
+                "controls", "stock-image"), { recursive: true });
+            await copyFile(new URL("controls/stock-image/designer.mjs", extensionRoot), path);
+            const bytes = await readFile(path);
+            state.templates = [{ name: "canvas-stock-image-designer", path,
+                hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.adapter" }];
+        }
+        const shell = await startShell(handoff, state, { workspace, project });
         return { url: shell.url, close: async () => {
             await shell.close();
             await rm(workspace, { recursive: true, force: true });
@@ -93,15 +105,19 @@ async function openDesigner(page) {
 test("Main page Logo upload explains rejection beside the picker and clears on replacement", async ({ page }) => {
     const state = await model();
     const { field } = JSON.parse(await readFile(new URL("stock-logo-main-page.json", templateRoot), "utf8"));
-    const { control: _control, ...logoField } = field;
+    const logoField = field;
     const { field: headerField } = JSON.parse(await readFile(new URL("stock-logo.json", templateRoot), "utf8"));
-    const { control: _headerControl, ...headerLogoField } = headerField;
-    state.pages[0].fields.push(headerLogoField);
-    state.constraints[headerField.id] = { type: "image", maxBytes: 32768 };
+    state.pages[0].fields.push(headerField);
+    state.constraints[headerField.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
     state.values[headerField.id] = "";
     state.pages.push({ page: "main", title: "Main", description: "", fields: [logoField] });
-    state.constraints[field.id] = { type: "image", maxBytes: 32768 };
+    state.constraints[field.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
     state.values[field.id] = "";
+    state.controls = [JSON.parse(await readFile(
+        new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
+    state.adapters = { "stock.image": "canvas-stock-image-designer" };
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
@@ -151,6 +167,30 @@ test("Main page Logo upload explains rejection beside the picker and clears on r
         await expect(headerFeedback).toContainText("32,988 bytes");
         await expect(headerFeedback).toContainText("32,768 bytes (32 KiB)");
         await expect(headerFeedback).toBeVisible();
+    } finally {
+        await shell.close();
+    }
+});
+
+test("configured image reports an incompatible Designer adapter beside its field", async ({ page }) => {
+    const state = await model();
+    const { field } = JSON.parse(await readFile(new URL("stock-logo.json", templateRoot), "utf8"));
+    state.pages[0].fields.push(field);
+    state.constraints[field.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+    state.values[field.id] = "";
+    state.controls = [JSON.parse(await readFile(
+        new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
+    state.adapters = { "stock.image": "canvas-stock-image-designer" };
+    const shell = await startPreparedShell(state);
+    try {
+        await page.route(/\/adapters\/canvas-stock-image-designer\.mjs/, (route) =>
+            route.fulfill({ contentType: "text/javascript", body:
+                'export const controlId = "wrong"; export const valueContract = { type: "image" }; export function mount() {}' }));
+        await page.goto(shell.url);
+        await expect(page.locator('[role="alert"]').filter({
+            hasText: "Could not load Header logo: Incompatible control ID or value contract",
+        })).toBeVisible();
     } finally {
         await shell.close();
     }
@@ -557,7 +597,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.7 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.11 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();

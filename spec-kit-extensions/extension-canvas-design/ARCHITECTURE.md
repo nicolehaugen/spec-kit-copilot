@@ -130,6 +130,18 @@ Generated configuration remains derived from the frozen request; there is no com
 
 **Logo** is a stock asset/control contribution from the **Canvas Design Specify Extension**. A Designer adapter supports upload, preview, replace, and remove; Generate validates and packages the image and generated header adapter **inside the Generated Workflow Canvas app**. On launch, the app reads its packaged image or uses the existing brand mark; it does not ask the project to install Canvas Design.
 
+The base extension registers one replace-only `stock.image` control definition
+and two separately named adapter templates. Header, main-page, and preset-owned
+asset fields reference that definition and declare their own generated binding;
+they do not each implement their own picker or renderer. The Designer adapter
+owns field presentation while the host validates persisted image values. Generate
+freezes the selected bytes and winning generated adapter, verifies both and
+packages the adapter once. The generated host supplies authorized local URLs
+and mount points; the packaged adapter renders them without design-time
+dependencies. An absent image retains its prior fallback or empty slot; a
+configured image whose adapter fails displays a local error instead of a
+success-shaped fallback. Scalar text and checkbox remain intentional built-ins.
+
 **Setup confirm** is a stock boolean/control contribution from the **Canvas Design Specify Extension**. The Designer Canvas displays a checkbox. Generate packages its value and the generated setup-control behavior **inside the app**. The checkbox selects when to invoke **one shell-owned project-setup operation**:
 
 | Value | If the active project needs workflow setup |

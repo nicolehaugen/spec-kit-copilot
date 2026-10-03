@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.10"
+  version: "0.1.11"
   description: Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.
   category: process
   author: spec-kit-copilot
@@ -46,6 +46,15 @@ provides:
     - name: canvas-stock-logo-main-page
       file: pages/stock-logo-main-page.json
       description: Optional independent larger logo for the generated workflow page.
+    - name: canvas-stock-image
+      file: controls/stock-image/control.json
+      description: Shared image value contract and paired adapters.
+    - name: canvas-stock-image-designer
+      file: controls/stock-image/designer.mjs
+      description: Image upload, preview, replacement, and removal in Designer.
+    - name: canvas-stock-image-generated
+      file: controls/stock-image/generated.mjs
+      description: Portable image presentation in generated canvases.
 
 tags:
   - copilot

@@ -11,6 +11,7 @@
     "type": "image",
     "control": "stock.image"
   },
+  "requires": ["canvas-stock-image"],
   "generatedBinding": {
     "presentation": "asset",
     "page": "canvas-generated-logo-gallery",

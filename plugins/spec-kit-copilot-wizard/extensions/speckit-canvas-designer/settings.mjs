@@ -20,8 +20,12 @@ export function validateValues(values, constraints) {
         if (rule.type === "boolean") {
             if (typeof value !== "boolean") throw new Error(`Invalid Designer setting: ${key}`);
         } else if (rule.type === "image") {
-            if (Object.keys(rule).sort().join() !== "maxBytes,type"
-                || rule.maxBytes !== 32 * 1024) throw new Error(`Invalid Designer image constraint: ${key}`);
+            if (Object.keys(rule).sort().join() !== "maxBytes,mimeTypes,type"
+                || rule.maxBytes !== 32 * 1024
+                || JSON.stringify(rule.mimeTypes)
+                    !== '["image/png","image/jpeg","image/gif","image/webp"]') {
+                throw new Error(`Invalid Designer image constraint: ${key}`);
+            }
             try { decodeImage(value, rule.maxBytes); }
             catch (error) { throw new Error(`Invalid Designer setting: ${key}: ${error.message}`, { cause: error }); }
         } else if (rule.type === "object") {

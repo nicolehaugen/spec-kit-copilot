@@ -9,6 +9,8 @@ const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "ut
 const pageAssets = readFileSync(new URL("./ui/page-assets.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+const imageValueContract = { type: "image", maxBytes: 32768,
+    mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -122,6 +124,16 @@ export function readConfig() {
             || (output.outputPath !== null && typeof output.outputPath !== "string"))
         || (config.brandAsset !== undefined && !validImageAsset(config.brandAsset, "logo"))
         || (config.mainPageAsset !== undefined && !validImageAsset(config.mainPageAsset, "main-page-logo"))
+        || (config.imageControl !== undefined && (!config.imageControl
+            || Object.keys(config.imageControl).sort().join() !== "adapter,definition,definitionHash,hash"
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.imageControl.adapter)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.imageControl.definition)
+            || !/^[a-f0-9]{64}$/.test(config.imageControl.hash)
+            || !/^[a-f0-9]{64}$/.test(config.imageControl.definitionHash)))
+        || (!config.imageControl && !!(config.brandAsset || config.mainPageAsset
+            || config.generatedPageAssets?.length))
+        || (config.imageControl && config.generatedControls?.some((item) =>
+            item.adapter === config.imageControl.adapter))
         || (config.theme !== undefined && !["light", "dark"].includes(config.theme))
         || !config.installed || ["presets", "extensions", "bundles"].some((kind) =>
             !Array.isArray(config.installed[kind]) || config.installed[kind].some((item) =>
@@ -131,6 +143,7 @@ export function readConfig() {
     for (const asset of [config.brandAsset, config.mainPageAsset, ...(config.generatedPageAssets ?? [])]) {
         if (asset) readImageAsset(asset);
     }
+    if (config.imageControl) readImageControl(config.imageControl);
     const sections = new Map();
     for (const { section } of config.readOnlyFields ?? []) {
         if (!section) continue;
@@ -148,11 +161,27 @@ function readImageAsset(asset) {
     const bytes = readFileSync(new URL(`./assets/${asset.file}`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
         || createHash("sha256").update(bytes).digest("hex") !== asset.hash) {
-        throw new Error("Packaged Logo image does not match its frozen hash");
+        throw new Error("Packaged image does not match its frozen hash");
     }
     return bytes;
 }
 
+function readImageControl(control) {
+    const bytes = readFileSync(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
+        throw new Error("Packaged stock.image adapter does not match its frozen hash");
+    }
+    const definition = readFileSync(new URL(`./controls/${control.definition}.json`, import.meta.url));
+    const parsed = JSON.parse(definition);
+    if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
+        || parsed.id !== "stock.image" || parsed.adapters?.generated !== control.adapter
+        || JSON.stringify(Object.entries(parsed.value ?? {}).sort())
+            !== JSON.stringify(Object.entries(imageValueContract).sort())) {
+        throw new Error("Packaged stock.image definition does not match its frozen contract");
+    }
+    return bytes;
+}
 function phaseLabel(phase) {
     if (phase.replace(/^speckit\./, "") === "taskstoissues") return "Create issues";
     return phase.replace(/^speckit\./, "").split(/[._-]/)
@@ -197,16 +226,16 @@ export function renderHtml(config, token = "") {
 <title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}</style></head>
 <body>
 <header class="app-header">
-    <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}" aria-hidden="true">${config.brandAsset
-        ? `<img src="/assets/${escapeHtml(config.brandAsset.file)}?token=${escapeHtml(encodeURIComponent(token))}" alt="">`
-        : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
+    <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}"${config.brandAsset
+        ? ` data-stock-image="header.brand" data-image-file="${escapeHtml(config.brandAsset.file)}" data-image-alt="" data-image-class="generated-image"`
+        : ' aria-hidden="true"'}>${config.brandAsset ? "" : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
 <main class="app-body workflow-surface">
     <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
         <div class="instance-collection-head">
             ${config.mainPageAsset
-                ? `<div class="collection-intro"><img class="collection-logo" src="/assets/${escapeHtml(config.mainPageAsset.file)}?token=${escapeHtml(encodeURIComponent(token))}" alt="${escapeHtml(canvas.displayName)} logo">${intro}</div>`
+                ? `<div class="collection-intro"><span data-stock-image="workflow.intro" data-image-file="${escapeHtml(config.mainPageAsset.file)}" data-image-alt="${escapeHtml(canvas.displayName)} logo" data-image-class="collection-logo generated-image"></span>${intro}</div>`
                 : intro}
             <button class="btn btn-secondary" id="new-workflow" type="button">+ New</button>
         </div>
@@ -264,6 +293,10 @@ export function renderHtml(config, token = "") {
             data-asset-slots="${escapeHtml(JSON.stringify(slots ?? []))}"
             data-assets="${escapeHtml(JSON.stringify((config.generatedPageAssets ?? [])
                 .filter((asset) => asset.page === id)))}"></span>`).join("") ?? ""}
+    ${config.imageControl ? `<span hidden id="stock-image-registration"
+        data-module="/controls/${escapeHtml(config.imageControl.adapter)}.mjs"
+        data-assets="${escapeHtml(JSON.stringify([config.brandAsset, config.mainPageAsset,
+            ...(config.generatedPageAssets ?? [])].filter(Boolean).map((asset) => asset.file)))}"></span>` : ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
@@ -303,9 +336,10 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 ...(config.generatedPageAssets ?? [])]
                 .find((asset) => asset && url.pathname === `/assets/${asset.file}`);
             if (request.method === "GET" && imageAsset) {
+                const bytes = readImageAsset(imageAsset);
                 response.writeHead(200, { "Content-Type": imageAsset.mime,
                     "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" })
-                    .end(readImageAsset(imageAsset));
+                    .end(bytes);
                 return;
             }
             const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
@@ -317,9 +351,13 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             }
             const controlName = /^\/controls\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
             if (request.method === "GET" && controlName
-                && config.generatedControls?.some((item) => item.adapter === controlName)) {
+                && (config.generatedControls?.some((item) => item.adapter === controlName)
+                    || config.imageControl?.adapter === controlName)) {
+                const module = config.imageControl?.adapter === controlName
+                    ? readImageControl(config.imageControl)
+                    : readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
-                    .end(readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url)));
+                    .end(module);
                 return;
             }
             if (!runtime) throw new UserError("The Copilot session runtime is unavailable. Reopen the canvas.", 503);

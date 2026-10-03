@@ -29,12 +29,16 @@ FILES = {
     "schemas/page.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
     *(f"pages/stock-{name}.json" for name in (
-        "description", "workflow-heading", "custom-slug",
+        "description", "workflow-heading", "custom-slug", "logo", "logo-main-page",
     )),
+    "controls/stock-image/control.json",
+    "controls/stock-image/designer.mjs",
+    "controls/stock-image/generated.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
+        "ui/page-assets.mjs",
     )),
 }
 
@@ -91,7 +95,13 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [(f"canvas-settings-{page}", f"pages/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
             + [(f"canvas-stock-{name}", f"pages/stock-{name}.json")
-               for name in ("description", "workflow-heading", "custom-slug")],
+               for name in ("description", "workflow-heading", "custom-slug",
+                            "logo", "logo-main-page")]
+            + [(name, f"controls/stock-image/{file}") for name, file in (
+                ("canvas-stock-image", "control.json"),
+                ("canvas-stock-image-designer", "designer.mjs"),
+                ("canvas-stock-image-generated", "generated.mjs"),
+            )],
         )
         actual_files = set()
         for path in PACKAGE.rglob("*"):
@@ -213,11 +223,18 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "## Canvas Design templates\n\n"
             "- `canvas-stock-description` — `designer.field`, `replace`\n"
             "- `canvas-stock-workflow-heading` — `designer.field`, `replace`\n"
-            "- `canvas-stock-custom-slug` — `designer.field`, `replace`\n\n"
+            "- `canvas-stock-custom-slug` — `designer.field`, `replace`\n"
+            "- `canvas-stock-logo` — `designer.field`, `replace`\n"
+            "- `canvas-stock-logo-main-page` — `designer.field`, `replace`\n"
+            "- `canvas-stock-image` — `control.definition`, `replace`\n"
+            "- `canvas-stock-image-designer` — `designer.adapter`, `replace`\n"
+            "- `canvas-stock-image-generated` — `generated.adapter`, `replace`\n\n"
         )
         self.assertEqual(self.command.count(stock_section), 1)
-        self.assertEqual((fixture / "commands/load-page.md").read_text("utf-8"),
-                         self.command.replace(stock_section, ""))
+        replaced = (fixture / "commands/load-page.md").read_text("utf-8")
+        self.assertIn("canvas-settings-setup", replaced)
+        self.assertNotIn("## Canvas Design templates", replaced)
+        self.assertNotIn("canvas-stock-image", replaced)
         self.assertNotIn(manifest["preset"]["id"],
                          json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
                                     .read_text("utf-8"))["presets"])

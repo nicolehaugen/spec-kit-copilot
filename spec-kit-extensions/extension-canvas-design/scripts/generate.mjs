@@ -48,8 +48,11 @@ function validateFrozenValues(values, constraints) {
                 throw new Error(`Invalid frozen Designer field: ${id}`);
             }
         } else if (rule.type === "image") {
-            if (Object.keys(rule).sort().join() !== "maxBytes,type"
-                || rule.maxBytes !== 32 * 1024 || typeof value !== "string"
+            if (Object.keys(rule).sort().join() !== "maxBytes,mimeTypes,type"
+                || rule.maxBytes !== 32 * 1024
+                || !isDeepStrictEqual(rule.mimeTypes,
+                    ["image/png", "image/jpeg", "image/gif", "image/webp"])
+                || typeof value !== "string"
                 || value.length > 44 * 1024) {
                 throw new Error(`Invalid frozen Designer image: ${id}`);
             }
@@ -88,6 +91,8 @@ function frozenImage(item, values, constraints) {
             : typeof item.page !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(item.page)
                 || typeof item.slot !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(item.slot))
         || constraints[item.id]?.type !== "image" || constraints[item.id]?.maxBytes !== 32 * 1024
+        || !isDeepStrictEqual(constraints[item.id]?.mimeTypes,
+            ["image/png", "image/jpeg", "image/gif", "image/webp"])
         || !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(item.mime)
         || typeof item.content !== "string" || item.content.length > 44 * 1024
         || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.content)
@@ -119,6 +124,49 @@ function frozenImage(item, values, constraints) {
     return bytes;
 }
 
+const imageContract = { type: "image", maxBytes: 32768,
+    mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+
+function frozenImageControl(item) {
+    if (!item || Object.keys(item).sort().join() !== "assets,control"
+        || item.control !== "stock.image" || !Array.isArray(item.assets) || item.assets.length !== 2
+        || item.assets[0]?.kind !== "control.definition"
+        || item.assets[1]?.kind !== "generated.adapter") {
+        throw new Error("Invalid frozen stock.image control registration");
+    }
+    for (const asset of item.assets) {
+        if (!asset || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
+            || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+            || typeof asset.content !== "string" || asset.content.length > 44 * 1024
+            || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+            || Buffer.from(asset.content, "base64").length > 32 * 1024
+            || Buffer.from(asset.content, "base64").toString("base64") !== asset.content
+            || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash) {
+            throw new Error("Invalid frozen stock.image control asset or hash");
+        }
+    }
+    let definition;
+    try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+    catch { throw new Error("Invalid stock.image control definition"); }
+    if (!definition || Object.keys(definition).sort().join() !== "adapters,id,schemaVersion,value"
+        || definition.schemaVersion !== 1 || definition.id !== item.control
+        || Object.keys(definition.adapters ?? {}).sort().join() !== "designer,generated"
+        || !/^[a-z][a-z0-9-]{0,79}$/.test(definition.adapters.designer)
+        || definition.adapters.generated !== item.assets[1].name
+        || item.assets[0].name === item.assets[1].name
+        || !isDeepStrictEqual(definition.value, imageContract)) {
+        throw new Error("Incompatible frozen stock.image value contract or adapters");
+    }
+    const module = Buffer.from(item.assets[1].content, "base64").toString("utf8");
+    if (/\bimport\b|\bexport\s+(?:\*|\{[^}]*\})\s+from\b/.test(module)) {
+        throw new Error("Frozen stock.image adapter must be self-contained");
+    }
+    return { adapter: item.assets[1].name, definition: item.assets[0].name,
+        hash: item.assets[1].hash,
+        definitionHash: item.assets[0].hash };
+}
+
 const imageFile = (item) => `${item.page
     ? `asset-${createHash("sha256").update(item.id).digest("hex").slice(0,24)}`
     : item.slot === "header.brand" ? "logo" : "main-page-logo"}.${{
@@ -128,7 +176,7 @@ const imageFile = (item) => `${item.page
 
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
-        generatedPages, generatedControls, generatedAssets, valueSources } = request;
+        generatedPages, generatedControls, generatedAssets, generatedImageControl, valueSources } = request;
     validateFrozenValues(values, fieldConstraints);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -165,13 +213,23 @@ function configuration(request) {
     }
     for (const [id, rule] of Object.entries(fieldConstraints)) {
         if (rule.type !== "image") continue;
-        if (Object.keys(rule).sort().join() !== "maxBytes,type" || rule.maxBytes !== 32 * 1024
+        if (Object.keys(rule).sort().join() !== "maxBytes,mimeTypes,type" || rule.maxBytes !== 32 * 1024
+            || !isDeepStrictEqual(rule.mimeTypes, imageContract.mimeTypes)
             || typeof values[id] !== "string"
             || values[id] !== "" && !generatedAssets?.some((item) => item.id === id)) {
             throw new Error(`Invalid frozen image field: ${id}`);
         }
     }
     for (const item of generatedAssets ?? []) frozenImage(item, values, fieldConstraints);
+    const imageControl = generatedImageControl && frozenImageControl(generatedImageControl);
+    if (!!imageControl !== Object.values(fieldConstraints).some((rule) => rule.type === "image")) {
+        throw new Error("Image fields require a frozen stock.image control");
+    }
+    if (imageControl && generatedControls?.some((item) =>
+        item.assets?.[1]?.name === imageControl.adapter
+        || item.assets?.[0]?.name === imageControl.definition)) {
+        throw new Error("Stock image assets conflict with another generated control");
+    }
     if (generatedFields !== undefined
         && (!Array.isArray(generatedFields) || generatedFields.length > 100
             || new Set(generatedFields.map((field) => field?.id)).size !== generatedFields.length
@@ -405,6 +463,7 @@ function configuration(request) {
         ...(pageImages.length ? { generatedPageAssets: pageImages.map((item) =>
             ({ id: item.id, label: item.label, page: item.page, slot: item.slot,
                 ...imageConfig(item) })) } : {}),
+        ...(imageControl ? { imageControl } : {}),
         ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer,
             values: declared, slots }) => ({ id, title, renderer,
             ...(declared ? { values: declared } : {}), ...(slots ? { slots } : {}) })) } : {}),
@@ -481,6 +540,12 @@ export async function materialize(project, workspace, handoffId, requestId) {
         { filename: `${item.assets[0].name}.json`, bytes: Buffer.from(item.assets[0].content, "base64") },
         { filename: `${item.assets[1].name}.mjs`, bytes: Buffer.from(item.assets[1].content, "base64") },
     ]);
+    if (request.generatedImageControl) {
+        controlFiles.push(...request.generatedImageControl.assets.map((asset) => ({
+            filename: `${asset.name}.${asset.kind === "control.definition" ? "json" : "mjs"}`,
+            bytes: Buffer.from(asset.content, "base64"),
+        })));
+    }
     const providerFiles = [...new Map((request.valueSources ?? []).filter(
         (item) => item.source.kind === "provider").map((item) => [
         item.source.module, { filename: `${item.source.module}.mjs`,

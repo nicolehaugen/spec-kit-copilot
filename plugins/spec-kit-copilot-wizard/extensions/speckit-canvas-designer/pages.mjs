@@ -252,18 +252,25 @@ function validateContribution(document, name, slots, fieldOrigins) {
 
 function validateControl(document, name) {
     const properties = document?.value?.properties;
+    const image = document?.value?.type === "image";
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).sort().join() !== "adapters,id,schemaVersion,value"
-        || document.schemaVersion !== 1 || !PAGE_PATTERN.test(document.id)
-        || !document.value || Object.keys(document.value).sort().join() !== "properties,type"
-        || document.value.type !== "object"
-        || !properties || typeof properties !== "object" || Array.isArray(properties)
-        || !Object.keys(properties).length || Object.keys(properties).length > 10
-        || Object.entries(properties).some(([key, allowed]) =>
-            !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
-            || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
-            || new Set(allowed).size !== allowed.length
-            || allowed.some((value) => typeof value !== "string" || !value || value.length > 80))
+        || document.schemaVersion !== 1
+        || (image ? document.id !== "stock.image" : !PAGE_PATTERN.test(document.id))
+        || !document.value || (image
+            ? Object.keys(document.value).sort().join() !== "maxBytes,mimeTypes,type"
+                || document.value.maxBytes !== 32 * 1024
+                || JSON.stringify(document.value.mimeTypes)
+                    !== '["image/png","image/jpeg","image/gif","image/webp"]'
+            : Object.keys(document.value).sort().join() !== "properties,type"
+                || document.value.type !== "object"
+                || !properties || typeof properties !== "object" || Array.isArray(properties)
+                || !Object.keys(properties).length || Object.keys(properties).length > 10
+                || Object.entries(properties).some(([key, allowed]) =>
+                    !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
+                    || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
+                    || new Set(allowed).size !== allowed.length
+                    || allowed.some((value) => typeof value !== "string" || !value || value.length > 80)))
         || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
         || !PAGE_PATTERN.test(document.adapters.designer)
         || !PAGE_PATTERN.test(document.adapters.generated)) {
@@ -579,7 +586,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             adapterOwners.set(adapter.name, control.document.id);
         }
         for (const field of fields) {
-            if (!field.document.generatedBinding || field.document.field.type !== "object") {
+            if (!field.document.generatedBinding
+                || field.document.field.type !== control.document.value.type) {
                 throw new Error(`${field.name}: incompatible shared control value or generated placement`);
             }
         }
@@ -590,7 +598,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
     }
     for (const entry of loaded.filter((item) => item.kind === "designer.field"
-        && item.document.field.type === "object")) {
+        && ["object", "image"].includes(item.document.field.type))) {
         if (!controls.some((control) => control.document.id === entry.document.field.control
             && entry.document.requires.includes(control.name))) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
@@ -731,13 +739,18 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
                 if (page.fields.length >= 100) throw new Error(`${page.page}: too many resolved fields`);
                 const field = document.field;
                 const { control: _stockControl, ...scalarField } = field;
-                page.fields.push(field.type === "object" ? field : scalarField);
+                page.fields.push(["object", "image"].includes(field.type) ? field : scalarField);
                 model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
                     : { type: field.type, ...(field.type === "string"
                         ? { maxLength: field.maxLength ?? 1000 } : field.type === "object"
                             ? { properties: controls.find((item) =>
                                 item.document.id === field.control).document.value.properties }
-                            : field.type === "image" ? { maxBytes: 32 * 1024 } : {}) };
+                            : field.type === "image" ? {
+                                maxBytes: controls.find((item) =>
+                                    item.document.id === field.control).document.value.maxBytes,
+                                mimeTypes: controls.find((item) =>
+                                    item.document.id === field.control).document.value.mimeTypes,
+                            } : {}) };
                 model.values[field.id] = field.type === "boolean" ? (field.default ?? false)
                     : field.type === "object" ? null : "";
             }

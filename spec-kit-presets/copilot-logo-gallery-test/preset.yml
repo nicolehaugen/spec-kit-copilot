@@ -3,7 +3,7 @@ schema_version: "1.0"
 preset:
   id: "copilot-logo-gallery-test"
   name: "Copilot Logo Gallery Test"
-  version: "0.1.0"
+  version: "0.1.1"
   description: "Test-only Logo field on a custom Designer page and asset slot on a generated page."
   author: "spec-kit-copilot"
   license: "MIT"
