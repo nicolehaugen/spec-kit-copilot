@@ -66,6 +66,13 @@ p { margin: 0; }
     padding: .6rem .75rem; border: 1px solid var(--border-color-strong);
     border-radius: var(--radius-sm); background: var(--background-color-elevated); color: var(--text-color-default); }
 .settings-checkbox { display: flex; align-items: center; gap: .6rem; }
+.settings-image img { max-width: 180px; max-height: 100px; object-fit: contain;
+    border: 1px solid var(--border-color-default); border-radius: var(--radius-sm);
+    background: var(--background-color-elevated); padding: .35rem; }
+.image-controls { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.settings-image .image-remove { min-height: 40px; padding: .5rem .75rem; font: inherit;
+    border: 1px solid var(--border-color-strong); border-radius: var(--radius-sm);
+    background: var(--background-color-elevated); color: var(--text-color-default); cursor: pointer; }
 .settings-field input[type="checkbox"] { width: 18px; height: 18px; min-height: 0;
     margin: 0; accent-color: var(--accent-color); }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--color-focus-outline, var(--accent-color)); outline-offset: 3px; }

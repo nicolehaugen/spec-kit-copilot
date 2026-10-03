@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.9** registers three JSON page templates and three ordered
+Canvas Design **0.1.10** registers three JSON page templates and four ordered
 stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
@@ -20,6 +20,7 @@ project extension directory, then validates the result in place.
 | `canvas-stock-description` | Essentials slot | Optional Description |
 | `canvas-stock-workflow-heading` | Essentials slot | Optional Workflow header |
 | `canvas-stock-custom-slug` | Essentials slot | Optional Allow custom slug |
+| `canvas-stock-logo` | Essentials slot | Optional Logo image |
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
@@ -31,6 +32,13 @@ does not remove the required Canvas ID and Title. If absent, generated descripti
 defaults to `Spec Kit workflow canvas.`, heading to `Workflows`, and custom slug
 to off. Generate validates all enabled Designer pages, including custom fields;
 an invalid page blocks generation until repaired.
+The optional Logo control accepts PNG, JPEG, GIF, or WebP images up to 32 KiB.
+Upload, preview, replace, and remove are available in Designer; removing the
+image restores the generated header's existing brand mark. Generate freezes
+the validated image bytes and SHA-256 hash and packages the image within the
+generated extension. The resulting app serves its own image without Canvas
+Design installed and rejects missing or modified packaged images rather than
+silently rendering a different logo.
 
 The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
@@ -87,7 +95,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.9/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.10/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.

@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
+import { decodeImage } from "./image.mjs";
 
 export const SETTINGS_LIMIT = 256 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
@@ -18,6 +19,11 @@ export function validateValues(values, constraints) {
         const value = values[key];
         if (rule.type === "boolean") {
             if (typeof value !== "boolean") throw new Error(`Invalid Designer setting: ${key}`);
+        } else if (rule.type === "image") {
+            if (Object.keys(rule).sort().join() !== "maxBytes,type"
+                || rule.maxBytes !== 32 * 1024) throw new Error(`Invalid Designer image constraint: ${key}`);
+            try { decodeImage(value, rule.maxBytes); }
+            catch (error) { throw new Error(`Invalid Designer setting: ${key}: ${error.message}`, { cause: error }); }
         } else if (rule.type === "object") {
             if (!value || typeof value !== "object" || Array.isArray(value)
                 || Object.keys(value).sort().join() !== Object.keys(rule.properties).sort().join()
