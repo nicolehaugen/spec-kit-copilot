@@ -29,10 +29,12 @@ function validLocalSelections(value) {
         const seen = new Set();
         return list.every((item) => {
             if (!record(item) || Object.keys(item).some((key) =>
-                !["id", "source", "approved", "path"].includes(key))) return false;
+                !["id", "source", "approved", "path", "version"].includes(key))) return false;
             if (typeof item.id !== "string" || !PACKAGE.test(item.id)) return false;
             if (item.source !== "local" || item.approved !== true) return false;
             if (typeof item.path !== "string" || !LOCAL_PATH.test(item.path)) return false;
+            if (item.version !== undefined && item.version !== null
+                && (typeof item.version !== "string" || !item.version || item.version.length > 64)) return false;
             if (seen.has(item.id)) return false;
             seen.add(item.id);
             return true;
@@ -49,6 +51,40 @@ function safeUrl(value) {
         const url = new URL(value);
         return url.protocol === "https:" && !!url.hostname && !url.username && !url.password;
     } catch { return false; }
+}
+
+function validInstallLocators(workflow) {
+    if (workflow.installLocators === undefined) return true;
+    if (!record(workflow.installLocators)
+        || KINDS.some((kind) => !Array.isArray(workflow.installLocators[kind])
+            || workflow.installLocators[kind].length !== workflow.installed[kind].length)) return false;
+    return KINDS.every((kind) => {
+        const expected = new Set(workflow.installed[kind].map((item) => item.id));
+        return workflow.installLocators[kind].every((item) => {
+            if (!record(item) || !expected.delete(item.installedId)
+                || typeof item.installedId !== "string" || !PACKAGE.test(item.installedId)) return false;
+            if (item.source === "local") {
+                return kind !== "bundles"
+                    && Object.keys(item).sort().join() === "installedId,path,source"
+                    && typeof item.path === "string" && LOCAL_PATH.test(item.path);
+            }
+            if (item.source === "bundle") {
+                return kind !== "bundles"
+                    && Object.keys(item).sort().join() === "bundleId,installedId,source"
+                    && typeof item.bundleId === "string" && PACKAGE.test(item.bundleId)
+                    && workflow.installed.bundles.some((bundle) => bundle.id === item.bundleId);
+            }
+            return typeof item.source === "string" && PACKAGE.test(item.source)
+                && typeof item.catalogId === "string" && PACKAGE.test(item.catalogId)
+                && Object.keys(item).every((key) =>
+                    ["installedId", "source", "catalogId", "downloadUrl", "bundleYml"].includes(key))
+                && (item.downloadUrl === null || safeUrl(item.downloadUrl))
+                && item.downloadUrl !== undefined
+                && (item.bundleYml === undefined || (kind === "bundles"
+                    && typeof item.bundleYml === "string" && item.bundleYml.length > 0
+                    && item.bundleYml.length <= 16384));
+        }) && !expected.size;
+    });
 }
 
 export function validateHandoffId(id) {
@@ -68,7 +104,8 @@ export function validateHandoff(handoff, id) {
                 .includes(key))
         || handoff.schemaVersion !== 1 || handoff.handoffId !== id
         || !record(handoff.workflow)
-        || Object.keys(handoff.workflow).some((key) => !["selectedPhases", "installed"].includes(key))
+        || Object.keys(handoff.workflow).some((key) =>
+            !["selectedPhases", "installed", "installLocators"].includes(key))
         || !Array.isArray(handoff.workflow.selectedPhases)
         || handoff.workflow.selectedPhases.length > 30
         || !handoff.workflow.selectedPhases.every((phase) => typeof phase === "string" && PACKAGE.test(phase))
@@ -78,14 +115,21 @@ export function validateHandoff(handoff, id) {
                     || handoff.workflow.installed[kind].length > 40
                     || handoff.workflow.installed[kind].some((item) => !record(item)
                         || Object.keys(item).some((key) =>
-                            !["id", "version", "source", "priority"].includes(key))
+                            !["id", "version", "source", "priority", "enabled"].includes(key))
                         || typeof item.id !== "string" || !PACKAGE.test(item.id)
                         || (kind !== "bundles"
-                            && !Number.isSafeInteger(item.priority))
-                        || (kind === "bundles" && item.priority !== undefined)
+                            && (!Number.isSafeInteger(item.priority)
+                                || (handoff.workflow.installLocators !== undefined
+                                    && typeof item.enabled !== "boolean")
+                                || (item.enabled !== undefined
+                                    && typeof item.enabled !== "boolean")))
+                        || (kind === "bundles"
+                            && (item.priority !== undefined || item.enabled !== undefined))
                         || (item.source !== undefined
                             && (typeof item.source !== "string" || !PACKAGE.test(item.source)))
                         || typeof item.version !== "string" || !item.version || item.version.length > 64))))
+        || (handoff.workflow.installLocators !== undefined
+            && (!handoff.workflow.installed || !validInstallLocators(handoff.workflow)))
         || !record(handoff.selections)
         || Object.keys(handoff.selections).some((kind) => !KINDS.includes(kind))
         || KINDS.some((kind) => !Array.isArray(handoff.selections[kind])

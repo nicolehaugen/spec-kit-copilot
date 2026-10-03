@@ -14,6 +14,8 @@ import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
+import { readInstalledBundleMembers, resolveRuntimeInstallLocators }
+    from "../server/runtime-provenance.mjs";
 
 // Real, valid manifests in this repo (same fixtures e2e/canvas-designer.spec.mjs
 // uses), so local-dev validation and precedence are exercised against actual
@@ -55,6 +57,7 @@ function fixture(overrides = {}) {
         getInstance: () => inst,
         getState: async () => current,
         getInstalledWorkflow: async () => empty,
+        getBundleMembers: async () => ({}),
         registerSse() {}, broadcast() {},
         ...overrides,
         session: { ...session, ...overrides.session },
@@ -120,10 +123,12 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /If a bundle replaced it, reinstall extension-canvas-design by ID with --force.*verify its version and source again/);
     assert.ok(sent[0].prompt.indexOf("remaining standalone extensions")
         < sent[0].prompt.indexOf("Only after ALL extensions"));
-    assert.match(sent[0].prompt, /running specify extension add separately for each ID or path/);
-    assert.match(sent[0].prompt, /running specify preset add separately for each ID or path/);
+    assert.match(sent[0].prompt, /running specify extension add separately for each catalogId or path/);
+    assert.match(sent[0].prompt, /running specify preset add separately for each catalogId or path/);
     assert.match(sent[0].prompt, /composition warning.*is a failure even with exit code 0/);
     assert.match(sent[0].prompt, /verify ALL handoff\.workflow\.installed presets and extensions/);
+    assert.match(sent[0].prompt, /installedId is the expected manifest ID, while catalogId is the ID to install/);
+    assert.match(sent[0].prompt, /Never look up a catalog using installedId/);
     assert.match(sent[0].prompt, /Verify runtime bundles separately with bundle list --json \(bundle_id and version only\)/);
     assert.match(sent[0].prompt, /bundle IDs have no enabled state or priority and do not appear in preset\/extension lists/);
     assert.doesNotMatch(sent[0].prompt, /verify ALL handoff\.workflow\.installed IDs, versions, enabled states/);
@@ -154,6 +159,7 @@ test("empty selections produce a complete immutable inline handoff and one queue
     const handoff = JSON.parse(json);
     assert.deepEqual(handoff.selections, empty);
     assert.deepEqual(handoff.workflow.selectedPhases, ["plan"]);
+    assert.deepEqual(handoff.workflow.installLocators, empty);
     assert.equal(handoff.sourceFingerprint, fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
     }));
@@ -219,7 +225,7 @@ test("outdated hosted Canvas Design requires a checked local override before dis
     const handoff = JSON.parse(withLocal.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
     assert.deepEqual(handoff.localSelections.extensions, [{
         id: "extension-canvas-design", source: "local", approved: true,
-        path: LOCAL_CANVAS_DESIGN_EXT_PATH,
+        path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.10",
     }]);
     assert.match(withLocal.sent[0].prompt, /skip the official by-ID install/);
     assert.match(withLocal.sent[0].prompt,
@@ -241,17 +247,120 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
             enabled: true, source: { kind: "catalog" } }],
         bundles: [{ bundle_id: "workflow-kit", version: "2.0.0" }],
     });
+
+    test("runtime provenance installs Pirate by catalog key but verifies its manifest ID", () => {
+        const installed = { presets: [
+            { id: "pirate-full-preset", version: "1.0.0", priority: 10, enabled: true },
+            { id: "lean", version: "1.0.0", priority: 10, enabled: false },
+        ], extensions: [], bundles: [] };
+        const sources = { presets: [
+            { id: "pirate", installedId: "pirate-full-preset", version: "1.0.0",
+                source: "community", downloadUrl: "https://example.org/pirate.zip",
+                installAllowed: false },
+            { id: "lean", installedId: "lean", version: "1.0.0",
+                source: "default", downloadUrl: null },
+        ], extensions: [], bundles: [] };
+        const locators = resolveRuntimeInstallLocators(installed, sources);
+        assert.deepEqual(locators.presets, [
+            { installedId: "pirate-full-preset", catalogId: "pirate", source: "community",
+                downloadUrl: "https://example.org/pirate.zip" },
+            { installedId: "lean", catalogId: "lean", source: "default", downloadUrl: null },
+        ]);
+        const handoff = buildDesignerHandoff(snapshot, empty, undefined, installed, randomUUID(), locators);
+        assert.equal(validateHandoff(handoff, handoff.handoffId), handoff);
+        assert.match(buildDesignerLaunchPrompt(handoff), /Never look up a catalog using installedId/);
+        assert.throws(() => validateHandoff({ ...handoff,
+            workflow: { ...handoff.workflow, installLocators: { ...locators,
+                presets: [{ ...locators.presets[0], catalogId: "pirate-full-preset" }, locators.presets[1]] } },
+        }, handoff.handoffId), /fingerprint mismatch/);
+    });
+
+    test("runtime provenance rejects missing, ambiguous, and version-drifted sources", () => {
+        const installed = { presets: [{ id: "pirate-full-preset", version: "1.0.0",
+            priority: 10, enabled: true }], extensions: [], bundles: [] };
+        const pirate = { id: "pirate", installedId: "pirate-full-preset", version: "1.0.0",
+            source: "community", downloadUrl: "https://example.org/pirate.zip" };
+        const sources = { presets: [pirate], extensions: [], bundles: [] };
+        assert.throws(() => resolveRuntimeInstallLocators(installed, empty),
+            /Cannot identify a unique approved install source/);
+        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+            ...sources, presets: [pirate, { ...pirate, id: "other" }],
+        }), /Cannot identify a unique approved install source/);
+        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+            ...sources, presets: [{ ...pirate, version: "1.0.1" }],
+        }), /Cannot identify a unique approved install source/);
+        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+            ...sources, presets: [{ ...pirate, downloadUrl: null }],
+        }), /no approved download URL/);
+    });
+
+    test("bundle members resolve to a verified bundle rather than a standalone install", async () => {
+        const bundles = [{ id: "kit", version: "2.0.0" }];
+        const members = await readInstalledBundleMembers(process.cwd(), bundles,
+            async (binary, args) => {
+                assert.deepEqual(args, ["bundle", "info", "kit", "--json"]);
+                return { stdout: JSON.stringify({ id: "kit", source: "community",
+                    components: [{ kind: "presets", id: "member" }] }) };
+            });
+        const installed = { presets: [{ id: "member", version: "1.0.0",
+            priority: 3, enabled: true }], extensions: [], bundles };
+        const locators = resolveRuntimeInstallLocators(installed, {
+            presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
+                source: "community", version: "2.0.0", downloadUrl: "https://example.org/kit.zip" }],
+        }, undefined, members);
+        assert.deepEqual(locators.presets, [{ installedId: "member", source: "bundle", bundleId: "kit" }]);
+        assert.equal(locators.bundles[0].catalogId, "kit");
+        assert.throws(() => resolveRuntimeInstallLocators({
+            ...installed, bundles: [...bundles, { id: "other", version: "2.0.0" }],
+        }, empty, undefined, { kit: members.kit, other: members.kit }), /Ambiguous bundle source/);
+    });
+
+    test("runtime source drift during readiness prevents Designer dispatch", async () => {
+        const source = { id: "pirate", installedId: "pirate-full-preset",
+            source: "community", version: "1.0.0",
+            downloadUrl: "https://example.org/pirate.zip" };
+        const installed = { presets: [{ id: "pirate-full-preset", version: "1.0.0",
+            priority: 10, enabled: true }], extensions: [], bundles: [] };
+        let catalogReads = 0;
+        const launch = fixture({ getInstalledWorkflow: async () => installed,
+            getState: async () => ({ ...snapshot, catalog: { ...catalog,
+                presets: [...catalog.presets, { ...source,
+                    downloadUrl: ++catalogReads > 2
+                        ? "https://example.org/replaced.zip" : source.downloadUrl }] } }) });
+        const response = await launch.post(request());
+        assert.equal(response.statusCode, 409);
+        assert.match(response.body.error, /Runtime package sources changed/);
+        assert.equal(catalogReads, 3);
+        assert.equal(launch.sent.length, 0);
+    });
     const runtime = fixture({ getInstalledWorkflow: async () => installed });
-    runtime.setSnapshot({ ...snapshot, composition: {
+    const selection = { presets: [{ id: "theme", source: "copilot", approved: true }],
+        extensions: [], bundles: [] };
+    runtime.setSnapshot({ ...snapshot, catalog: { ...catalog,
+        presets: [...catalog.presets, { id: "copilot-sub-agents",
+            installedId: "copilot-sub-agents", source: "copilot", version: "1.0.0",
+            downloadUrl: "https://example.org/sub-agents.zip" },
+        { id: "disabled", installedId: "disabled", source: "default",
+            version: "1.0.0", downloadUrl: null }],
+        extensions: [{ id: "extension-writer", installedId: "extension-writer",
+            source: "copilot", version: "0.3.0",
+            downloadUrl: "https://example.org/writer.zip" }],
+        bundles: [{ id: "workflow-kit", installedId: "workflow-kit",
+            source: "community", version: "2.0.0",
+            downloadUrl: "https://example.org/kit.zip" }],
+    }, composition: {
         presets: [{ id: "copilot-sub-agents", priority: 10 }],
         extensions: [{ id: "extension-writer", priority: 10 }],
         bundles: [{ id: "workflow-kit", version: "2.0.0" }],
     } });
-    const selection = { presets: [{ id: "theme", source: "copilot", approved: true }],
-        extensions: [], bundles: [] };
     assert.equal((await runtime.post(request(selection))).statusCode, 202);
     const handoff = JSON.parse(runtime.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
     assert.deepEqual(handoff.workflow.installed, installed);
+    assert.equal(handoff.workflow.installed.presets[1].enabled, false);
+    assert.deepEqual(handoff.workflow.installLocators.presets[0], {
+        installedId: "copilot-sub-agents", source: "copilot",
+        catalogId: "copilot-sub-agents", downloadUrl: "https://example.org/sub-agents.zip",
+    });
     assert.match(runtime.sent[0].prompt, /--priority.*set-priority/);
     assert.match(runtime.sent[0].prompt, /including entries not tagged canvas-design/);
     assert.deepEqual(handoff.selections.presets.map((item) => item.id), ["theme"]);
@@ -263,7 +372,7 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         .workflow.installed, empty);
     assert.throws(() => validateHandoff({ ...handoff,
         workflow: { ...handoff.workflow, installed: {
-            ...installed, presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 10 }],
+            ...installed, presets: [{ ...installed.presets[0], priority: 10 }, installed.presets[1]],
         } },
     }, handoff.handoffId), /fingerprint mismatch/);
 });
@@ -286,7 +395,8 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
             ["bundle", "list", "--json"],
         ]);
         assert.ok(calls.every(({ cwd }) => cwd === path));
-        assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0", priority: 1 }]);
+        assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0",
+            priority: 1, enabled: true }]);
         assert.deepEqual(installed.bundles, [{ id: "kit", version: "2.0.0" }]);
         await assert.rejects(readInstalledWorkflowInventory({ workspacePath: path },
             async () => ({ stdout: "not-json" })), /Invalid installed presets inventory/);
@@ -297,9 +407,9 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
 
 test("invalid or drifting runtime priorities never dispatch a Designer launch", async () => {
     assert.deepEqual(normalizeInstalledWorkflowInventory({
-        presets: [{ id: "preset", version: "1.0.0", priority: -2 }],
+        presets: [{ id: "preset", version: "1.0.0", priority: -2, enabled: false }],
         extensions: [], bundles: [],
-    }).presets, [{ id: "preset", version: "1.0.0", priority: -2 }]);
+    }).presets, [{ id: "preset", version: "1.0.0", priority: -2, enabled: false }]);
     for (const bad of [
         { id: "preset", version: "1.0.0" },
         { id: "preset", version: "1.0.0", priority: Number.MAX_SAFE_INTEGER + 1 },
@@ -307,11 +417,14 @@ test("invalid or drifting runtime priorities never dispatch a Designer launch", 
     ]) {
         assert.throws(() => normalizeInstalledWorkflowInventory({
             presets: [bad], extensions: [], bundles: [],
-        }), /identity, version or priority/);
+        }), /identity, version, state or priority/);
     }
     let reads = 0;
-    const changed = fixture({ getInstalledWorkflow: async () => ({
-        presets: [{ id: "preset", version: "1.0.0", priority: ++reads }],
+    const changed = fixture({ getState: async () => ({ ...snapshot, catalog: {
+        ...catalog, presets: [...catalog.presets, { id: "preset", installedId: "preset",
+            source: "default", version: "1.0.0", downloadUrl: null }],
+    } }), getInstalledWorkflow: async () => ({
+        presets: [{ id: "preset", version: "1.0.0", priority: ++reads, enabled: true }],
         extensions: [], bundles: [],
     }) });
     const response = await changed.post(request());
@@ -536,9 +649,10 @@ test("validateLocalDesignerSelections validates real manifests and stays undefin
         extensions: [{ id: "extension-canvas-design", path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
     });
     assert.deepEqual(result, {
-        presets: [{ id: "copilot-sub-agents", source: "local", approved: true, path: LOCAL_PRESET_PATH }],
+        presets: [{ id: "copilot-sub-agents", source: "local", approved: true,
+            path: LOCAL_PRESET_PATH, version: "1.0.0" }],
         extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
-            path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
+            path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.10" }],
     });
 });
 
@@ -619,8 +733,11 @@ test("Designer launch installs every extension before standalone presets, includ
             path: LOCAL_PRESET_PATH }],
         extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
             path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
-    }, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
-        extensions: [], bundles: [] }, randomUUID());
+    }, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1, enabled: true }],
+        extensions: [], bundles: [] }, randomUUID(), {
+        presets: [{ installedId: "copilot-sub-agents", source: "local",
+            path: LOCAL_PRESET_PATH }], extensions: [], bundles: [],
+    });
     const prompt = buildDesignerLaunchPrompt(handoff);
     const extensionStep = prompt.indexOf("Install ALL remaining standalone extensions");
     const localExtension = prompt.indexOf("For each approved entry in localSelections.extensions");
@@ -643,7 +760,7 @@ test("handleDesignerLaunch inlines validated localSelections into the handoff en
     const json = sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\nEND_HANDOFF_JSON\n/)[1];
     const handoff = JSON.parse(json);
     assert.deepEqual(handoff.localSelections, { presets: [{ id: "copilot-sub-agents",
-        source: "local", approved: true, path: LOCAL_PRESET_PATH }] });
+        source: "local", approved: true, path: LOCAL_PRESET_PATH, version: "1.0.0" }] });
     assert.equal(handoff.sourceFingerprint, fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
         localSelections: handoff.localSelections,
