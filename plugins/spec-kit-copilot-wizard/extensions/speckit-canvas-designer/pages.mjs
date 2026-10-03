@@ -189,7 +189,7 @@ function buildModel(entries, schema) {
 
 function validateContribution(document, name, slots, fieldOrigins) {
     schemaMetadata(document, name);
-    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires",
+    const keys = ["schemaVersion", "id", "host", "slot", "order", "field",
         "generatedBinding"];
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).some((key) => !keys.includes(key))
@@ -197,8 +197,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.id)
         || document.host !== "designer" || !Number.isInteger(document.order)
         || document.order < -100000 || document.order > 100000
-        || typeof document.slot !== "string"
-        || !Array.isArray(document.requires ?? [])) {
+        || typeof document.slot !== "string") {
         throw new Error(`${name}: invalid Canvas Design contribution`);
     }
     const slot = slots.get(document.slot)?.slot;
@@ -537,13 +536,6 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         loaded.push({ ...item, path, hash, ...(document === undefined ? {} : { document }) });
     }
-    for (const entry of loaded) {
-        for (const name of entry.document?.requires ?? []) {
-            if (typeof name !== "string" || !names.has(name)) {
-                throw new Error(`${entry.name}: unresolved required Canvas Design template ${name}`);
-            }
-        }
-    }
     for (const entry of loaded.filter((item) => item.kind === "generated.added-page-definition")) {
         const renderer = loaded.find((item) => item.name === entry.document.renderer);
         if (!renderer || renderer.kind !== "generated.added-page-renderer") {
@@ -638,8 +630,6 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             if (field.document.field.type !== control.document.value.type
                 || (["object", "image"].includes(field.document.field.type)
                     && !field.document.generatedBinding)
-                || (field.document.generatedBinding?.presentation === "text"
-                    && !field.document.requires.includes(control.name))
                 || (field.document.generatedBinding?.presentation === "control"
                     && !control.document.adapters.generated)) {
                 throw new Error(`${field.name}: incompatible shared control value or generated placement`);
@@ -653,8 +643,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition")) {
         if (!controls.some((control) => control.document.id === entry.document.field.control
-            && (["string", "boolean"].includes(entry.document.field.type)
-                || entry.document.requires.includes(control.name)))) {
+            && control.document.value.type === entry.document.field.type)) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
         }
     }

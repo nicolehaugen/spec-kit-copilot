@@ -62,9 +62,9 @@ brand mark; the optional larger main-page logo appears next to the workflow
 heading and description. Either image may be used alone. Generate freezes
 each selected image's bytes and SHA-256 hash and packages it within the
 generated extension, together with the frozen, shared generated adapter.
-Each image contribution lists `"requires": ["canvas-stock-image"]` and
-uses `"control": "stock.image"`; its `generatedBinding` declares the target
-slot. Presets reuse that definition and both adapters rather than supplying
+Each image contribution uses `"control": "stock.image"` to select the uniquely
+resolved shared definition; its `generatedBinding` declares the target slot.
+Missing or duplicate definitions fail validation. Presets reuse the definition and both adapters rather than supplying
 per-placement image renderers. The resulting app serves its own images and
 loads its packaged adapter without Canvas Design installed. It rejects missing
 or modified packaged images instead of silently rendering a different logo.
@@ -78,7 +78,7 @@ such as alt text in `context`. Neither adapter selects a slot or reads files.
 Preset-generated pages can also place a `stock.image` contribution. Declare a
 slot on the generated page, for example
 `"slots": [{"id": "hero.logo", "accepts": ["asset"]}]`, and bind the image
-field with `"requires": ["canvas-stock-image"]` and
+field with `"control": "stock.image"` and
 `"generatedBinding": {"presentation": "asset",
 "page": "canvas-generated-gallery", "slot": "hero.logo"}`. The page renderer
 puts a `<div data-asset-slot="hero.logo"></div>` at the desired location; the

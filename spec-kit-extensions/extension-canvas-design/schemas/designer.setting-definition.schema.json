@@ -10,7 +10,6 @@
     "host": {"const": "designer"},
     "slot": {"type": "string"},
     "order": {"type": "integer", "minimum": -100000, "maximum": 100000},
-    "requires": {"type": "array", "items": {"type": "string"}},
     "field": {
       "type": "object",
       "additionalProperties": false,

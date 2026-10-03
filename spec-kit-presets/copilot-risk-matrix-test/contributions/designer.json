@@ -4,7 +4,6 @@
   "host": "designer",
   "slot": "essentials.options",
   "order": 20,
-  "requires": ["canvas-control-risk-matrix"],
   "field": {
     "id": "risk.rating",
     "label": "Risk rating",
