@@ -8,6 +8,10 @@ import { artifactPath, collectArtifactEvidence, effectiveSource, readEvidenceCac
     validatePrimaryIndex } from "../artifact-evidence.mjs";
 import { handleArtifactTargets } from "../server/handlers-ops.mjs";
 import { attachOutputEvidence, outputAvailability } from "../canvas-runtime/output-availability.mjs";
+import { fsDeps } from "../canvas-runtime/instances.mjs";
+import { beginOutputInference } from "../canvas-runtime/output-inference.mjs";
+import { startRefresh } from "../canvas-runtime/refresh-status.mjs";
+import { hydrateExtensionArtifactsFromCache } from "../project-scanner/extension-artifacts.mjs";
 
 async function fixture(run) {
     const root = join(import.meta.dirname, `.evidence-fixture-${randomUUID()}`);
@@ -56,6 +60,45 @@ test("fingerprints effective skill and script, not composition layers", async ()
             .find(({ commandId }) => commandId === "speckit.plan").fingerprint, first.fingerprint);
         await write(".specify/scripts/powershell/setup-plan.ps1", "FEATURE_DIR is specs/new");
         assert.notEqual((await effectiveSource(root, "plan")).fingerprint, first.fingerprint);
+    });
+});
+
+test("output declaration uses the skill read for its fingerprint, without reopening it", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".github/skills/speckit-plan/SKILL.md",
+            "---\nname: speckit-plan\nartifact: specs/<slug>/plan.md\n---\nWrite specs/<slug>/plan.md.");
+        const snapshot = { pipeline: [{ id: "plan" }], commands: [],
+            composition: { artifacts: [] } };
+        let skillReads = 0;
+        const result = await collectArtifactEvidence(root, snapshot, async (path, flags) => {
+            if (path.endsWith("SKILL.md")) skillReads++;
+            return open(path, flags);
+        });
+        assert.equal(skillReads, 1);
+        assert.equal(result.evidence.plan.candidates[0].path, "specs/<slug>/plan.md");
+        assert.equal(result.requests.find(({ commandId }) => commandId === "speckit.plan").fingerprint,
+            (await effectiveSource(root, "plan")).fingerprint);
+    });
+});
+
+test("inferred outputs with the same named root and filename retain distinct root paths", async () => {
+    await fixture(async ({ root, write }) => {
+        const fingerprint = (await effectiveSource(root, "plan")).fingerprint;
+        const candidates = ["specs/first", "specs/second"].map((path) => ({
+            kind: "file", path: "plan.md", root: { name: "FEATURE_DIR", path },
+            source: "inference", effect: "creates", evidence: `Writes ${path}/plan.md`,
+        }));
+        await write(".speckit-wizard/artifact-targets.json", JSON.stringify({
+            entries: { "commands/speckit.plan": { outputEvidence: {
+                fingerprint, candidates, primaryIndex: 1,
+            } } },
+        }));
+        const snapshot = { pipeline: [{ id: "plan" }], commands: [],
+            composition: { artifacts: [] } };
+        const result = await collectArtifactEvidence(root, snapshot);
+        assert.deepEqual(result.evidence.plan.candidates.map(({ root: outputRoot }) => outputRoot?.path),
+            ["specs/first", "specs/second"]);
+        assert.equal(result.evidence.plan.primaryIndex, 1);
     });
 });
 
@@ -207,6 +250,80 @@ test("cache writes refuse a linked cache directory and clean up failed temp file
             if (swapped) await rename(backup, directory);
             await rm(outside, { recursive: true, force: true });
         }
+    });
+});
+
+test("scanner rejects a linked cache directory", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".speckit-wizard/artifact-targets.json", '{"version":1,"entries":{}}');
+        const directory = join(root, ".speckit-wizard");
+        const backup = `${directory}-original`;
+        const outside = await mkdtemp(join(tmpdir(), "evidence-scanner-read-"));
+        let swapped = false;
+        try {
+            await writeFile(join(outside, "artifact-targets.json"), '{"version":1,"entries":{}}');
+            await rename(directory, backup);
+            await symlink(outside, directory, process.platform === "win32" ? "junction" : "dir");
+            swapped = true;
+            await assert.rejects(hydrateExtensionArtifactsFromCache({
+                cwd: root, phases: {}, slug: null, deps: fsDeps,
+            }), /Linked artifact cache directory/);
+        } finally {
+            if (swapped) await rm(directory);
+            if (swapped) await rename(backup, directory);
+            await rm(outside, { recursive: true, force: true });
+        }
+    });
+});
+
+test("scanner pruning replaces a swapped cache link instead of writing through it", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".speckit-wizard/artifact-targets.json", JSON.stringify({
+            version: 1, entries: {
+                "commands/speckit.orphan": { writesTo: "specs/<slug>/orphan.md" },
+            },
+        }));
+        const cachePath = join(root, ".speckit-wizard", "artifact-targets.json");
+        const outside = await mkdtemp(join(tmpdir(), "evidence-scanner-write-"));
+        const external = join(outside, "unrelated.json");
+        try {
+            await writeFile(external, "leave untouched");
+            const warnings = [];
+            await hydrateExtensionArtifactsFromCache({
+                cwd: root, phases: {}, slug: null, warnings,
+                deps: { ...fsDeps, readEvidenceCache: async (cwd) => {
+                    const cache = await readEvidenceCache(cwd);
+                    await rm(cachePath);
+                    await link(external, cachePath);
+                    return cache;
+                } },
+            });
+            assert.deepEqual(warnings, []);
+            assert.equal(await readFile(external, "utf8"), "leave untouched");
+            assert.deepEqual((await readEvidenceCache(root)).entries, {});
+        } finally {
+            await rm(outside, { recursive: true, force: true });
+        }
+    });
+});
+
+test("unreadable cache immediately marks active output inference incomplete", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".speckit-wizard/artifact-targets.json", "{invalid json");
+        const events = [];
+        const inst = { workspacePath: root, url: "http://127.0.0.1:1234", token: "test",
+            broadcast: (event) => events.push(event) };
+        startRefresh(inst);
+        beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }]);
+        const res = response();
+        await handleArtifactTargets(res, { entries: {
+            "commands/speckit.plan": { writesTo: "specs/<slug>/plan.md" },
+        } }, { getInstance: () => inst, broadcast: (event) => events.push(event) });
+        assert.equal(res.status, 500);
+        assert.match(res.body.error, /Artifact cache was not overwritten/);
+        assert.equal(inst.outputInference.status, "incomplete");
+        assert.equal(inst.refreshStatus.status, "incomplete");
+        assert.ok(events.some(({ reason }) => reason === "output inference failed"));
     });
 });
 

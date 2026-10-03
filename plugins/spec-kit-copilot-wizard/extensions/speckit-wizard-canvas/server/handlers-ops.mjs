@@ -177,6 +177,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
     try {
         existing = await readEvidenceCache(inst.workspacePath);
     } catch (error) {
+        if (inst.outputInference?.status === "updating") failOutputInference(inst);
         return jsonError(res, 500, `Artifact cache was not overwritten: ${error.message}`);
     }
     for (const [key, entry] of Object.entries(cleaned)) {

@@ -196,6 +196,7 @@ export async function scanWorkspace(workspacePath, deps) {
         phases,
         slug: slug ?? null,
         deps,
+        warnings,
     }).catch((err) => {
         warnings.push(`hydrateExtensionArtifactsFromCache failed: ${err?.message ?? err}`);
     });

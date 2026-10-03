@@ -200,7 +200,8 @@ export async function effectiveSource(cwd, id, openFile = open) {
         files.push(await sourceFile(cwd, path, openFile) ?? { path, sha256: null });
     }
     const sources = files.map(({ path, sha256 }) => ({ path, sha256 }));
-    return { skillPath, sources, fingerprint: digest(JSON.stringify({ version: 1, sources })) };
+    return { skillPath, skillText: skill.text, sources,
+        fingerprint: digest(JSON.stringify({ version: 1, sources })) };
 }
 
 export async function readEvidenceCache(cwd, openFile = open) {
@@ -272,7 +273,7 @@ export async function writeEvidenceCache(cwd, payload, renameFile = rename) {
     }
 }
 
-export async function collectArtifactEvidence(cwd, snapshot) {
+export async function collectArtifactEvidence(cwd, snapshot, openFile = open) {
     const evidence = {}, requests = [], warnings = [];
     let cache;
     try { cache = await readEvidenceCache(cwd); }
@@ -296,10 +297,9 @@ export async function collectArtifactEvidence(cwd, snapshot) {
         if (!validId(id)) continue;
         const candidates = [];
         try {
-            const source = await effectiveSource(cwd, id);
-            const parsed = source ? await sourceFile(cwd, source.skillPath) : null;
-            const declaration = parsed ? pathEvidence(
-                (await parseCommandFile(parsed.text, warnings, "effective", id)).artifact, "declaration") : null;
+            const source = await effectiveSource(cwd, id, openFile);
+            const declaration = source ? pathEvidence(
+                (await parseCommandFile(source.skillText, warnings, "effective", id)).artifact, "declaration") : null;
             if (declaration) candidates.push(declaration);
             const cached = Object.entries(cache.entries).find(([key]) => commandId(key) === id)?.[1];
             const legacy = ["manual", "author"].includes(cached?.source)
@@ -318,7 +318,8 @@ export async function collectArtifactEvidence(cwd, snapshot) {
                     validatePrimaryIndex(cached.outputEvidence.primaryIndex, cached.outputEvidence.candidates));
                 for (const candidate of inferred.candidates) {
                     if (!candidates.some((item) => item.path && item.path === candidate.path
-                        && item.relativeTo === candidate.relativeTo && item.root?.name === candidate.root?.name)) {
+                        && item.relativeTo === candidate.relativeTo && item.root?.name === candidate.root?.name
+                        && item.root?.path === candidate.root?.path)) {
                         candidates.push(candidate);
                     }
                 }
@@ -331,7 +332,7 @@ export async function collectArtifactEvidence(cwd, snapshot) {
                 const target = cached.outputEvidence.candidates[primaryIndex];
                 primaryIndex = candidates.findIndex((candidate) => candidate.kind === "file"
                     && candidate.path === target?.path && candidate.relativeTo === target?.relativeTo
-                    && candidate.root?.name === target?.root?.name);
+                    && candidate.root?.name === target?.root?.name && candidate.root?.path === target?.root?.path);
                 if (primaryIndex < 0) primaryIndex = null;
             }
             if (current && candidates.some((candidate) => candidate.source === "manual" && candidate.kind === "file")) {

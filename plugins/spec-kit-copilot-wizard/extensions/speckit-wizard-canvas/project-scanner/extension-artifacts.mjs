@@ -20,28 +20,27 @@
 //     }
 //   }
 //
-// This scanner is the read side. Writing / re-inference is the agent's
-// job, exposed via the wizard's HTTP surface (see server /api/inference/*).
+// Inference writes through the wizard's HTTP surface; the scanner also
+// prunes orphaned cache entries when extensions are removed.
 
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { artifactPath } from "../artifact-evidence.mjs";
+import { artifactPath, readEvidenceCache, writeEvidenceCache } from "../artifact-evidence.mjs";
 import { CORE_COMMANDS } from "../pipeline/canonical.mjs";
 import { emptyPhaseSlice } from "../canvas-runtime/wizard-phases.mjs";
 import { toPortable } from "./fs-helpers.mjs";
 import {
     safeReaddir,
-    readBoundedJson,
     pickNewestSubdir,
     securePathWithin,
     canonicalizePath,
     isPathContained,
 } from "./fs-helpers.mjs";
 
-export async function hydrateExtensionArtifactsFromCache({ cwd, phases, slug, deps }) {
+export async function hydrateExtensionArtifactsFromCache({ cwd, phases, slug, deps, warnings = [] }) {
     const cachePath = join(cwd, ".speckit-wizard", "artifact-targets.json");
     if (!(await deps.pathExists(cachePath))) return;
 
-    const cache = await readBoundedJson(cachePath, deps);
+    const cache = await (deps.readEvidenceCache ?? readEvidenceCache)(cwd);
     const entries = cache?.entries;
     if (!entries || typeof entries !== "object") return;
 
@@ -82,18 +81,18 @@ export async function hydrateExtensionArtifactsFromCache({ cwd, phases, slug, de
     if (prunedAny) {
         // Persist the pruned cache back to disk so subsequent scans
         // (and any consumer that reads the file directly) see a clean
-        // picture. Best-effort — a write failure just means we'll try
-        // again next scan.
+        // picture. A write failure leaves stale entries for the next scan.
         try {
-            const fsp = await import("node:fs/promises");
             const nextCache = {
                 ...cache,
                 version: 1,
                 entries: kept,
                 updatedAt: new Date().toISOString(),
             };
-            await fsp.writeFile(cachePath, JSON.stringify(nextCache, null, 2) + "\n", "utf8");
-        } catch { /* leave stale — next scan retries */ }
+            await (deps.writeEvidenceCache ?? writeEvidenceCache)(cwd, JSON.stringify(nextCache, null, 2) + "\n");
+        } catch (error) {
+            warnings.push(`Artifact cache pruning failed: ${error?.message ?? error}`);
+        }
     }
 
     for (const [key, entry] of Object.entries(kept)) {
