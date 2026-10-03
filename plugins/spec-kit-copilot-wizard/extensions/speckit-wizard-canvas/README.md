@@ -96,6 +96,8 @@ Phase cards list the Markdown files and folders their commands produce,
 including multiple outputs when the installed skill identifies them. The
 default output opens in the artifact viewer when the file exists; folders
 and not-yet-created files offer a link to an existing parent folder instead.
+Opening an expected output in the viewer before it exists shows an
+"Output not ready or not found" message rather than a raw 404.
 The **Composition** button reads **Refresh** when idle, whether or not the latest
 data is up to date; progress and retry messages appear beside it. It rechecks
 installed skills and refreshes the phase output evidence; catalog install/remove actions refresh it as
@@ -104,6 +106,11 @@ the phase cards stays visible while pipeline or output inference is pending,
 briefly confirms completion, and remains visible with retry guidance if a
 refresh cannot finish. Merely opening the Phases tab does not start an
 inference turn.
+Effective skill and script sources, as well as the artifact evidence cache, are
+read through a single file handle with path/identity checks and a 512 KiB cap,
+so changing a workspace file during a refresh cannot bypass the read limit.
+Cache updates use an exclusive temporary file in a revalidated directory and
+atomically replace the destination rather than writing through a cache symlink.
 
 ## Opening the dashboard
 

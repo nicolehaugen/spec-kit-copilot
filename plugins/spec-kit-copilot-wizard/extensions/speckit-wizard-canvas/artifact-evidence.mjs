@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
-import { lstat, readFile, realpath, readdir } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, realpath, readdir, rename, unlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { effectivePipelinePhases, stripCommandsPrefix } from "./pipeline/effective-phases.mjs";
 import { parseCommandFile } from "./composition/preset-loader.mjs";
@@ -7,6 +8,7 @@ import { CORE_OUTPUTS } from "./pipeline/canonical.mjs";
 import { PHASE_ORDER } from "./canvas-runtime/wizard-phases.mjs";
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
+const SOURCE_LIMIT = 512 * 1024;
 export const commandId = (id) => stripCommandsPrefix(
     typeof id === "string" ? id.replace(/^command:/, "") : id);
 const validId = (id) => typeof id === "string" && /^[\w.-]{1,100}$/.test(id);
@@ -125,7 +127,38 @@ export function normalizeInferredEvidence(candidates, primaryIndex) {
     return { candidates: unique, primaryIndex: selected };
 }
 
-async function sourceFile(cwd, path) {
+async function readBounded(path, { invalid, oversized, linked = invalid, openFile = open }) {
+    let file;
+    try {
+        file = await openFile(path, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    } catch (error) {
+        if (error.code === "ELOOP") throw new Error(linked, { cause: error });
+        throw error;
+    }
+    try {
+        const [stat, pathStat, parent] = await Promise.all([
+            file.stat(), lstat(path), realpath(dirname(path)),
+        ]);
+        if (resolve(parent) !== resolve(dirname(path))
+            || !stat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink()
+            || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino
+            || stat.size > SOURCE_LIMIT) throw new Error(invalid);
+        const bytes = Buffer.alloc(SOURCE_LIMIT + 1);
+        let length = 0;
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (!bytesRead) break;
+            length += bytesRead;
+        }
+        if (length > SOURCE_LIMIT) throw new Error(oversized);
+        return bytes.toString("utf8", 0, length);
+    } finally {
+        await file.close();
+    }
+}
+
+async function sourceFile(cwd, path, openFile = open) {
     if (typeof path !== "string" || !/^(?:\.github\/skills\/|\.specify\/scripts\/)/.test(path)
         || path.split("/").some((part) => !part || part === "." || part === "..")
         || /[\\<>:"|?*\x00-\x1f\x7f]/.test(path)) throw new Error("Unsafe artifact evidence source");
@@ -145,17 +178,16 @@ async function sourceFile(cwd, path) {
     if (resolve(actual) !== resolve(current) || relative(root, actual).startsWith("..")) {
         throw new Error("Artifact evidence source escapes checkout");
     }
-    const stat = await lstat(actual);
-    if (!stat.isFile() || stat.size > 512 * 1024) throw new Error("Invalid artifact evidence source");
-    const text = await readFile(actual, "utf8");
+    const text = await readBounded(actual, { invalid: "Invalid artifact evidence source",
+        oversized: "Oversized artifact evidence source", linked: "Linked artifact evidence source", openFile });
     return { path, text, sha256: digest(text) };
 }
 
-export async function effectiveSource(cwd, id) {
+export async function effectiveSource(cwd, id, openFile = open) {
     if (!validId(id)) throw new Error("Invalid evidence command ID");
     const full = id.startsWith("speckit.") ? id : `speckit.${id}`;
     const skillPath = `.github/skills/${full.replaceAll(".", "-")}/SKILL.md`;
-    const skill = await sourceFile(cwd, skillPath);
+    const skill = await sourceFile(cwd, skillPath, openFile);
     if (!skill) return null;
     const paths = new Set(skill.text.match(/\.specify\/scripts\/[\w./-]+\.(?:ps1|sh|py)\b/g) ?? []);
     for (const path of [...paths]) {
@@ -165,13 +197,13 @@ export async function effectiveSource(cwd, id) {
     if (paths.size > 24) throw new Error("Too many script dependencies");
     const files = [skill];
     for (const path of [...paths].sort()) {
-        files.push(await sourceFile(cwd, path) ?? { path, sha256: null });
+        files.push(await sourceFile(cwd, path, openFile) ?? { path, sha256: null });
     }
     const sources = files.map(({ path, sha256 }) => ({ path, sha256 }));
     return { skillPath, sources, fingerprint: digest(JSON.stringify({ version: 1, sources })) };
 }
 
-export async function readEvidenceCache(cwd) {
+export async function readEvidenceCache(cwd, openFile = open) {
     const root = await realpath(cwd);
     const directory = join(root, ".speckit-wizard");
     const path = join(directory, "artifact-targets.json");
@@ -179,16 +211,63 @@ export async function readEvidenceCache(cwd) {
         const parent = await lstat(directory);
         if (!parent.isDirectory() || parent.isSymbolicLink()
             || resolve(await realpath(directory)) !== resolve(directory)) throw new Error("Linked artifact cache directory");
-        const stat = await lstat(path);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 512 * 1024
-            || resolve(await realpath(path)) !== resolve(path)) throw new Error("Unsafe artifact cache");
-        const cache = JSON.parse(await readFile(path, "utf8"));
+        const text = await readBounded(path, { invalid: "Unsafe artifact cache",
+            oversized: "Unsafe artifact cache", openFile });
+        const cache = JSON.parse(text);
         if (!cache || !cache.entries || typeof cache.entries !== "object" || Array.isArray(cache.entries)) {
             throw new Error("Invalid artifact cache");
         }
         return cache;
     } catch (error) {
         if (error.code === "ENOENT") return { version: 1, entries: {} };
+        throw error;
+    }
+}
+
+export async function writeEvidenceCache(cwd, payload, renameFile = rename) {
+    const root = await realpath(cwd);
+    const directory = join(root, ".speckit-wizard");
+    await mkdir(directory, { recursive: true });
+    const initial = await lstat(directory);
+    const sameDirectory = async () => {
+        const current = await lstat(directory);
+        return current.isDirectory() && !current.isSymbolicLink()
+            && current.dev === initial.dev && current.ino === initial.ino
+            && resolve(await realpath(directory)) === resolve(directory);
+    };
+    if (!await sameDirectory()) throw new Error("Unsafe artifact cache directory");
+    const temp = join(directory, `.artifact-targets.${randomUUID()}.tmp`);
+    const target = join(directory, "artifact-targets.json");
+    let opened;
+    try {
+        const file = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+            | (constants.O_NOFOLLOW ?? 0), 0o600);
+        try {
+            opened = await file.stat();
+            await file.writeFile(payload, "utf8");
+        } finally {
+            await file.close();
+        }
+        const current = await lstat(temp);
+        if (!await sameDirectory() || !opened.isFile() || !current.isFile() || current.isSymbolicLink()
+            || opened.dev !== current.dev || opened.ino !== current.ino) {
+            throw new Error("Unsafe artifact cache temporary file");
+        }
+        await renameFile(temp, target);
+    } catch (error) {
+        if (opened) {
+            try {
+                if (await sameDirectory()) {
+                    const current = await lstat(temp);
+                    if (current.isFile() && !current.isSymbolicLink()
+                        && opened.dev === current.dev && opened.ino === current.ino) await unlink(temp);
+                }
+            } catch (cleanupError) {
+                if (cleanupError.code !== "ENOENT") {
+                    console.warn(`Artifact cache temporary cleanup failed: ${cleanupError.message}`);
+                }
+            }
+        }
         throw error;
     }
 }

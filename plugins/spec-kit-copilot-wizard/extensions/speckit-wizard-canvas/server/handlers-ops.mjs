@@ -2,8 +2,7 @@
 // shared runSkillsReload core used by both /api/skills/reload and the
 // extension's canvas action.
 
-import { join } from "node:path";
-import { commandId, effectiveSource, normalizeInferredEvidence, readEvidenceCache,
+import { commandId, effectiveSource, normalizeInferredEvidence, readEvidenceCache, writeEvidenceCache,
     validateCandidates, validatePrimaryIndex } from "../artifact-evidence.mjs";
 import { failOutputInference } from "../canvas-runtime/output-inference.mjs";
 import { finishRefreshPart } from "../canvas-runtime/refresh-status.mjs";
@@ -173,10 +172,6 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
         return jsonError(res, 400, "no valid entries");
     }
 
-    const fsp = await import("node:fs/promises");
-    const cacheDir = join(inst.workspacePath, ".speckit-wizard");
-    const cachePath = join(cacheDir, "artifact-targets.json");
-
     // Read existing cache (if any) so we merge instead of clobber.
     let existing;
     try {
@@ -199,13 +194,13 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
         entries: { ...existing.entries, ...cleaned },
         updatedAt: new Date().toISOString(),
     };
-    if (Buffer.byteLength(JSON.stringify(merged)) > 512 * 1024) {
+    const payload = JSON.stringify(merged, null, 2) + "\n";
+    if (Buffer.byteLength(payload) > 512 * 1024) {
         return jsonError(res, 400, "Artifact-target cache exceeds its size limit");
     }
 
     try {
-        await fsp.mkdir(cacheDir, { recursive: true });
-        await fsp.writeFile(cachePath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+        await writeEvidenceCache(inst.workspacePath, payload);
     } catch (err) {
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }

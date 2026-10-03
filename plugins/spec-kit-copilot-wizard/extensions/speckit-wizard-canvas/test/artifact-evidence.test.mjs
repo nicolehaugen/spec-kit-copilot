@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, link, mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { artifactPath, collectArtifactEvidence, effectiveSource, validateCandidates,
+import { tmpdir } from "node:os";
+import { artifactPath, collectArtifactEvidence, effectiveSource, readEvidenceCache, writeEvidenceCache, validateCandidates,
     validatePrimaryIndex } from "../artifact-evidence.mjs";
 import { handleArtifactTargets } from "../server/handlers-ops.mjs";
 import { attachOutputEvidence, outputAvailability } from "../canvas-runtime/output-availability.mjs";
@@ -55,6 +56,157 @@ test("fingerprints effective skill and script, not composition layers", async ()
             .find(({ commandId }) => commandId === "speckit.plan").fingerprint, first.fingerprint);
         await write(".specify/scripts/powershell/setup-plan.ps1", "FEATURE_DIR is specs/new");
         assert.notEqual((await effectiveSource(root, "plan")).fingerprint, first.fingerprint);
+    });
+});
+
+test("source reads reject a replaced handle and an oversized file swapped after path checks", async () => {
+    await fixture(async ({ root }) => {
+        const other = join(root, ".specify", "scripts", "powershell", "setup-plan.ps1");
+        await assert.rejects(effectiveSource(root, "plan", (path, flags) =>
+            open(path.endsWith("SKILL.md") ? other : path, flags)), /Invalid artifact evidence source/);
+        await assert.rejects(effectiveSource(root, "plan", async (path, flags) => {
+            if (path.endsWith("SKILL.md")) await writeFile(path, "x".repeat(512 * 1024 + 1));
+            return open(path, flags);
+        }), /Invalid artifact evidence source/);
+    });
+});
+
+test("source reads stay bounded when the opened file grows after stat", async () => {
+    await fixture(async ({ root }) => {
+        await assert.rejects(effectiveSource(root, "plan", async (path, flags) => {
+            const file = await open(path, flags);
+            let expanded = false;
+            return {
+                stat: () => file.stat(),
+                read: async (...args) => {
+                    if (!expanded) {
+                        expanded = true;
+                        await appendFile(path, "x".repeat(512 * 1024 + 1));
+                    }
+                    return file.read(...args);
+                },
+                close: () => file.close(),
+            };
+        }), /Oversized artifact evidence source/);
+    });
+});
+
+test("source reads reject a parent replaced by a link after path checks", async () => {
+    await fixture(async ({ root }) => {
+        const parent = join(root, ".github", "skills", "speckit-plan");
+        const backup = `${parent}-original`;
+        const outside = await mkdtemp(join(tmpdir(), "evidence-source-"));
+        let swapped = false;
+        try {
+            await writeFile(join(outside, "SKILL.md"), "Unexpected outside content");
+            await assert.rejects(effectiveSource(root, "plan", async (path, flags) => {
+                if (path.endsWith("SKILL.md")) {
+                    await rename(parent, backup);
+                    await symlink(outside, parent, process.platform === "win32" ? "junction" : "dir");
+                    swapped = true;
+                }
+                return open(path, flags);
+            }), /Invalid artifact evidence source/);
+        } finally {
+            if (swapped) await rm(parent);
+            if (swapped) await rename(backup, parent);
+            await rm(outside, { recursive: true, force: true });
+        }
+    });
+});
+
+test("cache reads reject a replaced handle and remain bounded if the file grows", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".speckit-wizard/artifact-targets.json", '{"version":1,"entries":{}}');
+        const other = join(root, ".specify", "scripts", "powershell", "setup-plan.ps1");
+        await assert.rejects(readEvidenceCache(root, (_path, flags) =>
+            open(other, flags)), /Unsafe artifact cache/);
+        await assert.rejects(readEvidenceCache(root, async (path, flags) => {
+            const file = await open(path, flags);
+            let expanded = false;
+            return {
+                stat: () => file.stat(),
+                read: async (...args) => {
+                    if (!expanded) {
+                        expanded = true;
+                        await appendFile(path, "x".repeat(512 * 1024 + 1));
+                    }
+                    return file.read(...args);
+                },
+                close: () => file.close(),
+            };
+        }), /Unsafe artifact cache/);
+    });
+});
+
+test("cache reads reject a parent replaced by a link after validation", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".speckit-wizard/artifact-targets.json", '{"version":1,"entries":{}}');
+        const parent = join(root, ".speckit-wizard");
+        const backup = `${parent}-original`;
+        const outside = await mkdtemp(join(tmpdir(), "evidence-cache-"));
+        let swapped = false;
+        try {
+            await writeFile(join(outside, "artifact-targets.json"), '{"version":1,"entries":{}}');
+            await assert.rejects(readEvidenceCache(root, async (path, flags) => {
+                await rename(parent, backup);
+                await symlink(outside, parent, process.platform === "win32" ? "junction" : "dir");
+                swapped = true;
+                return open(path, flags);
+            }), /Unsafe artifact cache/);
+        } finally {
+            if (swapped) await rm(parent);
+            if (swapped) await rename(backup, parent);
+            await rm(outside, { recursive: true, force: true });
+        }
+    });
+});
+
+test("cache writes replace a swapped destination link without changing its target", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".speckit-wizard/artifact-targets.json", '{"version":1,"entries":{}}');
+        const outside = await mkdtemp(join(tmpdir(), "evidence-write-"));
+        const external = join(outside, "unrelated.json");
+        const payload = '{"version":1,"entries":{"commands/speckit.plan":{}}}\n';
+        try {
+            await writeFile(external, "leave untouched");
+            await writeEvidenceCache(root, payload, async (temp, target) => {
+                await rm(target);
+                if (process.platform === "win32") await link(external, target);
+                else await symlink(external, target, "file");
+                await rename(temp, target);
+            });
+            assert.equal(await readFile(external, "utf8"), "leave untouched");
+            assert.equal(await readFile(join(root, ".speckit-wizard", "artifact-targets.json"), "utf8"), payload);
+        } finally {
+            await rm(outside, { recursive: true, force: true });
+        }
+    });
+});
+
+test("cache writes refuse a linked cache directory and clean up failed temp files", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".speckit-wizard/artifact-targets.json", '{"version":1,"entries":{}}');
+        const directory = join(root, ".speckit-wizard");
+        await assert.rejects(writeEvidenceCache(root, "{}", async () => {
+            throw new Error("rename failed");
+        }), /rename failed/);
+        assert.deepEqual((await readdir(directory)).filter((name) => name.endsWith(".tmp")), []);
+
+        const backup = `${directory}-original`;
+        const outside = await mkdtemp(join(tmpdir(), "evidence-linked-cache-"));
+        let swapped = false;
+        try {
+            await rename(directory, backup);
+            await symlink(outside, directory, process.platform === "win32" ? "junction" : "dir");
+            swapped = true;
+            await assert.rejects(writeEvidenceCache(root, "{}"), /Unsafe artifact cache directory/);
+            assert.deepEqual(await readdir(outside), []);
+        } finally {
+            if (swapped) await rm(directory);
+            if (swapped) await rename(backup, directory);
+            await rm(outside, { recursive: true, force: true });
+        }
     });
 });
 
