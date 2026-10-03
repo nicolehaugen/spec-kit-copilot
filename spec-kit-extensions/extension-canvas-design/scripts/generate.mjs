@@ -86,6 +86,7 @@ function configuration(request) {
                 || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
                 || typeof asset.content !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
                 || asset.content.length > 44 * 1024
+                || Buffer.from(asset.content, "base64").length > 32 * 1024
                 || typeof asset.hash !== "string"
                 || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash)) {
             throw new Error("Invalid frozen generated page assets");
