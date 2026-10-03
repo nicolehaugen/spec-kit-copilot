@@ -68,7 +68,7 @@ async function boundedJson(path, root, limit, openFile = open, parse = true) {
         catch (error) {
             throw new PageContentError(`Invalid Designer ${parse ? "JSON" : "UTF-8"} in ${path}: ${error.message}`);
         }
-        return { document, bytes, path: target, size: length,
+        return { document, ...(parse ? {} : { bytes }), path: target, size: length,
             hash: createHash("sha256").update(bytes).digest("hex") };
     } finally {
         await file.close();

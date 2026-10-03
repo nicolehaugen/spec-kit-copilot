@@ -23,7 +23,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           files=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
-          if grep -Eq '^(plugins/spec-kit-copilot-wizard/|tests/e2e/|\.github/workflows/wizard-e2e\.yml$)' <<< "$files"; then
+          if grep -Eq '^(plugins/spec-kit-copilot-wizard/|tests/e2e/|spec-kit-extensions/extension-canvas-design/|\.github/workflows/wizard-e2e\.yml$)' <<< "$files"; then
             echo "wizard=true" >> "$GITHUB_OUTPUT"
           else
             echo "wizard=false" >> "$GITHUB_OUTPUT"
