@@ -29,6 +29,7 @@ FILES = {
     "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
+    "schemas/generated.workflow-page-definition.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
     *(f"designer/tabs/{name}.json" for name in PAGE_NAMES),
@@ -43,6 +44,8 @@ FILES = {
     "controls/stock-text/generated.mjs",
     "controls/stock-checkbox/control.json",
     "controls/stock-checkbox/designer.mjs",
+    "templates/generated-canvas/pages/workflow.json",
+    "templates/generated-canvas/pages/generated-pipeline.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
         "phase-response.mjs",
@@ -106,6 +109,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             + [(f"designer-essentials-{filename}", f"designer/essentials-settings/{filename}.json")
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
+            + [("generated-workflow", "templates/generated-canvas/pages/workflow.json"),
+               ("generated-pipeline", "templates/generated-canvas/pages/generated-pipeline.mjs")]
             + [(name, f"controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [
@@ -209,6 +214,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         kinds = (
             "designer.tab-definition",
             "designer.setting-definition", "generated.added-page-definition",
+            "generated.workflow-page-definition",
             "shared.control-definition", "generated.value-definition",
         )
         schemas = {kind: json.loads((PACKAGE / f"schemas/{kind}.schema.json").read_text("utf-8"))
@@ -221,6 +227,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "designer.setting-definition": list(PACKAGE.glob("designer/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
             "generated.added-page-definition": preset_generated_pages,
+            "generated.workflow-page-definition": [PACKAGE / "templates/generated-canvas/pages/workflow.json"],
             "shared.control-definition": list(PACKAGE.glob("controls/*/control.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
@@ -298,6 +305,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`\n"
             "- `designer-essentials-header-logo` — `designer.setting-definition`, `replace`\n"
             "- `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`\n"
+            "- `generated-workflow` — `generated.workflow-page-definition`, `replace`\n"
+            "- `generated-pipeline` — `generated.pipeline-renderer`, `replace`\n"
             "- `shared-controls-image` — `shared.control-definition`, `replace`\n"
             "- `designer-control-adapter-image` — `designer.control-adapter`, `replace`\n"
             "- `generated-control-adapter-image` — `generated.control-adapter`, `replace`\n"

@@ -5,9 +5,10 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.16** registers three JSON page templates, five ordered
+Canvas Design **0.1.17** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
-adapters, and a shared image definition with paired adapters, plus the
+adapters, a shared image definition with paired adapters, and a source-owned
+Workflow page definition and pipeline renderer, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -23,6 +24,8 @@ project extension directory, then validates the result in place.
 | `designer-essentials-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `designer-essentials-header-logo` | Essentials slot | Optional small header logo |
 | `designer-essentials-main-page-logo` | Essentials slot | Optional larger main-page logo |
+| `generated-workflow` | Generated Workflow page | Ordered, required host regions |
+| `generated-pipeline` | Generated Workflow page | Replaceable phase navigation and card presentation |
 | `shared-controls-image` | Shared control | Image value contract and paired adapter names |
 | `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
 | `generated-control-adapter-image` | Generated app | Render packaged images in authorized slots |
@@ -145,7 +148,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.16/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.17/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -257,6 +260,8 @@ not the JSON document. No kind is inferred from a filename.
 | --- | --- | --- |
 | `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
+| `generated.workflow-page-definition` | Required generated Workflow layout | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `generated.pipeline-renderer` | Workflow pipeline `.mjs` presentation | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
 | `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
@@ -282,6 +287,56 @@ Modules are self-contained UTF-8 `.mjs` replace-only templates. Register every
 module under its own name as well as its referencing JSON template. The generated
 app packages the winning generated-host modules; it does not load source presets
 at runtime. Do not import another module from a renderer or provider.
+
+The required `generated-workflow` definition has `id: "workflow"`, a `pipeline`
+reference to the registered `generated.pipeline-renderer`, and an ordered
+`regions` array containing each of `collection`, `details`, `values`,
+`controls`, `pages`, `constitution`, `message`, and `pipeline` exactly once.
+The generated host renders these regions in the declared order. Presets may
+replace the whole JSON template to reorder them, but cannot remove host
+regions, invent new ones, or change the phase-dispatch rules. Regions without
+configured content render nothing. This is intentionally distinct from an
+added generated page's `renderPage` contract.
+
+The pipeline module exports `mount({ root, phases, actions })`. It owns the
+navigation and selected-phase card within `root` and returns `{ steps }`, an
+ordered array of its phase buttons. `phases` contains `{ id, label, output }`
+display data; the host supplies `actions.select(index, focusId?)`,
+`actions.run(args)`, `actions.view()`, `actions.reveal()`,
+`actions.draft(value)`, and `actions.error(error)`. The first four request
+host-validated operations; adapters do not call workflow endpoints directly.
+For this initial proof, the renderer must retain the host's documented
+`phase-navigation`, `phase-card`, `phase-args`, status/action IDs,
+`data-phase-index`/`data-phase-label` buttons and `phase-template-N` elements
+used for state and focus updates. The test-only vertical preset demonstrates
+replacing the module while retaining those interactions; a fully independent
+feature-control lifecycle is a later milestone. A minimal static phase list:
+
+```js
+export function mount({ root, phases, actions }) {
+  const list = document.createElement("ol");
+  const steps = phases.map((phase, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.phaseIndex = String(index);
+    button.dataset.phaseLabel = phase.label;
+    button.textContent = phase.label;
+    button.addEventListener("click", () =>
+      Promise.resolve(actions.select(index)).catch(actions.error));
+    const item = document.createElement("li");
+    item.append(button);
+    list.append(item);
+    return button;
+  });
+  root.replaceChildren(list);
+  return { steps };
+}
+```
+
+The snippet illustrates the callback shape only; a working replacement must
+also render the required phase card and status/action elements. See
+[`generated-pipeline`](templates/generated-canvas/pages/generated-pipeline.mjs)
+for the complete stock implementation. Module imports are not packaged.
 
 `generated.added-page-renderer` exports
 `renderPage({ root, canvas, values })`. `root` is the owned DOM element;

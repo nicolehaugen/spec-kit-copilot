@@ -1,0 +1,33 @@
+schema_version: "1.0"
+
+preset:
+  id: "copilot-vertical-pipeline-test"
+  name: "Copilot Vertical Pipeline Test"
+  version: "0.1.0"
+  description: "Test-only vertical presentation of the generated Workflow pipeline."
+  author: "spec-kit-copilot"
+  license: "MIT"
+
+requires:
+  speckit_version: ">=1.0.7"
+  extensions:
+    - extension-canvas-design
+
+provides:
+  templates:
+    - type: "command"
+      name: "speckit.extension-canvas-design.load-page"
+      file: "commands/load-page.md"
+      description: "Register the vertical pipeline replacement."
+      replaces: "speckit.extension-canvas-design.load-page"
+      strategy: "append"
+    - type: "template"
+      name: "generated-pipeline"
+      file: "generated/pipeline.mjs"
+      description: "Show the Workflow phases in a vertical list."
+      strategy: "replace"
+
+tags:
+  - "copilot"
+  - "canvas-design"
+  - "test"

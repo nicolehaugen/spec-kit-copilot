@@ -84,6 +84,16 @@ async function projectFixture(t, workspace) {
             kind: "designer.tab-definition", strategy: "replace" });
     }
     const scalar = [];
+    await mkdir(join(installed, "templates", "generated-canvas", "pages"), { recursive: true });
+    for (const [name, filename, kind] of [
+        ["generated-workflow", "workflow.json", "generated.workflow-page-definition"],
+        ["generated-pipeline", "generated-pipeline.mjs", "generated.pipeline-renderer"],
+    ]) {
+        const path = join(installed, "templates", "generated-canvas", "pages", filename);
+        await copyFile(join(source, "templates", "generated-canvas", "pages", filename), path);
+        scalar.push({ name, path, sourceId: "extension:extension-canvas-design",
+            kind, strategy: "replace" });
+    }
     for (const [directory, names] of [
         ["stock-text", [["shared-controls-text", "control.json", "shared.control-definition"],
             ["designer-control-adapter-text", "designer.mjs", "designer.control-adapter"],
@@ -163,7 +173,27 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     assert.equal(model.pages[0].fields[1].control, "stock.text");
     assert.equal(model.adapters["stock.text"], "designer-control-adapter-text");
     assert.equal(model.adapters["stock.checkbox"], "designer-control-adapter-checkbox");
-    await assert.rejects(loadPages(handoff, project, entries, [], verify),
+    const workflowFile = scalar.find((item) => item.name === "generated-workflow").path;
+    const originalWorkflow = await readFile(workflowFile, "utf8");
+    const reordered = JSON.parse(originalWorkflow);
+    reordered.regions.reverse();
+    await writeFile(workflowFile, JSON.stringify(reordered));
+    const changedLayout = await loadResolvedDesignerPages(handoff, project, entries, fields);
+    assert.deepEqual(changedLayout.workflowPage.regions, reordered.regions);
+    reordered.regions[0] = reordered.regions[1];
+    await writeFile(workflowFile, JSON.stringify(reordered));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid Workflow page definition/);
+    await writeFile(workflowFile, originalWorkflow);
+    const pipelineFile = scalar.find((item) => item.name === "generated-pipeline").path;
+    const originalPipeline = await readFile(pipelineFile, "utf8");
+    await writeFile(pipelineFile, "export function other() {}");
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /missing mount export/);
+    await writeFile(pipelineFile, originalPipeline);
+    await assert.rejects(loadPages(handoff, project, entries,
+        scalar.filter((item) => item.kind === "generated.workflow-page-definition"
+            || item.kind === "generated.pipeline-renderer"), verify),
         /missing shared control definition for canvas.id/);
     await assert.rejects(loadPages(handoff, project, entries,
         [...fields, ...scalar.filter((item) => item.name !== "generated-control-adapter-text")],
@@ -1191,7 +1221,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.16/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.17/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -1267,7 +1297,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.16 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.17 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2452,7 +2482,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         "designer.tab-definition");
     assert.equal(canvas.inputSchema.properties.templates.maxItems, 100);
     assert.deepEqual(canvas.inputSchema.properties.templates.items.properties.kind.enum,
-        ["designer.setting-definition", "generated.added-page-definition",
+        ["designer.setting-definition", "generated.workflow-page-definition",
+            "generated.pipeline-renderer", "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",
             "designer.control-adapter", "generated.control-adapter",
             "generated.value-definition", "generated.computed-value-provider"]);

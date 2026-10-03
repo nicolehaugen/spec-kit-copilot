@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.16"
+  version: "0.1.17"
   description: Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.
   category: process
   author: spec-kit-copilot
@@ -49,6 +49,14 @@ provides:
     - name: designer-essentials-main-page-logo
       file: designer/essentials-settings/main-page-logo.json
       description: Optional independent larger logo for the generated workflow page.
+
+    # Workflow page: required regions and the generated phase presentation.
+    - name: generated-workflow
+      file: templates/generated-canvas/pages/workflow.json
+      description: Ordered Workflow page regions and pipeline renderer reference.
+    - name: generated-pipeline
+      file: templates/generated-canvas/pages/generated-pipeline.mjs
+      description: Horizontal workflow phase presentation.
 
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image

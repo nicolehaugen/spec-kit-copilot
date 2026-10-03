@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -7,11 +7,41 @@ import { test, expect } from "./playwright.mjs";
 import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
+const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/pages/", import.meta.url);
+const workflowDefinition = await readFile(new URL("workflow.json", workflowSource));
+const pipelineModule = await readFile(new URL("generated-pipeline.mjs", workflowSource));
+const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const workflowPage = { pipeline: "generated-pipeline",
+    regions: JSON.parse(workflowDefinition).regions,
+    definitionHash: digest(workflowDefinition), hash: digest(pipelineModule) };
+
+test("vertical pipeline replacement keeps phase navigation and host run actions", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+    try {
+        const vertical = await readFile(new URL(
+            "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/pipeline.mjs", import.meta.url));
+        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript", body: vertical,
+        }));
+        await page.goto(canvas.url);
+        await expect(page.locator(".vertical-phase-list [data-phase-index]")).toHaveCount(2);
+        await page.locator('.vertical-phase-list [data-phase-index="1"]').click();
+        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
+        await expect(page.locator("#run-phase")).toBeVisible();
+        await page.locator("#previous-phase").click();
+        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+        await page.locator("#phase-args").fill("Vertical proof");
+        await page.locator("#run-phase").click();
+        await expect(page.locator("#run-phase")).toBeVisible();
+        await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
+    } finally { await canvas.close(); }
+});
+
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
     generatedPages, generatedControls) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
-        schemaVersion: 1, userProvidesSlug,
+        schemaVersion: 1, userProvidesSlug, workflowPage,
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,

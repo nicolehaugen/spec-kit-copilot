@@ -144,6 +144,16 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             ...(page.values ? { values: page.values } : {}),
             ...(page.slots ? { slots: page.slots } : {}), assets });
     }
+    const workflowDefinition = model.templates?.find((item) =>
+        item.name === model.workflowPage?.name && item.kind === "generated.workflow-page-definition");
+    const pipelineRenderer = model.templates?.find((item) =>
+        item.name === model.workflowPage?.pipeline && item.kind === "generated.pipeline-renderer");
+    if (!workflowDefinition || !pipelineRenderer) {
+        throw new Error("Missing validated Workflow page definition or pipeline renderer");
+    }
+    const workflowPage = { id: "workflow", regions: model.workflowPage.regions,
+        pipeline: model.workflowPage.pipeline,
+        assets: await Promise.all([workflowDefinition, pipelineRenderer].map(asset)) };
     const valueSources = [];
     for (const value of model.valueSources ?? []) {
         const definition = model.templates.find((entry) => entry.name === value.name
@@ -190,6 +200,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         fieldConstraints: model.constraints,
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
+        workflowPage,
         ...(generatedControls.length ? { generatedControls } : {}),
         ...(generatedAssets.length ? { generatedAssets } : {}),
         ...(generatedImageControl ? { generatedImageControl } : {}),

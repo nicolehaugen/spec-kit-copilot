@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { mountPageAssets, createStockImageRenderer } from
     "../extension-canvas-design/templates/generated-canvas/ui/page-assets.mjs";
 
@@ -78,6 +79,7 @@ async function setup(t, selected = [logo, logo, logo]) {
         controls: [{ id: "stock.image", adapters: { generated: "generated-control-adapter-image" } }],
         generatedPages: [{ id: "gallery", name: "gallery", title: "Gallery",
             renderer: "gallery-renderer", slots: page.slots }] };
+    await addWorkflowFixture(project, model);
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     const requestPath = join(handoffFolder, "generations", prepared.requestId, "request.json");
     const sdk = join(project, ".github", "extensions", "image-canvas");

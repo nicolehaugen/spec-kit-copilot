@@ -39,6 +39,13 @@ function scalarRegistrations(resolve) {
     ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
 }
 
+function workflowRegistrations(resolve) {
+    return [
+        ["generated-workflow", "generated.workflow-page-definition"],
+        ["generated-pipeline", "generated.pipeline-renderer"],
+    ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
+}
+
 test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
     for (const [version, supported] of [
         ["0.99.99", false], ["1.0.6", false], ["1.0.7", true],
@@ -283,7 +290,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contribution-pr1-test"),
             kind: "designer.setting-definition", strategy: "replace" },
-        ...scalarRegistrations(resolve)];
+        ...scalarRegistrations(resolve), ...workflowRegistrations(resolve)];
         expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -369,7 +376,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contributions-billing"),
             kind: "designer.setting-definition", strategy: "replace" },
-        ...scalarRegistrations(resolve)];
+        ...scalarRegistrations(resolve), ...workflowRegistrations(resolve)];
         expect(templates[0].sourceId).toBe("copilot-billing-canvas-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -422,7 +429,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
 });
 
 test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
-    test.setTimeout(150_000);
+    test.setTimeout(240_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -440,7 +447,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
     handoff.sourceFingerprint = fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
     });
-    let shell, reopened, broken, incompatible, brokenContext, server;
+    let shell, reopened, broken, incompatible, brokenContext, server, routes;
     try {
         await mkdir(project);
         const run = (...args) => {
@@ -483,6 +490,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             ["canvas-control-risk-matrix-generated", "generated.control-adapter"],
         ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
         templates.push(...scalarRegistrations(resolve));
+        templates.push(...workflowRegistrations(resolve));
         templates.push(...["designer-essentials-description", "designer-essentials-workflow-heading"]
             .map((name) => ({ ...resolve(name), kind: "designer.setting-definition", strategy: "replace" })));
         const folder = handoffDirectory(workspace, handoff.handoffId);
@@ -526,7 +534,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         expect(config.generatedControls[0].value).toEqual({
             impact: "medium", likelihood: "medium",
         });
-        const routes = createWorkflowRoutes(config, {
+        routes = createWorkflowRoutes(config, {
             runtime: null, instanceId: "risk-browser", token: "risk-token",
             port: () => server.address().port,
         });
@@ -555,6 +563,11 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             "Could not load Risk rating: Incompatible control ID or value contract");
         const generatedAdapter = join(portable, "controls", `${templates[3].name}.mjs`);
         await writeFile(generatedAdapter, "export const mount = null;");
+        const servedAdapter = await fetch(`http://127.0.0.1:${server.address().port}`
+            + `/controls/${templates[3].name}.mjs?token=risk-token`,
+        { signal: AbortSignal.timeout(5000) });
+        expect(servedAdapter.status).toBe(200);
+        expect(await servedAdapter.text()).toContain("export const mount = null;");
         brokenContext = await page.context().browser().newContext();
         const brokenPage = await brokenContext.newPage();
         await brokenPage.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
@@ -562,7 +575,13 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             "Generated control could not render: Missing mount export");
     } finally {
         await brokenContext?.close();
-        if (server) await new Promise((resolve) => server.close(resolve));
+        routes?.close();
+        if (server) {
+            await new Promise((resolve) => {
+                server.close(resolve);
+                server.closeAllConnections();
+            });
+        }
         await incompatible?.close();
         await broken?.close();
         await reopened?.close();
@@ -681,7 +700,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.16 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.17 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
