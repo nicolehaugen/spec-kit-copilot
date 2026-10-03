@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "canvas-settings-pr1-test",
+  "title": "Test settings",
+  "description": "Designer-only test of a contributed field.",
+  "order": 40,
+  "enabled": true,
+  "slots": [{"id": "pr1-test.options", "accepts": ["field"],
+    "orderBy": ["order", "presetId", "id"]}],
+  "fields": []
+}

@@ -29,6 +29,11 @@ Only Copilot-specific presets belong here. Agent-agnostic presets (generic theme
 extension-specific workflows that don't rely on Copilot's tools) do **not** belong in
 this Copilot integration hub.
 
+The [`copilot-canvas-design-test`](copilot-canvas-design-test) preset is a
+**test-only** local fixture for the Copilot Canvas Designer provider. It is
+intentionally absent from `catalog.json` and is not released; tests install it
+with `specify preset add --dev`.
+
 ## Installing a preset
 
 **Recommended — register the catalog once, then install by id.** Catalogs are
@@ -97,4 +102,3 @@ directory, so `preset.yml` and `commands/` sit at the archive root. To publish:
 Either path fires `release-preset.yml`, which builds the zip and creates the GitHub
 release with that asset. When revving a preset, bump its `preset.yml` version and the
 matching `catalog.json` entry together **before** tagging.
-

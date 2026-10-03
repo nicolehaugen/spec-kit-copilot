@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.4"
+  version: "0.1.5"
   description: Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.
   category: process
   author: spec-kit-copilot
@@ -17,7 +17,7 @@ provides:
   commands:
     - name: speckit.extension-canvas-design.load-page
       file: commands/load-page.md
-      description: Resolve Designer settings pages and open the Canvas Designer with them.
+      description: Resolve registered Canvas Design templates and open the Designer once.
     - name: speckit.extension-canvas-design.generate
       file: commands/generate.md
       description: Generate a source-owned workflow canvas from frozen Designer Essentials.
