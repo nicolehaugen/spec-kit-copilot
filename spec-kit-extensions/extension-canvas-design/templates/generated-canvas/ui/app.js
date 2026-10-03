@@ -1,4 +1,15 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
+for (const root of document.querySelectorAll("[data-control-id]")) {
+    const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
+    try {
+        const { mount } = await import(`${root.dataset.module}?token=${encodeURIComponent(
+            new URL(import.meta.url).searchParams.get("token"))}`);
+        if (typeof mount !== "function") throw new Error("Missing mount export");
+        await mount({ root, field, value: JSON.parse(root.dataset.value) });
+    } catch (error) {
+        root.textContent = `Generated control could not render: ${error.message}`;
+    }
+}
 const $ = (id) => document.getElementById(id);
 const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];

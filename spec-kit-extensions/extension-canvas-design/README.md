@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.5** registers three JSON page templates and the
+Canvas Design **0.1.6** registers three JSON page templates and the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -77,7 +77,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.5/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.6/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -115,8 +115,18 @@ replace-only Specify template exporting `renderPage({ root, canvas, values })`;
 the definition must name that registered renderer. Invalid kinds, references,
 strategies, syntax or Specify template-layer metadata stop Designer opening.
 The frozen definition and module are copied into the generated app, which
-needs no design-time packages to render them. Other contributed settings and
-custom control modules are not included in Generate yet. The repository-local
+needs no design-time packages to render them. A separate, uncataloged
+[`copilot-risk-matrix-test`](../../spec-kit-presets/copilot-risk-matrix-test/preset.yml)
+preset contributes a typed object field in `essentials.options` and a read-only
+generated control in `details.content`. Its shared `control.definition` names
+the separately registered replace-only `designer.adapter` and
+`generated.adapter` modules; each exports `mount`, `controlId`, and
+`valueContract`. The Designer adapter receives `{root, field, value, onChange}`;
+the generated adapter receives `{root, field, value}`. The Designer validates
+changes and persists selected values; Generate freezes the validated object
+and packages the effective generated adapter and definition into the app.
+Missing, wrong-kind, non-replace, or incompatible adapters fail before opening
+rather than falling back to a stock control. The repository-local
 `copilot-billing-canvas-test` preset exercises this contract; its README shows
 both Billing and Essentials placements. An optional `generatedBinding.section`
 with a stable `id` and display `title` groups read-only fields under that

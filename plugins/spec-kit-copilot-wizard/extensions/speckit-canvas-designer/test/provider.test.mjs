@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFile, copyFile, cp, mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -611,7 +612,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.5/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.6/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -687,7 +688,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.5 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.6 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1189,6 +1190,126 @@ test("generated-only page validates typed assets, freezes winners and packages w
         `${definition.renderer}.mjs`)).href)).renderPage.name, "renderPage");
     assert.ok((await readFile(join(portable, "generated-only", "ui", "app.js"), "utf8"))
         .includes("wireGeneratedPages()"));
+});
+
+test("paired control validates both adapters, typed values and portable generated display", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-risk-matrix-test/",
+        import.meta.url));
+    const directory = join(project, ".specify", "presets");
+    await mkdir(directory);
+    const items = [
+        ["canvas-control-risk-matrix", "controls/risk-matrix/control.json", "control.definition"],
+        ["canvas-contributions-risk-designer", "contributions/designer.json", "designer.field"],
+        ["canvas-control-risk-matrix-designer", "controls/risk-matrix/designer.mjs", "designer.adapter"],
+        ["canvas-control-risk-matrix-generated", "controls/risk-matrix/generated.mjs", "generated.adapter"],
+    ];
+    const templates = await Promise.all(items.map(async ([name, file, kind]) => {
+        const path = join(directory, `${name}${file.endsWith(".mjs") ? ".mjs" : ".json"}`);
+        await copyFile(join(preset, ...file.split("/")), path);
+        return { name, path, kind, sourceId: "copilot-risk-matrix-test", strategy: "replace" };
+    }));
+    const registration = () => ({ kind: "template", stack: [{
+        active: true, sourceId: "copilot-risk-matrix-test", layer: "preset", strategy: "replace",
+    }] });
+    const load = (assets = templates, verify = registration) =>
+        loadResolvedDesignerPages(handoff, project, entries, assets, verify);
+    const model = await load();
+    assert.equal(model.pages[0].fields.find((field) => field.id === "risk.rating").control, "risk-matrix");
+    assert.deepEqual(model.values["risk.rating"], null);
+    assert.equal(model.generatedPages.length, 0);
+    assert.equal(model.adapters["risk-matrix"], "canvas-control-risk-matrix-designer");
+    const values = { ...model.values, "canvas.id": "risk-demo", "canvas.displayName": "Risk",
+        "risk.rating": { impact: "high", likelihood: "medium" } };
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model,
+        { modelRevision: model.revision, revision: 0, values: { ...values, "risk.rating": null } }),
+    /Invalid Designer setting: risk.rating/);
+    for (const value of [null, { impact: "high" },
+        { impact: "high", likelihood: "unknown" }, { impact: "high", likelihood: "medium", extra: 1 }]) {
+        await assert.rejects(freezeGeneration({ model, values: { ...values, "risk.rating": value },
+            handoff, project, workspace }), /Invalid Designer setting: risk.rating/);
+    }
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { modelRevision: model.revision, revision: 0, values });
+    const reopened = await loadDesignerSettings(workspace, handoff, await load());
+    assert.deepEqual(saved.values["risk.rating"], reopened.values["risk.rating"]);
+    for (const [assets, message] of [
+        [templates.filter((item) => item.kind !== "designer.adapter"), /missing designer adapter/],
+        [templates.filter((item) => item.kind !== "generated.adapter"), /missing generated adapter/],
+        [templates.map((item) => item.kind === "control.definition"
+            ? { ...item, kind: "designer.field" } : item), /Canvas Design contribution/],
+        [templates.map((item) => item.kind === "generated.adapter"
+            ? { ...item, kind: "designer.field" } : item), /must be a \.json/],
+        [templates.map((item) => item.kind === "designer.adapter"
+            ? { ...item, strategy: "append" } : item), /Invalid or duplicate/],
+    ]) await assert.rejects(load(assets), message);
+    await assert.rejects(load(templates, () => ({ kind: "script", stack: [] })),
+        /replace-only Specify template/);
+    const definition = templates[0];
+    const original = await readFile(definition.path, "utf8");
+    await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
+    await assert.rejects(load(), /invalid shared control value contract|incompatible shared control/);
+    await writeFile(definition.path, original);
+    const designerAdapter = templates[2];
+    const designerModule = await readFile(designerAdapter.path, "utf8");
+    await writeFile(designerAdapter.path, designerModule.replace(
+        'export const controlId = "risk-matrix"', 'export const controlId = "other-control"'));
+    await assert.rejects(load(), /incompatible shared control value contract or adapter reference/);
+    await writeFile(designerAdapter.path, designerModule);
+    const generated = templates[3];
+    const module = await readFile(generated.path, "utf8");
+    await writeFile(generated.path, module.replace('"medium", "high"', '"medium", "critical"'));
+    await assert.rejects(load(), /incompatible shared control value contract or adapter reference/);
+    await writeFile(generated.path, module);
+    await writeFile(generated.path, "export const mount = null;");
+    await assert.rejects(load(), /invalid generated.adapter/);
+    await writeFile(generated.path, module);
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const originalRequest = await readFile(requestPath, "utf8");
+    const invalidRequest = JSON.parse(originalRequest);
+    invalidRequest.generatedControls[0].value.likelihood = "impossible";
+    const { integrity: _integrity, ...payload } = invalidRequest;
+    invalidRequest.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(invalidRequest));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /incompatible frozen control value or adapters/);
+    await writeFile(requestPath, originalRequest);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const portable = join(workspace, "portable-risk");
+    const { cp } = await import("node:fs/promises");
+    await cp(join(project, prepared.target), portable, { recursive: true });
+    const { readConfig, renderHtml, createWorkflowRoutes } = await import(
+        pathToFileURL(join(portable, "server.mjs")).href);
+    const config = readConfig();
+    assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
+    assert.match(renderHtml(config), /data-control-id="risk.rating"/);
+    assert.equal((await import(pathToFileURL(join(portable, "controls",
+        `${generated.name}.mjs`)).href)).mount.name, "mount");
+    assert.equal(await readFile(join(portable, "controls", `${generated.name}.mjs`), "utf8"), module);
+    assert.doesNotMatch(renderHtml({ ...config, generatedControls: undefined }), /data-control-id=/);
+    const routes = createWorkflowRoutes(config, {
+        runtime: null, instanceId: "test", token: "portable-token", port: () => server.address().port,
+    });
+    const server = createServer(routes.handle);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise((resolve) => server.close(resolve)));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const html = await fetch(`${origin}/?token=portable-token`);
+    assert.equal(html.status, 200);
+    assert.match(await html.text(), /data-control-id="risk.rating"/);
+    const packaged = await fetch(`${origin}/controls/${generated.name}.mjs?token=portable-token`);
+    assert.equal(packaged.status, 200);
+    assert.equal(await packaged.text(), module);
+    assert.equal((await fetch(`${origin}/controls/${generated.name}.mjs`)).status, 401);
 });
 
 test("unavailable page schema stops opening with repair guidance; invalid pages remain per-page errors", async (t) => {

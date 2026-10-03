@@ -18,6 +18,13 @@ export function validateValues(values, constraints) {
         const value = values[key];
         if (rule.type === "boolean") {
             if (typeof value !== "boolean") throw new Error(`Invalid Designer setting: ${key}`);
+        } else if (rule.type === "object") {
+            if (!value || typeof value !== "object" || Array.isArray(value)
+                || Object.keys(value).sort().join() !== Object.keys(rule.properties).sort().join()
+                || Object.entries(rule.properties).some(([name, allowed]) =>
+                    !allowed.includes(value[name]))) {
+                throw new Error(`Invalid Designer setting: ${key}`);
+            }
         } else if (typeof value !== "string" || value.length > rule.maxLength
             || value.length < (rule.minLength ?? 0)
             || (rule.pattern && !new RegExp(rule.pattern).test(value))) {

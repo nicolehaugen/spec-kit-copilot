@@ -33,7 +33,7 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
-const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.5 or the current local source.";
+const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.6 or the current local source.";
 
 async function hasGenerateSkill(project) {
     try {
@@ -53,6 +53,16 @@ export async function startShell(handoff = null, model = null, { project, worksp
         ? new Map(await Promise.all(Object.entries(ASSETS).map(async ([path, [file, type]]) =>
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
+    if (model) {
+        for (const name of Object.values(model.adapters ?? {})) {
+            const adapter = model.templates.find((item) => item.name === name
+                && item.kind === "designer.adapter");
+            if (!adapter) throw new Error(`${name}: Designer adapter is unavailable`);
+            assets.set(`/adapters/${name}.mjs`, {
+                type: "text/javascript", content: await readFile(adapter.path, "utf8"),
+            });
+        }
+    }
     const token = randomBytes(24).toString("hex");
     const skillAvailable = project ? await hasGenerateSkill(project) : false;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable

@@ -58,6 +58,24 @@ export function readConfig() {
                             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
                             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
                             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120)))
+        || (config.generatedControls !== undefined
+            && (!Array.isArray(config.generatedControls) || config.generatedControls.length > 30
+                || new Set(config.generatedControls.map((item) => item?.id)).size !== config.generatedControls.length
+                || config.generatedControls.some((item) => !item
+                    || Object.keys(item).sort().join() !== "adapter,control,id,label,properties,slot,value"
+                    || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+                    || !/^[a-z][a-z0-9-]{0,79}$/.test(item.adapter)
+                    || !/^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+                    || typeof item.label !== "string" || !item.label || item.label.length > 120
+                    || item.slot !== "details.content"
+                    || !item.properties || typeof item.properties !== "object"
+                    || Array.isArray(item.properties) || !Object.keys(item.properties).length
+                    || !item.value || typeof item.value !== "object" || Array.isArray(item.value)
+                    || Object.keys(item.value).sort().join() !== Object.keys(item.properties).sort().join()
+                    || Object.entries(item.properties).some(([key, allowed]) =>
+                        !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
+                        || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
+                        || !allowed.includes(item.value[key])))))
         || !config.phaseOutputs || typeof config.phaseOutputs !== "object" || Array.isArray(config.phaseOutputs)
         || Object.values(config.phaseOutputs).some((output) => !output
             || typeof output.expectsArtifact !== "boolean"
@@ -148,6 +166,12 @@ export function renderHtml(config, token = "") {
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
     ${readOnlySections(config.readOnlyFields)}
+    ${config.generatedControls?.map(({ id, label, adapter, value }) =>
+        `<section class="phase-card" aria-label="${escapeHtml(label)}">
+            <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
+                data-field-label="${escapeHtml(label)}"
+                data-module="/controls/${escapeHtml(adapter)}.mjs"
+                data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("") ?? ""}
     ${config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
         <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">Workflow</button>
         ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
@@ -212,6 +236,13 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 && config.generatedPages?.some((page) => page.renderer === moduleName)) {
                 const module = readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }).end(module);
+                return;
+            }
+            const controlName = /^\/controls\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
+            if (request.method === "GET" && controlName
+                && config.generatedControls?.some((item) => item.adapter === controlName)) {
+                response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
+                    .end(readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url)));
                 return;
             }
             if (!runtime) throw new UserError("The Copilot session runtime is unavailable. Reopen the canvas.", 503);

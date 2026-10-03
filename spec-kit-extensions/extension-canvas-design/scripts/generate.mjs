@@ -20,7 +20,7 @@ function within(root, path) {
 }
 
 function configuration(request) {
-    const { canvas, workflow, values, installed, generatedFields, generatedPages } = request;
+    const { canvas, workflow, values, installed, generatedFields, generatedPages, generatedControls } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
@@ -99,6 +99,61 @@ function configuration(request) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
         }
     }
+    if (generatedControls !== undefined
+        && (!Array.isArray(generatedControls) || generatedControls.length > 30
+            || new Set(generatedControls.map((item) => item?.id)).size !== generatedControls.length
+            || generatedControls.some((item) => generatedFields?.some((field) => field.id === item.id)))) {
+        throw new Error("Invalid frozen generated controls");
+    }
+    for (const item of generatedControls ?? []) {
+        if (!item || Object.keys(item).sort().join() !== "assets,control,id,label,slot,value"
+            || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+            || !item.label || typeof item.label !== "string" || item.label.length > 120
+            || item.slot !== "details.content" || !Array.isArray(item.assets)
+            || item.assets.length !== 2
+            || item.assets[0]?.kind !== "control.definition"
+            || item.assets[1]?.kind !== "generated.adapter") {
+            throw new Error("Invalid frozen generated control registration");
+        }
+        for (const asset of item.assets) {
+            if (!asset || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+                || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
+                || typeof asset.sourceId !== "string"
+                || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+                || typeof asset.content !== "string"
+                || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+                || asset.content.length > 44 * 1024
+                || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash) {
+                throw new Error("Invalid frozen generated control asset");
+            }
+        }
+        let definition;
+        try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+        catch { throw new Error(`${item.id}: invalid control definition`); }
+        if (definition?.schemaVersion !== 1 || definition.id !== item.control
+            || definition.adapters?.generated !== item.assets[1].name
+            || !definition.adapters?.designer
+            || item.assets[0].name === item.assets[1].name
+            || definition.value?.type !== "object"
+            || !definition.value.properties
+            || typeof definition.value.properties !== "object"
+            || Array.isArray(definition.value.properties)
+            || !Object.keys(definition.value.properties).length
+            || Object.keys(definition.value.properties).length > 10
+            || Object.entries(definition.value.properties).some(([key, allowed]) =>
+                !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
+                || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
+                || new Set(allowed).size !== allowed.length
+                || allowed.some((value) => typeof value !== "string" || !value || value.length > 80))
+            || !item.value || typeof item.value !== "object" || Array.isArray(item.value)
+            || Object.keys(item.value).sort().join() !== Object.keys(definition.value.properties).sort().join()
+            || Object.entries(definition.value.properties).some(([key, allowed]) =>
+                !allowed.includes(item.value[key]))
+            || JSON.stringify(values[item.id]) !== JSON.stringify(item.value)) {
+            throw new Error(`${item.id}: incompatible frozen control value or adapters`);
+        }
+    }
     const outputs = {
         constitution: ".specify/memory/constitution.md", specify: "specs/<slug>/spec.md",
         clarify: "specs/<slug>/spec.md", plan: "specs/<slug>/plan.md",
@@ -110,6 +165,11 @@ function configuration(request) {
             ({ id, title, renderer })) } : {}),
         ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>
             ({ id, label, value: values[id], ...(section ? { section } : {}) })) } : {}),
+        ...(generatedControls?.length ? { generatedControls: generatedControls.map(
+            ({ id, label, control, slot, value, assets }) =>
+                ({ id, label, control, slot, value, adapter: assets[1].name,
+                    properties: JSON.parse(Buffer.from(assets[0].content, "base64").toString("utf8"))
+                        .value.properties })) } : {}),
         phases: workflow.selectedPhases,
         phaseOutputs: Object.fromEntries(workflow.selectedPhases.map((phase) => {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
@@ -165,6 +225,18 @@ export async function materialize(project, workspace, handoffId, requestId) {
         { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
         { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },
     ]);
+    const controlFiles = (request.generatedControls ?? []).flatMap((item) => [
+        { filename: `${item.assets[0].name}.json`, bytes: Buffer.from(item.assets[0].content, "base64") },
+        { filename: `${item.assets[1].name}.mjs`, bytes: Buffer.from(item.assets[1].content, "base64") },
+    ]);
+    const distinctControlFiles = new Map();
+    for (const file of controlFiles) {
+        if (distinctControlFiles.has(file.filename)
+            && !distinctControlFiles.get(file.filename).equals(file.bytes)) {
+            throw new Error(`Conflicting generated control asset: ${file.filename}`);
+        }
+        distinctControlFiles.set(file.filename, file.bytes);
+    }
     const target = join(projectRoot, ".github", "extensions", config.canvas.id);
     if (!within(projectRoot, target) || request.target !== `.github/extensions/${config.canvas.id}/`) {
         throw new Error("Generation target is invalid");
@@ -189,8 +261,14 @@ export async function materialize(project, workspace, handoffId, requestId) {
     }
     await mkdir(join(target, "ui"));
     if (pageFiles.length) await mkdir(join(target, "pages"));
+    if (controlFiles.length) await mkdir(join(target, "controls"));
     for (const { filename, bytes } of pageFiles) {
         const path = join(target, "pages", filename);
+        await writeFile(path, bytes, { flag: "wx" });
+        if (filename.endsWith(".mjs")) checkSyntax(path);
+    }
+    for (const [filename, bytes] of distinctControlFiles) {
+        const path = join(target, "controls", filename);
         await writeFile(path, bytes, { flag: "wx" });
         if (filename.endsWith(".mjs")) checkSyntax(path);
     }
