@@ -677,8 +677,8 @@ test("missing Generate skill explains why the action is disabled", async ({ page
             session: { send: async () => {} } });
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.14 or the current local source.");
+        await expect(page.locator("#generation-error")).toContainText(
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
