@@ -44,8 +44,11 @@
           "control": {"enum": ["stock.text", "stock.checkbox"]},
           "description": {"type": "string", "maxLength": 1000},
           "type": {"enum": ["string", "boolean"]},
+          "required": {"const": true},
           "default": {"type": "boolean"}
-        }
+        },
+        "if": {"required": ["required"]},
+        "then": {"properties": {"type": {"const": "string"}}}
       }
     }
   }

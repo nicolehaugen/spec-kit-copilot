@@ -73,7 +73,7 @@ p { margin: 0; }
     border: 1px solid var(--border-color-default); border-radius: var(--radius-sm);
     background: var(--background-color-elevated); padding: .35rem; }
 .image-controls { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
-.settings-image-error { margin: 0; color: var(--danger-color); font-size: 13px; }
+.settings-image-error, .settings-field-error { margin: 0; color: var(--danger-color); font-size: 13px; }
 .settings-image .image-remove { min-height: 40px; padding: .5rem .75rem; font: inherit;
     border: 1px solid var(--border-color-strong); border-radius: var(--radius-sm);
     background: var(--background-color-elevated); color: var(--text-color-default); cursor: pointer; }

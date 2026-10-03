@@ -62,8 +62,9 @@ async function model(revision = "first") {
         pages, revision,
         constraints: {
             "canvas.id": { type: "string", minLength: 1, maxLength: 100,
-                pattern: "^[a-z0-9][a-z0-9-]*$" },
-            "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
+                pattern: "^[a-z0-9][a-z0-9-]*$", required: true },
+            "canvas.displayName": { type: "string", minLength: 1, maxLength: 120,
+                required: true },
             "canvas.description": { type: "string", maxLength: 240 },
             "canvas.workflowListName": { type: "string", maxLength: 80 },
             "workflowSlug.userProvided": { type: "boolean" },
@@ -602,7 +603,8 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
         await expect(customSlug).toHaveAttribute("aria-description",
             "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.");
         await expect(id).toHaveAttribute("pattern", "^[a-z0-9][a-z0-9-]*$");
-        await expect(page.locator(`[id="${await id.getAttribute("aria-describedby")}"]`))
+        await expect(id).toHaveAttribute("aria-describedby", "setting-field-0-hint setting-field-0-error");
+        await expect(page.locator("#setting-field-0-hint"))
             .toHaveText("Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used.");
         await expect(title).toHaveAttribute("maxlength", "120");
         await expect(page.getByRole("textbox", { name: "Description" })).toHaveAttribute("maxlength", "240");
@@ -619,6 +621,41 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.getByRole("status")).toHaveText("Ready");
+    } finally {
+        await shell.close();
+    }
+});
+
+test("required stock text reports nonblank errors alongside its field and rejects Save", async ({ page }) => {
+    const state = await model();
+    state.pages[0].fields.find((field) => field.id === "canvas.description").required = true;
+    state.constraints["canvas.description"].required = true;
+    state.settingsRevision = 0;
+    state.persisted = false;
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
+        const title = page.getByRole("textbox", { name: "Title (required)" });
+        const description = page.getByRole("textbox", { name: "Description (required)" });
+        await id.fill("required-canvas");
+        await title.fill("  ");
+        await title.blur();
+        const titleError = page.locator("#setting-field-1-error");
+        await expect(titleError).toHaveText("Enter a nonblank Title.");
+        await expect(title).toHaveAttribute("aria-invalid", "true");
+        await title.fill("Required Canvas");
+        await expect(titleError).toBeHidden();
+        await description.fill("   ");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(description).toBeFocused();
+        await expect(page.locator("#setting-field-2-error"))
+            .toHaveText("Enter a nonblank Description.");
+        await expect(page.locator("#page-error")).toContainText("Enter a valid Description");
+        await description.fill("A valid description");
+        await expect(page.locator("#setting-field-2-error")).toBeHidden();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
     } finally {
         await shell.close();
     }
@@ -645,7 +682,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.14 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.15 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
@@ -699,9 +736,9 @@ test("Save validates values, persists edits and reports stale revisions", async 
         await page.goto(shell.url);
         const save = page.getByRole("button", { name: "Save", exact: true });
         await save.click();
-        await expect(page.getByRole("alert")).toContainText("Enter a valid Canvas ID");
+        await expect(page.locator("#page-error")).toContainText("Enter a valid Canvas ID");
         await expect(page.locator('[name="canvas.id"]')).toBeFocused();
-        await expect(page.getByRole("alert")).toContainText("lowercase letters (a–z), numbers (0–9), and hyphens (-)");
+        await expect(page.locator("#page-error")).toContainText("lowercase letters (a–z), numbers (0–9), and hyphens (-)");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("example-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Example");
         await save.click();

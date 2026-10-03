@@ -140,7 +140,8 @@ packages the adapter once. The generated host supplies authorized local URLs
 and mount points; the packaged adapter renders them without design-time
 dependencies. An absent image retains its prior fallback or empty slot; a
 configured image whose adapter fails displays a local error instead of a
-success-shaped fallback. Scalar text and checkbox remain intentional built-ins.
+success-shaped fallback. Stock text and checkbox use explicit definitions and
+Designer adapters; a text field may opt into host-enforced nonblank validation.
 Both image adapters accept `mount({ root, field, value, context })`: `value`
 is a renderable image-source string (an editable data URI in Designer, a
 host-authorized packaged URL in the generated app). Host-specific validation,
