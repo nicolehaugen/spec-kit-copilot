@@ -1,5 +1,5 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
-for (const root of document.querySelectorAll("[data-control-id]")) {
+async function mountGeneratedControl(root) {
     const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
     try {
         const { mount, controlId, valueContract } = await import(`${root.dataset.module}?token=${encodeURIComponent(
@@ -16,6 +16,9 @@ for (const root of document.querySelectorAll("[data-control-id]")) {
         root.setAttribute("role", "alert");
         root.textContent = `Generated control could not render: ${error.message}`;
     }
+}
+for (const root of document.querySelectorAll("[data-control-id]")) {
+    void mountGeneratedControl(root);
 }
 const $ = (id) => document.getElementById(id);
 const token = new URL(location.href).searchParams.get("token");
