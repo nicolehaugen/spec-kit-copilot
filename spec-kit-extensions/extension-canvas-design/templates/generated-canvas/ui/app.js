@@ -56,7 +56,7 @@ function wireGeneratedPages() {
             const content = document.createElement("div");
             await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
                 displayName: root.dataset.canvasTitle },
-                values: { ...JSON.parse(root.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
+                values: { ...JSON.parse(registration.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
             if (currentSelection !== selection) return;
             root.replaceChildren(...content.childNodes);
         } catch (error) {

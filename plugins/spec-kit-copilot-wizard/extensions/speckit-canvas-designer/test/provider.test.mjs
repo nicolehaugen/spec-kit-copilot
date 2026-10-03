@@ -1351,13 +1351,19 @@ test("generated-only page validates typed assets, freezes winners and packages w
         title: definition.title, renderer: definition.renderer }]);
     assert.equal(config.readOnlyFields[0].value, "CC-481");
     assert.match(renderHtml(config), /data-canvas-page="canvas-generated-overview"/);
-    assert.match(renderHtml(config), /data-generated-renderer="canvas-generated-overview"/);
+    assert.match(renderHtml(config), /data-generated-renderer="canvas-generated-overview"[^>]*data-values="\{\}"/);
+    const declaredHtml = renderHtml({ ...config, generatedPages: config.generatedPages.map((entry) => ({
+        ...entry, values: ["billing.costCode"],
+    })) });
+    assert.match(declaredHtml, /data-generated-renderer="canvas-generated-overview"[^>]*data-values="\{&quot;billing.costCode&quot;:&quot;CC-481&quot;\}"/);
     assert.doesNotMatch(renderHtml({ ...config, generatedPages: undefined }), /data-canvas-page=/);
     assert.equal(typeof createWorkflowRoutes, "function");
     assert.equal((await import(pathToFileURL(join(portable, "generated-only", "pages",
         `${definition.renderer}.mjs`)).href)).renderPage.name, "renderPage");
     assert.ok((await readFile(join(portable, "generated-only", "ui", "app.js"), "utf8"))
         .includes("wireGeneratedPages()"));
+    assert.match(await readFile(join(portable, "generated-only", "ui", "app.js"), "utf8"),
+        /JSON\.parse\(registration\.dataset\.values\)/);
 });
 
 test("named value sources freeze typed values and run from a portable canvas without a design preset", async (t) => {

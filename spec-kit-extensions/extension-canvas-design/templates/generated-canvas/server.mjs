@@ -184,8 +184,7 @@ export function renderHtml(config, token = "") {
         ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
     </nav>
     <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
-        data-canvas-title="${escapeHtml(canvas.displayName)}"
-        data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>` : ""}
+        data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>` : ""}
     ${hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
         <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
         <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
@@ -203,8 +202,12 @@ export function renderHtml(config, token = "") {
             </button></li>`).join("")}</ol>` : ""}
     </nav>
     <section id="phase-card" class="phase-card" aria-label="Selected phase">${phases.length ? renderPhase(config, phases, 0) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>
-    ${config.generatedPages?.map(({ id, renderer }) =>
-        `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"></span>`).join("") ?? ""}
+    ${config.generatedPages?.map(({ id, renderer, values }) =>
+        `<span hidden data-generated-renderer="${escapeHtml(id)}"
+            data-module="/pages/${escapeHtml(renderer)}.mjs"
+            data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? [])
+                .filter((field) => values?.includes(field.id))
+                .map(({ id, value }) => [id, value]))))}"></span>`).join("") ?? ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
