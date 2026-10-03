@@ -256,13 +256,16 @@ addition to) the hosted registry entry:
   Wizard's complete installed inventory (including disabled packages and
   priorities), plus verified install locators. Catalog IDs and installed
   manifest IDs are distinct: a catalog entry named `pirate`, for example,
-  can install a manifest named `pirate-full-preset`. The child installs by
-  catalog ID or approved URL and verifies by manifest ID and version; bundle
+  can install a manifest named `pirate-full-preset`. Catalog-installed
+  presets/extensions must also match the CLI's reported catalog source;
+  locally installed ones are reproduced from their installed copies in
+  the Wizard checkout, not from an ID/version-matched catalog entry. Bundle
   members are checked against the installed bundle rather than installed
-  again. Missing or ambiguous provenance, version mismatches, and sources
-  that change before dispatch block launch instead of guessing from a CLI
-  `source.kind` value. It installs remaining standalone extensions (including
-  local overrides), then standalone presets (including local overrides).
+  again; a bundle without verifiable install provenance blocks launch.
+  Missing or ambiguous provenance, version mismatches, and sources that
+  change before dispatch block launch instead of guessing. It installs
+  remaining standalone extensions (including local overrides), then
+  standalone presets (including local overrides).
   This ensures bundled and standalone preset command additions have the base
   available. It stops on composition warnings even if Specify exits
   successfully, and checks the generated load-page skill for the registered

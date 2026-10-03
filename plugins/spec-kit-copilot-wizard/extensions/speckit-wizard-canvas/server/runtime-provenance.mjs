@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { bundleSelectionMembers } from "../catalog/bundles.mjs";
 
@@ -19,7 +20,8 @@ export async function readInstalledBundleMembers(workspacePath, bundles, run = e
     return members;
 }
 
-export function resolveRuntimeInstallLocators(installed, catalog, localSelections, bundleMembers = {}) {
+export function resolveRuntimeInstallLocators(installed, catalog, localSelections, bundleMembers = {},
+    workspacePath) {
     const locators = { presets: [], extensions: [], bundles: [] };
     for (const kind of KINDS) {
         for (const item of installed[kind]) {
@@ -29,6 +31,11 @@ export function resolveRuntimeInstallLocators(installed, catalog, localSelection
                     throw new Error(`Local ${kind} ${item.id} version differs from the installed version`);
                 }
                 locators[kind].push({ installedId: item.id, source: "local", path: local.path });
+                continue;
+            }
+            if (item.source === "local" && kind !== "bundles" && workspacePath) {
+                locators[kind].push({ installedId: item.id, source: "local",
+                    path: join(workspacePath, ".specify", kind, item.id) });
                 continue;
             }
             const providers = kind === "bundles" ? [] : installed.bundles.filter((bundle) =>
@@ -42,8 +49,14 @@ export function resolveRuntimeInstallLocators(installed, catalog, localSelection
                     bundleId: providers[0].id });
                 continue;
             }
+            if (!item.source || item.source === "local") {
+                throw new Error(`Cannot verify the installed source for ${kind} ${item.id}; ${kind === "bundles"
+                    ? "Specify's bundle inventory does not include install provenance"
+                    : "select an approved local development path in the Wizard before launching Designer"}`);
+            }
             const candidates = (catalog?.[kind] ?? []).filter((entry) =>
                 entry?.installedId === item.id && entry.version === item.version
+                && entry.source === item.source
                 && typeof entry.id === "string" && typeof entry.source === "string");
             if (candidates.length !== 1) {
                 throw new Error(`Cannot identify a unique approved install source for installed ${kind} ${item.id} v${item.version}; resolve it in the Wizard before launching Designer`);

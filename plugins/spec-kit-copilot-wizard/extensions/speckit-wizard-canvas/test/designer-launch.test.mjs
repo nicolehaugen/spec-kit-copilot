@@ -241,17 +241,19 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         /Invalid installed bundle identity/);
     const installed = normalizeInstalledWorkflowInventory({
         presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1,
-            enabled: true, source: { kind: "local" } },
-        { id: "disabled", version: "1.0.0", priority: 10, enabled: false }],
+            enabled: true, source: { kind: "catalog", catalog: "copilot" } },
+        { id: "disabled", version: "1.0.0", priority: 10, enabled: false,
+            source: { kind: "catalog", catalog: "default" } }],
         extensions: [{ id: "extension-writer", version: "0.3.0", priority: 5,
-            enabled: true, source: { kind: "catalog" } }],
-        bundles: [{ bundle_id: "workflow-kit", version: "2.0.0" }],
+            enabled: true, source: { kind: "catalog", catalog: "copilot" } }],
+        bundles: [],
     });
 
     test("runtime provenance installs Pirate by catalog key but verifies its manifest ID", () => {
         const installed = { presets: [
-            { id: "pirate-full-preset", version: "1.0.0", priority: 10, enabled: true },
-            { id: "lean", version: "1.0.0", priority: 10, enabled: false },
+            { id: "pirate-full-preset", version: "1.0.0", priority: 10, enabled: true,
+                source: "community" },
+            { id: "lean", version: "1.0.0", priority: 10, enabled: false, source: "default" },
         ], extensions: [], bundles: [] };
         const sources = { presets: [
             { id: "pirate", installedId: "pirate-full-preset", version: "1.0.0",
@@ -277,7 +279,7 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
 
     test("runtime provenance rejects missing, ambiguous, and version-drifted sources", () => {
         const installed = { presets: [{ id: "pirate-full-preset", version: "1.0.0",
-            priority: 10, enabled: true }], extensions: [], bundles: [] };
+            priority: 10, enabled: true, source: "community" }], extensions: [], bundles: [] };
         const pirate = { id: "pirate", installedId: "pirate-full-preset", version: "1.0.0",
             source: "community", downloadUrl: "https://example.org/pirate.zip" };
         const sources = { presets: [pirate], extensions: [], bundles: [] };
@@ -292,10 +294,30 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         assert.throws(() => resolveRuntimeInstallLocators(installed, {
             ...sources, presets: [{ ...pirate, downloadUrl: null }],
         }), /no approved download URL/);
+        assert.throws(() => resolveRuntimeInstallLocators({
+            ...installed, presets: [{ ...installed.presets[0], source: "copilot" }],
+        }, sources), /Cannot identify a unique approved install source/);
+        assert.deepEqual(resolveRuntimeInstallLocators({
+            ...installed, presets: [{ ...installed.presets[0], source: "local" }],
+        }, sources, undefined, {}, process.cwd()).presets, [{
+            installedId: "pirate-full-preset", source: "local",
+            path: join(process.cwd(), ".specify", "presets", "pirate-full-preset"),
+        }]);
+        const localLocators = resolveRuntimeInstallLocators({
+            ...installed, presets: [{ ...installed.presets[0], source: "local" }],
+        }, sources, undefined, {}, process.cwd());
+        const prompt = buildDesignerLaunchPrompt(buildDesignerHandoff(snapshot, empty,
+            undefined, { ...installed, presets: [{ ...installed.presets[0], source: "local" }] },
+            randomUUID(), localLocators));
+        assert.match(prompt, /specify preset add --dev <path>/);
+        assert.match(prompt, /not a catalog match/);
+        assert.throws(() => resolveRuntimeInstallLocators({
+            ...installed, presets: [{ ...installed.presets[0], source: "local" }],
+        }, sources), /Cannot verify the installed source/);
     });
 
     test("bundle members resolve to a verified bundle rather than a standalone install", async () => {
-        const bundles = [{ id: "kit", version: "2.0.0" }];
+        const bundles = [{ id: "kit", version: "2.0.0", source: "community" }];
         const members = await readInstalledBundleMembers(process.cwd(), bundles,
             async (binary, args) => {
                 assert.deepEqual(args, ["bundle", "info", "kit", "--json"]);
@@ -303,13 +325,26 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
                     components: [{ kind: "presets", id: "member" }] }) };
             });
         const installed = { presets: [{ id: "member", version: "1.0.0",
-            priority: 3, enabled: true }], extensions: [], bundles };
+            priority: 3, enabled: true, source: "community" }], extensions: [], bundles };
         const locators = resolveRuntimeInstallLocators(installed, {
             presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
                 source: "community", version: "2.0.0", downloadUrl: "https://example.org/kit.zip" }],
         }, undefined, members);
         assert.deepEqual(locators.presets, [{ installedId: "member", source: "bundle", bundleId: "kit" }]);
+        assert.deepEqual(resolveRuntimeInstallLocators({
+            ...installed, presets: [{ ...installed.presets[0], source: "local" }],
+        }, { presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
+            source: "community", version: "2.0.0",
+            downloadUrl: "https://example.org/kit.zip" }] }, undefined, members,
+        process.cwd()).presets, [{ installedId: "member", source: "local",
+            path: join(process.cwd(), ".specify", "presets", "member") }]);
         assert.equal(locators.bundles[0].catalogId, "kit");
+        assert.throws(() => resolveRuntimeInstallLocators({
+            ...installed, bundles: [{ id: "kit", version: "2.0.0" }],
+        }, {
+            presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
+                source: "community", version: "2.0.0", downloadUrl: "https://example.org/kit.zip" }],
+        }, undefined, members), /Cannot verify the installed source for bundles kit/);
         assert.throws(() => resolveRuntimeInstallLocators({
             ...installed, bundles: [...bundles, { id: "other", version: "2.0.0" }],
         }, empty, undefined, { kit: members.kit, other: members.kit }), /Ambiguous bundle source/);
@@ -320,7 +355,7 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
             source: "community", version: "1.0.0",
             downloadUrl: "https://example.org/pirate.zip" };
         const installed = { presets: [{ id: "pirate-full-preset", version: "1.0.0",
-            priority: 10, enabled: true }], extensions: [], bundles: [] };
+            priority: 10, enabled: true, source: "community" }], extensions: [], bundles: [] };
         let catalogReads = 0;
         const launch = fixture({ getInstalledWorkflow: async () => installed,
             getState: async () => ({ ...snapshot, catalog: { ...catalog,
@@ -387,7 +422,8 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
                 calls.push({ binary, args, cwd: options.cwd });
                 const item = args[0] === "bundle"
                     ? [{ bundle_id: "kit", version: "2.0.0" }]
-                    : [{ id: args[0], version: "1.0.0", priority: 1, enabled: true }];
+                    : [{ id: args[0], version: "1.0.0", priority: 1, enabled: true,
+                        source: { kind: "catalog", catalog: "copilot" } }];
                 return { stdout: JSON.stringify(item) };
             });
         assert.deepEqual(calls.map(({ args }) => args), [
@@ -396,8 +432,16 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
         ]);
         assert.ok(calls.every(({ cwd }) => cwd === path));
         assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0",
-            priority: 1, enabled: true }]);
+            priority: 1, enabled: true, source: "copilot" }]);
         assert.deepEqual(installed.bundles, [{ id: "kit", version: "2.0.0" }]);
+        assert.deepEqual(normalizeInstalledWorkflowInventory({ presets: [{
+            id: "local-preset", version: "1.0.0", priority: 1, enabled: true,
+            source: { kind: "local" },
+        }], extensions: [], bundles: [] }).presets[0].source, "local");
+        assert.throws(() => normalizeInstalledWorkflowInventory({ presets: [{
+            id: "unknown", version: "1.0.0", priority: 1, enabled: true,
+            source: { kind: "catalog" },
+        }], extensions: [], bundles: [] }), /Invalid installed presets.*source/);
         await assert.rejects(readInstalledWorkflowInventory({ workspacePath: path },
             async () => ({ stdout: "not-json" })), /Invalid installed presets inventory/);
     } finally {
@@ -407,9 +451,11 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
 
 test("invalid or drifting runtime priorities never dispatch a Designer launch", async () => {
     assert.deepEqual(normalizeInstalledWorkflowInventory({
-        presets: [{ id: "preset", version: "1.0.0", priority: -2, enabled: false }],
+        presets: [{ id: "preset", version: "1.0.0", priority: -2, enabled: false,
+            source: { kind: "local" } }],
         extensions: [], bundles: [],
-    }).presets, [{ id: "preset", version: "1.0.0", priority: -2, enabled: false }]);
+    }).presets, [{ id: "preset", version: "1.0.0", priority: -2, enabled: false,
+        source: "local" }]);
     for (const bad of [
         { id: "preset", version: "1.0.0" },
         { id: "preset", version: "1.0.0", priority: Number.MAX_SAFE_INTEGER + 1 },
@@ -417,14 +463,15 @@ test("invalid or drifting runtime priorities never dispatch a Designer launch", 
     ]) {
         assert.throws(() => normalizeInstalledWorkflowInventory({
             presets: [bad], extensions: [], bundles: [],
-        }), /identity, version, state or priority/);
+        }), /identity, version, state, priority or source/);
     }
     let reads = 0;
     const changed = fixture({ getState: async () => ({ ...snapshot, catalog: {
         ...catalog, presets: [...catalog.presets, { id: "preset", installedId: "preset",
             source: "default", version: "1.0.0", downloadUrl: null }],
     } }), getInstalledWorkflow: async () => ({
-        presets: [{ id: "preset", version: "1.0.0", priority: ++reads, enabled: true }],
+        presets: [{ id: "preset", version: "1.0.0", priority: ++reads, enabled: true,
+            source: "default" }],
         extensions: [], bundles: [],
     }) });
     const response = await changed.post(request());
