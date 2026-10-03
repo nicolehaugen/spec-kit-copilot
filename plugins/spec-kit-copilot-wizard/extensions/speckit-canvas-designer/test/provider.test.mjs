@@ -805,6 +805,17 @@ test("reads the complete effective page set from the child checkout without a sn
         { code: "ENOENT" });
 });
 
+test("valid large page files do not inflate the Designer model with raw bytes", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    for (const entry of entries) {
+        const contents = await readFile(entry.path, "utf8");
+        await writeFile(entry.path, contents + " ".repeat(256 * 1024 - Buffer.byteLength(contents)));
+    }
+    const model = await loadResolvedDesignerPages(validHandoff(), project, entries);
+    assert.deepEqual(model.pages.map((page) => page.page), entries.map((entry) => entry.name));
+});
+
 test("registered contributions validate slots, sources, references and deterministic order", async (t) => {
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
