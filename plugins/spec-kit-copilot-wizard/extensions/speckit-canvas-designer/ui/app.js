@@ -45,7 +45,7 @@ generate.addEventListener("click", async () => {
     updateGenerate();
     showError("");
     try {
-        const values = Object.fromEntries(essentials.map((field) => [field, draft[field]]));
+        const values = draft;
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ revision: model.revision, values }),

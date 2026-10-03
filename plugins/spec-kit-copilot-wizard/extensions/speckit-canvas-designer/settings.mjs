@@ -8,7 +8,7 @@ export const SETTINGS_LIMIT = 256 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
 
-function validateValues(values, constraints) {
+export function validateValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
         || Object.keys(values).length !== Object.keys(constraints).length
         || Object.keys(values).some((key) => !Object.hasOwn(constraints, key))) {
