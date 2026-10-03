@@ -337,6 +337,11 @@ export async function applyComposition(inst, input) {
 // leave the composition slice alone.
 export async function runFastComposition(inst, { reason } = {}) {
     if (!inst?.workspacePath) return { ok: false, reason: "no-workspace" };
+    if (reason !== "refresh-button" && inst.refreshStatus?.status === "up-to-date") {
+        inst.refreshStatus.status = "ready";
+    }
+    inst.compositionRefreshCount = (inst.compositionRefreshCount ?? 0) + 1;
+    inst.broadcast({ type: "composition-progress", refreshing: true });
     try {
         const payload = await assembleComposition({
             workspaceRoot: inst.workspacePath,
@@ -357,6 +362,10 @@ export async function runFastComposition(inst, { reason } = {}) {
         return { ok: true, reason, stage2Needed: stage2.needed };
     } catch (err) {
         return { ok: false, reason: String(err?.message ?? err) };
+    } finally {
+        inst.compositionRefreshCount--;
+        inst.broadcast({ type: "composition-progress",
+            refreshing: inst.compositionRefreshCount > 0 });
     }
 }
 

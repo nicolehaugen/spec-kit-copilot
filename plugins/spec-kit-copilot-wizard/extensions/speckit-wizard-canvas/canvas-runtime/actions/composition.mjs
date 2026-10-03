@@ -13,6 +13,7 @@
 
 import { withInstance } from "../instances.mjs";
 import { applyComposition } from "../composition-apply.mjs";
+import { finishRefreshPart } from "../refresh-status.mjs";
 
 export const compositionActions = [
     {
@@ -53,6 +54,7 @@ export const compositionActions = [
         handler: (ctx) =>
             withInstance(ctx, async (inst) => {
                 const result = await applyComposition(inst, ctx.input ?? {});
+                if (result.inferredPipelineStatus?.accepted) finishRefreshPart(inst, "pipeline");
                 // Surface inferredPipeline acceptance so the LLM sees the
                 // drop in-turn (silent-drop was the previous failure mode).
                 return { ok: true, inferredPipelineStatus: result.inferredPipelineStatus };
