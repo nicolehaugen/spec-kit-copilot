@@ -10,6 +10,7 @@ import { persistAndBroadcast, runFastComposition } from "../composition-apply.mj
 import { reloadSkillsIfInstalledSetChanged } from "../instances.mjs";
 import { UnknownActionKindError } from "../../prompts.mjs";
 import { dispatchKindPrompt } from "../dispatch.mjs";
+import { beginOutputInference } from "../output-inference.mjs";
 
 /**
  * Shared body of the three showXCatalog handlers.
@@ -83,14 +84,19 @@ async function applyCatalogPush(inst, ctx, cfg) {
     // Removable once the Speckit CLI exposes the composition data this
     // wizard currently computes locally.
     if (cfg.runComposition) {
-        await runFastComposition(inst, { reason: cfg.reason });
+        const result = await runFastComposition(inst, { reason: cfg.reason });
+        if (!result.ok) throw new Error(`Composition refresh failed: ${result.reason}`);
     }
 
-    await persistAndBroadcast(
+    const snap = await persistAndBroadcast(
         inst,
         cfg.kind === "preset" && cfg.activePresetId ? { preset: cfg.activePresetId } : null,
     );
-    return { ok: true };
+    if (!cfg.runComposition) return { ok: true };
+    const requests = snap.artifactInferenceRequests ?? [];
+    const endpoint = beginOutputInference(inst, requests);
+    return { ok: true, artifactInferenceRequests: requests,
+        ...(endpoint ? { artifactInferenceEndpoint: endpoint.toString() } : {}) };
 }
 
 const CATALOG_ITEM_SCHEMA = {

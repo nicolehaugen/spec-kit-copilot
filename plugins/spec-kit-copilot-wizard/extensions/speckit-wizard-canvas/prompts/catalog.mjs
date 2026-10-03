@@ -17,6 +17,7 @@
 // See `../prompts.mjs` for the top-level dispatcher and family split.
 
 import { fmtHeader } from "./shared.mjs";
+import { buildCompositionPrompt } from "./composition.mjs";
 
 export const CATALOG_KINDS = new Set([
     "preset.install",
@@ -53,7 +54,8 @@ export function buildCatalogPrompt(kind, payload, context, { workspacePath, skil
                         : `Remove the preset with id \`${id}\`.`,
                     "Then re-list presets and push via `showPresetCatalog`.",
                     "`.speckit-wizard/state.json` is the state store.",
-                ].join("\n")
+                ].join("\n") + "\n\n" + buildCompositionPrompt("extension.inferArtifactTargets",
+                    { commands: null }, context, { workspacePath, skill })
             );
         }
 
@@ -75,7 +77,8 @@ export function buildCatalogPrompt(kind, payload, context, { workspacePath, skil
                         : "Run `specify extension remove <id>` to uninstall.",
                     "Then re-list extensions and push via `showExtensionCatalog`.",
                     "`.speckit-wizard/state.json` is the state store.",
-                ].join("\n")
+                ].join("\n") + "\n\n" + buildCompositionPrompt("extension.inferArtifactTargets",
+                    { commands: null }, context, { workspacePath, skill })
             );
         }
 
@@ -102,10 +105,11 @@ export function buildCatalogPrompt(kind, payload, context, { workspacePath, skil
                           ].join("\n")
                         : "Run `specify bundle remove <id>` to uninstall.",
                     "Then re-list bundles and push via `showBundleCatalog`.",
-                    "Because `specify bundle install/remove` delegates to `specify preset add/remove` and `specify extension add/remove` per component, ALSO re-list presets AND extensions and push `showPresetCatalog` + `showExtensionCatalog` so the Presets/Extensions/Composition views reflect the change.",
+                    "Because `specify bundle install/remove` delegates to `specify preset add/remove` and `specify extension add/remove` per component, ALSO re-list presets AND extensions and push `showPresetCatalog` + `showExtensionCatalog` so the Presets/Extensions/Composition views reflect the change. Push `showExtensionCatalog` last for a complete output-inference snapshot.",
                     "Bundle components may scaffold Copilot skills under `.github/skills/`. After the CLI succeeds, invoke the `reloadSessionSkills` canvas action via `invoke_canvas_action` on this wizard instance so the in-memory skill registry picks them up. Do NOT emit `/skills reload` as plain text.",
                     "`.speckit-wizard/state.json` is the state store.",
-                ].join("\n")
+                ].join("\n") + "\n\n" + buildCompositionPrompt("extension.inferArtifactTargets",
+                    { commands: null }, context, { workspacePath, skill })
             );
         }
 

@@ -1,4 +1,5 @@
 import { createCanvas, CanvasError, joinSession } from "@github/copilot-sdk/extension";
+import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
@@ -10,6 +11,16 @@ const servers = new Map();
 const opening = new Map();
 const handoffIdSchema = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$" };
 let checkout;
+
+async function ensureDependencies() {
+    const marker = new URL("./node_modules/es-module-lexer/package.json", import.meta.url);
+    try {
+        if ((await stat(marker)).isFile()) return;
+    } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+    }
+    throw new Error("Designer requires es-module-lexer. Open Spec Kit Wizard and use its environment setup to install the missing dependency, or run npm ci --omit=dev in the Designer extension folder.");
+}
 
 async function getCheckout() {
     if (!checkout) {
@@ -54,15 +65,19 @@ const session = await joinSession({
             properties: {
                 handoffId: handoffIdSchema,
                 pages: { type: "array", minItems: 3, maxItems: 100, items: {
-                    type: "object", additionalProperties: false, required: ["name", "path"],
-                    properties: { name: { type: "string", pattern: PAGE_NAME },
-                        path: { type: "string", minLength: 1, maxLength: 4096 } },
-                } },
-                templates: { type: "array", maxItems: 100, items: {
-                    type: "object", additionalProperties: false, required: ["name", "path", "sourceId"],
+                    type: "object", additionalProperties: false, required: ["name", "path", "kind", "strategy"],
                     properties: { name: { type: "string", pattern: PAGE_NAME },
                         path: { type: "string", minLength: 1, maxLength: 4096 },
-                        sourceId: { type: "string", minLength: 1, maxLength: 160 } },
+                        kind: { const: "designer.page" }, strategy: { const: "replace" } },
+                } },
+                templates: { type: "array", maxItems: 100, items: {
+                    type: "object", additionalProperties: false,
+                    required: ["name", "path", "sourceId", "kind", "strategy"],
+                    properties: { name: { type: "string", pattern: PAGE_NAME },
+                        path: { type: "string", minLength: 1, maxLength: 4096 },
+                        sourceId: { type: "string", minLength: 1, maxLength: 160 },
+                        kind: { type: "string", enum: ["designer.field", "generated.page", "generated.renderer"] },
+                        strategy: { const: "replace" } },
                 } },
             },
         },
@@ -78,6 +93,7 @@ const session = await joinSession({
                     servers.delete(ctx.instanceId);
                     await previous.close();
                 }
+                await ensureDependencies();
                 const { handoffId, pages, templates } = ctx.input ?? {};
                 if ((handoffId === undefined) !== (pages === undefined)
                     || (handoffId === undefined) !== (templates === undefined)) {

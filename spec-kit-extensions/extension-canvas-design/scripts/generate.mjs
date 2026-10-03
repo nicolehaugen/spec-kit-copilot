@@ -11,6 +11,7 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
+const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 512 * 1024;
 
@@ -20,7 +21,7 @@ function within(root, path) {
 }
 
 function configuration(request) {
-    const { canvas, workflow, values, installed, generatedFields } = request;
+    const { canvas, workflow, values, installed, generatedFields, generatedPages } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
@@ -65,6 +66,42 @@ function configuration(request) {
         }
         sections.set(section.id, section.title);
     }
+    if (generatedPages !== undefined
+        && (!Array.isArray(generatedPages) || generatedPages.length > 30
+            || new Set(generatedPages.map((page) => page?.id)).size !== generatedPages.length
+            || new Set(generatedPages.map((page) => page?.renderer)).size !== generatedPages.length)) {
+        throw new Error("Invalid frozen generated pages");
+    }
+    for (const page of generatedPages ?? []) {
+        if (!page || typeof page !== "object" || Array.isArray(page)
+            || Object.keys(page).sort().join() !== "assets,id,renderer,title"
+            || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
+            || page.id === RESERVED_GENERATED_PAGE_ID
+            || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
+            || !Array.isArray(page.assets) || page.assets.length !== 2
+            || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.page"
+            || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.renderer"
+            || page.assets.some((asset) => !asset || typeof asset !== "object"
+                || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+                || typeof asset.sourceId !== "string"
+                || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+                || typeof asset.content !== "string" || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+                || asset.content.length > 44 * 1024
+                || Buffer.from(asset.content, "base64").length > 32 * 1024
+                || typeof asset.hash !== "string"
+                || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash)) {
+            throw new Error("Invalid frozen generated page assets");
+        }
+        let definition;
+        try { definition = JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8")); }
+        catch { throw new Error(`${page.id}: invalid frozen generated page definition`); }
+        if (!definition || Object.keys(definition).sort().join() !== "id,renderer,schemaVersion,title"
+            || definition.schemaVersion !== 1 || definition.id !== page.id
+            || definition.renderer !== page.renderer || definition.title !== page.title) {
+            throw new Error(`${page.id}: frozen generated page definition differs from registration`);
+        }
+    }
     const outputs = {
         constitution: ".specify/memory/constitution.md", specify: "specs/<slug>/spec.md",
         clarify: "specs/<slug>/spec.md", plan: "specs/<slug>/plan.md",
@@ -72,6 +109,8 @@ function configuration(request) {
         checklist: "specs/<slug>/checklists/<name>.md",
     };
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"],
+        ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer }) =>
+            ({ id, title, renderer })) } : {}),
         ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>
             ({ id, label, value: values[id], ...(section ? { section } : {}) })) } : {}),
         phases: workflow.selectedPhases,
@@ -125,6 +164,10 @@ export async function materialize(project, workspace, handoffId, requestId) {
         throw new Error("Frozen generation request differs from the Wizard handoff");
     }
     const config = configuration(request);
+    const pageFiles = (request.generatedPages ?? []).flatMap((page) => [
+        { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
+        { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },
+    ]);
     const target = join(projectRoot, ".github", "extensions", config.canvas.id);
     if (!within(projectRoot, target) || request.target !== `.github/extensions/${config.canvas.id}/`) {
         throw new Error("Generation target is invalid");
@@ -148,6 +191,12 @@ export async function materialize(project, workspace, handoffId, requestId) {
         throw error;
     }
     await mkdir(join(target, "ui"));
+    if (pageFiles.length) await mkdir(join(target, "pages"));
+    for (const { filename, bytes } of pageFiles) {
+        const path = join(target, "pages", filename);
+        await writeFile(path, bytes, { flag: "wx" });
+        if (filename.endsWith(".mjs")) checkSyntax(path);
+    }
     for (const [file, content] of files) {
         if (file !== "extension.mjs") {
             await writeFile(join(target, file), content, { flag: "wx" });

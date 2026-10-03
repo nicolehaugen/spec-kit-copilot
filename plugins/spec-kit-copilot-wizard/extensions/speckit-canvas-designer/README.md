@@ -16,7 +16,8 @@ identity, version and priority remain reproducible. The child reloads skills
 once after installation. The composed
 `speckit-extension-canvas-design-load-page` skill resolves every effective
 template with `specify preset resolve` before opening Designer. It opens the
-official provider once with the complete set of page names and paths.
+official provider once with the complete typed inventory of page names,
+paths, asset kinds and replacement strategies.
 Preset and project overrides are honored. Failed CLI resolution, incomplete
 page lists, unsafe paths and invalid handoffs fail opening. A resolved page
 whose file is missing or invalid instead appears as a marked tab with its
@@ -36,7 +37,12 @@ beside the handoff in the Designer session artifacts (never to the page template
 reopening the same handoff restores them when its resolved pages are unchanged.
 Preset-registered stock text and checkbox fields render in their declared
 Designer page slot and are saved alongside built-in values. Custom control
-adapters and generated use of contributed settings are not implemented yet.
+adapters remain deferred. A separately registered generated-host page definition
+and replace-only renderer add a page only to the generated app, not Designer's
+tabs. The provider verifies the executable Specify template stack (and rejects
+native script registrations), validates the page/renderer pair, and freezes
+their bytes for packaging without the originating preset. Module dependencies
+in generated renderers are rejected because only the renderer is packaged.
 Save rejects stale revisions and invalid values, and reports failures without
 discarding edits. Generate freezes valid Essentials values and dispatches the
 installed Canvas Design generate command to create a new source-owned
@@ -56,7 +62,11 @@ checks the handoff structure, fingerprint, size, and session-artifact boundary.
 A missing or invalid handoff is an error, not an empty shell. The HTTP shell
 binds to loopback and requires an unguessable URL token.
 
-Run the provider tests with:
+The provider loads without installed npm dependencies. The Wizard's environment
+setup checks and installs the Designer's renderer parser alongside its own YAML
+parser. Opening Designer directly without the parser reports an install instruction
+instead of failing at provider startup. For local tests, install dependencies with
+`npm ci` in this directory, then run:
 
 ```bash
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs

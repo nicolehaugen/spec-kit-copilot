@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -10,6 +11,8 @@ const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
+// The generated shell uses "workflow" for its built-in page navigation.
+const RESERVED_GENERATED_PAGE_ID = "workflow";
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
@@ -60,15 +63,28 @@ async function boundedJson(path, root, limit, openFile = open, parse = true) {
         try {
             const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
             if (parse) document = JSON.parse(text);
+            else document = text;
         }
         catch (error) {
             throw new PageContentError(`Invalid Designer ${parse ? "JSON" : "UTF-8"} in ${path}: ${error.message}`);
         }
-        return { document, path: target, size: length,
+        return { document, ...(parse ? {} : { bytes }), path: target, size: length,
             hash: createHash("sha256").update(bytes).digest("hex") };
     } finally {
         await file.close();
     }
+}
+
+export async function readFrozenAsset(item, root) {
+    if (await realpath(root) !== root) {
+        throw new Error("Designer .specify directory changed since opening");
+    }
+    const result = await boundedJson(item.path, root, 32 * 1024, open, false);
+    if (result.path !== item.path || await realpath(dirname(item.path)) !== dirname(item.path)
+        || await realpath(root) !== root || result.hash !== item.hash) {
+        throw new Error(`${item.name}: generated asset changed since Designer opened; reopen Designer`);
+    }
+    return result.bytes;
 }
 
 function checkSchema(value, schema, location) {
@@ -213,7 +229,51 @@ function validateContribution(document, name, slots, fieldOrigins) {
     fieldOrigins.set(field.id, name);
 }
 
-async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes) {
+function validateGeneratedPage(document, name) {
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || Object.keys(document).sort().join() !== "id,renderer,schemaVersion,title"
+        || document.schemaVersion !== 1 || document.id !== name
+        || document.id === RESERVED_GENERATED_PAGE_ID
+        || typeof document.title !== "string" || !document.title.trim()
+        || document.title.length > 120 || typeof document.renderer !== "string"
+        || !PAGE_PATTERN.test(document.renderer)) {
+        throw new Error(`${name}: invalid generated page definition`);
+    }
+}
+
+function executableRegistration(project, name) {
+    const result = spawnSync("specify", ["artifact", "info", `template:${name}`, "--json"],
+        { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+    if (result.error || result.status !== 0) {
+        throw new Error(`${name}: cannot verify replace-only Specify template registration: ${result.stderr || result.error || result.stdout}`);
+    }
+    try {
+        const info = JSON.parse(result.stdout);
+        const script = spawnSync("specify", ["artifact", "info", `script:${name}`, "--json"],
+            { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+        if (script.error || ![0, 1].includes(script.status)) {
+            throw new Error(`${name}: cannot verify native script registration: ${script.stderr || script.error}`);
+        }
+        const scriptInfo = JSON.parse(script.stdout || script.stderr);
+        if (script.status === 1 && scriptInfo.error !== `unknown artifact script:${name}`) {
+            throw new Error(`${name}: cannot verify native script registration: ${scriptInfo.error || script.stderr}`);
+        }
+        if (script.status === 0 && scriptInfo.kind !== "script") {
+            throw new Error(`${name}: unexpected native script registration metadata`);
+        }
+        if (scriptInfo.kind === "script") {
+            throw new Error(`${name}: native Specify script registrations are not supported for generated renderers`);
+        }
+        return info;
+    }
+    catch (error) {
+        if (error.message.startsWith(`${name}:`)) throw error;
+        throw new Error(`${name}: invalid Specify registration metadata`, { cause: error });
+    }
+}
+
+async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes,
+    registration) {
     if (!Array.isArray(templates) || templates.length > 100) {
         throw new Error("Invalid Canvas Design template inventory");
     }
@@ -232,28 +292,69 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     let size = 0;
     for (const item of templates) {
         if (!item || typeof item !== "object" || Array.isArray(item)
-            || Object.keys(item).some((key) => !["name", "path", "sourceId"].includes(key))
+            || Object.keys(item).some((key) => !["name", "path", "sourceId", "kind", "strategy"].includes(key))
             || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
             || names.has(item.name) || typeof item.path !== "string"
             || !item.path || item.path.length > 4096 || /[\x00-\x1f\x7f]/.test(item.path)
             || typeof item.sourceId !== "string"
-            || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)) {
+            || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
+            || !["designer.field", "generated.page", "generated.renderer"].includes(item.kind)
+            || item.strategy !== "replace") {
             throw new Error(`Invalid or duplicate Canvas Design template: ${item?.name ?? ""}`);
         }
         names.add(item.name);
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
-        if (!inside(specify, path) || ![".json", ".mjs"].includes(extension)) {
-            throw new Error(`${item.name}: templates must be .json or .mjs files inside .specify`);
+        const expected = item.kind === "generated.renderer" ? ".mjs" : ".json";
+        if (!inside(specify, path) || extension !== expected) {
+            throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
         }
         const { document, hash, size: bytes } = await boundedJson(
-            path, specify, FILE_LIMIT, open, extension === ".json");
+            path, specify, FILE_LIMIT, open, item.kind !== "generated.renderer");
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
-        if (extension === ".json") {
+        if (item.kind === "designer.field") {
             validateContribution(document, item.name, slots, fieldOrigins);
             if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
             ids.add(document.id);
+        } else {
+            const info = registration(dirname(specify), item.name);
+            const layers = info?.stack;
+            const winner = layers?.find((layer) => layer.active);
+            const sourceLayer = item.sourceId === "project" ? "project"
+                : item.sourceId.startsWith("extension:") ? "extension" : "preset";
+            const sourceId = sourceLayer === "project" ? "_"
+                : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
+            if (info.kind !== "template" || !Array.isArray(layers) || !layers.length
+                || layers.some((layer) => layer.strategy !== "replace")
+                || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
+                throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
+            }
+            if (item.kind === "generated.page") {
+                validateGeneratedPage(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
+            } else {
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: generated renderer exceeds 32 KiB`);
+                const { init, parse } = await import("es-module-lexer/minimal");
+                await init();
+                let imports, exports;
+                try {
+                    [imports, exports] = parse(document);
+                } catch (error) {
+                    throw new Error(`${item.name}: invalid generated renderer: ${error.message}`, { cause: error });
+                }
+                if (imports.some((entry) => entry.d !== -2)) {
+                    throw new Error(`${item.name}: generated renderer must be self-contained; module imports are not packaged`);
+                }
+                const check = spawnSync("node", ["--check", "--input-type=module"],
+                    { input: document, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
+                if (check.error || check.status !== 0) {
+                    throw new Error(`${item.name}: invalid generated renderer: ${check.stderr || check.error || "module validation failed"}`);
+                }
+                if (!exports.some((entry) => entry.n === "renderPage")) {
+                    throw new Error(`${item.name}: invalid generated renderer: missing renderPage export`);
+                }
+            }
         }
         loaded.push({ ...item, path, hash, ...(document === undefined ? {} : { document }) });
     }
@@ -264,7 +365,20 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             }
         }
     }
-    const ordered = loaded.filter((entry) => entry.document?.field);
+    for (const entry of loaded.filter((item) => item.kind === "generated.page")) {
+        const renderer = loaded.find((item) => item.name === entry.document.renderer);
+        if (!renderer || renderer.kind !== "generated.renderer") {
+            throw new Error(`${entry.name}: missing generated renderer ${entry.document.renderer}`);
+        }
+    }
+    for (const entry of loaded.filter((item) => item.kind === "generated.renderer")) {
+        const uses = loaded.filter((item) => item.kind === "generated.page"
+            && item.document.renderer === entry.name);
+        if (uses.length !== 1) {
+            throw new Error(`${entry.name}: generated renderer must belong to exactly one page`);
+        }
+    }
+    const ordered = loaded.filter((entry) => entry.kind === "designer.field");
     const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     ordered.sort((a, b) => a.document.order - b.document.order
         || compare(a.sourceId.split(":").at(-1), b.sourceId.split(":").at(-1))
@@ -321,7 +435,8 @@ export async function assertPageCommand(project) {
     }
 }
 
-export async function loadResolvedDesignerPages(handoff, project, input, templates = []) {
+export async function loadResolvedDesignerPages(handoff, project, input, templates = [],
+    registration = executableRegistration) {
     const { checkout, schema } = await context(project);
     if (!Array.isArray(input) || !input.length || input.length > 100) {
         throw new Error("Designer requires between 1 and 100 resolved page paths");
@@ -331,8 +446,9 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     const names = new Set();
     const paths = input.map((item) => {
         if (!item || typeof item !== "object" || Array.isArray(item)
-            || Object.keys(item).some((key) => !["name", "path"].includes(key))
+            || Object.keys(item).some((key) => !["name", "path", "kind", "strategy"].includes(key))
             || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
+            || item.kind !== "designer.page" || item.strategy !== "replace"
             || typeof item.path !== "string" || !item.path || item.path.length > 4096
             || /[\x00-\x1f\x7f]/.test(item.path)) throw new Error("Invalid Designer page name/path");
         if (names.has(item.name)) throw new Error(`Invalid or duplicate Designer page name: ${item.name}`);
@@ -379,9 +495,11 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
     const { loaded, ordered } = await loadTemplates(
-        templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192);
+        templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
+    model.generatedPages = loaded.filter((entry) => entry.kind === "generated.page")
+        .map(({ name, document }) => ({ name, ...document }));
     for (const page of model.pages) {
         if (page.error) continue;
         for (const slot of page.slots ?? []) {
@@ -396,8 +514,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
             }
         }
     }
-    model.templates = loaded.map(({ name, path, hash, sourceId }) =>
-        ({ name, path, hash, sourceId }));
+    model.templates = loaded.map(({ name, path, hash, sourceId, kind, strategy }) =>
+        ({ name, path, hash, sourceId, kind, strategy }));
     return { ...model, revision: fingerprint({
         handoffId: handoff.handoffId, sourceFingerprint: handoff.sourceFingerprint, checkout, entries,
         templates: loaded,

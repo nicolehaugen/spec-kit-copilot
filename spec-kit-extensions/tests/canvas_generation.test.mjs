@@ -175,6 +175,11 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
             JSON.stringify({ ...defaultConfig, readOnlyFields: invalid }));
         assert.throws(() => readConfig(), /Invalid generated canvas configuration|Conflicting generated canvas section/);
     }
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ ...defaultConfig, generatedPages: [{
+            id: "workflow", title: "Workflow", renderer: "workflow-renderer",
+        }] }));
+    assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
 });
 
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
@@ -230,6 +235,51 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.deepEqual(state.phases.map((phase) => phase.id), handoff.workflow.selectedPhases);
     await canvas.onClose({ instanceId: "generated-test" });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId));
+});
+
+test("generation rejects malformed or mismatched frozen page assets before creating a target", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(path, "utf8"));
+    const definition = JSON.stringify({ schemaVersion: 1, id: "canvas-generated-overview",
+        renderer: "canvas-generated-overview-renderer", title: "Overview" });
+    const module = "export function renderPage({ root }) { root.textContent = 'Overview'; }";
+    const asset = (name, kind, content) => ({ name, kind, sourceId: "copilot-generated-page-test",
+        hash: createHash("sha256").update(content).digest("hex"),
+        content: Buffer.from(content).toString("base64") });
+    request.generatedPages = [{ id: "canvas-generated-overview", title: "Overview",
+        renderer: "canvas-generated-overview-renderer", assets: [
+            asset("canvas-generated-overview", "generated.page", definition),
+            asset("canvas-generated-overview-renderer", "generated.renderer", module),
+        ] }];
+    for (const change of [
+        (page) => { page.assets[0].hash = "0".repeat(64); },
+        (page) => { page.assets[1].kind = "script"; },
+        (page) => { page.title = "Changed"; },
+        (page) => { page.renderer = "../escape"; },
+        (page) => { page.id = "workflow"; },
+        (page) => { page.assets[1] = asset(page.renderer, "generated.renderer",
+            module.padEnd(32 * 1024 + 1, " ")); },
+    ]) {
+        const trial = structuredClone(request);
+        change(trial.generatedPages[0]);
+        const { integrity: _old, ...payload } = trial;
+        trial.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(trial));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen generated page assets|frozen generated page definition|Invalid frozen generated pages/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
+    const boundary = structuredClone(request);
+    boundary.generatedPages[0].assets[1] = asset("canvas-generated-overview-renderer",
+        "generated.renderer", module.padEnd(32 * 1024, " "));
+    const { integrity: _old, ...payload } = boundary;
+    boundary.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(path, JSON.stringify(boundary));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    assert.equal((await readFile(join(project, ".github", "extensions", "my-workflow",
+        "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
 });
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {

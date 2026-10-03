@@ -52,8 +52,11 @@ artifacts, provide input, and run the matching `speckit-*` skill.
 
 ### Browser tests
 
-From this extension directory, run `npm ci`, `npx playwright install chromium`,
-then `npm run test:e2e`. The tests start a local Wizard server with fixed
+From this extension directory, run `npm ci`; also run `npm ci` in the sibling
+`speckit-canvas-designer` extension directory. Then run
+`npx playwright install chromium` and `npm run test:e2e` here.
+The browser tests live in the repository's
+`tests/e2e/` directory and start a local Wizard server with fixed
 catalog data; no `specify` installation or live catalog is required.
 `.github/workflows/wizard-e2e.yml` runs them on PRs targeting `main` only
 when the Wizard plugin changes. The check is advisory until branch protection
@@ -91,6 +94,34 @@ The agent opens the wizard in a side panel. See
   phase in your lifecycle. Each phase corresponds to a command you
   execute — customize the commands in the pipeline, provide input to
   execute them, and view each artifact produced.
+
+Phase cards list the Markdown files and folders their commands produce,
+including multiple outputs when the installed skill identifies them. Outputs
+with the same named root and filename remain distinct when their root paths
+differ. The default output opens in the artifact viewer when the file exists;
+folders and not-yet-created files offer a link to an existing parent folder
+instead.
+Opening an expected output in the viewer before it exists shows an
+"Output not ready or not found" message rather than a raw 404.
+The **Composition** button reads **Refresh** when idle, whether or not the latest
+data is up to date; progress and retry messages appear beside it. It rechecks
+installed skills and refreshes the phase output evidence; catalog install/remove actions refresh it as
+part of their normal update. On the Phases tab, a prominent status row above
+the phase cards stays visible while pipeline or output inference is pending,
+briefly confirms completion, and remains visible with retry guidance if a
+refresh cannot finish. Merely opening the Phases tab does not start an
+inference turn.
+An unreadable output cache marks an active inference incomplete immediately,
+rather than leaving the refresh pending until its fallback timeout.
+Effective skill and script sources, as well as the artifact evidence cache, are
+read through a single file handle with path/identity checks and a 512 KiB cap,
+so changing a workspace file during a refresh cannot bypass the read limit.
+The skill's output declaration is parsed from the same bytes used to fingerprint
+it, so a concurrent skill edit cannot mix two versions in one snapshot.
+Cache updates use an exclusive temporary file in a revalidated directory and
+atomically replace the destination rather than writing through a cache symlink.
+The extension-artifact scanner uses these same cache read and write paths when
+hydrating outputs and pruning entries for removed extensions.
 
 ## Opening the dashboard
 
@@ -143,8 +174,8 @@ accordingly. The extension registers **13 actions** across four groups:
 - `runNpmDiagnostics` — dispatch a scripted npm-diagnostic prompt to the
   parent session so the Copilot agent walks a checklist (inspect
   `~/.npmrc`, ask about the org's approved feed / CA / proxy, propose a
-  minimal config change, retry the install, call `refreshEnvironment`
-  when done). Wired to the "Diagnose and fix with the agent" button on
+  minimal config change, retry the install, then use the Wizard's Retry
+  control to clear the error). Wired to the "Diagnose and fix with the agent" button on
   the boot overlay's deps-error card. See [First-open boot](#first-open-boot).
 
 **UI navigation (push state to a tab):**
@@ -251,10 +282,9 @@ flow recognize it.
   `speckit-cli-setup`).
 - The `spec-kit-copilot` core skills plugin installed — the wizard
   dispatches to its skills by name.
-- Node.js runtime (bundled with the Copilot App); one npm dependency
-  (`js-yaml`) is used for reading preset / bundle YAML.
-  The wizard installs it automatically on first open of a fresh clone
-  or worktree — no manual `npm install` needed.
+- Node.js runtime (bundled with the Copilot App). Wizard setup installs
+  `js-yaml` for YAML manifests and `es-module-lexer` for the sibling
+  Designer's generated-renderer validation when either is missing.
 
 <a id="first-open-boot"></a>
 
@@ -269,7 +299,7 @@ timer. The `deps-install` row streams npm's live output as the last
 line under the row title, so users see progress instead of a blank
 "installing…" spinner.
 
-If `npm install` fails (e.g. a corporate TLS-inspecting proxy blocks
+If `npm ci --omit=dev` fails (e.g. a corporate TLS-inspecting proxy blocks
 `registry.npmjs.org`), the deps-install row is replaced in-place with
 an error card classifying the failure and offering two buttons:
 
@@ -277,9 +307,8 @@ an error card classifying the failure and offering two buttons:
   to the Copilot agent (via the `runNpmDiagnostics` canvas action).
   The agent inspects `~/.npmrc`, asks about the user's approved
   internal feed / CA / proxy, proposes a minimal config change, and
-  retries the install. When it succeeds the agent calls
-  `refreshEnvironment`; the boot overlay picks up the new state and
-  animates through the remaining steps.
+  retries the install. Once it succeeds, click **Retry install** on the
+  Wizard's error card to recheck dependencies and clear the error.
 - **Retry install** — re-runs `installDeps` on the same backend, so
   the same overlay progress + error classification pipeline covers the
   retry too.
@@ -308,16 +337,19 @@ before rerunning a phase. If the state still looks wrong, ask the agent to
 reconcile it against the files on disk and the pipeline you intended; the
 wizard cannot detect or undo the overwritten update automatically.
 
-**First open shows "Spec Kit Wizard cannot start" or an npm error like
+**First open shows a dependency-install error like
 `ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE`, `ECONNREFUSED`, `ETIMEDOUT`,
 or `403 Forbidden` against `registry.npmjs.org`.**
 
-The first time the canvas opens in a fresh clone or worktree it runs
-`npm install js-yaml` in the extension folder. If your machine can't
+The first time the canvas opens in a fresh clone or worktree it installs
+each missing runtime dependency from its extension's lockfile with
+`npm ci --omit=dev`. The Wizard's Playwright dev dependency is not installed.
+If your machine can't
 reach the public npm registry — typically due to a corporate proxy,
 egress firewall, or TLS-inspecting appliance — that install fails and
-the wizard refuses to start. This is an npm reachability problem on the
-host, not a wizard bug. `package-lock.json` doesn't help here: it only
+the Wizard shows its recovery card; you can continue with reduced functionality.
+This is an npm reachability problem on the host, not a wizard bug.
+`package-lock.json` doesn't help here: it only
 pins versions, npm still has to fetch packages from a registry.
 
 Pick whichever applies:
@@ -328,26 +360,29 @@ Pick whichever applies:
    ```
    npm config set registry https://<your-approved-mirror>/npm/registry/
    ```
-   Verify with `npm install --dry-run js-yaml` in any empty folder, then
-   close and reopen the wizard canvas.
+   Verify the approved mirror serves both `js-yaml` and
+   `es-module-lexer`, then close and reopen the wizard canvas.
 2. **Trust your corporate root CA.** If your network intercepts TLS,
    npm needs the corporate CA:
    ```
    npm config set cafile "/path/to/corp-root-ca.pem"
    ```
    Your IT/security team can point you at the cert.
-3. **Install the dep manually, once**, then reopen the canvas:
+3. **Install the missing dependency manually, once**, then reopen the canvas.
+   Run this in the folder shown in the Wizard's error card (Wizard for
+   `js-yaml`, Designer for `es-module-lexer`):
    ```
-   cd <path-to>/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas
-   npm install js-yaml
+   cd <path-to>/spec-kit-copilot-wizard/extensions/<affected-canvas>
+   npm ci --omit=dev
    ```
    After this succeeds the wizard skips the auto-install on every
    subsequent open in the same folder.
 
-If none of the above are available in your environment, `js-yaml` is
-only used by the **Catalogs** and **Composition** pages; the rest of
-the wizard doesn't need it. Manual install (option 3) is the smallest
-change and doesn't require any org-wide npm reconfiguration.
+If `js-yaml` remains unavailable, the Wizard's **Catalogs** and
+**Composition** pages cannot parse YAML. If `es-module-lexer` remains
+unavailable, Designer reports the missing dependency on open. Manual
+installation in the affected extension folder doesn't require org-wide
+npm reconfiguration.
 
 ## Files
 
@@ -367,4 +402,4 @@ change and doesn't require any org-wide npm reconfiguration.
 | `ui/` | Dashboard UI served to the canvas iframe: `index.html`, `app.js`, `client.js`, plus per-page modules (`setup.js`, `catalog.js`, `composition.js`, `composition-artifacts.js`, `phase-card.js`, `phase-contributors.js`, `phase-runtime.js`, `state.js`, `modals.js`). |
 | `test/` | 5 consolidated `node --test` files (`composition`, `catalog`, `env`, `state-and-scanner`, `server-integration`) — zero SDK, zero network, zero real subprocess spawns. |
 | `copilot-extension.json` | Manifest for gist share/install. |
-| `package.json`, `package-lock.json` | `js-yaml` runtime dependency. |
+| `package.json`, `package-lock.json` | `js-yaml` runtime dependency; Wizard setup also checks the sibling Designer's lockfile. |

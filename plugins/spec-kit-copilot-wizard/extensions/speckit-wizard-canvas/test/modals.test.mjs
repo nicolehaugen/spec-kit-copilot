@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, test } from "node:test";
-import { flushClarifications, openCommunityInstallModal, setViewersDeps } from "../ui/modals.js";
+import { flushClarifications, openArtifactViewer, openCommunityInstallModal, setViewersDeps } from "../ui/modals.js";
 import {
     clearClarifications,
     clearPhaseRunning,
@@ -24,6 +24,33 @@ describe("wizard modals", () => {
         installLocalStorage();
         clearClarifications("speckit.plan");
         clearPhaseRunning("speckit.plan");
+    });
+
+    test("missing expected output shows an actionable viewer message, other errors remain failures", async () => {
+        const previousDocument = globalThis.document;
+        const previousFetch = globalThis.fetch;
+        const body = { innerHTML: "" };
+        const viewer = {
+            hidden: true,
+            innerHTML: "",
+            querySelector: (selector) => selector === ".artifact-viewer-body" ? body : null,
+        };
+        globalThis.document = { getElementById: (id) => id === "phase-artifact-viewer" ? viewer : null };
+        try {
+            globalThis.fetch = async () => ({ ok: false, status: 404 });
+            await openArtifactViewer({ id: "plan", artifactPath: "specs/new/plan.md" });
+            assert.equal(viewer.hidden, false);
+            assert.match(body.innerHTML, /Output not ready or not found at the expected path/);
+            assert.match(body.innerHTML, /Run the phase or check its output folder/);
+            assert.doesNotMatch(body.innerHTML, /Failed to load artifact/);
+
+            globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => "forbidden" });
+            await openArtifactViewer({ id: "plan", artifactPath: "specs/new/plan.md" });
+            assert.match(body.innerHTML, /Failed to load artifact: 403 forbidden/);
+        } finally {
+            globalThis.document = previousDocument;
+            globalThis.fetch = previousFetch;
+        }
     });
 
     test("community warning preserves Catalogs install copy and supports designer selection", () => {
