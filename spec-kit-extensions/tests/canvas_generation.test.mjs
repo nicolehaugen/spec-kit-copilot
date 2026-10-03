@@ -253,6 +253,8 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         (page) => { page.assets[1].kind = "script"; },
         (page) => { page.title = "Changed"; },
         (page) => { page.renderer = "../escape"; },
+        (page) => { page.assets[1] = asset(page.renderer, "generated.renderer",
+            module.padEnd(32 * 1024 + 1, " ")); },
     ]) {
         const trial = structuredClone(request);
         change(trial.generatedPages[0]);
@@ -263,6 +265,15 @@ test("generation rejects malformed or mismatched frozen page assets before creat
             /Invalid frozen generated page assets|frozen generated page definition|Invalid frozen generated pages/);
         await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
     }
+    const boundary = structuredClone(request);
+    boundary.generatedPages[0].assets[1] = asset("canvas-generated-overview-renderer",
+        "generated.renderer", module.padEnd(32 * 1024, " "));
+    const { integrity: _old, ...payload } = boundary;
+    boundary.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(path, JSON.stringify(boundary));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    assert.equal((await readFile(join(project, ".github", "extensions", "my-workflow",
+        "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
 });
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {

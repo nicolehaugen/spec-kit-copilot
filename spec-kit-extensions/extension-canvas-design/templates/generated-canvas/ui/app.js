@@ -22,10 +22,14 @@ function wireGeneratedPages() {
     const root = $("generated-page");
     if (!root) return;
     const buttons = [...document.querySelectorAll("[data-canvas-page]")];
+    let selection = 0;
     for (const button of buttons) button.addEventListener("click", async () => {
+        const currentSelection = ++selection;
         const id = button.dataset.canvasPage;
         const workflow = id === "workflow";
         root.hidden = workflow;
+        root.replaceChildren();
+        root.classList.remove("workflow-error");
         $("phase-navigation").hidden = !workflow;
         $("phase-card").hidden = !workflow;
         for (const candidate of buttons) {
@@ -38,16 +42,18 @@ function wireGeneratedPages() {
         try {
             if (!registration) throw new Error(`Missing generated page ${id}`);
             const { renderPage } = await import(`${registration.dataset.module}?token=${encodeURIComponent(token)}`);
+            if (currentSelection !== selection) return;
             if (typeof renderPage !== "function") throw new Error(`Invalid renderer for ${id}`);
-            root.replaceChildren();
-            await renderPage({ root, canvas: { id: root.dataset.canvasId,
+            const content = document.createElement("div");
+            await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
                 displayName: root.dataset.canvasTitle }, values: JSON.parse(root.dataset.values) });
+            if (currentSelection !== selection) return;
+            root.replaceChildren(...content.childNodes);
         } catch (error) {
+            if (currentSelection !== selection) return;
             root.textContent = `Generated page could not render: ${error.message}`;
             root.classList.add("workflow-error");
-            return;
         }
-        root.classList.remove("workflow-error");
     });
 }
 

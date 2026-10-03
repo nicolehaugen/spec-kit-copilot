@@ -7,7 +7,7 @@ import { test, expect } from "./playwright.mjs";
 import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
-async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"]) {
+async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"], generatedPages) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug,
@@ -23,6 +23,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         },
         phaseArtifacts: {},
         installed: { presets: [], extensions: [], bundles: [] },
+        ...(generatedPages ? { generatedPages } : {}),
     };
     let runtime, routes, server;
     try {
@@ -61,6 +62,47 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         throw error;
     }
 }
+
+test("generated page selection ignores stale imports and async renderers", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], [
+        { id: "slow", title: "Slow", renderer: "slow" },
+        { id: "fast", title: "Fast", renderer: "fast" },
+    ]);
+    try {
+        await page.route("**/pages/slow.mjs*", async (route) => {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            await route.fulfill({ contentType: "text/javascript", body: `
+                globalThis.slowModuleLoaded = true;
+                export async function renderPage({ root }) {
+                    globalThis.slowRenderStarted = true;
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                    root.textContent = "Slow";
+                    globalThis.slowRenderDone = true;
+                }
+            ` });
+        });
+        await page.route("**/pages/fast.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export function renderPage({ root }) { root.textContent = "Fast"; }',
+        }));
+        await page.goto(canvas.url);
+        const root = page.locator("#generated-page");
+        await page.locator('[data-canvas-page="slow"]').click();
+        await page.locator('[data-canvas-page="fast"]').click();
+        await expect(root).toHaveText("Fast");
+        await page.waitForFunction(() => globalThis.slowModuleLoaded);
+        await expect(root).toHaveText("Fast");
+        await page.locator('[data-canvas-page="slow"]').click();
+        await page.waitForFunction(() => globalThis.slowRenderStarted);
+        await page.locator('[data-canvas-page="fast"]').click();
+        await expect(root).toHaveText("Fast");
+        await page.waitForFunction(() => globalThis.slowRenderDone);
+        await expect(root).toHaveText("Fast");
+        await expect(page.locator('[data-canvas-page="fast"]')).toHaveAttribute("aria-current", "page");
+    } finally {
+        await canvas.close();
+    }
+});
 
 test("enabled slug previews the View target folder and persists across phases", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true);

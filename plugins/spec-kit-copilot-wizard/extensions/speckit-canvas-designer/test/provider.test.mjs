@@ -1282,6 +1282,16 @@ test("paired control validates both adapters, typed values and portable generate
     await writeFile(requestPath, JSON.stringify(invalidRequest));
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /incompatible frozen control value or adapters/);
+    const oversizedRequest = JSON.parse(originalRequest);
+    const oversized = Buffer.alloc(32 * 1024 + 1);
+    oversizedRequest.generatedControls[0].assets[1].content = oversized.toString("base64");
+    oversizedRequest.generatedControls[0].assets[1].hash =
+        createHash("sha256").update(oversized).digest("hex");
+    const { integrity: _oversizedIntegrity, ...oversizedPayload } = oversizedRequest;
+    oversizedRequest.integrity = createHash("sha256").update(JSON.stringify(oversizedPayload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(oversizedRequest));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen generated control asset/);
     await writeFile(requestPath, originalRequest);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const portable = join(workspace, "portable-risk");

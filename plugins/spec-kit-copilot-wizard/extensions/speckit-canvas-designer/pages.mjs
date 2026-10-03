@@ -357,7 +357,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 try {
                     [imports] = parse(document);
                 } catch (error) {
-                    throw new Error(`${item.name}: invalid ${item.kind}: ${error.message}`, { cause: error });
+                    throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
+                        ? "generated renderer" : item.kind}: ${error.message}`, { cause: error });
                 }
                 if (imports.some((entry) => entry.d !== -2)) {
                     throw new Error(`${item.name}: ${item.kind === "generated.renderer"
