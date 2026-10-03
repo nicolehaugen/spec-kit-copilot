@@ -1,15 +1,15 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./playwright.mjs";
 import { fileURLToPath } from "node:url";
 
 // A real, valid preset directory in this repo — used to exercise the
 // "Local development" add flow against an actual manifest on disk, matching
-// how e2e/server.mjs wires getInstance() to the real repo root rather than a
+// how the E2E server wires getInstance() to the real repo root rather than a
 // fixture workspace.
 const LOCAL_PRESET_PATH = fileURLToPath(
-    new URL("../../../../../spec-kit-presets/copilot-sub-agents", import.meta.url),
+    new URL("../../spec-kit-presets/copilot-sub-agents", import.meta.url),
 ).replace(/[\\/]$/, "");
 const LOCAL_CANVAS_DESIGN_PATH = fileURLToPath(
-    new URL("../../../../../spec-kit-extensions/extension-canvas-design", import.meta.url),
+    new URL("../../spec-kit-extensions/extension-canvas-design", import.meta.url),
 ).replace(/[\\/]$/, "");
 
 test.beforeEach(async ({ page }) => {

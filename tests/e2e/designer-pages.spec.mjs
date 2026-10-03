@@ -3,18 +3,18 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { test, expect } from "@playwright/test";
-import { startShell } from "../../speckit-canvas-designer/server.mjs";
-import { fingerprint, handoffDirectory } from "../../speckit-canvas-designer/handoff.mjs";
-import { loadResolvedDesignerPages } from "../../speckit-canvas-designer/pages.mjs";
-import { loadDesignerSettings } from "../../speckit-canvas-designer/settings.mjs";
-import { materialize } from "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
-import { renderHtml } from "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
+import { test, expect } from "./playwright.mjs";
+import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
+import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
+import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
+import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
+import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
+import { renderHtml } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 
-const templateRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/pages/", import.meta.url);
-const extensionRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
-const presetRoot = new URL("../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
-const billingRoot = new URL("../../../../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
+const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/pages/", import.meta.url);
+const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
+const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
+const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
 
 function supportsSpecifyVersion(output) {
     const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
@@ -131,8 +131,10 @@ test("isolated test preset resolves through Specify and renders its contributed 
         };
         const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
             "canvas-settings-appearance", "canvas-settings-pr1-test"]
-            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name); return entry; });
-        const templates = [resolve("canvas-contribution-pr1-test")];
+            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
+                return { ...entry, kind: "designer.page", strategy: "replace" }; });
+        const templates = [{ ...resolve("canvas-contribution-pr1-test"),
+            kind: "designer.field", strategy: "replace" }];
         expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -213,8 +215,10 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         };
         const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
             "canvas-settings-appearance", "canvas-settings-billing"]
-            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name); return entry; });
-        const templates = [resolve("canvas-contributions-billing")];
+            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
+                return { ...entry, kind: "designer.page", strategy: "replace" }; });
+        const templates = [{ ...resolve("canvas-contributions-billing"),
+            kind: "designer.field", strategy: "replace" }];
         expect(templates[0].sourceId).toBe("copilot-billing-canvas-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });

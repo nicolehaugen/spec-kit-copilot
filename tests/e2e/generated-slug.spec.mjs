@@ -3,9 +3,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test, expect } from "@playwright/test";
-import { createWorkflowRoutes } from "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
-import { createRuntime } from "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
+import { test, expect } from "./playwright.mjs";
+import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
+import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"]) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
