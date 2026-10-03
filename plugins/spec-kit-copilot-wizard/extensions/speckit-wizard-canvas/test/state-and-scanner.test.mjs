@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { describe, test } from "node:test";
 import { PHASE_ORDER } from "../canvas-runtime/wizard-phases.mjs";
 import { _internal as scannerInternal, readMarkdownArtifact, scanWorkspace } from "../project-scanner.mjs";
@@ -753,6 +754,14 @@ function makeFs(files) {
     };
     return {
         _store: store,
+        readEvidenceCache: async (cwd) => {
+            const value = fileContent(store.get(norm(join(cwd, ".speckit-wizard", "artifact-targets.json"))));
+            if (typeof value !== "string") return { version: 1, entries: {} };
+            try { return JSON.parse(value); } catch { return null; }
+        },
+        writeEvidenceCache: async (cwd, payload) => {
+            store.set(norm(join(cwd, ".speckit-wizard", "artifact-targets.json")), payload);
+        },
         pathExists: async (p) => {
             const np = norm(p);
             return store.has(np) || isDir(np);
