@@ -34,12 +34,19 @@ JPEG, GIF, or WebP images up to 32 KiB each. The smaller Header logo replaces
 the generated header's brand mark; the larger Main page logo appears beside the
 workflow heading. Either can be set alone. Both use the shared field/slot
 validation path and freeze the selected bytes and hashes at Generate. With no
-Header logo, the existing brand mark remains unchanged. Without optional text fields,
-generated description,
-heading and custom slug default to `Spec Kit workflow canvas.`, `Workflows` and
-off. Workflow name appears after Phase input in the generated
-canvas's first workflow-creation phase and labels the workflow there. Essentials'
-default-off Allow custom slug setting controls whether an optional Workflow slug
+Header logo, the existing brand mark remains unchanged. Without optional text
+fields, generated description, heading and custom slug default to
+`Spec Kit workflow canvas.`, `Workflows` and off.
+
+Preset-generated pages can publish `asset` slots and receive any registered
+`stock.image` field by `generatedBinding.page` and `.slot`, independent of the
+field's Designer page. The renderer places a `data-asset-slot` element where it
+wants the image; the generated host mounts the packaged asset. Missing,
+incompatible, and duplicate placements fail explicitly.
+
+Workflow name appears after Phase input in the generated canvas's first
+workflow-creation phase and labels the workflow there. Essentials' default-off
+Allow custom slug setting controls whether an optional Workflow slug
 field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
 Artifacts and Appearance are empty by default. Save persists validated field values to `settings.json`

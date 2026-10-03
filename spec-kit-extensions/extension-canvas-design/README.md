@@ -43,6 +43,20 @@ generated extension. The resulting app serves its own images without Canvas
 Design installed and rejects missing or modified packaged images rather than
 silently rendering a different logo.
 
+Preset-generated pages can also place a `stock.image` contribution. Declare a
+slot on the generated page, for example
+`"slots": [{"id": "hero.logo", "accepts": ["asset"]}]`, and bind the image
+field with `"generatedBinding": {"presentation": "asset",
+"page": "canvas-generated-gallery", "slot": "hero.logo"}`. The page renderer
+puts a `<div data-asset-slot="hero.logo"></div>` at the desired location; the
+generated host mounts the packaged image there, with the field label as its
+accessible description. The renderer may style the slot to choose the size
+and layout. Every page, field, and renderer must be explicitly registered as
+a named replace-only template. Unknown, duplicate, or incompatible slots fail
+validation; a selected image whose slot is not rendered fails visibly when
+the generated page opens. Neither preset files nor the Canvas Design package
+are needed at runtime.
+
 The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
 runtime package inventory from the Wizard handoff. Designer-only `canvas-design`

@@ -219,10 +219,17 @@ function validateContribution(document, name, slots, fieldOrigins) {
         && (!binding
             || typeof binding !== "object" || Array.isArray(binding)
             || (["object", "image"].includes(field.type)
-                ? Object.keys(binding).sort().join() !== "presentation,slot"
+                ? (field.type === "image"
+                    ? Object.keys(binding).sort().join() !== (binding.page === undefined
+                        ? "presentation,slot" : "page,presentation,slot")
+                        || (binding.page !== undefined && !PAGE_PATTERN.test(binding.page))
+                    : Object.keys(binding).sort().join() !== "presentation,slot")
                     || binding.presentation !== (field.type === "image" ? "asset" : "control")
                     || (field.type === "image"
-                        ? !["header.brand", "workflow.intro"].includes(binding.slot)
+                        ? binding.page === undefined
+                            ? !["header.brand", "workflow.intro"].includes(binding.slot)
+                            : typeof binding.slot !== "string"
+                                || !/^[a-z][a-z0-9.-]{0,79}$/.test(binding.slot)
                         : binding.slot !== "details.content")
                 : field.type !== "string"
                     || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
@@ -266,7 +273,7 @@ function validateControl(document, name) {
 
 function validateGeneratedPage(document, name) {
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || Object.keys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values"].includes(key))
+        || Object.keys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
         || document.schemaVersion !== 1 || document.id !== name
         || document.id === RESERVED_GENERATED_PAGE_ID
         || typeof document.title !== "string" || !document.title.trim()
@@ -275,7 +282,14 @@ function validateGeneratedPage(document, name) {
         || (document.values !== undefined && (!Array.isArray(document.values)
             || document.values.length > 100 || new Set(document.values).size !== document.values.length
             || document.values.some((id) => typeof id !== "string"
-                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id))))) {
+                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id))))
+        || (document.slots !== undefined && (!Array.isArray(document.slots)
+            || document.slots.length > 30
+            || new Set(document.slots.map((slot) => slot?.id)).size !== document.slots.length
+            || document.slots.some((slot) => !slot || typeof slot !== "object"
+                || Array.isArray(slot) || Object.keys(slot).sort().join() !== "accepts,id"
+                || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
+                || JSON.stringify(slot.accepts) !== '["asset"]')))) {
         throw new Error(`${name}: invalid generated page definition`);
     }
 }
@@ -525,6 +539,24 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         for (const id of page.document.values ?? []) {
             if (!generatedIds.has(id)) throw new Error(`${page.name}: undeclared generated value ${id}`);
         }
+    }
+    const occupiedAssetSlots = new Set();
+    for (const entry of loaded.filter((item) => item.kind === "designer.field"
+        && item.document.generatedBinding?.presentation === "asset")) {
+        const binding = entry.document.generatedBinding;
+        if (binding.page) {
+            const page = loaded.find((item) => item.kind === "generated.page"
+                && item.document.id === binding.page);
+            if (!page?.document.slots?.some((slot) =>
+                slot.id === binding.slot && slot.accepts.includes("asset"))) {
+                throw new Error(`${entry.name}: unknown or incompatible generated page asset slot ${binding.page}.${binding.slot}`);
+            }
+        }
+        const key = `${binding.page ?? "workflow"}:${binding.slot}`;
+        if (occupiedAssetSlots.has(key)) {
+            throw new Error(`${entry.name}: duplicate generated asset slot ${key}`);
+        }
+        occupiedAssetSlots.add(key);
     }
     const controls = loaded.filter((entry) => entry.kind === "control.definition");
     const adapterOwners = new Map();

@@ -32,7 +32,11 @@ Each registration declares its Canvas Design kind (`designer.field`,
 `designer.adapter`, `generated.adapter`, `value.definition`, or
 `value.provider`) and strategy (`replace`). A `designer.field` can also
 register `stock.image` assets, bound to the generated `header.brand` or
-`workflow.intro` slot. Each slot accepts one independent image.
+`workflow.intro` slot, or to a named `asset` slot on a registered generated
+page via `generatedBinding.page` and `.slot`. Each slot accepts one independent
+image; the generated page renderer places a `data-asset-slot` element where
+the image belongs. Its image file and stock rendering are packaged into the
+generated app, not loaded from Specify at runtime.
 Designer pages have kind `designer.page` and strategy `replace` (implicit for
 the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register

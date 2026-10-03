@@ -1,4 +1,5 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
+const { mountPageAssets } = await import(`./page-assets.mjs${new URL(import.meta.url).search}`);
 async function mountGeneratedControl(root) {
     const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
     try {
@@ -60,6 +61,8 @@ function wireGeneratedPages() {
                 displayName: root.dataset.canvasTitle },
                 values: { ...JSON.parse(root.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
             if (currentSelection !== selection) return;
+            mountPageAssets(content, JSON.parse(registration.dataset.assetSlots),
+                JSON.parse(registration.dataset.assets), token);
             root.replaceChildren(...content.childNodes);
         } catch (error) {
             if (currentSelection !== selection) return;

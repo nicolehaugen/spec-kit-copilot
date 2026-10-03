@@ -9,7 +9,7 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "templates", "generated-canvas");
 const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
     "phase-response.mjs",
-    "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
+    "ui/app.js", "ui/markdown.mjs", "ui/page-assets.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
@@ -80,8 +80,13 @@ function within(root, path) {
 }
 
 function frozenImage(item, values, constraints) {
-    if (!item || Object.keys(item).sort().join() !== "content,hash,id,mime,slot"
-        || !fieldPattern.test(item.id) || !["header.brand", "workflow.intro"].includes(item.slot)
+    if (!item || Object.keys(item).sort().join() !== (item.page === undefined
+        ? "content,hash,id,label,mime,slot" : "content,hash,id,label,mime,page,slot")
+        || !fieldPattern.test(item.id)
+        || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+        || (item.page === undefined ? !["header.brand", "workflow.intro"].includes(item.slot)
+            : typeof item.page !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(item.page)
+                || typeof item.slot !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(item.slot))
         || constraints[item.id]?.type !== "image" || constraints[item.id]?.maxBytes !== 32 * 1024
         || !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(item.mime)
         || typeof item.content !== "string" || item.content.length > 44 * 1024
@@ -114,7 +119,9 @@ function frozenImage(item, values, constraints) {
     return bytes;
 }
 
-const imageFile = (item) => `${item.slot === "header.brand" ? "logo" : "main-page-logo"}.${{
+const imageFile = (item) => `${item.page
+    ? `asset-${createHash("sha256").update(item.id).digest("hex").slice(0,24)}`
+    : item.slot === "header.brand" ? "logo" : "main-page-logo"}.${{
     "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
     "image/webp": "webp",
 }[item.mime]}`;
@@ -150,8 +157,10 @@ function configuration(request) {
         throw new Error("Invalid frozen canvas identity, workflow or runtime inventory");
     }
     if (generatedAssets !== undefined && (!Array.isArray(generatedAssets)
-        || generatedAssets.length > 2
-        || new Set(generatedAssets.map((item) => item?.slot)).size !== generatedAssets.length)) {
+        || generatedAssets.length > 10
+        || new Set(generatedAssets.map((item) => item?.id)).size !== generatedAssets.length
+        || new Set(generatedAssets.map((item) =>
+            `${item?.page ?? "workflow"}:${item?.slot}`)).size !== generatedAssets.length)) {
         throw new Error("Invalid frozen image assets");
     }
     for (const [id, rule] of Object.entries(fieldConstraints)) {
@@ -277,7 +286,7 @@ function configuration(request) {
     }
     for (const page of generatedPages ?? []) {
         if (!page || typeof page !== "object" || Array.isArray(page)
-            || Object.keys(page).some((key) => !["assets", "id", "renderer", "title", "values"].includes(key))
+            || Object.keys(page).some((key) => !["assets", "id", "renderer", "title", "values", "slots"].includes(key))
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             || page.id === RESERVED_GENERATED_PAGE_ID
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
@@ -285,6 +294,13 @@ function configuration(request) {
             || (page.values !== undefined && (!Array.isArray(page.values)
                 || page.values.length > 100 || new Set(page.values).size !== page.values.length
                 || page.values.some((id) => !generatedIds.has(id))))
+            || (page.slots !== undefined && (!Array.isArray(page.slots)
+                || page.slots.length > 30
+                || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
+                || page.slots.some((slot) => !slot || typeof slot !== "object"
+                    || Object.keys(slot).sort().join() !== "accepts,id"
+                    || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
+                    || JSON.stringify(slot.accepts) !== '["asset"]')))
             || !Array.isArray(page.assets) || page.assets.length !== 2
             || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.page"
             || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.renderer"
@@ -303,11 +319,18 @@ function configuration(request) {
         try { definition = JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8")); }
         catch { throw new Error(`${page.id}: invalid frozen generated page definition`); }
         if (!definition || Object.keys(definition).some((key) =>
-            !["id", "renderer", "schemaVersion", "title", "values"].includes(key))
+            !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
             || definition.schemaVersion !== 1 || definition.id !== page.id
             || definition.renderer !== page.renderer || definition.title !== page.title
-            || JSON.stringify(definition.values) !== JSON.stringify(page.values)) {
+            || JSON.stringify(definition.values) !== JSON.stringify(page.values)
+            || JSON.stringify(definition.slots) !== JSON.stringify(page.slots)) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
+        }
+    }
+    for (const image of generatedAssets ?? []) {
+        if (image.page && !generatedPages?.some((page) => page.id === image.page
+            && page.slots?.some((slot) => slot.id === image.slot && slot.accepts.includes("asset")))) {
+            throw new Error(`${image.id}: unknown generated page asset slot`);
         }
     }
     if (generatedControls !== undefined
@@ -372,14 +395,19 @@ function configuration(request) {
         tasks: "specs/<slug>/tasks.md", analyze: "specs/<slug>/analysis.md",
         checklist: "specs/<slug>/checklists/<name>.md",
     };
-    const headerImage = generatedAssets?.find((item) => item.slot === "header.brand");
-    const mainImage = generatedAssets?.find((item) => item.slot === "workflow.intro");
+    const headerImage = generatedAssets?.find((item) => !item.page && item.slot === "header.brand");
+    const mainImage = generatedAssets?.find((item) => !item.page && item.slot === "workflow.intro");
     const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
+    const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
         ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
-        ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer, values: declared }) =>
-            ({ id, title, renderer, ...(declared ? { values: declared } : {}) })) } : {}),
+        ...(pageImages.length ? { generatedPageAssets: pageImages.map((item) =>
+            ({ id: item.id, label: item.label, page: item.page, slot: item.slot,
+                ...imageConfig(item) })) } : {}),
+        ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer,
+            values: declared, slots }) => ({ id, title, renderer,
+            ...(declared ? { values: declared } : {}), ...(slots ? { slots } : {}) })) } : {}),
         ...(valueSources?.length ? { valueSources: valueSources.map(
             ({ id, label, schema, source, presentation, section, assets }) => ({
                 id, label, schema, source: source.kind === "provider"

@@ -6,6 +6,7 @@ import { phaseContract, valueContract } from "./contract.mjs";
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "utf8");
+const pageAssets = readFileSync(new URL("./ui/page-assets.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 
@@ -67,11 +68,36 @@ export function readConfig() {
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
                 || config.generatedPages.some((page) => !page || typeof page !== "object"
                             || Array.isArray(page) || Object.keys(page).some((key) =>
-                                !["id", "renderer", "title", "values"].includes(key))
+                                !["id", "renderer", "title", "values", "slots"].includes(key))
                             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
                             || page.id === RESERVED_GENERATED_PAGE_ID
                             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
-                            || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120)))
+                            || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
+                            || (page.slots !== undefined && (!Array.isArray(page.slots)
+                                || page.slots.length > 30
+                                || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
+                                || page.slots.some((slot) => !slot || typeof slot !== "object"
+                                    || Object.keys(slot).sort().join() !== "accepts,id"
+                                    || typeof slot.id !== "string"
+                                    || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
+                                    || JSON.stringify(slot.accepts) !== '["asset"]'))))))
+        || (config.generatedPageAssets !== undefined
+            && (!Array.isArray(config.generatedPageAssets)
+                || config.generatedPageAssets.length > 10
+                || new Set(config.generatedPageAssets.map((asset) => asset?.id)).size
+                    !== config.generatedPageAssets.length
+                || new Set(config.generatedPageAssets.map((asset) =>
+                    `${asset?.page}:${asset?.slot}`)).size !== config.generatedPageAssets.length
+                || config.generatedPageAssets.some((asset) => !asset
+                    || Object.keys(asset).sort().join() !== "file,hash,id,label,mime,page,slot"
+                    || typeof asset.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(asset.id)
+                    || typeof asset.label !== "string" || !asset.label.trim() || asset.label.length > 120
+                    || typeof asset.page !== "string" || typeof asset.slot !== "string"
+                    || !config.generatedPages?.some((page) => page.id === asset.page
+                        && page.slots?.some((slot) => slot.id === asset.slot
+                            && slot.accepts.includes("asset")))
+                    || !validImageAsset({ file: asset.file, hash: asset.hash, mime: asset.mime },
+                        `asset-${createHash("sha256").update(asset.id).digest("hex").slice(0,24)}`))))
         || (config.generatedControls !== undefined
             && (!Array.isArray(config.generatedControls) || config.generatedControls.length > 30
                 || new Set(config.generatedControls.map((item) => item?.id)).size !== config.generatedControls.length
@@ -102,7 +128,7 @@ export function readConfig() {
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
         throw new Error("Invalid generated canvas configuration");
     }
-    for (const asset of [config.brandAsset, config.mainPageAsset]) {
+    for (const asset of [config.brandAsset, config.mainPageAsset, ...(config.generatedPageAssets ?? [])]) {
         if (asset) readImageAsset(asset);
     }
     const sections = new Map();
@@ -233,8 +259,11 @@ export function renderHtml(config, token = "") {
             </button></li>`).join("")}</ol>` : ""}
     </nav>
     <section id="phase-card" class="phase-card" aria-label="Selected phase">${phases.length ? renderPhase(config, phases, 0) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>
-    ${config.generatedPages?.map(({ id, renderer }) =>
-        `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"></span>`).join("") ?? ""}
+    ${config.generatedPages?.map(({ id, renderer, slots }) =>
+        `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"
+            data-asset-slots="${escapeHtml(JSON.stringify(slots ?? []))}"
+            data-assets="${escapeHtml(JSON.stringify((config.generatedPageAssets ?? [])
+                .filter((asset) => asset.page === id)))}"></span>`).join("") ?? ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
@@ -263,12 +292,15 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             response.writeHead(401).end("Unauthorized"); return;
         }
         try {
-            if (request.method === "GET" && ["/", "/ui/app.js", "/ui/markdown.mjs"].includes(url.pathname)) {
-                const body = url.pathname === "/" ? html : url.pathname === "/ui/app.js" ? script : markdown;
+            if (request.method === "GET" && ["/", "/ui/app.js", "/ui/markdown.mjs",
+                "/ui/page-assets.mjs"].includes(url.pathname)) {
+                const body = url.pathname === "/" ? html : url.pathname === "/ui/app.js"
+                    ? script : url.pathname === "/ui/markdown.mjs" ? markdown : pageAssets;
                 response.writeHead(200, { "Content-Type": `${url.pathname === "/" ? "text/html" : "text/javascript"}; charset=utf-8` }).end(body);
                 return;
             }
-            const imageAsset = [config.brandAsset, config.mainPageAsset]
+            const imageAsset = [config.brandAsset, config.mainPageAsset,
+                ...(config.generatedPageAssets ?? [])]
                 .find((asset) => asset && url.pathname === `/assets/${asset.file}`);
             if (request.method === "GET" && imageAsset) {
                 response.writeHead(200, { "Content-Type": imageAsset.mime,

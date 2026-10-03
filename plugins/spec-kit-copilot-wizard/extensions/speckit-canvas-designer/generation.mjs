@@ -46,14 +46,17 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const imageContributions = (model.contributions ?? [])
         .filter((item) => item.field.type === "image"
             && item.generatedBinding?.presentation === "asset");
-    if (imageContributions.length > 2
-        || new Set(imageContributions.map((item) => item.generatedBinding.slot)).size
+    if (imageContributions.length > 10
+        || new Set(imageContributions.map((item) =>
+            `${item.generatedBinding.page ?? "workflow"}:${item.generatedBinding.slot}`)).size
             !== imageContributions.length) {
-        throw new Error("Each generated Logo slot accepts only one image asset");
+        throw new Error("Generated asset slots must be unique and at most ten");
     }
     const generatedAssets = imageContributions.flatMap((item) => {
         const image = decodeImage(values[item.field.id]);
-        return image ? [{ id: item.field.id, slot: item.generatedBinding.slot,
+        return image ? [{ id: item.field.id, label: item.field.label,
+            slot: item.generatedBinding.slot,
+            ...(item.generatedBinding.page ? { page: item.generatedBinding.page } : {}),
             mime: image.mime, hash: createHash("sha256").update(image.bytes).digest("hex"),
             content: image.bytes.toString("base64") }] : [];
     });
@@ -79,7 +82,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
         const assets = await Promise.all([definition, renderer].map(asset));
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer,
-            ...(page.values ? { values: page.values } : {}), assets });
+            ...(page.values ? { values: page.values } : {}),
+            ...(page.slots ? { slots: page.slots } : {}), assets });
     }
     const valueSources = [];
     for (const value of model.valueSources ?? []) {

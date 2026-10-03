@@ -328,6 +328,115 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     assert.match(portable.renderHtml(fallback), /class="brand-mark" aria-hidden="true">&#9671;/);
 });
 
+test("preset generated page places a reusable Logo in its declared asset slot", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const folder = join(project, ".specify", "presets");
+    await mkdir(folder);
+    const page = { schemaVersion: 1, id: "canvas-generated-gallery", title: "Gallery",
+        renderer: "canvas-gallery-renderer",
+        slots: [{ id: "hero.logo", accepts: ["asset"] }] };
+    const field = { schemaVersion: 1, id: "gallery.logo", host: "designer",
+        slot: "essentials.options", order: 60,
+        field: { id: "gallery.logo", type: "image", control: "stock.image",
+            label: "Gallery logo" },
+        generatedBinding: { presentation: "asset", page: page.id, slot: "hero.logo" } };
+    const pagePath = join(folder, "gallery.json");
+    const rendererPath = join(folder, "gallery.mjs");
+    const fieldPath = join(folder, "gallery-field.json");
+    await writeFile(pagePath, JSON.stringify(page));
+    await writeFile(rendererPath, `export function renderPage({ root }) {
+        const hero = document.createElement("div");
+        hero.dataset.assetSlot = "hero.logo";
+        root.append(hero);
+    }`);
+    await writeFile(fieldPath, JSON.stringify(field));
+    const templates = [
+        { name: page.id, path: pagePath, sourceId: "project",
+            kind: "generated.page", strategy: "replace" },
+        { name: page.renderer, path: rendererPath, sourceId: "project",
+            kind: "generated.renderer", strategy: "replace" },
+        { name: "canvas-gallery-logo", path: fieldPath, sourceId: "project",
+            kind: "designer.field", strategy: "replace" },
+    ];
+    const registration = () => ({ kind: "template", stack: [
+        { active: true, sourceId: "_", layer: "project", strategy: "replace" }] });
+    const load = () => loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+    const model = await load();
+    assert.equal(model.pages[0].fields.at(-1).id, "gallery.logo");
+    await writeFile(fieldPath, JSON.stringify({ ...field,
+        generatedBinding: { ...field.generatedBinding, slot: "missing" } }));
+    await assert.rejects(load(), /unknown or incompatible generated page asset slot/);
+    await writeFile(fieldPath, JSON.stringify(field));
+    await writeFile(pagePath, JSON.stringify({ ...page, slots: [{ id: "hero.logo", accepts: ["field"] }] }));
+    await assert.rejects(load(), /invalid generated page definition/);
+    await writeFile(pagePath, JSON.stringify(page));
+    const gif = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACAUwAOw==", "base64");
+    const values = { ...model.values, "canvas.id": "gallery-canvas",
+        "canvas.displayName": "Gallery canvas",
+        "gallery.logo": `data:image/gif;base64,${gif.toString("base64")}` };
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const frozen = JSON.parse(await readFile(requestPath, "utf8"));
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const invalid = structuredClone(frozen);
+    invalid.generatedAssets[0].slot = "missing";
+    const { integrity: _old, ...payload } = invalid;
+    invalid.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(invalid));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /unknown generated page asset slot/);
+    await writeFile(requestPath, JSON.stringify(frozen));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, prepared.target);
+    const runtime = await import(pathToFileURL(join(target, "server.mjs")).href);
+    const config = runtime.readConfig();
+    assert.deepEqual(config.generatedPages[0].slots, page.slots);
+    const asset = config.generatedPageAssets[0];
+    assert.deepEqual({ id: asset.id, page: asset.page, slot: asset.slot },
+        { id: "gallery.logo", page: page.id, slot: "hero.logo" });
+    assert.equal(config.brandAsset, undefined);
+    assert.equal(config.mainPageAsset, undefined);
+    assert.deepEqual(await readFile(join(target, "assets", asset.file)), gif);
+    assert.match(runtime.renderHtml(config), /data-asset-slots=/);
+    const server = createServer(runtime.createWorkflowRoutes(config, { token: "gallery-token" }).handle);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const response = await fetch(`${base}/assets/${asset.file}?token=gallery-token`);
+        assert.equal(response.status, 200);
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), gif);
+        assert.equal((await fetch(`${base}/ui/page-assets.mjs?token=gallery-token`)).status, 200);
+    } finally {
+        await new Promise((resolve) => server.close(resolve));
+    }
+    const { mountPageAssets } = await import(pathToFileURL(join(target, "ui", "page-assets.mjs")).href);
+    const previousDocument = globalThis.document;
+    try {
+        globalThis.document = { createElement: () => ({}) };
+        const slot = { dataset: { assetSlot: "hero.logo" },
+            replaceChildren(image) { this.image = image; } };
+        const content = { querySelectorAll: () => [slot] };
+        mountPageAssets(content, page.slots, [asset], "gallery-token");
+        assert.equal(slot.image.alt, "Gallery logo");
+        assert.equal(slot.image.src, `/assets/${asset.file}?token=gallery-token`);
+        assert.throws(() => mountPageAssets({ querySelectorAll: () => [] },
+            page.slots, [asset], "gallery-token"), /did not render asset slot/);
+        assert.throws(() => mountPageAssets({ querySelectorAll: () => [slot, slot] },
+            page.slots, [asset], "gallery-token"), /duplicate generated asset slot/);
+    } finally {
+        globalThis.document = previousDocument;
+    }
+    await writeFile(join(target, "assets", asset.file), Buffer.from("tampered"));
+    assert.throws(() => runtime.readConfig(), /Packaged Logo image does not match/);
+});
+
 test("handoff validates bounded IDs, shape, URLs and fingerprint", () => {
     const good = validHandoff();
     assert.equal(validateHandoff(good, ID), good);
