@@ -105,6 +105,10 @@ Inferred paths use one location form at a time: a repository-relative path,
 `relativeTo: "feature"` for the active feature directory (including
 `FEATURE_DIR`), or `root: {name, path?}` for a different named output
 directory. Combining `root` and `relativeTo` is invalid.
+Inference submissions fetch `/api/state` from the same Wizard instance and
+copy each current request fingerprint into the POST programmatically. They
+check the requested command IDs before posting; a stale request still fails
+the server's fingerprint validation rather than saving outdated evidence.
 Opening an expected output in the viewer before it exists shows an
 "Output not ready or not found" message rather than a raw 404.
 The **Composition** button reads **Refresh** when idle, whether or not the latest
