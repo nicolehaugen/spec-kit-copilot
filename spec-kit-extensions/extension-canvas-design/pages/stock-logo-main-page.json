@@ -6,6 +6,5 @@
   "order": 50,
   "field": {"id": "canvas.mainPageLogo", "type": "image", "control": "stock.image",
     "label": "Main page logo", "description": "Optional larger PNG, JPEG, GIF, or WebP image (up to 32 KiB)."},
-  "requires": ["canvas-stock-image"],
   "generatedBinding": {"presentation": "asset", "slot": "workflow.intro"}
 }

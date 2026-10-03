@@ -58,25 +58,43 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             !== imageContributions.length) {
         throw new Error("Generated asset slots must be unique and at most ten");
     }
-    let generatedImageControl;
-    if (imageContributions.length) {
-        const control = model.controls?.find((entry) => entry.id === "stock.image");
-        const definition = model.templates?.find((entry) => entry.kind === "control.definition"
-            && imageContributions.every((item) => item.requires?.includes(entry.name)));
+    const checkout = await realpath(project);
+    const specify = join(checkout, ".specify");
+    const asset = async (item) => {
+        if (!item || item.strategy !== "replace") throw new Error("Missing validated replace-only generated asset");
+        const bytes = await readFrozenAsset(item, specify);
+        return { name: item.name, kind: item.kind, sourceId: item.sourceId,
+            hash: item.hash, content: bytes.toString("base64") };
+    };
+    let definitions;
+    const generatedControl = async (id) => {
+        const controls = model.controls?.filter((entry) => entry.id === id) ?? [];
+        definitions ??= Promise.all((model.templates ?? [])
+            .filter((entry) => entry.kind === "control.definition").map(async (entry) => {
+                const bytes = await readFrozenAsset(entry, specify);
+                let document;
+                try { document = JSON.parse(bytes.toString("utf8")); }
+                catch { throw new Error(`${entry.name}: invalid frozen control definition`); }
+                return { entry, document };
+            }));
+        const matches = (await definitions).filter(({ document }) => document?.id === id);
+        const control = controls[0];
         const adapter = model.templates?.find((entry) => entry.kind === "generated.adapter"
             && entry.name === control?.adapters?.generated);
-        if (!control || !definition || !adapter
-            || imageContributions.some((item) => item.field.control !== control.id
-                || !item.requires?.includes(definition.name))) {
-            throw new Error("Missing paired stock.image definition or generated adapter");
+        if (controls.length !== 1 || matches.length !== 1 || !adapter
+            || matches[0].document.adapters?.generated !== adapter.name) {
+            throw new Error(`Missing paired ${id} definition or generated adapter`);
+        }
+        return { control, definition: matches[0].entry, adapter };
+    };
+    let generatedImageControl;
+    if (imageContributions.length) {
+        const { control, definition, adapter } = await generatedControl("stock.image");
+        if (imageContributions.some((item) => item.field.control !== control.id)) {
+            throw new Error("Image contribution uses an incompatible shared control");
         }
         generatedImageControl = { control: control.id,
-            assets: await Promise.all([definition, adapter].map(async (item) => {
-                if (item.strategy !== "replace") throw new Error("Missing validated replace-only image control asset");
-                const bytes = await readFrozenAsset(item, join(await realpath(project), ".specify"));
-                return { name: item.name, kind: item.kind, sourceId: item.sourceId,
-                    hash: item.hash, content: bytes.toString("base64") };
-            })) };
+            assets: await Promise.all([definition, adapter].map(asset)) };
     }
     const generatedAssets = imageContributions.flatMap((item) => {
         const image = decodeImage(values[item.field.id]);
@@ -91,15 +109,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     if (controlContributions.length > 30) {
         throw new Error("Generated controls exceed the 30-control limit");
     }
-    const checkout = await realpath(project);
-    const specify = join(checkout, ".specify");
     const generatedPages = [];
-    const asset = async (item) => {
-        if (!item || item.strategy !== "replace") throw new Error("Missing validated replace-only generated asset");
-        const bytes = await readFrozenAsset(item, specify);
-        return { name: item.name, kind: item.kind, sourceId: item.sourceId,
-            hash: item.hash, content: bytes.toString("base64") };
-    };
     let generatedTextControl;
     let generatedTextPlacements;
     if (textContributions.length) {
@@ -119,25 +129,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
                 : item.slot !== "details.content")) {
             throw new Error("Invalid or duplicate generated stock.text placement");
         }
-        const control = model.controls?.find((entry) => entry.id === "stock.text");
-        const definitions = await Promise.all((model.templates ?? [])
-            .filter((entry) => entry.kind === "control.definition").map(async (entry) => {
-                const bytes = await readFrozenAsset(entry, specify);
-                let document;
-                try { document = JSON.parse(bytes.toString("utf8")); }
-                catch { throw new Error(`${entry.name}: invalid frozen control definition`); }
-                return { entry, document };
-            }));
-        const matches = definitions.filter(({ document }) => document.id === control?.id);
-        const definition = matches.length === 1 ? matches[0].entry : null;
-        const adapter = model.templates?.find((entry) => entry.kind === "generated.adapter"
-            && entry.name === control?.adapters?.generated);
-        if (!control || !definition || !adapter
-            || matches[0].document.adapters?.generated !== adapter.name
-            || textContributions.some((item) => item.generatedBinding.presentation === "text"
-                && !item.requires?.includes(definition.name))) {
-            throw new Error("Missing paired stock.text definition or generated adapter");
-        }
+        const { control, definition, adapter } = await generatedControl("stock.text");
         generatedTextControl = { control: control.id,
             assets: await Promise.all([definition, adapter].map(asset)) };
     }
@@ -170,18 +162,11 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     }
     const generatedControls = [];
     for (const contribution of controlContributions) {
-        const control = model.controls.find((entry) => entry.id === contribution.field.control);
-        if (!control) throw new Error(`${contribution.name}: missing shared control`);
-        const names = [
-            model.templates.find((entry) => entry.kind === "control.definition"
-                && entry.name === contribution.requires.find((name) =>
-                    model.templates.some((item) => item.name === name && item.kind === "control.definition"))),
-            model.templates.find((entry) => entry.name === control.adapters.generated
-                && entry.kind === "generated.adapter"),
-        ];
+        const { control, definition, adapter } = await generatedControl(contribution.field.control);
         generatedControls.push({ id: contribution.field.id, label: contribution.field.label,
             control: control.id, slot: contribution.generatedBinding.slot,
-            value: values[contribution.field.id], assets: await Promise.all(names.map(asset)) });
+            value: values[contribution.field.id],
+            assets: await Promise.all([definition, adapter].map(asset)) });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);

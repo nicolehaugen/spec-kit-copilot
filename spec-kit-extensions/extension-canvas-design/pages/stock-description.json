@@ -4,7 +4,6 @@
   "host": "designer",
   "slot": "essentials.options",
   "order": 10,
-  "requires": ["canvas-stock-text"],
   "field": {"id": "canvas.description", "type": "string", "control": "stock.text",
     "label": "Description"},
   "generatedBinding": {"presentation": "text", "slot": "workflow.description"}

@@ -65,7 +65,7 @@ async function setup(t, selected = [logo, logo, logo]) {
     const values = { "canvas.id": "image-canvas", "canvas.displayName": "Image canvas",
         ...Object.fromEntries(fieldIds.map((id, index) => [id, selected[index]])) };
     const contributions = fieldIds.map((id, index) => ({
-        name: `image-${index}`, requires: ["canvas-stock-image"],
+        name: `image-${index}`,
         field: { id, label: `Logo ${index}`, type: "image", control: "stock.image" },
         generatedBinding: { presentation: "asset",
             slot: ["header.brand", "workflow.intro", "gallery.logo"][index],
@@ -81,7 +81,7 @@ async function setup(t, selected = [logo, logo, logo]) {
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     const requestPath = join(handoffFolder, "generations", prepared.requestId, "request.json");
     const sdk = join(project, ".github", "extensions", "image-canvas");
-    return { project, workspace, prepared, sdk, requestPath, templates };
+    return { project, workspace, prepared, sdk, requestPath, templates, model, values };
 }
 
 async function rewrite(requestPath, edit) {
@@ -90,6 +90,20 @@ async function rewrite(requestPath, edit) {
     const { integrity: _previous, ...payload } = request;
     await writeFile(requestPath, JSON.stringify({ ...payload, integrity: digest(JSON.stringify(payload)) }));
 }
+
+test("stock.image resolves a unique frozen definition by control ID", async (t) => {
+    const { project, workspace, templates, model, values } = await setup(t);
+    const missing = { ...model, templates: templates.filter((entry) =>
+        entry.name !== "canvas-stock-image") };
+    await assert.rejects(freezeGeneration({ model: missing, values, handoff, project, workspace }),
+        /Missing paired stock.image definition or generated adapter/);
+    const duplicate = { ...model, templates: [...templates, {
+        ...templates.find((entry) => entry.name === "canvas-stock-image"),
+        name: "another-stock-image",
+    }] };
+    await assert.rejects(freezeGeneration({ model: duplicate, values, handoff, project, workspace }),
+        /Missing paired stock.image definition or generated adapter/);
+});
 
 test("one frozen stock.image adapter renders Header, Main and gallery without design-time files", async (t) => {
     const { project, workspace, prepared, sdk, requestPath } = await setup(t);
@@ -189,8 +203,7 @@ test("missing Logo keeps diamond; frozen image and adapter tampering fail before
             fields: [{ id: "canvas.id" }, { id: "canvas.displayName" }] }],
         constraints: request.fieldConstraints,
         contributions: [{ field: { id: "canvas.logo", type: "image", control: "stock.image" },
-            generatedBinding: { presentation: "asset", slot: "header.brand" },
-            requires: ["canvas-stock-image"] }],
+            generatedBinding: { presentation: "asset", slot: "header.brand" } }],
         templates, controls: [{ id: "stock.image",
             adapters: { generated: "canvas-stock-image-generated" } }] },
         values: request.values, handoff, project, workspace }), /generated asset changed/);

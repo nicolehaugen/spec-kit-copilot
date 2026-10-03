@@ -169,10 +169,10 @@ test("stock scalar definitions mount required fields and reject incomplete visua
         verify), /missing generated adapter canvas-stock-text-generated/);
     const original = await readFile(fields[0].path, "utf8");
     const changed = JSON.parse(original);
-    changed.requires = [];
+    changed.requires = ["canvas-stock-text"];
     await writeFile(fields[0].path, JSON.stringify(changed));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
-        /incompatible shared control value or generated placement/);
+        /invalid Canvas Design contribution/);
     await writeFile(fields[0].path, original);
     await writeFile(fields[0].path, JSON.stringify({ ...JSON.parse(original),
         generatedBinding: { presentation: "text", slot: "workflow.heading" } }));
@@ -266,17 +266,24 @@ test("stock image requires one compatible control definition and paired self-con
     assert.equal(model.pages[0].fields.find((field) => field.id === "canvas.logo").control, "stock.image");
     assert.deepEqual(model.constraints["canvas.logo"].mimeTypes,
         ["image/png", "image/jpeg", "image/gif", "image/webp"]);
-    await assert.rejects(load(fields), /unresolved required Canvas Design template/);
+    await assert.rejects(load(fields), /missing or incompatible shared control definition/);
     for (const kind of ["designer.adapter", "generated.adapter"]) {
         await assert.rejects(load(templates.filter((item) => item.kind !== kind)),
             new RegExp(`missing ${kind.split(".")[0]} adapter`));
     }
     const originalField = await readFile(fieldPath, "utf8");
-    await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField), requires: [] }));
-    await assert.rejects(load(), /missing or incompatible shared control definition/);
+    await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
+        requires: ["canvas-stock-image"] }));
+    await assert.rejects(load(), /invalid Canvas Design contribution/);
     await writeFile(fieldPath, originalField);
     const control = adapters[0];
     const originalControl = await readFile(control.path, "utf8");
+    const duplicate = { ...control, name: "canvas-stock-image-copy",
+        path: join(project, ".specify", "extensions", "extension-canvas-design",
+            "controls", "stock-image", "copy.json") };
+    await copyFile(control.path, duplicate.path);
+    await assert.rejects(load([...templates, duplicate]),
+        /unreferenced or duplicate control definition/);
     await writeFile(control.path, JSON.stringify({ ...JSON.parse(originalControl),
         value: { type: "image", maxBytes: 65536, mimeTypes: ["image/png"] } }));
     await assert.rejects(load(), /invalid shared control value contract/);
@@ -1180,7 +1187,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.14/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.15/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -1256,7 +1263,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.14 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.15 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1546,7 +1553,7 @@ test("registered contributions validate slots, sources, references and determini
         /canvas-contribution-beta: unknown or incompatible Designer slot unknown.slot/);
     await writeFile(beta.path, JSON.stringify({ ...beta.document, requires: ["missing-template"] }));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
-        /unresolved required Canvas Design template missing-template/);
+        /invalid Canvas Design contribution/);
     await writeFile(beta.path, JSON.stringify(beta.document));
     const replacement = join(directory, "project-replacement.json");
     await writeFile(replacement, JSON.stringify({ ...beta.document,
@@ -2129,7 +2136,7 @@ test("paired control validates both adapters, typed values and portable generate
         ...controlDocument, id: "risk-other",
     }));
     await writeFile(secondFieldTemplate.path, JSON.stringify({
-        ...secondField, requires: [secondControlTemplate.name],
+        ...secondField,
         field: { ...secondField.field, control: "risk-other" },
     }));
     await assert.rejects(load([...templates, secondControlTemplate, secondFieldTemplate]),

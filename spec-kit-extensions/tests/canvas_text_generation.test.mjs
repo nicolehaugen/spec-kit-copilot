@@ -62,11 +62,11 @@ async function fixture(t) {
             adapters: { designer: "canvas-stock-text-designer", generated: "canvas-stock-text-generated" } },
         { id: "stock.checkbox", adapters: { designer: "canvas-stock-checkbox-designer" } }],
         contributions: [...fields.map(([id, label, slot]) => ({
-            name: id, requires: ["canvas-stock-text"],
+            name: id,
             field: { id, label, type: "string", control: "stock.text" },
             generatedBinding: { presentation: slot === "details.content" ? "stock.readonly" : "text",
                 slot },
-        })), { name: "custom-slug", requires: ["canvas-stock-checkbox"],
+        })), { name: "custom-slug",
             field: { id: "workflowSlug.userProvided", type: "boolean",
                 label: "Allow custom slug", control: "stock.checkbox" } }],
     };
@@ -221,11 +221,9 @@ test("header text requires declared placements; absent contributions retain shel
         project, workspace }), /Invalid or duplicate generated stock.text placement/);
 });
 
-test("legacy stock.readonly text without requires resolves the winning shared definition", async (t) => {
+test("stock.readonly text resolves the winning shared definition by control ID", async (t) => {
     const { project, workspace, model, values, sdk } = await fixture(t);
-    const legacy = structuredClone(model);
-    delete legacy.contributions[2].requires;
-    const prepared = await freezeGeneration({ model: legacy, values, handoff, project, workspace });
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
     assert.equal(request.generatedTextControl.assets[0].name, "canvas-stock-text");
@@ -236,9 +234,15 @@ test("legacy stock.readonly text without requires resolves the winning shared de
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig, renderHtml } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     assert.match(renderHtml(readConfig()), /data-field-id="billing.code" data-stock-text="details.content"/);
-    const invalid = structuredClone(model);
-    delete invalid.contributions[0].requires;
+    const invalid = { ...model, templates: model.templates.filter((entry) =>
+        entry.name !== "canvas-stock-text") };
     await assert.rejects(freezeGeneration({ model: invalid, values, handoff, project, workspace }),
+        /Missing paired stock.text definition or generated adapter/);
+    const duplicate = { ...model, templates: [...model.templates, {
+        ...model.templates.find((entry) => entry.name === "canvas-stock-text"),
+        name: "another-stock-text",
+    }] };
+    await assert.rejects(freezeGeneration({ model: duplicate, values, handoff, project, workspace }),
         /Missing paired stock.text definition or generated adapter/);
 });
 
