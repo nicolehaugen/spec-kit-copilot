@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.13** registers three JSON page templates, five ordered
+Canvas Design **0.1.14** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, and a shared image definition with paired adapters, plus the
 `speckit.extension-canvas-design.load-page` and
@@ -41,7 +41,11 @@ editor with optional text contributions; a preset cannot remove them by
 omitting an optional contribution. Field-specific length, requiredness, and
 identifier rules remain enforced by the Designer host. Description and
 Workflow header use the packaged stock-text adapter for their visible
-generated presentation. Allow custom slug uses the stock-checkbox editor
+generated presentation. Authors may set `"required": true` on a text field
+in a page or a field contribution to reject empty or whitespace-only values.
+The shared Designer adapter shows an inline error; Save and Generate verify
+the constraint independently. Omitted `required` preserves optional text.
+Allow custom slug uses the stock-checkbox editor
 but only its boolean value is consumed by the generated shell; it does not
 need an empty generated visual adapter. A future Setup confirm checkbox can
 reuse this pattern without moving privileged setup into an adapter.
@@ -141,7 +145,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.13/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.14/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.

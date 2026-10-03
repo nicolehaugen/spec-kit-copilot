@@ -31,15 +31,17 @@ function validateFrozenValues(values, constraints) {
         const value = values[id];
         if (rule.type === "string") {
             if (Object.keys(rule).some((key) =>
-                !["type", "maxLength", "minLength", "pattern"].includes(key))
+                !["type", "maxLength", "minLength", "pattern", "required"].includes(key))
                 || !Number.isInteger(rule.maxLength) || rule.maxLength < 1
                 || rule.maxLength > 1000
                 || (rule.minLength !== undefined && (!Number.isInteger(rule.minLength)
                     || rule.minLength < 0 || rule.minLength > rule.maxLength))
                 || (rule.pattern !== undefined && (typeof rule.pattern !== "string"
                     || rule.pattern.length > 120))
+                || (rule.required !== undefined && rule.required !== true)
                 || typeof value !== "string" || value.length > rule.maxLength
                 || value.length < (rule.minLength ?? 0)
+                || (rule.required && !value.trim())
                 || (rule.pattern && !new RegExp(rule.pattern).test(value))) {
                 throw new Error(`Invalid frozen Designer field: ${id}`);
             }

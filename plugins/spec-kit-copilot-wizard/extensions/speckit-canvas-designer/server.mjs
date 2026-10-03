@@ -34,7 +34,7 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
-const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.13 or the current local source.";
+const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.14 or the current local source.";
 
 async function hasGenerateSkill(project) {
     try {

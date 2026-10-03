@@ -37,6 +37,7 @@ export function validateValues(values, constraints) {
             }
         } else if (typeof value !== "string" || value.length > rule.maxLength
             || value.length < (rule.minLength ?? 0)
+            || (rule.required && !value.trim())
             || (rule.pattern && !new RegExp(rule.pattern).test(value))) {
             throw new Error(`Invalid Designer setting: ${key}`);
         }

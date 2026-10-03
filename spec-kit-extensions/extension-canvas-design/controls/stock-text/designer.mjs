@@ -18,7 +18,7 @@ export function mount({ root, field, value, context, onChange }) {
     input.id = inputId;
     input.name = field.id;
     input.value = value;
-    input.required = (constraints.minLength ?? 0) > 0;
+    input.required = constraints.required === true || (constraints.minLength ?? 0) > 0;
     input.maxLength = constraints.maxLength;
     if (constraints.pattern) input.pattern = constraints.pattern;
     if (input.required) {
@@ -36,6 +36,27 @@ export function mount({ root, field, value, context, onChange }) {
         hint.textContent = field.description;
         input.setAttribute("aria-describedby", hint.id);
         root.append(hint);
+    }
+    if (constraints.required) {
+        const error = document.createElement("p");
+        error.id = `${inputId}-error`;
+        error.className = "settings-field-error";
+        error.setAttribute("role", "alert");
+        error.textContent = `Enter a nonblank ${field.label}.`;
+        error.hidden = true;
+        const describedBy = input.getAttribute("aria-describedby");
+        input.setAttribute("aria-describedby", [describedBy, error.id].filter(Boolean).join(" "));
+        root.append(error);
+        let touched = context.showValidationError === true;
+        const validate = () => {
+            const invalid = !input.value.trim();
+            error.hidden = !touched || !invalid;
+            if (error.hidden) input.removeAttribute("aria-invalid");
+            else input.setAttribute("aria-invalid", "true");
+        };
+        input.addEventListener("blur", () => { touched = true; validate(); });
+        input.addEventListener("input", validate);
+        validate();
     }
     input.addEventListener("input", () => onChange(input.value));
 }

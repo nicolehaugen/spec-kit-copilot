@@ -156,12 +156,13 @@ function validateDraft(action = "saving") {
             || Object.keys(value).sort().join() !== Object.keys(rules.properties).sort().join()
             || Object.entries(rules.properties).some(([key, allowed]) => !allowed.includes(value[key])))
             : (typeof value !== "string" || value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
+            || (rules.required && !value.trim())
             || (rules.pattern && !new RegExp(rules.pattern).test(value)))) {
             const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
             const field = page?.fields.find((item) => item.id === id);
             showError(`Enter a valid ${field?.label ?? id} before ${action}.${rules.type === "image" ? " Use a PNG, JPEG, GIF, or WebP under 32 KiB." : id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
             if (page) {
-                renderPage(page.page);
+                renderPage(page.page, id);
                 root.querySelectorAll("input").forEach((input) => {
                     if (input.name === id) { input.focus(); input.reportValidity(); }
                 });
@@ -201,7 +202,7 @@ saveButton.addEventListener("click", async () => {
     }
 });
 
-function renderPage(pageId) {
+function renderPage(pageId, invalidFieldId) {
     const page = model.pages.find((entry) => entry.page === pageId);
     if (!page) throw new Error("Unknown Designer page");
     currentPage = pageId;
@@ -266,6 +267,7 @@ function renderPage(pageId) {
                 if (!mount.isConnected) return;
                 return render({ root: mount, field, value: draft[field.id],
                     context: { constraints: rules, inputId: `setting-field-${index}`,
+                        showValidationError: field.id === invalidFieldId,
                         ...(image ? { validateImage: validImage, setBusy(busy) {
                             uploading = busy;
                             updateSave();

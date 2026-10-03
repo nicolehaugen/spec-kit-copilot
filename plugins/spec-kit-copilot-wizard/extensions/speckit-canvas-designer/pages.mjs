@@ -18,8 +18,8 @@ const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
 const RULES = {
-    "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$" },
-    "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
+    "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$", required: true },
+    "canvas.displayName": { type: "string", minLength: 1, maxLength: 120, required: true },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
     "workflowSlug.userProvided": { type: "boolean" },
@@ -140,7 +140,8 @@ function buildModel(entries, schema) {
                 const scalarControl = type === "boolean" ? "stock.checkbox" : "stock.text";
                 if (ids.has(field.id) || (Object.hasOwn(field, "default") && type !== "boolean")
                     || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== type)
-                    || (field.control !== undefined && field.control !== scalarControl)) {
+                    || (field.control !== undefined && field.control !== scalarControl)
+                    || (field.required !== undefined && (type !== "string" || field.required !== true))) {
                     throw new Error(`${name}: duplicate or invalid field ${field.id}`);
                 }
                 ids.add(field.id);
@@ -165,7 +166,8 @@ function buildModel(entries, schema) {
         for (const field of document.fields) {
             const type = field.type ?? "string";
             constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
-                : { type, ...(type === "string" ? { maxLength: 1000 } : {}) };
+                : { type, ...(type === "string"
+                    ? { maxLength: 1000, ...(field.required ? { required: true } : {}) } : {}) };
             values[field.id] = type === "boolean" ? (field.default ?? false) : "";
             fieldOrigins.set(field.id, name);
         }
@@ -198,7 +200,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
     const field = document.field;
     if (!field || typeof field !== "object" || Array.isArray(field)
         || Object.keys(field).some((key) =>
-            !["id", "label", "description", "type", "default", "control", "maxLength"].includes(key))
+            !["id", "label", "description", "type", "default", "control", "maxLength", "required"].includes(key))
         || typeof field.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
         || typeof field.label !== "string" || !field.label || field.label.length > 120
         || (field.description !== undefined
@@ -212,6 +214,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || (field.maxLength !== undefined && (field.type !== "string"
             || !Number.isInteger(field.maxLength) || field.maxLength < 1
             || field.maxLength > 1000))
+        || (field.required !== undefined && (field.type !== "string" || field.required !== true))
         || (Object.hasOwn(field, "default")
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
@@ -785,9 +788,11 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
                 if (page.fields.length >= 100) throw new Error(`${page.page}: too many resolved fields`);
                 const field = document.field;
                 page.fields.push(field);
-                model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
+                model.constraints[field.id] = Object.hasOwn(RULES, field.id)
+                    ? { ...RULES[field.id], ...(field.required ? { required: true } : {}) }
                     : { type: field.type, ...(field.type === "string"
-                        ? { maxLength: field.maxLength ?? 1000 } : field.type === "object"
+                        ? { maxLength: field.maxLength ?? 1000,
+                            ...(field.required ? { required: true } : {}) } : field.type === "object"
                             ? { properties: controls.find((item) =>
                                 item.document.id === field.control).document.value.properties }
                             : field.type === "image" ? {

@@ -15,7 +15,7 @@ import {
 import { shellHtml, startShell } from "../server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAsset } from "../pages.mjs";
 import {
-    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
+    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
 import { freezeGeneration } from "../generation.mjs";
 import { decodeImage } from "../image.mjs";
@@ -184,6 +184,65 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(entries[0].path, JSON.stringify(setup));
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
     assert.match(invalid.pages[0].error.reason, /duplicate or invalid field canvas.id/);
+});
+
+test("custom text requiredness is field-specific and enforced by Save and Generate", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const setup = JSON.parse(await readFile(entries[0].path, "utf8"));
+    setup.fields.push({ id: "billing.reference", label: "Reference", type: "string",
+        control: "stock.text", required: true });
+    await writeFile(entries[0].path, JSON.stringify(setup));
+    const templates = await stockTemplates(project);
+    const contribution = JSON.parse(await readFile(templates[0].path, "utf8"));
+    contribution.field.required = true;
+    await writeFile(templates[0].path, JSON.stringify(contribution));
+    const model = await loadResolvedDesignerPages(handoff, project, entries, templates);
+    assert.equal(model.constraints["billing.reference"].required, true);
+    assert.equal(model.constraints["canvas.description"].required, true);
+    assert.equal(model.constraints["canvas.workflowListName"].required, undefined);
+    const values = { ...model.values, "canvas.id": "required-canvas",
+        "canvas.displayName": "Required Canvas", "billing.reference": "   ",
+        "canvas.description": "Description" };
+    assert.throws(() => validateValues(values, model.constraints),
+        /Invalid Designer setting: billing.reference/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        modelRevision: model.revision, revision: 0, values,
+    }), /Invalid Designer setting: billing.reference/);
+    await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
+        /Invalid Designer setting: billing.reference/);
+    values["billing.reference"] = "REF-42";
+    values["canvas.description"] = "  ";
+    assert.throws(() => validateValues(values, model.constraints),
+        /Invalid Designer setting: canvas.description/);
+    values["canvas.description"] = "Description";
+    values["canvas.displayName"] = "  ";
+    assert.throws(() => validateValues(values, model.constraints),
+        /Invalid Designer setting: canvas.displayName/);
+    values["canvas.displayName"] = "Required Canvas";
+    validateValues(values, model.constraints);
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
+    const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.equal(frozen.fieldConstraints["billing.reference"].required, true);
+    assert.equal(frozen.fieldConstraints["canvas.description"].required, true);
+    await saveDesignerSettings(workspace, handoff, model, {
+        modelRevision: model.revision, revision: 0, values,
+    });
+    const optional = { ...values, "canvas.workflowListName": "" };
+    validateValues(optional, model.constraints);
+    contribution.field.required = false;
+    await writeFile(templates[0].path, JSON.stringify(contribution));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
+        /incompatible field or control definition/);
+    setup.fields[2].required = false;
+    await writeFile(entries[0].path, JSON.stringify(setup));
+    const invalidPage = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.match(invalidPage.pages[0].error.reason, /canvas-settings-setup/);
 });
 
 test("stock image requires one compatible control definition and paired self-contained adapters", async (t) => {
@@ -1121,7 +1180,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.13/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.14/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -1197,7 +1256,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.13 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.14 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -33,8 +33,13 @@ two required fields stay fixed but mount the same registered `stock.text`
 Designer adapter as optional text fields. `stock.checkbox` similarly provides
 the optional boolean editor. Their field-specific constraints and saved values
 remain host-owned. Generate packages the winning stock-text generated adapter
-for visible Description, Workflow header, or read-only text placements. The
-custom-slug boolean is consumed by the generated shell, so it needs no
+for visible Description, Workflow header, or read-only text placements. Text
+fields on a page or in a contribution can opt into `"required": true`; the
+shared text editor reports blank or whitespace-only values beside the input,
+while Designer Save and Generate independently enforce the same constraint.
+Canvas ID and Title remain unconditionally required, and other text fields
+remain optional unless configured otherwise. The custom-slug boolean is
+consumed by the generated shell, so it needs no
 generated visual adapter or display toggle. A future Setup confirm checkbox
 can follow this pattern without delegating project setup to adapter code. The
 optional image controls upload, preview, replace, and remove independent PNG,
@@ -112,7 +117,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.13 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.14 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

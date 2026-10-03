@@ -130,6 +130,22 @@ test("frozen stock.text is packaged once and mounted at visible slots without de
     assert.equal((await fetch(`${url}?token=secret`)).status, 500);
 });
 
+test("generator independently enforces required text constraints in frozen requests", async (t) => {
+    const { project, workspace, prepared, requestPath } = await fixture(t);
+    const original = JSON.parse(await readFile(requestPath, "utf8"));
+    await rewrite(requestPath, (request) => {
+        request.fieldConstraints["billing.code"].required = true;
+        request.values["billing.code"] = "   ";
+    });
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen Designer field: billing.code/);
+    await rewrite(requestPath, (request) => {
+        request.values["billing.code"] = "CC-481";
+    });
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    await writeFile(requestPath, JSON.stringify(original));
+});
+
 test("stock.text freezes winning bytes and rejects missing, altered and incompatible adapters", async (t) => {
     const { project, workspace, prepared, requestPath, sdk, model, values, templates } = await fixture(t);
     const original = JSON.parse(await readFile(requestPath, "utf8"));
