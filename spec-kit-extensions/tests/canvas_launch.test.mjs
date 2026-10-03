@@ -4,9 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { declarations, verifyComposition } from "../extension-canvas-design/scripts/verify-launch.mjs";
+import { declarations, isInside, verifyComposition } from "../extension-canvas-design/scripts/verify-launch.mjs";
 
 const source = fileURLToPath(new URL("../extension-canvas-design/", import.meta.url));
+
+test("template containment rejects outside paths and other Windows drives", () => {
+    const root = join(tmpdir(), "canvas-check", ".specify");
+    assert.equal(isInside(root, join(root, "pages", "template.json")), true);
+    assert.equal(isInside(root, root), false);
+    assert.equal(isInside(root, join(root, "..", "template.json")), false);
+    if (process.platform === "win32") {
+        const otherDrive = root[0].toLowerCase() === "c" ? "D" : "C";
+        assert.equal(isInside(root, `${otherDrive}:\\outside\\template.json`), false);
+    }
+});
 
 test("generated skill declarations include appended pages and templates anywhere", async () => {
     const base = await readFile(join(source, "commands", "load-page.md"), "utf8");

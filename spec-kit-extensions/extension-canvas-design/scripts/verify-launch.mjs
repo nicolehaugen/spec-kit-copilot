@@ -14,6 +14,11 @@ const HEADINGS = new Set(["Pages", "Additional Designer pages",
 const EXECUTABLE = new Set(["generated.renderer", "designer.adapter",
     "generated.adapter", "value.provider"]);
 
+export function isInside(root, target) {
+    const part = relative(root, target);
+    return !!part && part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part);
+}
+
 export function declarations(command) {
     const result = new Map();
     let heading = "";
@@ -87,12 +92,11 @@ export async function verifyComposition(project, run = exec) {
         const winner = layers?.find((layer) => layer.active);
         const target = await realpath(path);
         const root = await realpath(join(child, ".specify"));
-        const inside = relative(root, target);
         if (info.kind !== "template" || info.name !== entry.name
             || !Array.isArray(layers) || !layers.length
             || layers.some((layer) => layer.strategy !== "replace")
             || !winner || layers.filter((layer) => layer.active).length !== 1
-            || !inside || inside === ".." || inside.startsWith(`..${sep}`)
+            || !isInside(root, target)
             || !winner.sourcePath || target !== await realpath(resolve(child, winner.sourcePath))) {
             throw new Error(`${entry.name}: resolution or replace-only template stack does not match Specify.`);
         }
