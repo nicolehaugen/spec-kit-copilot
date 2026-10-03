@@ -1962,6 +1962,9 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.equal(canvas.inputSchema.properties.pages.minItems, 3);
     assert.equal(canvas.inputSchema.properties.pages.maxItems, 100);
     assert.equal(canvas.inputSchema.properties.templates.maxItems, 100);
+    assert.deepEqual(canvas.inputSchema.properties.templates.items.properties.kind.enum,
+        ["designer.field", "generated.page", "generated.renderer", "control.definition",
+            "designer.adapter", "generated.adapter", "value.definition", "value.provider"]);
 
     let releaseShell;
     try {
