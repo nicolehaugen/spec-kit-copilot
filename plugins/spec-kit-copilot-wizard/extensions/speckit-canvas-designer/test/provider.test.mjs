@@ -119,6 +119,27 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
         description: "Stock description", workflowListName: "Stock heading" });
     assert.equal(config.userProvidesSlug, true);
 
+    for (const [id, description, heading, expectedDescription, expectedHeading] of [
+        ["blank-stock", "   ", "  ", "Spec Kit workflow canvas.", "Workflows"],
+        ["padded-stock", "  About this canvas  ", "  My workflows  ",
+            "About this canvas", "My workflows"],
+    ]) {
+        const stockValues = { ...values, "canvas.id": id, "canvas.description": description,
+            "canvas.workflowListName": heading };
+        const frozen = await freezeGeneration({ model: saved, values: stockValues,
+            handoff, project, workspace });
+        const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+            "handoffs", handoff.handoffId, "generations", frozen.requestId, "request.json"), "utf8"));
+        assert.equal(request.values["canvas.description"], description.trim());
+        assert.equal(request.values["canvas.workflowListName"], heading.trim());
+        assert.equal(request.canvas.description, expectedDescription);
+        assert.equal(request.canvas.workflowListName, expectedHeading);
+        await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+        const output = JSON.parse(await readFile(join(project, frozen.target, "canvas-config.json"), "utf8"));
+        assert.equal(output.canvas.description, expectedDescription);
+        assert.equal(output.canvas.workflowListName, expectedHeading);
+    }
+
     const minimal = await loadResolvedDesignerPages(handoff, project, entries);
     assert.deepEqual(minimal.pages[0].fields.map((field) => field.id),
         ["canvas.id", "canvas.displayName"]);

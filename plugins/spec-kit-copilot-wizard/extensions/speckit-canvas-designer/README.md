@@ -63,8 +63,9 @@ Save rejects stale revisions and invalid values, and reports failures without
 discarding edits. Generate validates and freezes fields on every enabled page
 while requiring non-reserved Canvas ID and Title on Essentials, and dispatches the
 installed Canvas Design generate command to create a new source-owned
-workflow canvas; the button is unavailable without a complete Wizard handoff,
-a valid Essentials page, any invalid enabled page, or the installed Generate skill in the child checkout.
+workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
+Essentials is missing or invalid, any enabled page is invalid, or the Generate
+skill is not installed in the child checkout.
 A missing skill shows how to relaunch with Canvas Design v0.1.7 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials

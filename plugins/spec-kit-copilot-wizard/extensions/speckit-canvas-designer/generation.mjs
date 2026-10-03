@@ -28,6 +28,9 @@ export function validateEssentials(model, values) {
         }
         result[id] = value.trim();
     }
+    for (const id of ["canvas.description", "canvas.workflowListName"]) {
+        if (Object.hasOwn(result, id)) result[id] = result[id].trim();
+    }
     if (reserved.has(result["canvas.id"])) throw new Error("Canvas ID must be non-reserved");
     return result;
 }
