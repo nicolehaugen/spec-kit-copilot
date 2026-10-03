@@ -498,6 +498,9 @@ test("generator rejects inconsistent all-page values and stock defaults before w
         (request) => { request.values["canvas.description"] = "x".repeat(241); },
         (request) => { request.canvas.description = "not the frozen value"; },
         (request) => { request.fieldConstraints["canvas.description"].type = "object"; },
+        (request) => { request.fieldConstraints["canvas.id"].pattern = "^(a+)+$"; },
+        (request) => { delete request.fieldConstraints["canvas.id"].pattern; },
+        (request) => { request.fieldConstraints["canvas.description"].pattern = "^(a+)+$"; },
     ];
     for (const change of failures) {
         const request = structuredClone(original);

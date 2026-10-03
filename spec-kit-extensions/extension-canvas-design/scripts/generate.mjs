@@ -35,11 +35,12 @@ function validateFrozenValues(values, constraints) {
                 || rule.maxLength > 1000
                 || (rule.minLength !== undefined && (!Number.isInteger(rule.minLength)
                     || rule.minLength < 0 || rule.minLength > rule.maxLength))
-                || (rule.pattern !== undefined && (typeof rule.pattern !== "string"
-                    || rule.pattern.length > 120))
+                || (id === "canvas.id"
+                    ? rule.pattern !== "^[a-z0-9][a-z0-9-]*$"
+                    : rule.pattern !== undefined)
                 || typeof value !== "string" || value.length > rule.maxLength
                 || value.length < (rule.minLength ?? 0)
-                || (rule.pattern && !new RegExp(rule.pattern).test(value))) {
+                || (id === "canvas.id" && !idPattern.test(value))) {
                 throw new Error(`Invalid frozen Designer field: ${id}`);
             }
         } else if (rule.type === "boolean") {
