@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { Script } from "node:vm";
 import { fingerprint } from "./handoff.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
@@ -455,10 +456,21 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                     throw new Error(`${item.name}: invalid ${item.kind === "generated.renderer"
                         ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
                 }
-                if (item.kind === "value.provider"
-                    && (exports.length !== 1
-                        || !/^\s*export\s+(?:function|const)\s+provideValue\b/m.test(document))) {
-                    throw new Error(`${item.name}: value provider must declare only export function or const provideValue`);
+                if (item.kind === "value.provider") {
+                    const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:function|const)\s+provideValue\b/g)];
+                    if (exports.length !== 1 || declarations.length !== 1
+                        || declarations[0].index + declarations[0][0].lastIndexOf("provideValue")
+                            !== exports[0].s) {
+                        throw new Error(`${item.name}: value provider must use a direct export function provideValue or export const provideValue declaration; named re-exports are not supported`);
+                    }
+                    const body = document.replace(
+                        /(^|\n)\s*export\s+(?=(?:async\s+)?function\s+provideValue\b|const\s+provideValue\b)/g, "$1");
+                    try {
+                        new Script(`"use strict"; const workflow = null;\n${body}\nprovideValue({ workflow });`);
+                    } catch (error) {
+                        throw new Error(`${item.name}: value provider cannot run as a generated script: ${error.message}`,
+                            { cause: error });
+                    }
                 }
             }
         }

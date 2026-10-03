@@ -317,7 +317,9 @@ function configuration(request) {
             ({ id, title, renderer, ...(declared ? { values: declared } : {}) })) } : {}),
         ...(valueSources?.length ? { valueSources: valueSources.map(
             ({ id, label, schema, source, presentation, section, assets }) => ({
-                id, label, schema, source, presentation, provenance: assets[0].sourceId,
+                id, label, schema, source: source.kind === "provider"
+                    ? { ...source, hash: assets[1].hash } : source,
+                presentation, provenance: assets[0].sourceId,
                 ...(section ? { section } : {}),
             })) } : {}),
         ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>

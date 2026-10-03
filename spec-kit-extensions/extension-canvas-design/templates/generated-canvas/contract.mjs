@@ -123,8 +123,9 @@ export function valueContract(config) {
         } else throw new UserError(`Invalid value schema for ${field.id}.`);
         const source = field.source;
         if (source.kind === "provider") {
-            if (Object.keys(source).sort().join() !== "kind,module"
+            if (Object.keys(source).sort().join() !== "hash,kind,module"
                 || typeof source.module !== "string" || !moduleId.test(source.module)
+                || typeof source.hash !== "string" || !/^[a-f0-9]{64}$/.test(source.hash)
                 || field.presentation === "stock.editable") {
                 throw new UserError(`Invalid value provider for ${field.id}.`);
             }

@@ -62,10 +62,15 @@ in generated renderers are rejected because only the renderer is packaged.
 Registered `value.definition` JSON templates join the same field-ID collision
 registry and declare a typed constant or a workflow-scoped provider, plus
 read-only, runtime-editable, or processing-only presentation. A provider must
-have its own replace-only `value.provider` `.mjs` registration with a
-`provideValue` export. Designer validates the declaration and module syntax,
-but does not execute providers; Generate freezes their bytes and hashes for
-packaging. Generated pages may declare the IDs they consume in `values`.
+have its own replace-only `value.provider` `.mjs` registration with a direct
+`export function provideValue` or `export const provideValue` declaration
+(named re-exports are unsupported). Designer validates the actual declaration
+and checks that the transformed script parses,
+but does not execute providers; Generate confirms each resolved provider's
+name, source and hash before freezing its bytes for packaging. Changes since
+Designer opened require reopening and reconfirming. Generated pages may declare
+the IDs they consume in `values`. The packaged app rejects changed provider
+bytes before execution; this is not a sandbox for approved provider code.
 Runtime-editable values belong to the generated canvas shell, not to a
 particular workflow's drafts.
 Save rejects stale revisions and invalid values, and reports failures without
@@ -75,7 +80,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.8 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.9 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

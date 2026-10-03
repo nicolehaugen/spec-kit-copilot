@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.8** registers three JSON page templates and three ordered
+Canvas Design **0.1.9** registers three JSON page templates and three ordered
 stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
@@ -87,7 +87,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.8/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.9/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -144,18 +144,29 @@ collisions with Designer fields. A constant uses
 `"source":{"kind":"constant","value":...}`; a workflow-derived value uses
 `"source":{"kind":"provider","module":"<registered-template-name>"}` and a
 separate `value.provider` replace-only `.mjs` template exporting
-`provideValue({workflow})` as an exported function or const (synchronous and
-without imports). The module is validated and frozen, **not run in
-Designer**. `stock.readonly` displays a value automatically, `stock.editable`
+`provideValue({workflow})` with a direct `export function` or `export const`
+declaration (synchronous and without imports). Named re-exports are unsupported.
+Designer checks that the transformed script parses, but **does not run it**.
+Generate requires explicit confirmation of every resolved provider's name,
+source (including project overrides), and SHA-256 hash; changed bytes require
+reopening Designer and confirming again. `stock.readonly` displays a value
+automatically, `stock.editable`
 allows a constant's typed value to be edited through shell-owned state shared
 by every workflow, and `processing-only` omits automatic display. A generated
 page must explicitly list consumed IDs in its definition's `values` array;
 processing-only is not a secrecy boundary. Providers require a selected
 existing workflow and must return a value matching their declared schema;
-refresh errors surface rather than substituting a default. The packaged app
-evaluates providers in a bounded isolated context without Node globals or
-network/filesystem APIs and does not resolve or need the originating preset at
-runtime.
+refresh errors surface rather than substituting a default. A refresh has a
+three-second provider budget shared by all values; providers not evaluated
+before the deadline report an error instead of holding the UI indefinitely.
+The packaged app
+checks provider bytes against the frozen hash before each evaluation and
+reports changes without running them. It does not resolve or need the
+originating preset at runtime. The bounded worker/VM limits accidental hangs;
+**`node:vm` is not a security boundary**. Approved provider JavaScript must be
+trusted with the local user's privileges, including filesystem and network
+access. Hash checks prevent unnoticed substitutions, not malicious approved
+code.
 The browser reports incompatible `controlId` or `valueContract` exports,
 non-function `mount` exports, and mount failures beside the affected control.
 For stock read-only fields, an optional `generatedBinding.section` with a

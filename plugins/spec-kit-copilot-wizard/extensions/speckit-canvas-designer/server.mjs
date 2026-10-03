@@ -34,7 +34,7 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
-const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.8 or the current local source.";
+const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.9 or the current local source.";
 
 async function hasGenerateSkill(project) {
     try {
@@ -162,8 +162,20 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
                 if (!input || typeof input !== "object" || Array.isArray(input)
-                    || Object.keys(input).some((key) => !["revision", "values"].includes(key))
+                    || Object.keys(input).some((key) => !["revision", "values", "approvedProviders"].includes(key))
                     || input.revision !== model.revision) throw new Error("Designer settings changed; reload and retry");
+                const providers = (model.templates ?? []).filter((item) => item.kind === "value.provider")
+                    .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
+                if (providers.length || input.approvedProviders !== undefined) {
+                    if (!Array.isArray(input.approvedProviders)
+                        || JSON.stringify(input.approvedProviders) !== JSON.stringify(providers)) {
+                        throw new Error("Provider approval does not match the resolved names, sources and hashes; review and confirm again");
+                    }
+                    const specify = join(await realpath(project), ".specify");
+                    for (const item of (model.templates ?? []).filter((entry) => entry.kind === "value.provider")) {
+                        await readFrozenAsset(item, specify);
+                    }
+                }
                 if (!await hasGenerateSkill(project)) {
                     res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
                         .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));

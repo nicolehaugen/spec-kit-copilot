@@ -734,7 +734,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.8/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.9/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -810,7 +810,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.8 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.9 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1452,11 +1452,55 @@ test("named value sources freeze typed values and run from a portable canvas wit
     await writeFile(provider.path, "export function otherValue() {}");
     await assert.rejects(load(), /invalid value.provider/);
     await writeFile(provider.path, "function provideValue() { return 'ok'; }\nexport { provideValue };");
-    await assert.rejects(load(), /value provider must declare only export function or const provideValue/);
+    await assert.rejects(load(), /value provider must use a direct export function provideValue.*named re-exports are not supported/);
+    await writeFile(provider.path, "/*\nexport function provideValue\n*/\nconst provideValue = () => 'ok';\nexport { provideValue };");
+    await assert.rejects(load(), /value provider must use a direct export function provideValue.*named re-exports are not supported/);
+    await writeFile(provider.path, "const text = `\nexport function provideValue\n`;\nconst provideValue = () => text;\nexport { provideValue };");
+    await assert.rejects(load(), /value provider must use a direct export function provideValue.*named re-exports are not supported/);
+    await writeFile(provider.path, "export const provideValue = () => 'ok';\nconst workflow = {};");
+    await assert.rejects(load(), /value provider cannot run as a generated script/);
     await writeFile(provider.path, originalProvider);
 
     const selected = { ...model.values, "canvas.id": "value-demo",
         "canvas.displayName": "Value demo" };
+    const overrideAssets = templates.map((item) => item === provider
+        ? { ...item, sourceId: "project" } : item);
+    const overridden = await load(overrideAssets, (_project, name) => ({
+        kind: "template", stack: [{ active: true, strategy: "replace",
+            layer: name === provider.name ? "project" : "preset",
+            sourceId: name === provider.name ? "_" : "copilot-canvas-values-test" }],
+    }));
+    const skill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-generate", "SKILL.md");
+    await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
+    await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    const prompts = [];
+    const shell = await startShell(handoff, overridden, { project, workspace,
+        session: { send: async ({ prompt }) => prompts.push(prompt) } });
+    t.after(() => shell.close());
+    const endpoint = new URL(shell.url);
+    endpoint.pathname = "/api/generate";
+    const post = (approvedProviders) => fetch(endpoint, {
+        method: "POST", headers: { "Content-Type": "application/json",
+            Origin: endpoint.origin },
+        body: JSON.stringify({ revision: overridden.revision, values: selected,
+            ...(approvedProviders === undefined ? {} : { approvedProviders }) }),
+    });
+    const approval = overridden.templates.filter((item) => item.kind === "value.provider")
+        .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
+    assert.deepEqual(approval, [{ name: provider.name, sourceId: "project",
+        hash: overridden.templates.find((item) => item.name === provider.name).hash }]);
+    assert.equal((await post()).status, 422);
+    assert.equal((await post([{ ...approval[0], sourceId: "copilot-canvas-values-test" }])).status, 422);
+    assert.equal((await post([{ ...approval[0], hash: "0".repeat(64) }])).status, 422);
+    assert.equal(prompts.length, 0);
+    await writeFile(provider.path, `${originalProvider}\n// changed after approval`);
+    const changedApproval = await post(approval);
+    assert.equal(changedApproval.status, 422);
+    assert.match((await changedApproval.json()).error, /changed since Designer opened/);
+    await writeFile(provider.path, originalProvider);
+    assert.equal((await post(approval)).status, 202);
+    assert.equal(prompts.length, 1);
     const prepared = await freezeGeneration({ model, values: selected, handoff, project, workspace });
     await writeFile(provider.path, `${originalProvider}\n// changed after freeze`);
     await assert.rejects(freezeGeneration({ model, values: selected, handoff, project, workspace }),
@@ -1481,6 +1525,8 @@ test("named value sources freeze typed values and run from a portable canvas wit
     await cp(join(project, prepared.target), portable, { recursive: true });
     const { readConfig, renderHtml } = await import(pathToFileURL(join(portable, "server.mjs")).href);
     const config = readConfig();
+    assert.equal(config.valueSources.find((value) => value.id === "demo.workflow").source.hash,
+        approval[0].hash);
     assert.deepEqual(config.valueSources.map(({ id }) => id).sort(),
         ["demo.choice", "demo.enabled", "demo.heading", "demo.note", "demo.processing", "demo.workflow"]);
     assert.equal(config.valueSources.find((value) => value.id === "demo.note").presentation, "stock.editable");
@@ -1525,7 +1571,7 @@ test("named value sources freeze typed values and run from a portable canvas wit
     await writeFile(packagedProvider, "export function provideValue() { return 12; }");
     const invalidProvider = await runtime.snapshot();
     assert.equal(invalidProvider.valueFields.some((field) => field.id === "demo.workflow"), false);
-    assert.match(invalidProvider.valueErrors["demo.workflow"], /failed validation/);
+    assert.match(invalidProvider.valueErrors["demo.workflow"], /Packaged provider .* changed/);
     await writeFile(packagedProvider, originalProvider);
     await runtime.save({ selected: "specs/002-second", revision: first.revision });
     const second = await runtime.snapshot();
@@ -1546,6 +1592,35 @@ test("named value sources freeze typed values and run from a portable canvas wit
     assert.deepEqual((await withoutConsumer.snapshot()).pageValues, {});
     assert.equal((await withoutConsumer.snapshot()).valueFields.some(
         (field) => field.id === "demo.processing"), false);
+    const slowSource = "export function provideValue() { const end = Date.now() + 150; while (Date.now() < end) {} return 'ok'; }";
+    await writeFile(join(portable, "providers", "slow-provider.mjs"), slowSource);
+    const workflowField = config.valueSources.find((field) => field.id === "demo.workflow");
+    const slowConfig = { ...config, valueSources: [
+        config.valueSources.find((field) => field.id === "demo.heading"),
+        ...Array.from({ length: 40 }, (_, index) => ({
+            ...workflowField, id: `demo.slow${index}`, label: `Slow ${index}`,
+            source: { kind: "provider", module: "slow-provider",
+                hash: createHash("sha256").update(slowSource).digest("hex") },
+        })),
+    ], generatedPages: [] };
+    const slowWorkspace = await fixture(t);
+    const slowRuntime = await createRuntime({ config: slowConfig, cwd: project,
+        workspace: slowWorkspace, session });
+    t.after(() => slowRuntime.close());
+    const noSelection = await slowRuntime.snapshot();
+    assert.equal(Object.keys(noSelection.valueErrors).length, 0);
+    assert.equal(noSelection.valueFields.some((field) => field.id.startsWith("demo.slow")), false);
+    await slowRuntime.save({ selected: "specs/002-second", revision: 0 });
+    const start = performance.now();
+    const slowSnapshot = await slowRuntime.snapshot();
+    assert.ok(performance.now() - start < 5000, "refresh should not wait for all 40 slow providers");
+    assert.equal(slowSnapshot.valueFields.find((field) => field.id === "demo.heading").value,
+        "Sample heading");
+    assert.ok(Object.keys(slowSnapshot.valueErrors).length > 0);
+    assert.ok(Object.values(slowSnapshot.valueErrors).every((error) =>
+        error === "Value provider refresh time limit exceeded. Refresh to retry."));
+    assert.equal(slowSnapshot.valueFields.filter((field) => field.id.startsWith("demo.slow")).length
+        + Object.keys(slowSnapshot.valueErrors).length, 40);
     const stateKey = createHash("sha256").update(JSON.stringify([project, config.canvas.id])).digest("hex");
     const statePath = join(workspace, "generated-canvases", stateKey, "state.json");
     const savedState = await readFile(statePath, "utf8");

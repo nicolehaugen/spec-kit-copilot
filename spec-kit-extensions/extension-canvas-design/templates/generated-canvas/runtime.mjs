@@ -9,6 +9,9 @@ import { UserError, confined, readBounded, directories, atomicJson, safePath, sl
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 
+const PROVIDER_REFRESH_LIMIT_MS = 3000;
+const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
+
 if (!isMainThread && workerData?.canvasValueProvider) {
     try {
         const { source, workflow } = workerData.canvasValueProvider;
@@ -29,9 +32,15 @@ if (!isMainThread && workerData?.canvasValueProvider) {
     }
 }
 
-async function evaluateProvider(module, workflow) {
+async function evaluateProvider(module, hash, workflow, deadline) {
+    if (performance.now() >= deadline) throw new UserError(PROVIDER_REFRESH_ERROR);
     const source = await readBounded(fileURLToPath(new URL(".", import.meta.url)),
         `providers/${module}.mjs`, 32 * 1024);
+    if (createHash("sha256").update(source).digest("hex") !== hash) {
+        throw new UserError(`Packaged provider ${module} changed; restore the generated canvas files.`);
+    }
+    const remaining = Math.ceil(deadline - performance.now());
+    if (remaining <= 0) throw new UserError(PROVIDER_REFRESH_ERROR);
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL(import.meta.url), {
             workerData: { canvasValueProvider: { source, workflow } },
@@ -39,7 +48,9 @@ async function evaluateProvider(module, workflow) {
             resourceLimits: { maxOldGenerationSizeMb: 48, maxYoungGenerationSizeMb: 16 },
         });
         let finished = false;
-        const timer = setTimeout(() => finish(new Error("Provider exceeded its execution limit")), 2000);
+        const timer = setTimeout(() => finish(remaining < 2000
+            ? new UserError(PROVIDER_REFRESH_ERROR) : new Error("Provider exceeded its execution limit")),
+        Math.min(2000, remaining));
         function finish(error, value) {
             if (finished) return;
             finished = true;
@@ -219,22 +230,28 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const item = state.selected;
         const selectedWorkflow = item === "__new__" ? null : entries.find((entry) => entry.id === item);
         const visibleValues = [], pageValues = {}, valueErrors = {};
+        const providerDeadline = performance.now() + PROVIDER_REFRESH_LIMIT_MS;
+        let reportedDeadline = false;
         for (const field of valueFields) {
             if (field.source.kind === "provider" && !selectedWorkflow) continue;
             let value;
             try {
                 if (field.source.kind === "provider") {
-                    value = await evaluateProvider(field.source.module, {
+                    value = await evaluateProvider(field.source.module, field.source.hash, {
                         id: selectedWorkflow.id, slug: selectedWorkflow.slug,
                         label: selectedWorkflow.label,
-                    });
+                    }, providerDeadline);
                 } else if (field.presentation === "stock.editable") {
                     value = Object.hasOwn(state.values ?? {}, field.id) ? state.values[field.id] : field.source.value;
                 } else value = field.source.value;
                 value = validateValue(field.schema, value, field.id);
             } catch (error) {
-                valueErrors[field.id] = `Value ${field.label} could not be evaluated or failed validation.`;
-                await diagnostic(`Generated canvas value ${field.id} failed: ${error.message}`);
+                valueErrors[field.id] = error instanceof UserError
+                    ? error.message : `Value ${field.label} could not be evaluated or failed validation.`;
+                if (error.message !== PROVIDER_REFRESH_ERROR || !reportedDeadline) {
+                    await diagnostic(`Generated canvas value ${field.id} failed: ${error.message}`);
+                }
+                if (error.message === PROVIDER_REFRESH_ERROR) reportedDeadline = true;
                 continue;
             }
             const entry = { id: field.id, label: field.label, schema: field.schema, value,
