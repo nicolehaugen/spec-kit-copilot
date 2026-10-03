@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.15** registers three JSON page templates, five ordered
+Canvas Design **0.1.16** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, and a shared image definition with paired adapters, plus the
 `speckit.extension-canvas-design.load-page` and
@@ -34,7 +34,7 @@ project extension directory, then validates the result in place.
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
-The Essentials core template lives in `pages/essentials.json`; its
+The Essentials core template lives in `designer/tabs/essentials.json`; its
 `canvas-settings-setup` ID stays stable for preset resolution.
 Its required Canvas ID and Title are fixed fields that share the `stock.text`
 editor with optional text contributions; a preset cannot remove them by
@@ -145,7 +145,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.15/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.16/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.

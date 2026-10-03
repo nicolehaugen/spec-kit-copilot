@@ -264,9 +264,10 @@ spec-kit-extensions/extension-canvas-design/
   extension.yml
   commands/load-page.md
   commands/generate.md
-  pages/essentials.json                required identity fields and an optional-field slot
-  pages/artifacts.json                 currently empty placeholder
-  pages/appearance.json                currently empty placeholder
+  designer/tabs/essentials.json        required identity fields and an optional-field slot
+  designer/tabs/artifacts.json         currently empty placeholder
+  designer/tabs/appearance.json        currently empty placeholder
+  designer/settings/*.json             optional fields placed into Designer tabs
   schemas/designer.default-tab-definition.schema.json  currently string/boolean fields
   scripts/generate.mjs
   templates/generated-canvas/
@@ -289,15 +290,16 @@ spec-kit-extensions/extension-canvas-design/
   commands/
     load-page.md
     generate.md
-  pages/
+  designer/tabs/
     essentials.json                    core ID/name fields; optional-field slot
     artifacts.json                     phase-output review slot
     appearance.json                    palette/theme slot
-  contributions/
+  designer/settings/
     stock-essentials.json              optional Essentials fields
     stock-artifacts.json               Artifacts page control registration
     stock-appearance.json              Appearance page control registration
-    stock-generated.json               default generated slots/features
+  generated/
+    stock-generated.json               proposed generated-host features
   controls/
     phase-outputs/
       control.json
@@ -337,11 +339,11 @@ The **Designer Canvas provider and adapter API for new controls** remain in the 
 copilot-billing-canvas/
   preset.yml                           tagged canvas-design
   commands/load-page.md                explicitly names added contributions
-  pages/billing.json                   additional Designer page
-  contributions/billing.json           field, slot, and generated bindings
+  designer/tabs/billing.json           additional Designer tab
+  designer/settings/billing.json       field, slot, and generated bindings
   controls/cost-code/
     control.json                       stock text/read-only control binding
-  pages-generated/
+  generated/pages/
     billing.json                       generated page definition
     billing.mjs                        generated page renderer
 ```
@@ -559,25 +561,25 @@ provides:
       description: Materialize the validated frozen canvas app.
   templates:
     - name: canvas-settings-setup
-      file: pages/essentials.json
+      file: designer/tabs/essentials.json
       description: Required canvas identity fields and Essentials slot.
     - name: canvas-settings-artifacts
-      file: pages/artifacts.json
+      file: designer/tabs/artifacts.json
       description: Artifacts page and phase-output review slot.
     - name: canvas-settings-appearance
-      file: pages/appearance.json
+      file: designer/tabs/appearance.json
       description: Appearance page and palette slot.
     - name: canvas-contributions-stock-essentials
-      file: contributions/stock-essentials.json
+      file: designer/settings/stock-essentials.json
       description: Optional stock Essentials fields.
     - name: canvas-contributions-stock-artifacts
-      file: contributions/stock-artifacts.json
+      file: designer/settings/stock-artifacts.json
       description: Default phase-output editor contribution.
     - name: canvas-contributions-stock-appearance
-      file: contributions/stock-appearance.json
+      file: designer/settings/stock-appearance.json
       description: Default palette editor contribution.
     - name: canvas-contributions-stock-generated
-      file: contributions/stock-generated.json
+      file: generated/stock-generated.json
       description: Default generated-host contributions.
   # Current base manifests register stock-text and stock-checkbox definitions
   # and Designer adapters; visible text placements also register a generated adapter.
@@ -614,11 +616,11 @@ provides:
       strategy: "append"
     - type: template
       name: canvas-settings-billing
-      file: pages/billing.json
+      file: designer/tabs/billing.json
       strategy: replace
     - type: template
       name: canvas-contributions-billing
-      file: contributions/billing.json
+      file: designer/settings/billing.json
       strategy: replace
     - type: template
       name: canvas-control-billing-code

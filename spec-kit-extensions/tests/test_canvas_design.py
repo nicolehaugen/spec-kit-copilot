@@ -33,9 +33,9 @@ FILES = {
     "schemas/generated.added-page-definition.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
-    *(f"pages/{name}.json" for name in PAGE_NAMES),
-    *(f"pages/stock-{name}.json" for name in (
-        "description", "workflow-heading", "custom-slug", "logo", "logo-main-page",
+    *(f"designer/tabs/{name}.json" for name in PAGE_NAMES),
+    *(f"designer/settings/{name}.json" for name in (
+        "description", "workflow-heading", "custom-slug", "header-logo", "main-page-logo",
     )),
     "controls/stock-image/control.json",
     "controls/stock-image/designer.mjs",
@@ -62,7 +62,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         cls.schema = json.loads((PACKAGE / "schemas/designer.default-tab-definition.schema.json").read_text("utf-8"))
         cls.validator = Draft202012Validator(cls.schema)
         cls.pages = [
-            json.loads((PACKAGE / f"pages/{name}.json").read_text("utf-8"))
+            json.loads((PACKAGE / f"designer/tabs/{name}.json").read_text("utf-8"))
             for name in PAGE_NAMES
         ]
         cls.command = (PACKAGE / "commands/load-page.md").read_text("utf-8")
@@ -103,11 +103,13 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             [(template["name"], template["file"])
              for template in self.manifest["provides"]["templates"]],
-            [(f"canvas-settings-{page}", f"pages/{filename}.json")
+            [(f"canvas-settings-{page}", f"designer/tabs/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
-            + [(f"canvas-stock-{name}", f"pages/stock-{name}.json")
-               for name in ("description", "workflow-heading", "custom-slug",
-                            "logo", "logo-main-page")]
+            + [(f"canvas-stock-{name}", f"designer/settings/{filename}.json")
+               for name, filename in (
+                   ("description", "description"), ("workflow-heading", "workflow-heading"),
+                   ("custom-slug", "custom-slug"), ("logo", "header-logo"),
+                   ("logo-main-page", "main-page-logo"))]
             + [(name, f"controls/stock-image/{file}") for name, file in (
                 ("canvas-stock-image", "control.json"),
                 ("canvas-stock-image-designer", "designer.mjs"),
@@ -199,7 +201,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
             ],
         )
-        stock = [json.loads((PACKAGE / f"pages/stock-{name}.json").read_text("utf-8"))
+        stock = [json.loads((PACKAGE / f"designer/settings/{name}.json").read_text("utf-8"))
                  for name in ("description", "workflow-heading", "custom-slug")]
         self.assertEqual([item["order"] for item in stock], [10, 20, 30])
         self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 3)
@@ -224,24 +226,28 @@ class CanvasDesignPackageTests(unittest.TestCase):
                    for kind in kinds}
         registry = Registry().with_resource(
             "designer.default-tab-definition.schema.json", Resource.from_contents(self.schema))
-        preset_pages = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/pages/*.json"))
+        preset_tabs = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/tabs/*.json"))
+        preset_generated_pages = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/generated/pages/*.json"))
         fixtures = {
-            "designer.default-tab-definition": [PACKAGE / f"pages/{name}.json" for name in PAGE_NAMES]
-                + [path for path in preset_pages if json.loads(path.read_text("utf-8")).get("id")
+            "designer.default-tab-definition": [PACKAGE / f"designer/tabs/{name}.json" for name in PAGE_NAMES]
+                + [path for path in preset_tabs if json.loads(path.read_text("utf-8")).get("id")
                    in (f"canvas-settings-{name}" for name in PAGE_IDS)],
-            "designer.added-tab-definition": [path for path in preset_pages
-                if "fields" in json.loads(path.read_text("utf-8"))
-                and json.loads(path.read_text("utf-8")).get("id")
+            "designer.added-tab-definition": [path for path in preset_tabs
+                if json.loads(path.read_text("utf-8")).get("id")
                 not in (f"canvas-settings-{name}" for name in PAGE_IDS)],
-            "designer.setting-definition": list(PACKAGE.glob("pages/stock-*.json"))
-                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/contributions/*.json")),
-            "generated.added-page-definition": [path for path in preset_pages
-                if "renderer" in json.loads(path.read_text("utf-8"))],
+            "designer.setting-definition": list(PACKAGE.glob("designer/settings/*.json"))
+                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
+            "generated.added-page-definition": preset_generated_pages,
             "shared.control-definition": list(PACKAGE.glob("controls/*/control.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
         }
         self.assertTrue(all(fixtures.values()))
+        for manifest_path in (EXTENSIONS.parent / "spec-kit-presets").glob("*/preset.yml"):
+            manifest = yaml.safe_load(manifest_path.read_text("utf-8"))
+            for template in manifest.get("provides", {}).get("templates", []):
+                with self.subTest(preset=manifest_path.parent.name, template=template["name"]):
+                    self.assertTrue((manifest_path.parent / template["file"]).is_file())
         self.assertEqual(schemas["designer.added-tab-definition"]["$ref"],
                          "designer.default-tab-definition.schema.json")
         for kind, schema in schemas.items():
@@ -285,12 +291,12 @@ class CanvasDesignPackageTests(unittest.TestCase):
             {
                 "type": "template",
                 "name": "canvas-settings-setup",
-                "file": "pages/essentials.json",
+                "file": "designer/tabs/essentials.json",
                 "description": "Replace Essentials with required identity fields only.",
                 "strategy": "replace",
             },
         ])
-        page = json.loads((fixture / "pages/essentials.json").read_text("utf-8"))
+        page = json.loads((fixture / "designer/tabs/essentials.json").read_text("utf-8"))
         self.validator.validate(page)
         self.assertEqual({key: value for key, value in page.items() if key != "$schema"},
                          {key: value for key, value in self.pages[0].items() if key != "$schema"})

@@ -62,8 +62,8 @@ Providers are packaged, never evaluated by Designer.
    opening Designer. Its order and winning files belong to Specify.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
-       canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.15)
+       canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\designer\tabs\essentials.json
+         (top layer from: extension:extension-canvas-design v0.1.16)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on

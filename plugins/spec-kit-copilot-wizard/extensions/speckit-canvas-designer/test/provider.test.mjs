@@ -5,7 +5,7 @@ import { writeFileSync } from "node:fs";
 import { appendFile, copyFile, cp, mkdtemp, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -66,7 +66,7 @@ async function projectFixture(t, workspace) {
     const specify = join(project, ".specify");
     const installed = join(specify, "extensions", "extension-canvas-design");
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url));
-    await mkdir(join(installed, "pages"), { recursive: true });
+    await mkdir(join(installed, "designer", "tabs"), { recursive: true });
     await mkdir(join(installed, "schemas"), { recursive: true });
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-load-page"),
         { recursive: true });
@@ -80,8 +80,8 @@ async function projectFixture(t, workspace) {
         ["appearance", "appearance"]];
     const entries = [];
     for (const [name, filename] of pages) {
-        const path = join(installed, "pages", `${filename}.json`);
-        await copyFile(join(source, "pages", `${filename}.json`), path);
+        const path = join(installed, "designer", "tabs", `${filename}.json`);
+        await copyFile(join(source, "designer", "tabs", `${filename}.json`), path);
         entries.push({ name: `canvas-settings-${name}`, path,
             kind: "designer.default-tab-definition", strategy: "replace" });
     }
@@ -110,11 +110,13 @@ async function projectFixture(t, workspace) {
 async function stockTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
-    const directory = join(project, ".specify", "extensions", "extension-canvas-design", "pages");
+    const directory = join(project, ".specify", "extensions", "extension-canvas-design",
+        "designer", "settings");
+    await mkdir(directory, { recursive: true });
     const templates = [];
     for (const name of ["description", "workflow-heading", "custom-slug"]) {
-        const path = join(directory, `stock-${name}.json`);
-        await copyFile(join(source, "pages", `stock-${name}.json`), path);
+        const path = join(directory, `${name}.json`);
+        await copyFile(join(source, "designer", "settings", `${name}.json`), path);
         templates.push({ name: `canvas-stock-${name}`, path,
             sourceId: "extension:extension-canvas-design",
             kind: "designer.setting-definition", strategy: "replace" });
@@ -253,8 +255,9 @@ test("stock image requires one compatible control definition and paired self-con
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
     const fieldPath = join(project, ".specify", "extensions", "extension-canvas-design",
-        "pages", "stock-logo.json");
-    await copyFile(join(source, "pages", "stock-logo.json"), fieldPath);
+        "designer", "settings", "header-logo.json");
+    await mkdir(dirname(fieldPath), { recursive: true });
+    await copyFile(join(source, "designer", "settings", "header-logo.json"), fieldPath);
     const fields = [{ name: "canvas-stock-logo", path: fieldPath,
         sourceId: "extension:extension-canvas-design", kind: "designer.setting-definition", strategy: "replace" }];
     const adapters = await stockImageTemplates(project);
@@ -415,11 +418,12 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
     const path = join(project, ".specify", "extensions", "extension-canvas-design",
-        "pages", "stock-logo.json");
+        "designer", "settings", "header-logo.json");
     const mainPath = join(project, ".specify", "extensions", "extension-canvas-design",
-        "pages", "stock-logo-main-page.json");
-    await copyFile(join(source, "pages", "stock-logo.json"), path);
-    await copyFile(join(source, "pages", "stock-logo-main-page.json"), mainPath);
+        "designer", "settings", "main-page-logo.json");
+    await mkdir(dirname(path), { recursive: true });
+    await copyFile(join(source, "designer", "settings", "header-logo.json"), path);
+    await copyFile(join(source, "designer", "settings", "main-page-logo.json"), mainPath);
     const templates = [...[path, mainPath].map((file, index) => ({
         name: index ? "canvas-stock-logo-main-page" : "canvas-stock-logo", path: file,
         sourceId: "extension:extension-canvas-design", kind: "designer.setting-definition", strategy: "replace",
@@ -556,10 +560,10 @@ test("logo gallery preset places a reusable Logo in its declared asset slot", as
     const rendererPath = join(folder, "generated.mjs");
     const fieldPath = join(folder, "logo.json");
     for (const [relative, target] of [
-        [join("pages", "designer.json"), designerPath],
-        [join("pages", "generated.json"), pagePath],
-        [join("pages", "generated.mjs"), rendererPath],
-        [join("contributions", "logo.json"), fieldPath],
+        [join("designer", "tabs", "logo-gallery.json"), designerPath],
+        [join("generated", "pages", "logo-gallery.json"), pagePath],
+        [join("generated", "pages", "logo-gallery.mjs"), rendererPath],
+        [join("designer", "settings", "logo.json"), fieldPath],
     ]) await copyFile(join(preset, relative), target);
     const designer = JSON.parse(await readFile(designerPath, "utf8"));
     const pageSource = await readFile(pagePath, "utf8");
@@ -1187,7 +1191,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.15/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.16/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -1263,7 +1267,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.15 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.16 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1426,10 +1430,10 @@ test("registered contributions validate slots, sources, references and determini
         await mkdir(directory);
         const pagePath = join(directory, "billing-page.json");
         const contributionPath = join(directory, "billing-contribution.json");
-        await copyFile(join(preset, "pages", "billing.json"), pagePath);
+        await copyFile(join(preset, "designer", "tabs", "billing.json"), pagePath);
         const pageEntry = { name: "canvas-settings-billing", path: pagePath,
             kind: "designer.added-tab-definition", strategy: "replace" };
-        const contribution = JSON.parse(await readFile(join(preset, "contributions", "billing.json")));
+        const contribution = JSON.parse(await readFile(join(preset, "designer", "settings", "billing.json")));
         const templates = [{ name: "canvas-contributions-billing", path: contributionPath,
             sourceId: "copilot-billing-canvas-test",
             kind: "designer.setting-definition", strategy: "replace" }];
@@ -1671,8 +1675,8 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await mkdir(directory);
     const definitionPath = join(directory, "overview.json");
     const rendererPath = join(directory, "overview.mjs");
-    await copyFile(join(preset, "pages", "overview.json"), definitionPath);
-    await copyFile(join(preset, "pages", "overview.mjs"), rendererPath);
+    await copyFile(join(preset, "generated", "pages", "overview.json"), definitionPath);
+    await copyFile(join(preset, "generated", "pages", "overview.mjs"), rendererPath);
     const definition = JSON.parse(await readFile(definitionPath, "utf8"));
     const renderer = await readFile(rendererPath, "utf8");
     const pages = [
@@ -1775,7 +1779,7 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await assert.rejects(stat(sideEffectPath), { code: "ENOENT" });
     await writeFile(rendererPath, renderer);
     const billing = JSON.parse(await readFile(new URL(
-        "../../../../../spec-kit-presets/copilot-billing-canvas-test/contributions/billing.json",
+        "../../../../../spec-kit-presets/copilot-billing-canvas-test/designer/settings/billing.json",
         import.meta.url)));
     const billingPath = join(directory, "billing.json");
     await writeFile(billingPath, JSON.stringify({ ...billing, slot: "essentials.options" }));
@@ -1839,8 +1843,8 @@ test("named value sources freeze typed values and run from a portable canvas wit
         ["canvas-value-workflow", "values/workflow.json", "generated.value-definition"],
         ["canvas-value-workflow-provider", "values/workflow.mjs", "generated.computed-value-provider"],
         ["canvas-value-processing", "values/processing.json", "generated.value-definition"],
-        ["canvas-generated-values", "pages/values.json", "generated.added-page-definition"],
-        ["canvas-generated-values-renderer", "pages/values.mjs", "generated.added-page-renderer"],
+        ["canvas-generated-values", "generated/pages/values.json", "generated.added-page-definition"],
+        ["canvas-generated-values-renderer", "generated/pages/values.mjs", "generated.added-page-renderer"],
     ];
     const command = await readFile(join(preset, "commands", "load-page.md"), "utf8");
     for (const [name, , kind] of items) {
@@ -2123,7 +2127,7 @@ test("paired control validates both adapters, typed values and portable generate
     await mkdir(directory);
     const items = [
         ["canvas-control-risk-matrix", "controls/risk-matrix/control.json", "shared.control-definition"],
-        ["canvas-contributions-risk-designer", "contributions/designer.json", "designer.setting-definition"],
+        ["canvas-contributions-risk-designer", "designer/settings/risk-rating.json", "designer.setting-definition"],
         ["canvas-control-risk-matrix-designer", "controls/risk-matrix/designer.mjs", "designer.control-adapter"],
         ["canvas-control-risk-matrix-generated", "controls/risk-matrix/generated.mjs", "generated.control-adapter"],
     ];
@@ -2524,8 +2528,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             "../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url));
         const testPage = join(project, ".specify", "pr1-test-page.json");
         const testField = join(project, ".specify", "pr1-test-field.json");
-        await copyFile(join(preset, "pages", "pr1-test.json"), testPage);
-        await copyFile(join(preset, "contributions", "pr1-test.json"), testField);
+        await copyFile(join(preset, "designer", "tabs", "pr1-test.json"), testPage);
+        await copyFile(join(preset, "designer", "settings", "pr1-test.json"), testField);
         const withPreset = await canvas.open({ instanceId: "same", input: {
             handoffId: ID,
             pages: [...entries, { name: "canvas-settings-pr1-test", path: testPage,

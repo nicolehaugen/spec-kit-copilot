@@ -28,7 +28,7 @@ provides:
       strategy: "replace"
     - type: "template"
       name: "canvas-contributions-risk-designer"
-      file: "contributions/designer.json"
+      file: "designer/settings/risk-rating.json"
       description: "Risk rating in the Essentials Designer slot."
       strategy: "replace"
     - type: "template"

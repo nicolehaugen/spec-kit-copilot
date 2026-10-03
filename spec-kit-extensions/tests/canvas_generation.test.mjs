@@ -314,12 +314,12 @@ test("frozen named values reject tampered modules and package independently of t
         const { schemaVersion: _version, ...source } = definition;
         return { ...source, assets };
     }));
-    const page = JSON.parse(await readFile(new URL("pages/values.json", preset)));
+    const page = JSON.parse(await readFile(new URL("generated/pages/values.json", preset)));
     const request = { ...original, valueSources, generatedPages: [{
         id: page.id, title: page.title, renderer: page.renderer, values: page.values,
         assets: [
-            await asset(page.id, "generated.added-page-definition", "pages/values.json"),
-            await asset(page.renderer, "generated.added-page-renderer", "pages/values.mjs"),
+            await asset(page.id, "generated.added-page-definition", "generated/pages/values.json"),
+            await asset(page.renderer, "generated.added-page-renderer", "generated/pages/values.mjs"),
         ],
     }] };
     const persist = async (candidate) => {
@@ -356,10 +356,10 @@ test("frozen named values reject tampered modules and package independently of t
 });
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
-    const page = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/essentials.json", import.meta.url)));
+    const page = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/tabs/essentials.json", import.meta.url)));
     assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
-    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-workflow-heading.json", import.meta.url)));
-    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-custom-slug.json", import.meta.url)));
+    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/settings/workflow-heading.json", import.meta.url)));
+    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/settings/custom-slug.json", import.meta.url)));
     assert.deepEqual(slug.field, {
         id: "workflowSlug.userProvided", type: "boolean", control: "stock.checkbox", default: false, label: "Allow custom slug",
         description: "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.",

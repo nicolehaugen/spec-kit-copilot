@@ -13,7 +13,8 @@ import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/exte
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
 import { renderHtml } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 
-const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/pages/", import.meta.url);
+const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer/tabs/", import.meta.url);
+const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer/settings/", import.meta.url);
 const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
@@ -55,7 +56,7 @@ async function model(revision = "first") {
         pages.push({ ...document, page: document.id });
     }
     for (const name of ["description", "workflow-heading", "custom-slug"]) {
-        const { field } = JSON.parse(await readFile(new URL(`stock-${name}.json`, templateRoot), "utf8"));
+        const { field } = JSON.parse(await readFile(new URL(`${name}.json`, settingsRoot), "utf8"));
         pages[0].fields.push(field);
     }
     return {
@@ -137,9 +138,9 @@ async function openDesigner(page) {
 
 test("Main page Logo upload explains rejection beside the picker and clears on replacement", async ({ page }) => {
     const state = await model();
-    const { field } = JSON.parse(await readFile(new URL("stock-logo-main-page.json", templateRoot), "utf8"));
+    const { field } = JSON.parse(await readFile(new URL("main-page-logo.json", settingsRoot), "utf8"));
     const logoField = field;
-    const { field: headerField } = JSON.parse(await readFile(new URL("stock-logo.json", templateRoot), "utf8"));
+    const { field: headerField } = JSON.parse(await readFile(new URL("header-logo.json", settingsRoot), "utf8"));
     state.pages[0].fields.push(headerField);
     state.constraints[headerField.id] = { type: "image", maxBytes: 32768,
         mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
@@ -207,7 +208,7 @@ test("Main page Logo upload explains rejection beside the picker and clears on r
 
 test("configured image reports an incompatible Designer adapter beside its field", async ({ page }) => {
     const state = await model();
-    const { field } = JSON.parse(await readFile(new URL("stock-logo.json", templateRoot), "utf8"));
+    const { field } = JSON.parse(await readFile(new URL("header-logo.json", settingsRoot), "utf8"));
     state.pages[0].fields.push(field);
     state.constraints[field.id] = { type: "image", maxBytes: 32768,
         mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
@@ -682,7 +683,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.15 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.16 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
