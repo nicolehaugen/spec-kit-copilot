@@ -101,6 +101,10 @@ with the same named root and filename remain distinct when their root paths
 differ. The default output opens in the artifact viewer when the file exists;
 folders and not-yet-created files offer a link to an existing parent folder
 instead.
+Inferred paths use one location form at a time: a repository-relative path,
+`relativeTo: "feature"` for the active feature directory (including
+`FEATURE_DIR`), or `root: {name, path?}` for a different named output
+directory. Combining `root` and `relativeTo` is invalid.
 Opening an expected output in the viewer before it exists shows an
 "Output not ready or not found" message rather than a raw 404.
 The **Composition** button reads **Refresh** when idle, whether or not the latest
