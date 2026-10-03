@@ -26,6 +26,7 @@ FILES = {
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
+    "scripts/verify-launch.mjs",
     "schemas/page.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
     *(f"pages/stock-{name}.json" for name in (

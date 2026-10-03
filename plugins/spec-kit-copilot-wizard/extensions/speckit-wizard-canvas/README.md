@@ -251,6 +251,22 @@ addition to) the hosted registry entry:
   successfully, and checks the generated load-page skill for the registered
   preset page/template names before opening Designer. This ordering applies
   only to Designer launch, not the Wizard's Catalogs install actions.
+- Before installing, the child runs a read-only preflight for the exact
+  session-root handoff bytes, Specify CLI version, project setup, and approved
+  local manifests. For local development packages, the preflight records a
+  bounded content digest; after each local install and after later overrides,
+  the child compares the installed files with the approved source. Specify's
+  `local` inventory label alone does not identify which directory supplied a
+  copied package. The hosted Canvas Design requirement remains v0.1.7; a
+  newer approved local source is checked by content and composed capabilities
+  rather than forced to that hosted version.
+- Newer Canvas Design packages run a read-only verifier over the **generated,
+  composed** load-page skill and Specify's per-name resolution/stack metadata.
+  It produces the complete pages/templates input only when all registrations
+  check out. Compatible older hosted packages without that verifier continue
+  to use the generated skill's existing manual per-name checks. The official
+  Designer is opened once; shell availability alone does not assert all pages
+  loaded or generation readiness.
 - Local selections reset when the dialog is closed after a **successful**
   launch (matching the existing reset behavior for hosted selections), but
   are retained if the launch fails, so you can fix the problem and retry

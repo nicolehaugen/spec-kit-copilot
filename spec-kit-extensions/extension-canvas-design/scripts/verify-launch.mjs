@@ -1,0 +1,157 @@
+import { execFile } from "node:child_process";
+import { readFile, realpath } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const exec = promisify(execFile);
+const NAME = /^[a-z][a-z0-9-]{0,79}$/;
+const KINDS = new Set(["designer.field", "generated.page", "generated.renderer",
+    "control.definition", "designer.adapter", "generated.adapter",
+    "value.definition", "value.provider"]);
+const HEADINGS = new Set(["Pages", "Additional Designer pages",
+    "Canvas Design templates", "Additional Canvas Design templates"]);
+const EXECUTABLE = new Set(["generated.renderer", "designer.adapter",
+    "generated.adapter", "value.provider"]);
+
+export function declarations(command, requirePage = true) {
+    const result = new Map();
+    let heading = "";
+    for (const line of command.split(/\r?\n/)) {
+        const title = line.match(/^## (.+?)\s*$/);
+        if (title) { heading = title[1]; continue; }
+        if (!HEADINGS.has(heading) || !/^\s*-\s/.test(line)) continue;
+        const names = [...line.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+        const name = names[0];
+        if (!NAME.test(name ?? "")) throw new Error(`Invalid Canvas Design registration: ${line.trim()}`);
+        const page = heading === "Pages" || heading === "Additional Designer pages";
+        const kind = page ? "designer.page" : names[1];
+        const strategy = page ? "replace" : names[2];
+        if ((!page && (names.length !== 3 || !KINDS.has(kind) || strategy !== "replace"))
+            || (page && names.length !== 1
+                && (names.length !== 3 || names[1] !== kind || names[2] !== strategy))) {
+            throw new Error(`Invalid Canvas Design kind or strategy for ${name}.`);
+        }
+        const existing = result.get(name);
+        if (existing && existing.kind !== kind) {
+            throw new Error(`Conflicting Canvas Design registration for ${name}.`);
+        }
+        if (!existing) result.set(name, { name, kind, strategy: "replace" });
+    }
+    if (requirePage && ![...result.values()].some((entry) => entry.kind === "designer.page")) {
+        throw new Error("Generated load-page skill is missing Designer pages.");
+    }
+    return [...result.values()];
+}
+
+async function cli(project, args, run, checkWarnings = false) {
+    const { stdout, stderr = "" } = await run(process.platform === "win32" ? "specify.exe" : "specify",
+        args, { cwd: project, timeout: 10000, maxBuffer: 128 * 1024,
+            env: { ...process.env, COLUMNS: "8192", NO_COLOR: "1" } });
+    if (stderr.trim() || (checkWarnings
+        && /\b(?:warning|not found|ambiguous)\b/i.test(stdout))) {
+        throw new Error(`Specify ${args.join(" ")} reported a warning or missing result: ${stdout} ${stderr}`);
+    }
+    return stdout;
+}
+
+export async function verifyComposition(project, run = exec) {
+    const child = await realpath(project);
+    const skill = join(child, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md");
+    const entries = declarations(await readFile(skill, "utf8"));
+    const command = JSON.parse(await cli(child, ["artifact", "info",
+        "command:speckit.extension-canvas-design.load-page", "--json"], run));
+    const stack = command.stack;
+    const baseIndex = stack?.findIndex((layer) => layer.strategy === "replace");
+    if (command.kind !== "command" || !Array.isArray(stack) || baseIndex < 0
+        || stack.slice(0, baseIndex).some((layer) => layer.strategy !== "append")) {
+        throw new Error("Generated load-page command has no valid composed base.");
+    }
+    for (const layer of stack.slice(0, baseIndex + 1)) {
+        if (!["preset", "extension"].includes(layer.layer)
+            || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(layer.sourceId ?? "")
+            || (layer.strategy === "replace" && typeof layer.sourcePath !== "string")) {
+            throw new Error("Generated load-page command has an unknown source.");
+        }
+        const path = layer.strategy === "replace"
+            ? resolve(child, layer.sourcePath)
+            : join(child, ".specify", layer.layer === "preset" ? "presets" : "extensions",
+                layer.sourceId, "commands", "load-page.md");
+        const commandRoot = await realpath(join(child, ".specify"));
+        const commandRel = relative(commandRoot, await realpath(path));
+        if (!commandRel || commandRel === ".." || commandRel.startsWith(`..${sep}`)) {
+            throw new Error(`Generated load-page command source escapes .specify: ${layer.sourceId}.`);
+        }
+        const contribution = await readFile(path, "utf8");
+        for (const required of declarations(contribution, false)) {
+            if (!entries.some((entry) => entry.name === required.name
+                && entry.kind === required.kind)) {
+                throw new Error(`Generated load-page skill is missing ${required.name} from ${layer.sourceId}.`);
+            }
+        }
+    }
+    const pages = [], templates = [];
+    for (const entry of entries) {
+        const output = await cli(child, ["preset", "resolve", entry.name], run, true);
+        const lines = output.trim().split(/\r?\n/).map((line) => line.trim());
+        const prefix = `${entry.name}:`;
+        if (!lines[0]?.startsWith(prefix)) throw new Error(`Specify did not resolve ${entry.name}.`);
+        const path = (lines[0].slice(prefix.length).trim() || lines[1] || "").trim();
+        const meta = lines.find((line) => line.startsWith("(top layer from: ")
+            && line.endsWith(")"));
+        if (!isAbsolute(path) || !meta || lines.length > 3
+            || lines.filter((line) => line.startsWith(prefix)).length !== 1) {
+            throw new Error(`Specify returned an incomplete resolution for ${entry.name}.`);
+        }
+        const raw = meta.slice("(top layer from: ".length, -1);
+        const sourceId = raw === "project override" ? "project"
+            : raw.replace(/ v[A-Za-z0-9][A-Za-z0-9._+-]*$/, "");
+        if (sourceId !== "project" && !/^(?:extension:)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sourceId)) {
+            throw new Error(`Specify returned an unknown source for ${entry.name}.`);
+        }
+        const info = JSON.parse(await cli(child,
+            ["artifact", "info", `template:${entry.name}`, "--json"], run));
+        const layers = info.stack;
+        const winner = layers?.find((layer) => layer.active);
+        const target = await realpath(path);
+        const root = await realpath(join(child, ".specify"));
+        const inside = relative(root, target);
+        if (info.kind !== "template" || info.name !== entry.name
+            || !Array.isArray(layers) || !layers.length
+            || layers.some((layer) => layer.strategy !== "replace")
+            || !winner || layers.filter((layer) => layer.active).length !== 1
+            || !inside || inside === ".." || inside.startsWith(`..${sep}`)
+            || !winner.sourcePath || target !== await realpath(resolve(child, winner.sourcePath))) {
+            throw new Error(`${entry.name}: resolution or replace-only template stack does not match Specify.`);
+        }
+        const expectedSource = winner.layer === "project" ? "project"
+            : `${winner.layer === "extension" ? "extension:" : ""}${winner.sourceId}`;
+        if (sourceId !== expectedSource) throw new Error(`${entry.name}: resolved source does not match the winner.`);
+        if (EXECUTABLE.has(entry.kind)) {
+            try {
+                await cli(child, ["artifact", "info", `script:${entry.name}`, "--json"], run);
+                throw new Error(`${entry.name}: native script collision.`);
+            } catch (error) {
+                if (error.code !== 1) throw error;
+                let detail;
+                try { detail = JSON.parse(error.stdout || error.stderr); }
+                catch { throw new Error(`${entry.name}: unverified script metadata.`, { cause: error }); }
+                if (detail.error !== `unknown artifact script:${entry.name}`) {
+                    throw new Error(`${entry.name}: native script collision or unverified script metadata.`);
+                }
+            }
+        }
+        const verified = { ...entry, path };
+        if (entry.kind === "designer.page") pages.push(verified);
+        else templates.push({ ...verified, sourceId });
+    }
+    return { pages, templates };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    try { console.log(JSON.stringify(await verifyComposition(process.argv[2] ?? process.cwd()))); }
+    catch (error) {
+        console.error(`Designer composition verification failed: ${error.message}`);
+        process.exitCode = 1;
+    }
+}

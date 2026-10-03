@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.9** registers three JSON page templates and three ordered
+Canvas Design **0.1.10** registers three JSON page templates and three ordered
 stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
@@ -87,7 +87,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.9/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.10/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -112,6 +112,12 @@ files. Only after all paths resolve does it open the official Designer provider
 once with the complete typed, replace-only set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
 handoffs, and an unavailable provider stop the operation before an open URL is
 returned. A resolved page whose file is missing or invalid shows an error tab
+For this version, `scripts/verify-launch.mjs` checks the generated skill's
+default and contributed declarations against the installed package commands,
+then verifies every name with Specify's resolution and template-stack metadata
+before returning the full pages/templates input. It performs no installation
+or provider evaluation. A warning (even on exit status 0), missing name,
+composition mismatch, or executable script collision stops the open. A resolved page whose file is missing or invalid shows an error tab
 with a path and reason; healthy pages stay usable. Invalid registered field
 contributions stop the open with both names on a field collision; newly
 registered stock text/checkbox fields render on their declared Designer page

@@ -116,7 +116,7 @@ export function validateHandoff(handoff, id) {
     return handoff;
 }
 
-export async function readHandoff(workspacePath, handoffId, openFile = open) {
+export async function readHandoff(workspacePath, handoffId, openFile = open, expectedHash = null) {
     const id = validateHandoffId(handoffId);
     if (typeof workspacePath !== "string" || !workspacePath.trim()) {
         throw new Error("Designer session workspace is unavailable");
@@ -157,6 +157,8 @@ export async function readHandoff(workspacePath, handoffId, openFile = open) {
             length += bytesRead;
         }
         if (length > HANDOFF_LIMIT) throw new Error("Oversized Designer handoff");
+        if (expectedHash && createHash("sha256").update(bytes.subarray(0, length)).digest("hex")
+            !== expectedHash) throw new Error("Designer handoff bytes changed; stop and relaunch.");
         text = bytes.toString("utf8", 0, length);
     } finally {
         await file.close();

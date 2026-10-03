@@ -43,6 +43,15 @@ Providers are packaged, never evaluated by Designer.
 
 ## Steps
 
+After installation and one successful skill reload, run
+`node .specify/extensions/extension-canvas-design/scripts/verify-launch.mjs
+<child-checkout>` once from the child project root. It reads this **generated**
+composed skill, checks all declarations and performs the read-only resolution,
+replace-only stack and script-collision checks in steps 1-3. Use its complete
+`pages` and `templates` JSON for step 4; stop on a nonzero exit or missing
+registration. Do not repeat those CLI checks or open twice. Older compatible
+hosted packages without this verifier must perform steps 1-3 manually.
+
 1. Read this entire composed command first. Collect the defaults and every name
    in every **Additional Designer pages**, **Canvas Design templates**, and
    **Additional Canvas Design templates** section, removing duplicates.
@@ -56,7 +65,7 @@ Providers are packaged, never evaluated by Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.9)
+         (top layer from: extension:extension-canvas-design v0.1.10)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
