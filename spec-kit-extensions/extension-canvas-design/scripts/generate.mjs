@@ -11,6 +11,7 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
+const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 512 * 1024;
 
@@ -75,6 +76,7 @@ function configuration(request) {
         if (!page || typeof page !== "object" || Array.isArray(page)
             || Object.keys(page).sort().join() !== "assets,id,renderer,title"
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
+            || page.id === RESERVED_GENERATED_PAGE_ID
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
             || !Array.isArray(page.assets) || page.assets.length !== 2

@@ -175,6 +175,11 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
             JSON.stringify({ ...defaultConfig, readOnlyFields: invalid }));
         assert.throws(() => readConfig(), /Invalid generated canvas configuration|Conflicting generated canvas section/);
     }
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ ...defaultConfig, generatedPages: [{
+            id: "workflow", title: "Workflow", renderer: "workflow-renderer",
+        }] }));
+    assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
 });
 
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
@@ -253,6 +258,7 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         (page) => { page.assets[1].kind = "script"; },
         (page) => { page.title = "Changed"; },
         (page) => { page.renderer = "../escape"; },
+        (page) => { page.id = "workflow"; },
         (page) => { page.assets[1] = asset(page.renderer, "generated.renderer",
             module.padEnd(32 * 1024 + 1, " ")); },
     ]) {

@@ -7,6 +7,7 @@ const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url),
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
+const RESERVED_GENERATED_PAGE_ID = "workflow";
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -56,6 +57,7 @@ export function readConfig() {
                 || config.generatedPages.some((page) => !page || typeof page !== "object"
                             || Array.isArray(page) || Object.keys(page).sort().join() !== "id,renderer,title"
                             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
+                            || page.id === RESERVED_GENERATED_PAGE_ID
                             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
                             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120)))
         || (config.generatedControls !== undefined
