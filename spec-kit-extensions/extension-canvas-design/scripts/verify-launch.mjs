@@ -44,12 +44,11 @@ export function declarations(command) {
     return [...result.values()];
 }
 
-async function cli(project, args, run, checkWarnings = false) {
+async function cli(project, args, run) {
     const { stdout, stderr = "" } = await run(process.platform === "win32" ? "specify.exe" : "specify",
         args, { cwd: project, timeout: 10000, maxBuffer: 128 * 1024,
             env: { ...process.env, COLUMNS: "8192", NO_COLOR: "1" } });
-    if (stderr.trim() || (checkWarnings
-        && /\b(?:warning|not found|ambiguous)\b/i.test(stdout))) {
+    if (stderr.trim()) {
         throw new Error(`Specify ${args.join(" ")} reported a warning or missing result: ${stdout} ${stderr}`);
     }
     return stdout;
@@ -61,9 +60,13 @@ export async function verifyComposition(project, run = exec) {
     const entries = declarations(await readFile(skill, "utf8"));
     const pages = [], templates = [];
     for (const entry of entries) {
-        const output = await cli(child, ["preset", "resolve", entry.name], run, true);
+        const output = await cli(child, ["preset", "resolve", entry.name], run);
         const lines = output.trim().split(/\r?\n/).map((line) => line.trim());
         const prefix = `${entry.name}:`;
+        if (lines.some((line) => /^Warning:/i.test(line))
+            || lines[0] === `${prefix} not found`) {
+            throw new Error(`Specify did not resolve ${entry.name}: warning or missing result.`);
+        }
         if (!lines[0]?.startsWith(prefix)) throw new Error(`Specify did not resolve ${entry.name}.`);
         const path = (lines[0].slice(prefix.length).trim() || lines[1] || "").trim();
         const meta = lines.find((line) => line.startsWith("(top layer from: ")

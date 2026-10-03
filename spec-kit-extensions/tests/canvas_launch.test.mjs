@@ -26,7 +26,7 @@ test("generated skill declarations include appended pages and templates anywhere
 });
 
 test("composed verification resolves every name, rejects warnings and native scripts before open", async (t) => {
-    const project = await mkdtemp(join(tmpdir(), "canvas-composition-"));
+    const project = await mkdtemp(join(tmpdir(), "canvas-warning-ambiguous-"));
     t.after(() => rm(project, { recursive: true, force: true }));
     const installed = join(project, ".specify", "extensions", "extension-canvas-design");
     await cp(source, installed, { recursive: true });
@@ -53,13 +53,14 @@ test("composed verification resolves every name, rejects warnings and native scr
         "canvas-stock-custom-slug": join(installed, "pages", "stock-custom-slug.json"),
     };
     const minimalBase = base.replace(/## Canvas Design templates[\s\S]*?(?=## Steps)/, "");
-    let warning = false, collision = false, strategy = "replace";
+    let warning = "", collision = false, strategy = "replace";
     const run = async (_binary, args) => {
         const name = args[0] === "preset" ? args[2] : args[2].split(":")[1];
-        if (args[0] === "preset") return { stdout: warning
+        if (args[0] === "preset") return { stdout: warning === "missing"
             ? `${name}: not found`
             : `${name}: ${paths[name]}\n(top layer from: ${name.startsWith("sample-")
-                ? "sample v1.0.0" : "extension:extension-canvas-design v0.1.10"})` };
+                ? "sample v1.0.0" : "extension:extension-canvas-design v0.1.10"})`
+                + (warning === "composition" ? "\nWarning: composition cannot produce output" : "") };
         if (args[2].startsWith("script:")) {
             if (collision) return { stdout: '{"kind":"script"}' };
             throw Object.assign(new Error("Unknown script"), { code: 1,
@@ -82,9 +83,11 @@ test("composed verification resolves every name, rejects warnings and native scr
     assert.equal(baseOnly.pages.length, 3);
     assert.equal(baseOnly.templates.length, 3);
     await writeFile(skill, `${base}\n${contribution}`);
-    warning = true;
+    warning = "missing";
     await assert.rejects(verifyComposition(project, run), /warning or missing result/);
-    warning = false;
+    warning = "composition";
+    await assert.rejects(verifyComposition(project, run), /warning or missing result/);
+    warning = "";
     collision = true;
     await assert.rejects(verifyComposition(project, run), /native script collision/);
     collision = false;
