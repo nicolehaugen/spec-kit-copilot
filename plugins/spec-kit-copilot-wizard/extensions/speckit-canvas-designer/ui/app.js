@@ -5,6 +5,62 @@ const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
 let model, currentPage, draft, saving = false;
+const generate = document.getElementById("generate-canvas");
+let generating = false;
+let queued = false;
+const essentials = ["canvas.id", "canvas.displayName", "canvas.description",
+    "canvas.workflowListName", "workflowSlug.userProvided"];
+
+function updateGenerate() {
+    const setup = model?.pages.find((page) => page.page === "canvas-settings-setup");
+    const generationError = document.getElementById("generation-error");
+    generationError.textContent = model?.generationError ?? "";
+    generationError.hidden = !generationError.textContent;
+    generate.disabled = saving || generating || queued || !model?.handoffId
+        || !model.generationAvailable || !setup || !!setup.error
+        || !essentials.every((field) => setup.fields?.some((item) => item.id === field));
+}
+
+generate.addEventListener("click", async () => {
+    if (generate.disabled) return;
+    for (const field of ["canvas.id", "canvas.displayName"]) {
+        const value = draft[field];
+        const rules = model.constraints[field];
+        if (typeof value !== "string" || value.length < rules.minLength
+            || value.length > rules.maxLength
+            || (rules.pattern && !new RegExp(rules.pattern).test(value))
+            || !value.trim()) {
+            renderPage("canvas-settings-setup");
+            const input = [...root.querySelectorAll("input")].find((item) => item.name === field);
+            const hint = field === "canvas.id" ? model.pages
+                .find((page) => page.page === "canvas-settings-setup")?.fields
+                .find((item) => item.id === field)?.description : "";
+            showError(`Enter a valid ${field === "canvas.id" ? "Canvas ID" : "Title"} before generating.${hint ? ` ${hint}` : ""}`);
+            input?.focus();
+            input?.reportValidity();
+            return;
+        }
+    }
+    generating = true;
+    updateGenerate();
+    showError("");
+    try {
+        const values = Object.fromEntries(essentials.map((field) => [field, draft[field]]));
+        const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ revision: model.revision, values }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);
+        status.textContent = `Generation queued: ${result.target}`;
+        queued = true;
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        generating = false;
+        updateGenerate();
+    }
+});
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -30,6 +86,7 @@ function updateSave() {
     saveButton.setAttribute("aria-busy", String(saving));
     root.inert = saving;
     for (const tab of tabs.children) tab.disabled = saving;
+    updateGenerate();
 }
 
 function validateDraft() {
@@ -45,7 +102,8 @@ function validateDraft() {
                     if (input.name === id) { input.focus(); input.reportValidity(); }
                 });
             }
-            showError(`Enter a valid ${page?.fields.find((field) => field.id === id).label ?? id} before saving.`);
+            const field = page?.fields.find((item) => item.id === id);
+            showError(`Enter a valid ${field?.label ?? id} before saving.${id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
             return false;
         }
     }
@@ -116,10 +174,7 @@ function renderPage(pageId) {
         input.id = `setting-field-${index}`;
         input.name = field.id;
         label.htmlFor = input.id;
-        if (field.description) {
-            label.title = field.description;
-            input.setAttribute("aria-description", field.description);
-        }
+        if (field.description) label.title = field.description;
         if (checkbox) {
             input.type = "checkbox";
             input.checked = draft[field.id];
@@ -131,13 +186,23 @@ function renderPage(pageId) {
             if (rules.pattern) input.pattern = rules.pattern;
             if (input.required) label.append(element("span", " (required)", "muted"));
         }
+        if (field.description) {
+            if (checkbox) input.setAttribute("aria-description", field.description);
+            else input.setAttribute("aria-describedby", `${input.id}-hint`);
+        }
         input.addEventListener("input", () => {
             draft[field.id] = checkbox ? input.checked : input.value;
             messageBox.hidden = true;
             showError("");
             updateSave();
+            updateGenerate();
         });
         wrapper.append(...(checkbox ? [input, label] : [label, input]));
+        if (field.description && !checkbox) {
+            const hint = element("p", field.description, "settings-hint");
+            hint.id = `${input.id}-hint`;
+            wrapper.append(hint);
+        }
         form.append(wrapper);
     }
     root.append(form);
@@ -187,6 +252,7 @@ function applyState(next) {
             ?? model.pages[0];
         renderPage(selected.page);
         updateSave();
+        updateGenerate();
     }
 }
 

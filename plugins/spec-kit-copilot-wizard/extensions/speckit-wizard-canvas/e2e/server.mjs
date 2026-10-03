@@ -19,13 +19,13 @@ const snapshot = {
     catalog: {
         designerFingerprint: "e2e-catalog",
         presets: [
-            { id: "design-preset", name: "Design preset", source: "community", tags: ["canvas-design"] },
+            { id: "design-preset", name: "Design preset", source: "community", description: 'Preset with "quoted" settings', tags: ["canvas-design"] },
             { id: "foreign-preset", name: "Copilot preset", source: "copilot", tags: ["canvas-design"] },
             { id: "other-preset", name: "Other preset", source: "copilot", tags: ["other"] },
             { id: "unlisted-preset", name: "Unlisted preset", source: "copilot" },
         ],
         extensions: [
-            { id: "design-extension", name: "Design extension", source: "community", tags: ["canvas-design"] },
+            { id: "design-extension", name: "Design extension", source: "community", description: "Extends the designer behavior", tags: ["canvas-design"] },
             { id: "unlisted-extension", name: "Unlisted extension", source: "copilot", tags: ["other"] },
         ],
         bundles: [

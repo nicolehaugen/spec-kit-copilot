@@ -68,10 +68,24 @@ export function validateHandoff(handoff, id) {
                 .includes(key))
         || handoff.schemaVersion !== 1 || handoff.handoffId !== id
         || !record(handoff.workflow)
-        || Object.keys(handoff.workflow).some((key) => key !== "selectedPhases")
+        || Object.keys(handoff.workflow).some((key) => !["selectedPhases", "installed"].includes(key))
         || !Array.isArray(handoff.workflow.selectedPhases)
         || handoff.workflow.selectedPhases.length > 30
         || !handoff.workflow.selectedPhases.every((phase) => typeof phase === "string" && PACKAGE.test(phase))
+        || (handoff.workflow.installed !== undefined
+            && (!record(handoff.workflow.installed)
+                || KINDS.some((kind) => !Array.isArray(handoff.workflow.installed[kind])
+                    || handoff.workflow.installed[kind].length > 40
+                    || handoff.workflow.installed[kind].some((item) => !record(item)
+                        || Object.keys(item).some((key) =>
+                            !["id", "version", "source", "priority"].includes(key))
+                        || typeof item.id !== "string" || !PACKAGE.test(item.id)
+                        || (kind !== "bundles"
+                            && !Number.isSafeInteger(item.priority))
+                        || (kind === "bundles" && item.priority !== undefined)
+                        || (item.source !== undefined
+                            && (typeof item.source !== "string" || !PACKAGE.test(item.source)))
+                        || typeof item.version !== "string" || !item.version || item.version.length > 64))))
         || !record(handoff.selections)
         || Object.keys(handoff.selections).some((kind) => !KINDS.includes(kind))
         || KINDS.some((kind) => !Array.isArray(handoff.selections[kind])

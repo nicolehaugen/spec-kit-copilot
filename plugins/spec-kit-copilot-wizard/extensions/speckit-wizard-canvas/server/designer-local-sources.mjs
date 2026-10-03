@@ -213,7 +213,7 @@ async function readBoundedManifest(manifestPath, manifest, canonical, openFile =
 
 /**
  * Parse and validate the manifest for an already-known `kind` at
- * `canonical`. Resolves with `{ kind, id, name, version, path }`.
+ * `canonical`. Resolves with `{ kind, id, name, version, description, path }`.
  */
 async function validateManifest(kind, canonical, openFile = open) {
     const manifest = MANIFEST[kind];
@@ -245,13 +245,14 @@ async function validateManifest(kind, canonical, openFile = open) {
         id,
         name: name.trim(),
         version: typeof version === "string" ? version : null,
+        description: typeof section.description === "string" ? section.description.trim() : "",
         path: canonical,
     };
 }
 
 /**
  * Validate a user-typed absolute directory as a local preset/extension
- * source. Resolves with `{ kind, id, name, version, path }` (the canonical,
+ * source. Resolves with `{ kind, id, name, version, description, path }` (the canonical,
  * realpath'd directory) or throws an `Error` with an explicit, user-facing
  * message describing exactly what failed.
  *
