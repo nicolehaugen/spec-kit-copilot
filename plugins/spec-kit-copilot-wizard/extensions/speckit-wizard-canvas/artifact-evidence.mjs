@@ -275,6 +275,7 @@ export async function writeEvidenceCache(cwd, payload, renameFile = rename) {
 
 export async function collectArtifactEvidence(cwd, snapshot, openFile = open) {
     const evidence = {}, requests = [], warnings = [];
+    let incomplete = false;
     let cache;
     try { cache = await readEvidenceCache(cwd); }
     catch (error) { warnings.push(error.message); cache = { entries: {} }; }
@@ -343,7 +344,8 @@ export async function collectArtifactEvidence(cwd, snapshot, openFile = open) {
         } catch (error) {
             warnings.push(`${id}: ${error.message}`);
             evidence[id] = { candidates };
+            incomplete = true;
         }
     }
-    return { evidence, requests, warnings };
+    return { evidence, requests, warnings, incomplete };
 }

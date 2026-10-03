@@ -10,7 +10,7 @@ import { handleArtifactTargets } from "../server/handlers-ops.mjs";
 import { attachOutputEvidence, outputAvailability } from "../canvas-runtime/output-availability.mjs";
 import { fsDeps } from "../canvas-runtime/instances.mjs";
 import { beginOutputInference } from "../canvas-runtime/output-inference.mjs";
-import { startRefresh } from "../canvas-runtime/refresh-status.mjs";
+import { finishRefreshPart, setRefreshWork, startRefresh } from "../canvas-runtime/refresh-status.mjs";
 import { hydrateExtensionArtifactsFromCache } from "../project-scanner/extension-artifacts.mjs";
 
 async function fixture(run) {
@@ -78,6 +78,31 @@ test("output declaration uses the skill read for its fingerprint, without reopen
         assert.equal(result.evidence.plan.candidates[0].path, "specs/<slug>/plan.md");
         assert.equal(result.requests.find(({ commandId }) => commandId === "speckit.plan").fingerprint,
             (await effectiveSource(root, "plan")).fingerprint);
+    });
+});
+
+test("a failed command source read marks output collection and refresh incomplete", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".github/skills/speckit-specify/SKILL.md", "Writes specs/<slug>/spec.md");
+        const result = await collectArtifactEvidence(root,
+            { pipeline: [{ id: "plan" }, { id: "specify" }], commands: [] }, async (path, flags) => {
+                if (path.endsWith("speckit-plan\\SKILL.md")
+                    || path.endsWith("speckit-plan/SKILL.md")) throw new Error("source read failed");
+                return open(path, flags);
+            });
+        assert.equal(result.incomplete, true);
+        assert.ok(result.warnings.some((warning) => warning.includes("plan: source read failed")));
+        assert.ok(!result.requests.some(({ commandId }) => commandId === "speckit.plan"));
+        assert.ok(result.requests.some(({ commandId }) => commandId === "speckit.specify"));
+        const inst = { workspacePath: root, broadcast() {} };
+        startRefresh(inst);
+        const snap = { warnings: [], phases: {}, commands: [], specsDir: null };
+        await attachOutputEvidence(inst, {}, snap, result);
+        assert.equal(snap.artifactEvidenceIncomplete, true);
+        assert.equal(snap.refreshStatus, "incomplete");
+        setRefreshWork(inst, { pipeline: false, outputs: true });
+        finishRefreshPart(inst, "outputs");
+        assert.equal(inst.refreshStatus.status, "incomplete");
     });
 });
 

@@ -3,6 +3,7 @@ import { artifactPath } from "../artifact-evidence.mjs";
 import { displayOutputPath, primaryCandidate, resolveOutputPath } from "../pipeline/output-evidence.mjs";
 import { securePathWithin } from "../project-scanner/fs-helpers.mjs";
 import { fsDeps } from "./instances.mjs";
+import { failRefresh } from "./refresh-status.mjs";
 
 async function existing(cwd, path, kind) {
     if (!path || !artifactPath(path, kind)) return null;
@@ -90,7 +91,9 @@ export async function outputAvailability(cwd, candidate, specsDir, observed = nu
 export async function attachOutputEvidence(inst, scan, snap, outputs) {
     snap.artifactEvidence = outputs.evidence;
     snap.artifactInferenceRequests = outputs.requests;
+    snap.artifactEvidenceIncomplete = outputs.incomplete;
     snap.warnings.push(...outputs.warnings);
+    if (outputs.incomplete) failRefresh(inst);
     if (outputs.requests.length && inst.refreshStatus?.status === "up-to-date") {
         inst.refreshStatus.status = "ready";
     }
