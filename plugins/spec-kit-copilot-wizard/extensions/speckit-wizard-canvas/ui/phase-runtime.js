@@ -343,18 +343,39 @@ export async function dispatchPipeline(action, extra = {}) {
     }
 }
 
+let pipelineRefreshPending = false;
+let pipelineUpdatedUntil = 0;
+let pipelineUpdatedTimer;
+
 /** Render the top-of-page pipeline toolbar. */
 export function renderPipelineBanner() {
     const el = document.getElementById("pipeline-banner");
     if (!el) return;
+    const refresh = compositionProgressText(state.snapshot, state.compositionRequested);
+    if (refresh === "Refreshing…") {
+        pipelineRefreshPending = true;
+        pipelineUpdatedUntil = 0;
+        clearTimeout(pipelineUpdatedTimer);
+    } else if (refresh === "Up to date" && pipelineRefreshPending) {
+        pipelineRefreshPending = false;
+        pipelineUpdatedUntil = Date.now() + 5000;
+        clearTimeout(pipelineUpdatedTimer);
+        pipelineUpdatedTimer = setTimeout(() => {
+            pipelineUpdatedUntil = 0;
+            renderPipelineBanner();
+        }, 5000);
+    } else if (refresh !== "Up to date") {
+        pipelineRefreshPending = false;
+        pipelineUpdatedUntil = 0;
+        clearTimeout(pipelineUpdatedTimer);
+    }
     const onPhasesTab = state.activeTab === "phases" || !state.activeTab;
     if (!onPhasesTab) { el.hidden = true; el.innerHTML = ""; return; }
     const items = pipelineItems();
     const edited = pipelineIsEdited();
-    const refresh = compositionProgressText(state.snapshot, state.compositionRequested);
-    const refreshLabel = refresh === "Refreshing…" ? "Refreshing pipeline…"
-        : refresh === "Refresh incomplete — retry" ? "Refresh incomplete"
-            : refresh === "Up to date" ? "Up to date" : "";
+    const refreshLabel = refresh === "Refreshing…" ? "Refreshing pipeline from installed presets and extensions…"
+        : refresh === "Refresh incomplete — retry" ? "Refresh incomplete — retry in Setup → Composition."
+            : refresh === "Up to date" && Date.now() < pipelineUpdatedUntil ? "Pipeline updated" : "";
     const refreshState = refresh === "Refreshing…" ? "updating"
         : refresh === "Refresh incomplete — retry" ? "incomplete" : "idle";
     el.hidden = false;
@@ -370,7 +391,6 @@ export function renderPipelineBanner() {
                         Pipeline
                         <button type="button" class="comp-info-btn" id="pipeline-info-btn" aria-label="About phases" aria-expanded="false" aria-controls="pipeline-info-popover" title="About phases">i</button>
                     </h2>
-                    <span class="pipeline-refresh-status" role="status" aria-live="polite" data-progress="${refreshState}" title="${refreshState === "incomplete" ? "Retry from the Composition tab" : "Composition refresh status"}">${refreshLabel}</span>
                 </div>
                 <p class="comp-subtitle">Start from this suggested pipeline and shape it to your project by adding or removing commands below.</p>
                 <div id="pipeline-info-popover" class="comp-info-popover" role="dialog" aria-label="About phases" hidden>
@@ -393,6 +413,7 @@ export function renderPipelineBanner() {
                     : ""}
             </div>
         </header>
+        ${refreshLabel ? `<div class="pipeline-refresh-status" role="status" aria-live="polite" data-progress="${refreshState}">${refreshState === "updating" ? '<span class="pipeline-refresh-spinner" aria-hidden="true"></span>' : ""}${refreshLabel}</div>` : ""}
     `;
     wireInfoPopover("pipeline-info-btn", "pipeline-info-popover");
     el.querySelector(".pipeline-generate")?.addEventListener("click", openCanvasDesignerDialog);

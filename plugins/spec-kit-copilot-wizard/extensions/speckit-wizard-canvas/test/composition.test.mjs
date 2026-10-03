@@ -32,6 +32,7 @@ import {
     observePhaseProgress,
     PHASE_RUN_ACK_MS,
     renderMoreCommandsPanel,
+    renderPipelineBanner,
     resolvePipelineEntry,
     setRunLockDeps,
 } from "../ui/phase-runtime.js";
@@ -213,6 +214,53 @@ test("refresh UI waits for backend completion and shows retry on failure", () =>
     } finally {
         state.compositionRequested = priorRequested;
         state.compositionRefreshId = priorId;
+    }
+});
+
+test("Phases shows a prominent transient refresh status and persistent retry guidance", () => {
+    const previousDocument = globalThis.document;
+    const previousSnapshot = state.snapshot;
+    const previousTab = state.activeTab;
+    const previousRequested = state.compositionRequested;
+    const previousNow = Date.now;
+    let now = 1000;
+    const banner = { hidden: false, innerHTML: "", querySelector: () => null };
+    globalThis.document = { getElementById: (id) => id === "pipeline-banner" ? banner : null };
+    Date.now = () => now;
+    state.activeTab = "phases";
+    state.compositionRequested = false;
+    try {
+        state.snapshot = { refreshStatus: "up-to-date" };
+        renderPipelineBanner();
+        assert.doesNotMatch(banner.innerHTML, /pipeline-refresh-status/);
+
+        state.snapshot.refreshStatus = "refreshing";
+        renderPipelineBanner();
+        assert.match(banner.innerHTML, /role="status" aria-live="polite" data-progress="updating"/);
+        assert.match(banner.innerHTML, /pipeline-refresh-spinner" aria-hidden="true"/);
+        assert.match(banner.innerHTML, /Refreshing pipeline from installed presets and extensions/);
+        assert.match(banner.innerHTML, /<\/header>\s*<div class="pipeline-refresh-status"/);
+
+        state.snapshot.refreshStatus = "up-to-date";
+        renderPipelineBanner();
+        assert.match(banner.innerHTML, /Pipeline updated/);
+        now += 5001;
+        renderPipelineBanner();
+        assert.doesNotMatch(banner.innerHTML, /pipeline-refresh-status/);
+
+        state.snapshot.refreshStatus = "incomplete";
+        renderPipelineBanner();
+        assert.match(banner.innerHTML, /data-progress="incomplete".*Retry in Setup/mi);
+        renderPipelineBanner();
+        assert.match(banner.innerHTML, /Refresh incomplete/);
+        state.snapshot.refreshStatus = "ready";
+        renderPipelineBanner();
+        assert.doesNotMatch(banner.innerHTML, /pipeline-refresh-status/);
+    } finally {
+        state.snapshot = previousSnapshot;
+        state.activeTab = previousTab;
+        state.compositionRequested = previousRequested;
+        Date.now = previousNow;
     }
 });
 
