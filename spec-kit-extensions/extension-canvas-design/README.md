@@ -251,18 +251,20 @@ not the JSON document. No kind is inferred from a filename.
 
 | Kind | Shape | JSON Schema |
 | --- | --- | --- |
-| `designer.default-tab-definition` | Built-in Designer tab | [page](schemas/page.schema.json) |
-| `designer.added-tab-definition` | Additional Designer tab | [page](schemas/page.schema.json) |
-| `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/setting.schema.json) |
-| `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated-page.schema.json) |
+| `designer.default-tab-definition` | Built-in Designer tab | [default tab](schemas/designer.default-tab-definition.schema.json) |
+| `designer.added-tab-definition` | Additional Designer tab | [added tab](schemas/designer.added-tab-definition.schema.json) |
+| `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
+| `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
-| `shared.control-definition` | Shared typed control | [shared control](schemas/shared-control.schema.json) |
+| `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
 | `designer.control-adapter` | Designer `.mjs` control adapter | Module contract below |
 | `generated.control-adapter` | Generated `.mjs` control adapter | Module contract below |
-| `generated.value-definition` | Generated constant or computed value | [generated value](schemas/generated-value.schema.json) |
+| `generated.value-definition` | Generated constant or computed value | [generated value](schemas/generated.value-definition.schema.json) |
 | `generated.computed-value-provider` | Generated `.mjs` provider | Module contract below |
 
-The five JSON Schemas describe document shapes, not the entire loader:
+Each JSON kind has a matching schema filename. The added-tab schema references
+the default-tab schema because the two kinds have the same document shape.
+These schemas describe document shapes, not the entire loader:
 the loader additionally verifies template-name/ID equality where applicable,
 cross-template references and slots, field collisions, schema-dependent constant
 values, matching adapter exports, and runtime integrity. `$schema` is optional;

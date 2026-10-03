@@ -685,7 +685,8 @@ async function context(project) {
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
-    const schemaPath = join(specify, "extensions", "extension-canvas-design", "schemas", "page.schema.json");
+    const schemaPath = join(specify, "extensions", "extension-canvas-design", "schemas",
+        "designer.default-tab-definition.schema.json");
     let schema;
     try {
         // Presets replace page content; the installed extension supplies the evolving validation contract.

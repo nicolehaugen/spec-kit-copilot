@@ -266,7 +266,7 @@ spec-kit-extensions/extension-canvas-design/
   pages/essentials.json                required identity fields and an optional-field slot
   pages/artifacts.json                 currently empty placeholder
   pages/appearance.json                currently empty placeholder
-  schemas/page.schema.json             currently string/boolean fields
+  schemas/designer.default-tab-definition.schema.json  currently string/boolean fields
   scripts/generate.mjs
   templates/generated-canvas/
     extension.mjs
@@ -316,7 +316,7 @@ spec-kit-extensions/extension-canvas-design/
       feature.json
       generated.mjs                    setup UI, not package installer
   schemas/
-    page.schema.json
+    designer.default-tab-definition.schema.json
     contribution.schema.json           proposed versioned contribution schema
   scripts/generate.mjs
   templates/generated-canvas/
@@ -371,7 +371,7 @@ For the future standalone Copilot plugin, those app files would be placed under 
 
 ## 13. Illustrative JSON contracts
 
-These examples describe the **proposed Canvas Design contract**, not the current `page.schema.json`. Specify can resolve the JSON templates; the Designer Canvas interprets and validates their contents.
+These examples describe the **proposed Canvas Design contract**, not the current `designer.default-tab-definition.schema.json`. Specify can resolve the JSON templates; the Designer Canvas interprets and validates their contents.
 
 Core Essentials defines the required fields and a documented slot:
 

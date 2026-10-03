@@ -12,6 +12,7 @@ from zipfile import ZipFile
 
 import yaml
 from jsonschema import Draft202012Validator, ValidationError
+from referencing import Registry, Resource
 
 
 EXTENSIONS = Path(__file__).resolve().parents[1]
@@ -26,11 +27,12 @@ FILES = {
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
-    "schemas/page.schema.json",
-    "schemas/setting.schema.json",
-    "schemas/generated-page.schema.json",
-    "schemas/shared-control.schema.json",
-    "schemas/generated-value.schema.json",
+    "schemas/designer.default-tab-definition.schema.json",
+    "schemas/designer.added-tab-definition.schema.json",
+    "schemas/designer.setting-definition.schema.json",
+    "schemas/generated.added-page-definition.schema.json",
+    "schemas/shared.control-definition.schema.json",
+    "schemas/generated.value-definition.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
     *(f"pages/stock-{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "logo", "logo-main-page",
@@ -57,7 +59,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
     def setUpClass(cls):
         cls.manifest = yaml.safe_load((PACKAGE / "extension.yml").read_text("utf-8"))
         cls.catalog = json.loads((EXTENSIONS / "catalog.json").read_text("utf-8"))
-        cls.schema = json.loads((PACKAGE / "schemas/page.schema.json").read_text("utf-8"))
+        cls.schema = json.loads((PACKAGE / "schemas/designer.default-tab-definition.schema.json").read_text("utf-8"))
         cls.validator = Draft202012Validator(cls.schema)
         cls.pages = [
             json.loads((PACKAGE / f"pages/{name}.json").read_text("utf-8"))
@@ -213,32 +215,40 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(len(field_ids), len(set(field_ids)))
 
     def test_all_json_contract_schemas_and_fixtures(self):
-        schemas = {
-            "page": self.schema,
-            **{kind: json.loads((PACKAGE / f"schemas/{name}.schema.json").read_text("utf-8"))
-               for kind, name in (
-                   ("setting", "setting"), ("generated-page", "generated-page"),
-                   ("shared-control", "shared-control"), ("generated-value", "generated-value"),
-               )},
-        }
+        kinds = (
+            "designer.default-tab-definition", "designer.added-tab-definition",
+            "designer.setting-definition", "generated.added-page-definition",
+            "shared.control-definition", "generated.value-definition",
+        )
+        schemas = {kind: json.loads((PACKAGE / f"schemas/{kind}.schema.json").read_text("utf-8"))
+                   for kind in kinds}
+        registry = Registry().with_resource(
+            "designer.default-tab-definition.schema.json", Resource.from_contents(self.schema))
+        preset_pages = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/pages/*.json"))
         fixtures = {
-            "page": [PACKAGE / f"pages/{name}.json" for name in PAGE_NAMES]
-                    + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/pages/*.json")),
-            "setting": list(PACKAGE.glob("pages/stock-*.json"))
-                       + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/contributions/*.json")),
-            "generated-page": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/pages/*.json")),
-            "shared-control": list(PACKAGE.glob("controls/*/control.json"))
-                              + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
-            "generated-value": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
+            "designer.default-tab-definition": [PACKAGE / f"pages/{name}.json" for name in PAGE_NAMES]
+                + [path for path in preset_pages if json.loads(path.read_text("utf-8")).get("id")
+                   in (f"canvas-settings-{name}" for name in PAGE_IDS)],
+            "designer.added-tab-definition": [path for path in preset_pages
+                if "fields" in json.loads(path.read_text("utf-8"))
+                and json.loads(path.read_text("utf-8")).get("id")
+                not in (f"canvas-settings-{name}" for name in PAGE_IDS)],
+            "designer.setting-definition": list(PACKAGE.glob("pages/stock-*.json"))
+                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/contributions/*.json")),
+            "generated.added-page-definition": [path for path in preset_pages
+                if "renderer" in json.loads(path.read_text("utf-8"))],
+            "shared.control-definition": list(PACKAGE.glob("controls/*/control.json"))
+                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
+            "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
         }
+        self.assertTrue(all(fixtures.values()))
+        self.assertEqual(schemas["designer.added-tab-definition"]["$ref"],
+                         "designer.default-tab-definition.schema.json")
         for kind, schema in schemas.items():
             Draft202012Validator.check_schema(schema)
-            validator = Draft202012Validator(schema)
+            validator = Draft202012Validator(schema, registry=registry)
             for path in fixtures[kind]:
                 doc = json.loads(path.read_text("utf-8"))
-                if (kind == "page" and "renderer" in doc
-                        or kind == "generated-page" and "fields" in doc):
-                    continue
                 with self.subTest(kind=kind, path=str(path)):
                     validator.validate(doc)
                     if path.is_relative_to(PACKAGE):
@@ -247,7 +257,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                             path.parent).replace("\\", "/"))
         value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
-        validator = Draft202012Validator(schemas["generated-value"])
+        validator = Draft202012Validator(schemas["generated.value-definition"])
         for invalid in (
             {**value, "source": {"kind": "provider", "module": value["source"]["module"]}},
             {**value, "presentation": "stock.editable"},

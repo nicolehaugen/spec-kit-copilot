@@ -1,5 +1,5 @@
 {
-  "$schema": "../../schemas/shared-control.schema.json",
+  "$schema": "../../schemas/shared.control-definition.schema.json",
   "schemaVersion": 1,
   "id": "stock.text",
   "value": {"type": "string"},

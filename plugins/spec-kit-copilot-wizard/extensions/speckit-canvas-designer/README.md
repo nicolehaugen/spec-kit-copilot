@@ -136,8 +136,8 @@ instead of failing at provider startup. For local tests, install dependencies wi
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
 ```
 
-Canvas Design's [taxonomy, five JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
-define the registration and authoring surface. Both default and added Designer
-tabs use the same page schema. Preset fixture JSON omits `$schema` because its
+Canvas Design's [taxonomy, six kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
+define the registration and authoring surface. The added-tab schema references
+the default-tab schema's shared document shape. Preset fixture JSON omits `$schema` because its
 installed package cannot reliably resolve a relative path into a separately
 installed extension; see the mapping in the extension README.

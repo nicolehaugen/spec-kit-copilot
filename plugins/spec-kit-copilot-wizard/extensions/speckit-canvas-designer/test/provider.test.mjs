@@ -73,8 +73,8 @@ async function projectFixture(t, workspace) {
     await writeFile(join(project, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md"), "test");
     await writeFile(join(specify, "extensions", ".registry"),
         JSON.stringify({ extensions: { "extension-canvas-design": { enabled: true } } }));
-    await copyFile(join(source, "schemas", "page.schema.json"),
-        join(installed, "schemas", "page.schema.json"));
+    await copyFile(join(source, "schemas", "designer.default-tab-definition.schema.json"),
+        join(installed, "schemas", "designer.default-tab-definition.schema.json"));
     await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
     const pages = [["setup", "essentials"], ["artifacts", "artifacts"],
         ["appearance", "appearance"]];
@@ -2291,7 +2291,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
     const schema = join(project, ".specify", "extensions", "extension-canvas-design",
-        "schemas", "page.schema.json");
+        "schemas", "designer.default-tab-definition.schema.json");
     const original = await readFile(schema);
     for (const [contents, reason] of [
         [null, /ENOENT/], ["{broken", /Invalid Designer JSON/],
@@ -2403,7 +2403,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             handoffId: ID, pages: [...entries, entries[0]], templates: [],
         } }), /duplicate Designer page name/);
         const schema = join(project, ".specify", "extensions", "extension-canvas-design",
-            "schemas", "page.schema.json");
+            "schemas", "designer.default-tab-definition.schema.json");
         const installedSchema = await readFile(schema);
         await rm(schema);
         await assert.rejects(canvas.open({ instanceId: "same", input: {

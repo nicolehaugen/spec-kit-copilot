@@ -1,5 +1,5 @@
 {
-  "$schema": "../schemas/setting.schema.json",
+  "$schema": "../schemas/designer.setting-definition.schema.json",
   "schemaVersion": 1,
   "id": "stock.workflow-heading",
   "host": "designer",
