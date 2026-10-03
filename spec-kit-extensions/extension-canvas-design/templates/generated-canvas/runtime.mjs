@@ -19,10 +19,11 @@ if (!isMainThread && workerData?.canvasValueProvider) {
         const context = createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false } });
         const serialized = runInContext(
             `"use strict"; const workflow = Object.freeze(JSON.parse(${JSON.stringify(JSON.stringify(workflow))}));\n`
-            + "const result = ((workflow) => {\n"
+            + "const provide = (() => {\n"
             + `${body}\n`
-            + "if (typeof provideValue !== 'function') throw new Error('Missing provideValue export');\n"
-            + "return provideValue({ workflow });\n})(workflow);\n"
+            + "return provideValue;\n})();\n"
+            + "if (typeof provide !== 'function') throw new Error('Missing provideValue export');\n"
+            + "const result = provide({ workflow });\n"
             + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
             + "JSON.stringify(result);",
             context, { timeout: 300 });
