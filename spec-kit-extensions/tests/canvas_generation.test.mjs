@@ -132,7 +132,7 @@ test("the generator rejects a frozen request above its shared size limit", async
     const { project, workspace, prepared } = await fixture(t);
     const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", prepared.requestId, "request.json");
-    await writeFile(path, "x".repeat(512 * 1024 + 1));
+    await writeFile(path, "x".repeat(2 * 1024 * 1024 + 1));
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /Generation request is too large/);
 });

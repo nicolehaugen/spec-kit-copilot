@@ -8,7 +8,7 @@ let model, currentPage, draft, saving = false;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
-let uploading = false;
+const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
 
@@ -48,7 +48,7 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = saving || uploading || generating || queued || !model?.handoffId
+    generate.disabled = saving || activeUploads.size > 0 || generating || queued || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity;
 }
@@ -135,14 +135,14 @@ function showError(message) {
 function updateSave() {
     const noChanges = model?.persisted
         && JSON.stringify(draft) === JSON.stringify(model.values);
-    saveButton.disabled = saving || uploading || !model || noChanges;
+    saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges;
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
     saveButton.textContent = saving ? "Saving..." : "Save";
     saveButton.setAttribute("aria-busy", String(saving));
-    root.inert = saving;
-    for (const tab of tabs.children) tab.disabled = saving;
+    root.inert = saving || activeUploads.size > 0;
+    for (const tab of tabs.children) tab.disabled = saving || activeUploads.size > 0;
     updateGenerate();
 }
 
@@ -269,7 +269,8 @@ function renderPage(pageId, invalidFieldId) {
                     context: { constraints: rules, inputId: `setting-field-${index}`,
                         showValidationError: field.id === invalidFieldId,
                         ...(image ? { validateImage: validImage, setBusy(busy) {
-                            uploading = busy;
+                            if (busy) activeUploads.add(field.id);
+                            else activeUploads.delete(field.id);
                             updateSave();
                         } } : {}) },
                     onChange(value) {

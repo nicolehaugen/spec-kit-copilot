@@ -14,7 +14,7 @@ const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 2 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 
 function validateFrozenValues(values, constraints) {

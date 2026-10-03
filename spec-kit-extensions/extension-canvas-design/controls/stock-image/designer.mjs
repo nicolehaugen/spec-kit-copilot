@@ -44,6 +44,8 @@ export function mount({ root, field, value, context, onChange }) {
     const controls = element("div", undefined, "image-controls");
     const remove = element("button", "Remove", "image-remove");
     remove.type = "button";
+    remove.setAttribute("aria-label", `Remove ${field.label} image`);
+    let request = 0;
     const refresh = () => {
         const selected = !!value;
         preview.hidden = !selected;
@@ -52,6 +54,7 @@ export function mount({ root, field, value, context, onChange }) {
         remove.hidden = !selected;
     };
     input.addEventListener("change", async () => {
+        if (input.disabled) return;
         const file = input.files?.[0];
         if (!file) return;
         if (!valueContract.mimeTypes.includes(file.type)
@@ -62,6 +65,9 @@ export function mount({ root, field, value, context, onChange }) {
                 : `${field.label} must be a nonempty PNG, JPEG, GIF, or WebP image.`);
             return;
         }
+        const current = ++request;
+        input.disabled = true;
+        remove.disabled = true;
         setBusy(true);
         setUploadError("");
         try {
@@ -75,14 +81,21 @@ export function mount({ root, field, value, context, onChange }) {
                 image.onerror = () => reject(new Error("Image cannot be displayed."));
                 image.src = content;
             });
+            if (current !== request || !root.isConnected) return;
             onChange(content);
             value = content;
             refresh();
         } catch (error) {
-            setUploadError(`Could not load ${field.label}: ${error.message}`);
+            if (current === request && root.isConnected) {
+                setUploadError(`Could not load ${field.label}: ${error.message}`);
+            }
         } finally {
-            input.value = "";
-            setBusy(false);
+            if (current === request) {
+                input.value = "";
+                input.disabled = false;
+                remove.disabled = false;
+                setBusy(false);
+            }
         }
     });
     remove.addEventListener("click", () => {

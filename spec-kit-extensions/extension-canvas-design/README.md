@@ -62,6 +62,9 @@ brand mark; the optional larger main-page logo appears next to the workflow
 heading and description. Either image may be used alone. Generate freezes
 each selected image's bytes and SHA-256 hash and packages it within the
 generated extension, together with the frozen, shared generated adapter.
+The Designer accepts up to ten selected 32 KiB images; its Save and frozen
+generation size limits accommodate that maximum, while still rejecting
+oversized aggregate requests explicitly.
 Each image contribution uses `"control": "stock.image"` to select the uniquely
 resolved shared definition; its `generatedBinding` declares the target slot.
 Missing or duplicate definitions fail validation. Presets reuse the definition and both adapters rather than supplying

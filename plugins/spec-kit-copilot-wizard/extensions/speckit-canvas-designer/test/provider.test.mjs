@@ -450,6 +450,22 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     const mainLogo = `data:image/gif;base64,${gif.toString("base64")}`;
     assert.deepEqual(decodeImage(logo).bytes, png);
     assert.deepEqual(decodeImage(mainLogo).bytes, gif);
+    const jpeg = Buffer.from([
+        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/",
+        "2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/",
+        "8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/",
+        "8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/",
+        "9oADAMBAAIRAxEAPwD50ooor8MP9Uz/2Q==",
+    ].join(""), "base64");
+    assert.deepEqual(decodeImage(`data:image/jpeg;base64,${jpeg.toString("base64")}`).bytes, jpeg);
+    for (const bytes of [
+        Buffer.from([255, 216, 255, 255, 217]),
+        Buffer.from([255, 216, 255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0, 255, 217]),
+        Buffer.concat([jpeg.subarray(0, 30), jpeg.subarray(-2)]),
+    ]) {
+        assert.throws(() => decodeImage(`data:image/jpeg;base64,${bytes.toString("base64")}`),
+            /image bytes do not match/);
+    }
     const values = { ...model.values, "canvas.id": "with-logo",
         "canvas.displayName": "Logo test", "canvas.logo": logo, "canvas.mainPageLogo": mainLogo };
     for (const bad of ["data:image/svg+xml;base64,PHN2Zz4=", "data:image/png;base64,AAAA",
@@ -915,7 +931,7 @@ test("settings reads stay bounded when the file grows after its initial stat", a
             return {
                 stat: async () => {
                     const before = await file.stat();
-                    await appendFile(join(folder, "settings.json"), "x".repeat(256 * 1024 + 1));
+                    await appendFile(join(folder, "settings.json"), "x".repeat(SETTINGS_LIMIT + 1));
                     return before;
                 },
                 read: (...args) => file.read(...args),
@@ -1105,7 +1121,7 @@ test("token-gated Save endpoint reports errors without losing the current values
     assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
 });
 
-test("Save reserves space for the stored envelope and rejects larger valid requests", async (t) => {
+test("Save accepts a bounded request and rejects one byte over the limit", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff("a".repeat(128));
     const folder = await saveHandoff(workspace, handoff);
@@ -1128,22 +1144,23 @@ test("Save reserves space for the stored envelope and rejects larger valid reque
         values[id] = "x".repeat(length);
         remaining -= length;
     }
-    assert.equal(remaining, 0);
     const body = JSON.stringify(payload);
-    assert.equal(Buffer.byteLength(body), SAVE_REQUEST_LIMIT);
+    assert.ok(Buffer.byteLength(body) < SAVE_REQUEST_LIMIT);
+    const padded = body + " ".repeat(SAVE_REQUEST_LIMIT - Buffer.byteLength(body));
+    assert.equal(Buffer.byteLength(padded), SAVE_REQUEST_LIMIT);
     const shell = await startShell(handoff, model, { project, workspace });
     t.after(() => shell.close());
     const saveUrl = new URL(shell.url);
     saveUrl.pathname = "/api/save";
     const response = await fetch(saveUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: `${body} ` });
+        body: `${padded} ` });
     assert.equal(response.status, 413);
     assert.match(response.headers.get("content-type"), /application\/json/);
     assert.deepEqual(await response.json(), { error: "Designer save request is too large" });
     await assert.rejects(readFile(join(folder, "settings.json")), { code: "ENOENT" });
     const accepted = await fetch(saveUrl, { method: "POST",
-        headers: { "Content-Type": "application/json" }, body });
+        headers: { "Content-Type": "application/json" }, body: padded });
     assert.equal(accepted.status, 200);
     assert.equal((await accepted.json()).settingsRevision, 1);
     assert.ok((await readFile(join(folder, "settings.json"))).length <= SETTINGS_LIMIT);
