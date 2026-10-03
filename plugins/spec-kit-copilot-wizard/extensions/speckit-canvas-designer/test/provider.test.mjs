@@ -328,53 +328,60 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     assert.match(portable.renderHtml(fallback), /class="brand-mark" aria-hidden="true">&#9671;/);
 });
 
-test("preset generated page places a reusable Logo in its declared asset slot", async (t) => {
+test("logo gallery preset places a reusable Logo in its declared asset slot", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
+    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-logo-gallery-test/",
+        import.meta.url));
     const folder = join(project, ".specify", "presets");
     await mkdir(folder);
-    const page = { schemaVersion: 1, id: "canvas-generated-gallery", title: "Gallery",
-        renderer: "canvas-gallery-renderer",
-        slots: [{ id: "hero.logo", accepts: ["asset"] }] };
-    const field = { schemaVersion: 1, id: "gallery.logo", host: "designer",
-        slot: "essentials.options", order: 60,
-        field: { id: "gallery.logo", type: "image", control: "stock.image",
-            label: "Gallery logo" },
-        generatedBinding: { presentation: "asset", page: page.id, slot: "hero.logo" } };
-    const pagePath = join(folder, "gallery.json");
-    const rendererPath = join(folder, "gallery.mjs");
-    const fieldPath = join(folder, "gallery-field.json");
-    await writeFile(pagePath, JSON.stringify(page));
-    await writeFile(rendererPath, `export function renderPage({ root }) {
-        const hero = document.createElement("div");
-        hero.dataset.assetSlot = "hero.logo";
-        root.append(hero);
-    }`);
-    await writeFile(fieldPath, JSON.stringify(field));
+    const designerPath = join(folder, "designer.json");
+    const pagePath = join(folder, "generated.json");
+    const rendererPath = join(folder, "generated.mjs");
+    const fieldPath = join(folder, "logo.json");
+    for (const [relative, target] of [
+        [join("pages", "designer.json"), designerPath],
+        [join("pages", "generated.json"), pagePath],
+        [join("pages", "generated.mjs"), rendererPath],
+        [join("contributions", "logo.json"), fieldPath],
+    ]) await copyFile(join(preset, relative), target);
+    const designer = JSON.parse(await readFile(designerPath, "utf8"));
+    const pageSource = await readFile(pagePath, "utf8");
+    const fieldSource = await readFile(fieldPath, "utf8");
+    const page = JSON.parse(pageSource);
+    const field = JSON.parse(fieldSource);
+    const renderer = await readFile(rendererPath, "utf8");
+    assert.match(renderer, /dataset\.assetSlot = "hero\.logo"/);
     const templates = [
-        { name: page.id, path: pagePath, sourceId: "project",
+        { name: page.id, path: pagePath, sourceId: "copilot-logo-gallery-test",
             kind: "generated.page", strategy: "replace" },
-        { name: page.renderer, path: rendererPath, sourceId: "project",
+        { name: page.renderer, path: rendererPath, sourceId: "copilot-logo-gallery-test",
             kind: "generated.renderer", strategy: "replace" },
-        { name: "canvas-gallery-logo", path: fieldPath, sourceId: "project",
+        { name: "canvas-logo-gallery-image", path: fieldPath, sourceId: "copilot-logo-gallery-test",
             kind: "designer.field", strategy: "replace" },
     ];
     const registration = () => ({ kind: "template", stack: [
-        { active: true, sourceId: "_", layer: "project", strategy: "replace" }] });
-    const load = () => loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+        { active: true, sourceId: "copilot-logo-gallery-test", layer: "preset", strategy: "replace" }] });
+    const load = () => loadResolvedDesignerPages(handoff, project,
+        [...entries, { name: designer.id, path: designerPath,
+            kind: "designer.page", strategy: "replace" }], templates, registration);
     const model = await load();
-    assert.equal(model.pages[0].fields.at(-1).id, "gallery.logo");
+    assert.equal(model.pages.find((item) => item.id === designer.id).fields[0].id, "gallery.logo");
+    assert.equal(model.pages.find((item) => item.id === "canvas-settings-setup").fields.length, 2);
+    assert.equal(field.slot, designer.slots[0].id);
+    assert.equal(field.generatedBinding.page, page.id);
+    assert.equal(field.generatedBinding.slot, page.slots[0].id);
     await writeFile(fieldPath, JSON.stringify({ ...field,
         generatedBinding: { ...field.generatedBinding, slot: "missing" } }));
     await assert.rejects(load(), /unknown or incompatible generated page asset slot/);
-    await writeFile(fieldPath, JSON.stringify(field));
+    await writeFile(fieldPath, fieldSource);
     await writeFile(pagePath, JSON.stringify({ ...page, slots: [{ id: "hero.logo", accepts: ["field"] }] }));
     await assert.rejects(load(), /invalid generated page definition/);
-    await writeFile(pagePath, JSON.stringify(page));
+    await writeFile(pagePath, pageSource);
     const gif = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACAUwAOw==", "base64");
     const values = { ...model.values, "canvas.id": "gallery-canvas",
         "canvas.displayName": "Gallery canvas",
