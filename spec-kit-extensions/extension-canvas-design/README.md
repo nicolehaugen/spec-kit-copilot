@@ -109,19 +109,23 @@ names and additional page or Canvas Design template names explicitly registered
 in the composed command by presets. It uses `specify preset resolve <name>`
 to find each project's effective named file; package tags alone do not register
 files. Only after all paths resolve does it open the official Designer provider
-once with the complete typed, replace-only set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
-handoffs, and an unavailable provider stop the operation before an open URL is
-returned. A resolved page whose file is missing or invalid shows an error tab
-For this version, `scripts/verify-launch.mjs` checks the generated skill's
-default and contributed declarations against the installed package commands,
-then verifies every name with Specify's resolution and template-stack metadata
-before returning the full pages/templates input. It performs no installation
-or provider evaluation. A warning (even on exit status 0), missing name,
-composition mismatch, or executable script collision stops the open. A resolved page whose file is missing or invalid shows an error tab
-with a path and reason; healthy pages stay usable. Invalid registered field
-contributions stop the open with both names on a field collision; newly
-registered stock text/checkbox fields render on their declared Designer page
-and can be saved. A registered bounded string contribution with
+once with the complete typed, replace-only set. Missing or ambiguous CLI
+resolutions, unsafe paths, invalid handoffs, and an unavailable provider stop
+the operation before an open URL is returned. A resolved page whose file is
+missing or invalid shows an error tab with a path and reason; healthy pages
+stay usable.
+
+`scripts/verify-launch.mjs` reads the generated skill's declarations and
+verifies each name with Specify's resolution and template-stack metadata
+before returning the complete pages/templates input. It performs no
+installation or provider evaluation. A warning (even on exit status 0),
+missing name, resolution mismatch, or executable script collision stops the
+open.
+
+Invalid registered field contributions stop the open with both names on a
+field collision; newly registered stock text/checkbox fields render on their
+declared Designer page and can be saved. A registered bounded string
+contribution with
 `generatedBinding: {"presentation": "stock.readonly"}` also freezes its
 validated value into a built-in read-only generated display, regardless of
 which declared Designer slot holds the field. A separately registered

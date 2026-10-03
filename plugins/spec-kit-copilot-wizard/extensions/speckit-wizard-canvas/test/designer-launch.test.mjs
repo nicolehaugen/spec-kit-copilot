@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, link, mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -14,7 +14,7 @@ import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
-import { preflight, verifyLocalInstall } from "../server/designer-launch-check.mjs";
+import { packageDigest, preflight, verifyLocalInstall } from "../server/designer-launch-check.mjs";
 
 // Real, valid manifests in this repo (same fixtures e2e/canvas-designer.spec.mjs
 // uses), so local-dev validation and precedence are exercised against actual
@@ -133,10 +133,10 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /Verify runtime bundles separately with bundle list --json \(bundle_id and version only\)/);
     assert.match(sent[0].prompt, /bundle IDs have no enabled state or priority and do not appear in preset\/extension lists/);
     assert.doesNotMatch(sent[0].prompt, /verify ALL handoff\.workflow\.installed IDs, versions, enabled states/);
-    assert.match(sent[0].prompt, /confirm it includes any page and template names registered by the installed Canvas Design presets/);
+    assert.doesNotMatch(sent[0].prompt, /confirm it includes any page and template names registered by the installed Canvas Design presets/);
     assert.match(sent[0].prompt, /speckit-extension-canvas-design-load-page/);
     assert.match(sent[0].prompt, /Invoke the generated, preset-composed speckit-extension-canvas-design-load-page skill with handoffId/);
-    assert.match(sent[0].prompt, /If the generated skill is unavailable after reload, report the concrete error and stop/);
+    assert.match(sent[0].prompt, /If the generated speckit-extension-canvas-design-load-page skill is unavailable after reload, report the concrete error and stop/);
     assert.match(sent[0].prompt, /Follow its entire composed command for the complete named-template resolution/);
     assert.match(sent[0].prompt, /ONCE after all installations/);
     assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.7/);
@@ -671,6 +671,51 @@ test("read-only preflight pins handoff bytes and verifies approved local install
         async () => ({ stdout: "specify 1.0.6" })), />=1\.0\.7/);
 });
 
+test("local package digest rejects file and parent swaps and bounds a growing file", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "designer-package-digest-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+
+    const replaced = join(root, "replaced");
+    await mkdir(replaced);
+    await writeFile(join(replaced, "value.txt"), "original");
+    await assert.rejects(packageDigest(replaced, async (path, flags) => {
+        await rename(path, `${path}.old`);
+        await writeFile(path, "replacement");
+        return open(path, flags);
+    }), /file changed during verification/);
+
+    const swapped = join(root, "swapped");
+    const parent = join(swapped, "nested");
+    await mkdir(parent, { recursive: true });
+    await writeFile(join(parent, "value.txt"), "original");
+    await assert.rejects(packageDigest(swapped, async (path, flags) => {
+        const moved = join(swapped, "moved");
+        await rename(parent, moved);
+        await mkdir(parent);
+        await link(join(moved, "value.txt"), path);
+        return open(path, flags);
+    }), /directory changed during verification/);
+
+    const growing = join(root, "growing");
+    await mkdir(growing);
+    const changing = join(growing, "value.txt");
+    await writeFile(changing, "original");
+    let largestRead = 0;
+    await assert.rejects(packageDigest(growing, async (path, flags) => {
+        const file = await open(path, flags);
+        return {
+            stat: () => file.stat(),
+            read: async (buffer, offset, length, position) => {
+                largestRead = Math.max(largestRead, length);
+                await writeFile(path, Buffer.alloc(8 * 1024 * 1024 + 1));
+                return file.read(buffer, offset, length, position);
+            },
+            close: () => file.close(),
+        };
+    }), /file changed during verification/);
+    assert.ok(largestRead <= "original".length + 1);
+});
+
 test("Designer launch installs every extension before standalone presets, including local overrides", () => {
     const handoff = buildDesignerHandoff(snapshot, empty, {
         presets: [{ id: "copilot-sub-agents", source: "local", approved: true,
@@ -689,7 +734,6 @@ test("Designer launch installs every extension before standalone presets, includ
     assert.ok(extensionStep > 0 && extensionStep < localExtension
         && localExtension < presetStep && presetStep < localPreset);
     assert.match(prompt, /including 'no base command layer'/);
-    assert.match(prompt, /If any registration is missing, stop and report incomplete command composition/);
 });
 
 test("handleDesignerLaunch inlines validated localSelections into the handoff end-to-end", async () => {

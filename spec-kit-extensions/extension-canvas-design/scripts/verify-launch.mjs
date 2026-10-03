@@ -14,7 +14,7 @@ const HEADINGS = new Set(["Pages", "Additional Designer pages",
 const EXECUTABLE = new Set(["generated.renderer", "designer.adapter",
     "generated.adapter", "value.provider"]);
 
-export function declarations(command, requirePage = true) {
+export function declarations(command) {
     const result = new Map();
     let heading = "";
     for (const line of command.split(/\r?\n/)) {
@@ -38,7 +38,7 @@ export function declarations(command, requirePage = true) {
         }
         if (!existing) result.set(name, { name, kind, strategy: "replace" });
     }
-    if (requirePage && ![...result.values()].some((entry) => entry.kind === "designer.page")) {
+    if (![...result.values()].some((entry) => entry.kind === "designer.page")) {
         throw new Error("Generated load-page skill is missing Designer pages.");
     }
     return [...result.values()];
@@ -59,37 +59,6 @@ export async function verifyComposition(project, run = exec) {
     const child = await realpath(project);
     const skill = join(child, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md");
     const entries = declarations(await readFile(skill, "utf8"));
-    const command = JSON.parse(await cli(child, ["artifact", "info",
-        "command:speckit.extension-canvas-design.load-page", "--json"], run));
-    const stack = command.stack;
-    const baseIndex = stack?.findIndex((layer) => layer.strategy === "replace");
-    if (command.kind !== "command" || !Array.isArray(stack) || baseIndex < 0
-        || stack.slice(0, baseIndex).some((layer) => layer.strategy !== "append")) {
-        throw new Error("Generated load-page command has no valid composed base.");
-    }
-    for (const layer of stack.slice(0, baseIndex + 1)) {
-        if (!["preset", "extension"].includes(layer.layer)
-            || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(layer.sourceId ?? "")
-            || (layer.strategy === "replace" && typeof layer.sourcePath !== "string")) {
-            throw new Error("Generated load-page command has an unknown source.");
-        }
-        const path = layer.strategy === "replace"
-            ? resolve(child, layer.sourcePath)
-            : join(child, ".specify", layer.layer === "preset" ? "presets" : "extensions",
-                layer.sourceId, "commands", "load-page.md");
-        const commandRoot = await realpath(join(child, ".specify"));
-        const commandRel = relative(commandRoot, await realpath(path));
-        if (!commandRel || commandRel === ".." || commandRel.startsWith(`..${sep}`)) {
-            throw new Error(`Generated load-page command source escapes .specify: ${layer.sourceId}.`);
-        }
-        const contribution = await readFile(path, "utf8");
-        for (const required of declarations(contribution, false)) {
-            if (!entries.some((entry) => entry.name === required.name
-                && entry.kind === required.kind)) {
-                throw new Error(`Generated load-page skill is missing ${required.name} from ${layer.sourceId}.`);
-            }
-        }
-    }
     const pages = [], templates = [];
     for (const entry of entries) {
         const output = await cli(child, ["preset", "resolve", entry.name], run, true);

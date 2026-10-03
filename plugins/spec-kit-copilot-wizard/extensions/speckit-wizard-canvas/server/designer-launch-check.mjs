@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, readFile, readdir, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -13,10 +14,21 @@ const MAX_FILES = 512;
 const MAX_BYTES = 8 * 1024 * 1024;
 const manifestName = { presets: "preset.yml", extensions: "extension.yml" };
 
-export async function packageDigest(root) {
+export async function packageDigest(root, openFile = open) {
     const hash = createHash("sha256");
     let count = 0, bytes = 0;
+    const packageStat = await lstat(root);
+    async function checkDirectory(directory, before) {
+        const [current, canonical] = await Promise.all([lstat(directory), realpath(directory)]);
+        if (!current.isDirectory() || current.dev !== before.dev || current.ino !== before.ino
+            || canonical !== directory) {
+            throw new Error(`Local package directory changed during verification: ${directory}`);
+        }
+    }
+    await checkDirectory(root, packageStat);
     async function walk(directory) {
+        const directoryStat = await lstat(directory);
+        await checkDirectory(directory, directoryStat);
         for (const entry of (await readdir(directory, { withFileTypes: true }))
             .sort((a, b) => a.name.localeCompare(b.name, "en"))) {
             if (OMIT.has(entry.name)) continue;
@@ -27,15 +39,46 @@ export async function packageDigest(root) {
             if (!stat.isFile() || ++count > MAX_FILES || (bytes += stat.size) > MAX_BYTES) {
                 throw new Error(`Local package exceeds verification limits: ${root}`);
             }
-            const content = await readFile(path);
-            if ((bytes += content.length - stat.size) > MAX_BYTES) {
-                throw new Error(`Local package exceeds verification limits: ${root}`);
+            const file = await openFile(path, constants.O_RDONLY
+                | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+            try {
+                const opened = await file.stat();
+                const current = await lstat(path);
+                await checkDirectory(directory, directoryStat);
+                await checkDirectory(root, packageStat);
+                if (!opened.isFile() || !current.isFile() || current.isSymbolicLink()
+                    || opened.dev !== stat.dev || opened.ino !== stat.ino
+                    || current.dev !== stat.dev || current.ino !== stat.ino
+                    || opened.size !== stat.size || opened.mtimeMs !== stat.mtimeMs) {
+                    throw new Error(`Local package file changed during verification: ${path}`);
+                }
+                const content = Buffer.alloc(stat.size + 1);
+                let length = 0;
+                while (length < content.length) {
+                    const { bytesRead } = await file.read(content, length, content.length - length, length);
+                    if (!bytesRead) break;
+                    length += bytesRead;
+                }
+                const [after, pathStat] = await Promise.all([file.stat(), lstat(path)]);
+                await checkDirectory(directory, directoryStat);
+                await checkDirectory(root, packageStat);
+                if (!pathStat.isFile() || pathStat.isSymbolicLink()
+                    || pathStat.dev !== stat.dev || pathStat.ino !== stat.ino
+                    || after.dev !== stat.dev || after.ino !== stat.ino
+                    || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs
+                    || after.ctimeMs !== opened.ctimeMs || length !== opened.size) {
+                    throw new Error(`Local package file changed during verification: ${path}`);
+                }
+                hash.update(relative(root, path).split(sep).join("/")).update("\0");
+                hash.update(String(length)).update("\0").update(content.subarray(0, length));
+            } finally {
+                await file.close();
             }
-            hash.update(relative(root, path).split(sep).join("/")).update("\0");
-            hash.update(String(content.length)).update("\0").update(content);
         }
+        await checkDirectory(directory, directoryStat);
     }
     await walk(root);
+    await checkDirectory(root, packageStat);
     return hash.digest("hex");
 }
 

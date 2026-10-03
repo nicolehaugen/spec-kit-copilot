@@ -8,7 +8,7 @@ import { declarations, verifyComposition } from "../extension-canvas-design/scri
 
 const source = fileURLToPath(new URL("../extension-canvas-design/", import.meta.url));
 
-test("generated command declarations include appended pages and templates anywhere", async () => {
+test("generated skill declarations include appended pages and templates anywhere", async () => {
     const base = await readFile(join(source, "commands", "load-page.md"), "utf8");
     const appended = `${base}\n## Additional Canvas Design templates\n- \`sample-renderer\` — \`generated.renderer\`, \`replace\`\n`
         + "## Additional Designer pages\n- `sample-page`\n";
@@ -33,9 +33,7 @@ test("composed verification resolves every name, rejects warnings and native scr
     const preset = join(project, ".specify", "presets", "sample");
     const contribution = "## Additional Designer pages\n- `sample-page`\n\n"
         + "## Additional Canvas Design templates\n- `sample-renderer` — `generated.renderer`, `replace`\n";
-    await mkdir(join(preset, "commands"), { recursive: true });
     await mkdir(join(preset, "pages"), { recursive: true });
-    await writeFile(join(preset, "commands", "load-page.md"), contribution);
     await writeFile(join(preset, "pages", "sample.json"), "{}");
     await writeFile(join(preset, "pages", "renderer.mjs"), "export function renderPage() {}");
     const base = await readFile(join(installed, "commands", "load-page.md"), "utf8");
@@ -54,24 +52,9 @@ test("composed verification resolves every name, rejects warnings and native scr
         "canvas-stock-workflow-heading": join(installed, "pages", "stock-workflow-heading.json"),
         "canvas-stock-custom-slug": join(installed, "pages", "stock-custom-slug.json"),
     };
-    const minimum = join(project, ".specify", "presets", "minimum", "commands", "load-page.md");
-    await mkdir(join(project, ".specify", "presets", "minimum", "commands"),
-        { recursive: true });
     const minimalBase = base.replace(/## Canvas Design templates[\s\S]*?(?=## Steps)/, "");
-    await writeFile(minimum, minimalBase);
-    let warning = false, collision = false, strategy = "replace", replacedBase = false;
+    let warning = false, collision = false, strategy = "replace";
     const run = async (_binary, args) => {
-        if (args[2] === "command:speckit.extension-canvas-design.load-page") {
-            return { stdout: JSON.stringify({ kind: "command", stack: [
-                { strategy: "append", layer: "preset", sourceId: "sample" },
-                { strategy: "replace", layer: replacedBase ? "preset" : "extension",
-                    sourceId: replacedBase ? "minimum" : "extension-canvas-design",
-                    sourcePath: replacedBase ? minimum : join(installed, "commands", "load-page.md") },
-                ...(replacedBase ? [{ strategy: "replace", layer: "extension",
-                    sourceId: "extension-canvas-design",
-                    sourcePath: join(installed, "commands", "load-page.md") }] : []),
-            ] }) };
-        }
         const name = args[0] === "preset" ? args[2] : args[2].split(":")[1];
         if (args[0] === "preset") return { stdout: warning
             ? `${name}: not found`
@@ -95,7 +78,9 @@ test("composed verification resolves every name, rejects warnings and native scr
     assert.equal(result.templates.length, 4);
     assert.deepEqual(result.templates.find((entry) => entry.name === "sample-renderer").sourceId, "sample");
     await writeFile(skill, base);
-    await assert.rejects(verifyComposition(project, run), /missing sample-page from sample/);
+    const baseOnly = await verifyComposition(project, run);
+    assert.equal(baseOnly.pages.length, 3);
+    assert.equal(baseOnly.templates.length, 3);
     await writeFile(skill, `${base}\n${contribution}`);
     warning = true;
     await assert.rejects(verifyComposition(project, run), /warning or missing result/);
@@ -106,7 +91,6 @@ test("composed verification resolves every name, rejects warnings and native scr
     strategy = "append";
     await assert.rejects(verifyComposition(project, run), /replace-only template stack/);
     strategy = "replace";
-    replacedBase = true;
     await writeFile(skill, `${minimalBase}\n${contribution}`);
     const intentionalReplacement = await verifyComposition(project, run);
     assert.equal(intentionalReplacement.pages.length, 4);
