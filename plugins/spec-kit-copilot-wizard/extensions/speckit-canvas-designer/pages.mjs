@@ -198,11 +198,12 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || typeof field.label !== "string" || !field.label || field.label.length > 120
         || (field.description !== undefined
             && (typeof field.description !== "string" || field.description.length > 1000))
-        || !["string", "boolean", "object"].includes(field.type)
+        || !["string", "boolean", "object", "image"].includes(field.type)
         || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== field.type)
         || (field.type === "object"
             ? !PAGE_PATTERN.test(field.control)
-            : field.control !== (field.type === "boolean" ? "stock.checkbox" : "stock.text"))
+            : field.control !== (field.type === "boolean" ? "stock.checkbox"
+                : field.type === "image" ? "stock.image" : "stock.text"))
         || (field.maxLength !== undefined && (field.type !== "string"
             || !Number.isInteger(field.maxLength) || field.maxLength < 1
             || field.maxLength > 1000))
@@ -211,12 +212,16 @@ function validateContribution(document, name, slots, fieldOrigins) {
         throw new Error(`${name}: incompatible field or control definition`);
     }
     const binding = document.generatedBinding;
+    if (field.type === "image" && binding === undefined) {
+        throw new Error(`${name}: image asset requires a generated header binding`);
+    }
     if (binding !== undefined
         && (!binding
             || typeof binding !== "object" || Array.isArray(binding)
-            || (field.type === "object"
+            || (["object", "image"].includes(field.type)
                 ? Object.keys(binding).sort().join() !== "presentation,slot"
-                    || binding.presentation !== "control" || binding.slot !== "details.content"
+                    || binding.presentation !== (field.type === "image" ? "asset" : "control")
+                    || binding.slot !== (field.type === "image" ? "header.brand" : "details.content")
                 : field.type !== "string"
                     || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
                     || binding.presentation !== "stock.readonly")
@@ -697,7 +702,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
                     : { type: field.type, ...(field.type === "string"
                         ? { maxLength: field.maxLength ?? 1000 } : field.type === "object"
                             ? { properties: controls.find((item) =>
-                                item.document.id === field.control).document.value.properties } : {}) };
+                                item.document.id === field.control).document.value.properties }
+                            : field.type === "image" ? { maxBytes: 32 * 1024 } : {}) };
                 model.values[field.id] = field.type === "boolean" ? (field.default ?? false)
                     : field.type === "object" ? null : "";
             }

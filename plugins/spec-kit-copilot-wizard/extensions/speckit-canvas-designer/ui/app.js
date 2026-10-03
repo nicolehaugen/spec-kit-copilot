@@ -8,7 +8,33 @@ let model, currentPage, draft, saving = false;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
+let uploading = false;
 const required = ["canvas.id", "canvas.displayName"];
+
+function validImage(value) {
+    if (value === "") return true;
+    const match = typeof value === "string"
+        && /^data:(image\/(?:png|jpeg|gif|webp));base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/.exec(value);
+    if (!match || match[2].length > Math.ceil(32768 / 3) * 4) return false;
+    const binary = atob(match[2]);
+    const signatures = {
+        "image/png": [137, 80, 78, 71, 13, 10, 26, 10],
+        "image/jpeg": [255, 216, 255],
+        "image/gif": [71, 73, 70, 56],
+        "image/webp": [82, 73, 70, 70],
+    };
+    return binary.length > 0 && binary.length <= 32768
+        && signatures[match[1]].every((byte, index) => binary.charCodeAt(index) === byte)
+        && (match[1] !== "image/png" || binary.length >= 24 && binary.slice(12, 16) === "IHDR")
+        && (match[1] !== "image/jpeg" || binary.length >= 5
+            && binary.charCodeAt(binary.length - 2) === 255 && binary.charCodeAt(binary.length - 1) === 217)
+        && (match[1] !== "image/gif" || binary.length >= 14
+            && ["GIF87a", "GIF89a"].includes(binary.slice(0, 6)))
+        && (match[1] !== "image/webp" || binary.length >= 16
+            && binary.slice(8, 12) === "WEBP"
+            && new DataView(new Uint8Array([...binary.slice(4, 8)]
+                .map((character) => character.charCodeAt(0))).buffer).getUint32(0, true) + 8 === binary.length);
+}
 
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "canvas-settings-setup");
@@ -21,7 +47,7 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = saving || generating || queued || !model?.handoffId
+    generate.disabled = saving || uploading || generating || queued || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity;
 }
@@ -108,7 +134,7 @@ function showError(message) {
 function updateSave() {
     const noChanges = model?.persisted
         && JSON.stringify(draft) === JSON.stringify(model.values);
-    saveButton.disabled = saving || !model || noChanges;
+    saveButton.disabled = saving || uploading || !model || noChanges;
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
@@ -123,7 +149,8 @@ function validateDraft(action = "saving") {
     for (const [id, rules] of Object.entries(model.constraints)) {
         const value = draft[id];
         if (rules.type === "boolean" && typeof value === "boolean") continue;
-        if (rules.type === "object" ? (!value || typeof value !== "object"
+        if (rules.type === "image" ? !validImage(value)
+            : rules.type === "object" ? (!value || typeof value !== "object"
             || Array.isArray(value)
             || Object.keys(value).sort().join() !== Object.keys(rules.properties).sort().join()
             || Object.entries(rules.properties).some(([key, allowed]) => !allowed.includes(value[key])))
@@ -140,7 +167,7 @@ function validateDraft(action = "saving") {
                 }
             }
             const field = page?.fields.find((item) => item.id === id);
-            showError(`Enter a valid ${field?.label ?? id} before ${action}.${id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
+            showError(`Enter a valid ${field?.label ?? id} before ${action}.${rules.type === "image" ? " Use a PNG, JPEG, GIF, or WebP under 32 KiB." : id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
             return false;
         }
     }
@@ -204,6 +231,74 @@ function renderPage(pageId) {
     if (!page.fields.length) form.append(element("p", "This template defines no fields.", "settings-note"));
     for (const [index, field] of page.fields.entries()) {
         const rules = model.constraints[field.id];
+        if (rules.type === "image") {
+            const wrapper = element("div", undefined, "settings-field settings-image");
+            const label = element("label", field.label);
+            const input = element("input");
+            input.type = "file";
+            input.accept = "image/png,image/jpeg,image/gif,image/webp";
+            input.id = `setting-field-${index}`;
+            label.htmlFor = input.id;
+            const preview = element("img");
+            preview.alt = `${field.label} preview`;
+            const controls = element("div", undefined, "image-controls");
+            const remove = element("button", "Remove", "image-remove");
+            remove.type = "button";
+            const refresh = () => {
+                const selected = !!draft[field.id];
+                preview.hidden = !selected;
+                if (selected) preview.src = draft[field.id];
+                else preview.removeAttribute("src");
+                remove.hidden = !selected;
+            };
+            input.addEventListener("change", async () => {
+                const file = input.files?.[0];
+                if (!file) return;
+                if (!["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type)
+                    || !file.size || file.size > rules.maxBytes) {
+                    input.value = "";
+                    showError("Logo must be a PNG, JPEG, GIF, or WebP under 32 KiB.");
+                    return;
+                }
+                uploading = true;
+                updateSave();
+                try {
+                    const bytes = new Uint8Array(await file.arrayBuffer());
+                    const content = `data:${file.type};base64,${btoa(
+                        Array.from(bytes, (byte) => String.fromCharCode(byte)).join(""))}`;
+                    if (!validImage(content)) throw new Error("Image bytes do not match the selected format.");
+                    await new Promise((resolve, reject) => {
+                        const image = new Image();
+                        image.onload = resolve;
+                        image.onerror = () => reject(new Error("Image cannot be displayed."));
+                        image.src = content;
+                    });
+                    draft[field.id] = content;
+                    refresh();
+                    showError("");
+                    messageBox.hidden = true;
+                } catch (error) {
+                    showError(`Could not load ${field.label}: ${error.message}`);
+                } finally {
+                    input.value = "";
+                    uploading = false;
+                    updateSave();
+                }
+            });
+            remove.addEventListener("click", () => {
+                draft[field.id] = "";
+                refresh();
+                showError("");
+                messageBox.hidden = true;
+                updateSave();
+            });
+            controls.append(input, remove);
+            wrapper.append(label, preview, controls);
+            if (field.description) wrapper.append(element("p", field.description, "settings-hint"));
+            form.append(wrapper);
+            refresh();
+            continue;
+        }
         if (rules.type === "object") {
             const wrapper = element("div", undefined, "settings-field");
             wrapper.append(element("p", field.label));

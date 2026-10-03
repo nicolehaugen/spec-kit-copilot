@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
@@ -83,12 +83,21 @@ export function readConfig() {
         || Object.values(config.phaseOutputs).some((output) => !output
             || typeof output.expectsArtifact !== "boolean"
             || (output.outputPath !== null && typeof output.outputPath !== "string"))
+        || (config.brandAsset !== undefined && (!config.brandAsset
+            || Object.keys(config.brandAsset).sort().join() !== "file,hash,mime"
+            || !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(config.brandAsset.mime)
+            || config.brandAsset.file !== `logo.${{
+                "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+                "image/webp": "webp",
+            }[config.brandAsset.mime]}`
+            || !/^[a-f0-9]{64}$/.test(config.brandAsset.hash)))
         || (config.theme !== undefined && !["light", "dark"].includes(config.theme))
         || !config.installed || ["presets", "extensions", "bundles"].some((kind) =>
             !Array.isArray(config.installed[kind]) || config.installed[kind].some((item) =>
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
         throw new Error("Invalid generated canvas configuration");
     }
+    if (config.brandAsset) readBrandAsset(config);
     const sections = new Map();
     for (const { section } of config.readOnlyFields ?? []) {
         if (!section) continue;
@@ -100,6 +109,15 @@ export function readConfig() {
     phaseContract(config);
     valueContract(config);
     return config;
+}
+
+function readBrandAsset(config) {
+    const bytes = readFileSync(new URL(`./assets/${config.brandAsset.file}`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== config.brandAsset.hash) {
+        throw new Error("Packaged Logo image does not match its frozen hash");
+    }
+    return bytes;
 }
 
 function phaseLabel(phase) {
@@ -145,7 +163,9 @@ export function renderHtml(config, token = "") {
 <title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}</style></head>
 <body>
 <header class="app-header">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">&#9671;</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
+    <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}" aria-hidden="true">${config.brandAsset
+        ? `<img src="/assets/${escapeHtml(config.brandAsset.file)}?token=${escapeHtml(encodeURIComponent(token))}" alt="">`
+        : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
 <main class="app-body workflow-surface">
@@ -222,7 +242,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
         response.setHeader("Cache-Control", "no-store");
         response.setHeader("X-Content-Type-Options", "nosniff");
         response.setHeader("Referrer-Policy", "no-referrer");
-        response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+        response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         let url;
         try { url = new URL(request.url, "http://127.0.0.1"); }
         catch { response.writeHead(400).end("Invalid URL"); return; }
@@ -236,6 +256,13 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && ["/", "/ui/app.js", "/ui/markdown.mjs"].includes(url.pathname)) {
                 const body = url.pathname === "/" ? html : url.pathname === "/ui/app.js" ? script : markdown;
                 response.writeHead(200, { "Content-Type": `${url.pathname === "/" ? "text/html" : "text/javascript"}; charset=utf-8` }).end(body);
+                return;
+            }
+            if (request.method === "GET" && config.brandAsset
+                && url.pathname === `/assets/${config.brandAsset.file}`) {
+                response.writeHead(200, { "Content-Type": config.brandAsset.mime,
+                    "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" })
+                    .end(readBrandAsset(config));
                 return;
             }
             const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];

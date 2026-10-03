@@ -27,9 +27,13 @@ Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
 Essentials requires Canvas ID and Title from the resolved core page. Description,
-Workflow header and Allow custom slug are separate ordered stock contributions
-registered by the composed load-page command. With all three registered, the
-same five controls appear in the same order. Without them, generated description,
+Workflow header, Allow custom slug, and Logo are separate ordered stock contributions
+registered by the composed load-page command. The optional Logo control uploads,
+previews, replaces, and removes PNG, JPEG, GIF, or WebP images up to 32 KiB.
+It uses the shared field/slot validation path, freezes the selected image bytes
+and hash at Generate, and packages the image with the generated header. With no
+Logo, the existing brand mark remains unchanged. Without optional text fields,
+generated description,
 heading and custom slug default to `Spec Kit workflow canvas.`, `Workflows` and
 off. Workflow name appears after Phase input in the generated
 canvas's first workflow-creation phase and labels the workflow there. Essentials'
@@ -80,7 +84,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.9 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.10 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

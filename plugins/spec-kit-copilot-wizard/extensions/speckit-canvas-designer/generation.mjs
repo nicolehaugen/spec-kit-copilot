@@ -3,6 +3,7 @@ import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
+import { decodeImage } from "./image.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
@@ -42,6 +43,16 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
+    const imageContributions = (model.contributions ?? [])
+        .filter((item) => item.field.type === "image"
+            && item.generatedBinding?.presentation === "asset");
+    if (imageContributions.length > 1) throw new Error("Generated header accepts only one image asset");
+    const generatedAssets = imageContributions.flatMap((item) => {
+        const image = decodeImage(values[item.field.id]);
+        return image ? [{ id: item.field.id, slot: item.generatedBinding.slot,
+            mime: image.mime, hash: createHash("sha256").update(image.bytes).digest("hex"),
+            content: image.bytes.toString("base64") }] : [];
+    });
     const controlContributions = (model.contributions ?? [])
         .filter((item) => item.generatedBinding?.presentation === "control");
     if (controlContributions.length > 30) {
@@ -120,6 +131,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),
+        ...(generatedAssets.length ? { generatedAssets } : {}),
         ...(valueSources.length ? { valueSources } : {}),
     };
     const payload = JSON.stringify(request);

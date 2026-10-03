@@ -47,6 +47,12 @@ function validateFrozenValues(values, constraints) {
             if (Object.keys(rule).sort().join() !== "type" || typeof value !== "boolean") {
                 throw new Error(`Invalid frozen Designer field: ${id}`);
             }
+        } else if (rule.type === "image") {
+            if (Object.keys(rule).sort().join() !== "maxBytes,type"
+                || rule.maxBytes !== 32 * 1024 || typeof value !== "string"
+                || value.length > 44 * 1024) {
+                throw new Error(`Invalid frozen Designer image: ${id}`);
+            }
         } else if (rule.type === "object") {
             const properties = rule.properties;
             if (Object.keys(rule).sort().join() !== "properties,type"
@@ -73,9 +79,44 @@ function within(root, path) {
     return part && part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part);
 }
 
+function frozenImage(item, values, constraints) {
+    if (!item || Object.keys(item).sort().join() !== "content,hash,id,mime,slot"
+        || !fieldPattern.test(item.id) || item.slot !== "header.brand"
+        || constraints[item.id]?.type !== "image" || constraints[item.id]?.maxBytes !== 32 * 1024
+        || !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(item.mime)
+        || typeof item.content !== "string" || item.content.length > 44 * 1024
+        || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.content)
+        || values[item.id] !== `data:${item.mime};base64,${item.content}`) {
+        throw new Error("Invalid frozen image asset registration");
+    }
+    const bytes = Buffer.from(item.content, "base64");
+    const signatures = {
+        "image/png": [137, 80, 78, 71, 13, 10, 26, 10],
+        "image/jpeg": [255, 216, 255],
+        "image/gif": [71, 73, 70, 56],
+        "image/webp": [82, 73, 70, 70],
+    };
+    if (!bytes.length || bytes.length > 32 * 1024
+        || bytes.toString("base64") !== item.content
+        || !signatures[item.mime].every((part, index) => bytes[index] === part)
+        || (item.mime === "image/png" && (bytes.length < 24
+            || bytes.toString("ascii", 12, 16) !== "IHDR"))
+        || (item.mime === "image/jpeg" && (bytes.length < 5
+            || bytes.at(-2) !== 255 || bytes.at(-1) !== 217))
+        || (item.mime === "image/gif" && (bytes.length < 14
+            || !["GIF87a", "GIF89a"].includes(bytes.toString("ascii", 0, 6))))
+        || (item.mime === "image/webp" && (bytes.length < 16
+            || bytes.toString("ascii", 8, 12) !== "WEBP"
+            || bytes.readUInt32LE(4) + 8 !== bytes.length))
+        || createHash("sha256").update(bytes).digest("hex") !== item.hash) {
+        throw new Error("Invalid frozen image bytes or hash");
+    }
+    return bytes;
+}
+
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
-        generatedPages, generatedControls, valueSources } = request;
+        generatedPages, generatedControls, generatedAssets, valueSources } = request;
     validateFrozenValues(values, fieldConstraints);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -103,6 +144,17 @@ function configuration(request) {
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
         throw new Error("Invalid frozen canvas identity, workflow or runtime inventory");
     }
+    if (generatedAssets !== undefined && (!Array.isArray(generatedAssets)
+        || generatedAssets.length > 1)) throw new Error("Invalid frozen image assets");
+    for (const [id, rule] of Object.entries(fieldConstraints)) {
+        if (rule.type !== "image") continue;
+        if (Object.keys(rule).sort().join() !== "maxBytes,type" || rule.maxBytes !== 32 * 1024
+            || typeof values[id] !== "string"
+            || values[id] !== "" && !generatedAssets?.some((item) => item.id === id)) {
+            throw new Error(`Invalid frozen image field: ${id}`);
+        }
+    }
+    for (const item of generatedAssets ?? []) frozenImage(item, values, fieldConstraints);
     if (generatedFields !== undefined
         && (!Array.isArray(generatedFields) || generatedFields.length > 100
             || new Set(generatedFields.map((field) => field?.id)).size !== generatedFields.length
@@ -313,6 +365,11 @@ function configuration(request) {
         checklist: "specs/<slug>/checklists/<name>.md",
     };
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
+        ...(generatedAssets?.length ? { brandAsset: { file: `logo.${{
+            "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+            "image/webp": "webp",
+        }[generatedAssets[0].mime]}`, mime: generatedAssets[0].mime,
+            hash: generatedAssets[0].hash } } : {}),
         ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer, values: declared }) =>
             ({ id, title, renderer, ...(declared ? { values: declared } : {}) })) } : {}),
         ...(valueSources?.length ? { valueSources: valueSources.map(
@@ -393,6 +450,12 @@ export async function materialize(project, workspace, handoffId, requestId) {
         item.source.module, { filename: `${item.source.module}.mjs`,
             bytes: Buffer.from(item.assets[1].content, "base64") },
     ])).values()];
+    const imageFiles = (request.generatedAssets ?? []).map((item) => ({
+        filename: `logo.${{
+            "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+            "image/webp": "webp",
+        }[item.mime]}`, bytes: frozenImage(item, request.values, request.fieldConstraints),
+    }));
     const distinctControlFiles = new Map();
     for (const file of controlFiles) {
         if (distinctControlFiles.has(file.filename)
@@ -427,6 +490,10 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (pageFiles.length) await mkdir(join(target, "pages"));
     if (controlFiles.length) await mkdir(join(target, "controls"));
     if (providerFiles.length) await mkdir(join(target, "providers"));
+    if (imageFiles.length) await mkdir(join(target, "assets"));
+    for (const { filename, bytes } of imageFiles) {
+        await writeFile(join(target, "assets", filename), bytes, { flag: "wx" });
+    }
     for (const { filename, bytes } of pageFiles) {
         const path = join(target, "pages", filename);
         await writeFile(path, bytes, { flag: "wx" });

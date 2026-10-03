@@ -18,6 +18,7 @@ import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
 } from "../settings.mjs";
 import { freezeGeneration } from "../generation.mjs";
+import { decodeImage } from "../image.mjs";
 
 const ID = "designer_1";
 
@@ -194,6 +195,99 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     await assert.rejects(freezeGeneration({ model: missingIdentity,
         values: { ...missingIdentity.values, "canvas.id": "other" },
         handoff, project, workspace }), /Canvas ID and Title/);
+});
+
+test("stock Logo validates, persists, freezes and packages a portable header image with fallback", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
+        import.meta.url));
+    const path = join(project, ".specify", "extensions", "extension-canvas-design",
+        "pages", "stock-logo.json");
+    await copyFile(join(source, "pages", "stock-logo.json"), path);
+    const templates = [{ name: "canvas-stock-logo", path,
+        sourceId: "extension:extension-canvas-design", kind: "designer.field", strategy: "replace" }];
+    const model = await loadResolvedDesignerPages(handoff, project, entries, templates);
+    assert.equal(model.constraints["canvas.logo"].type, "image");
+    assert.equal(model.values["canvas.logo"], "");
+    const originalAppearance = await readFile(entries[2].path, "utf8");
+    const originalLogo = await readFile(path, "utf8");
+    const appearance = JSON.parse(originalAppearance);
+    appearance.slots = [{ id: "appearance.logo", accepts: ["field"],
+        orderBy: ["order", "presetId", "id"] }];
+    await writeFile(entries[2].path, JSON.stringify(appearance));
+    const logoContribution = JSON.parse(originalLogo);
+    await writeFile(path, JSON.stringify({ ...logoContribution, slot: "appearance.logo" }));
+    const moved = await loadResolvedDesignerPages(handoff, project, entries, templates);
+    assert.equal(moved.pages.find((page) => page.page === "canvas-settings-appearance")
+        .fields[0].id, "canvas.logo");
+    await writeFile(path, originalLogo);
+    await writeFile(entries[2].path, originalAppearance);
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64");
+    const logo = `data:image/png;base64,${png.toString("base64")}`;
+    assert.deepEqual(decodeImage(logo).bytes, png);
+    const values = { ...model.values, "canvas.id": "with-logo",
+        "canvas.displayName": "Logo test", "canvas.logo": logo };
+    for (const bad of ["data:image/svg+xml;base64,PHN2Zz4=", "data:image/png;base64,AAAA",
+        `data:image/png;base64,${Buffer.alloc(32769).toString("base64")}`, "data:image/png;base64,?"]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model,
+            { revision: 0, modelRevision: model.revision, values: { ...values, "canvas.logo": bad } }),
+        /Invalid Designer setting: canvas.logo/);
+        await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.logo": bad },
+            handoff, project, workspace }), /Invalid Designer setting: canvas.logo/);
+    }
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { revision: 0, modelRevision: model.revision, values });
+    assert.equal((await loadDesignerSettings(workspace, handoff, model)).values["canvas.logo"], logo);
+    const prepared = await freezeGeneration({ model: saved, values, handoff, project, workspace });
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const frozen = JSON.parse(await readFile(requestPath, "utf8"));
+    assert.equal(frozen.generatedAssets[0].hash, createHash("sha256").update(png).digest("hex"));
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const tampered = structuredClone(frozen);
+    tampered.generatedAssets[0].content = Buffer.from("not an image").toString("base64");
+    const { integrity: _prior, ...payload } = tampered;
+    tampered.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(tampered));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen image/);
+    await writeFile(requestPath, JSON.stringify(frozen));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, prepared.target);
+    const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(await readFile(join(target, "assets", config.brandAsset.file)), png);
+    const portable = await import(pathToFileURL(join(target, "server.mjs")).href);
+    assert.deepEqual(portable.readConfig().brandAsset, config.brandAsset);
+    assert.match(portable.renderHtml(config, "secret"), /<img src="\/assets\/logo.png\?token=secret" alt="">/);
+    assert.match(portable.renderHtml({ ...config, brandAsset: undefined }), /class="brand-mark" aria-hidden="true">&#9671;/);
+    const routed = createServer(portable.createWorkflowRoutes(config, { token: "secret" }).handle);
+    await new Promise((resolve) => routed.listen(0, "127.0.0.1", resolve));
+    try {
+        const base = `http://127.0.0.1:${routed.address().port}`;
+        const image = await fetch(`${base}/assets/logo.png?token=secret`);
+        assert.equal(image.status, 200);
+        assert.equal(image.headers.get("content-type"), "image/png");
+        assert.match(image.headers.get("content-security-policy"), /img-src 'self'/);
+        assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+        assert.equal((await fetch(`${base}/assets/logo.png`)).status, 401);
+    } finally {
+        await new Promise((resolve) => routed.close(resolve));
+    }
+    await writeFile(join(target, "assets", "logo.png"), Buffer.from("changed"));
+    assert.throws(() => portable.readConfig(), /Packaged Logo image does not match/);
+    const absent = { ...model.values, "canvas.id": "without-logo",
+        "canvas.displayName": "Fallback", "canvas.logo": "" };
+    const noLogo = await freezeGeneration({ model, values: absent, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, noLogo.requestId);
+    const fallback = JSON.parse(await readFile(join(project, noLogo.target, "canvas-config.json")));
+    assert.equal(fallback.brandAsset, undefined);
+    assert.match(portable.renderHtml(fallback), /class="brand-mark" aria-hidden="true">&#9671;/);
 });
 
 test("handoff validates bounded IDs, shape, URLs and fingerprint", () => {
@@ -734,7 +828,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.9/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.10/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -810,7 +904,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.9 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.10 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1911,7 +2005,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
     for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs",
-        "settings.mjs", "generation.mjs"]) {
+        "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
     await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
