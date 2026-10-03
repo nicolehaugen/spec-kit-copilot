@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.7** registers three JSON page templates and three ordered
+Canvas Design **0.1.8** registers three JSON page templates and three ordered
 stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
@@ -87,7 +87,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.7/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.8/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -135,6 +135,27 @@ freezes the validated object and packages the effective generated adapter and
 definition into the app, up to 30 generated controls. Missing, wrong-kind,
 non-replace, or multiply owned adapters stop Designer opening rather than
 falling back to a stock control.
+
+Canvas-wide values can also be declared in a registered `value.definition`
+replace-only JSON template. Its `schemaVersion: 1`, stable `id`, `label`,
+`schema` (bounded string, boolean, or enumerated object), `source`, and
+`presentation` are validated against the same field registry, including
+collisions with Designer fields. A constant uses
+`"source":{"kind":"constant","value":...}`; a workflow-derived value uses
+`"source":{"kind":"provider","module":"<registered-template-name>"}` and a
+separate `value.provider` replace-only `.mjs` template exporting
+`provideValue({workflow})` as an exported function or const (synchronous and
+without imports). The module is validated and frozen, **not run in
+Designer**. `stock.readonly` displays a value automatically, `stock.editable`
+allows a constant's typed value to be edited through shell-owned state shared
+by every workflow, and `processing-only` omits automatic display. A generated
+page must explicitly list consumed IDs in its definition's `values` array;
+processing-only is not a secrecy boundary. Providers require a selected
+existing workflow and must return a value matching their declared schema;
+refresh errors surface rather than substituting a default. The packaged app
+evaluates providers in a bounded isolated context without Node globals or
+network/filesystem APIs and does not resolve or need the originating preset at
+runtime.
 The browser reports incompatible `controlId` or `valueContract` exports,
 non-function `mount` exports, and mount failures beside the affected control.
 For stock read-only fields, an optional `generatedBinding.section` with a

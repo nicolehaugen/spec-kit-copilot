@@ -734,7 +734,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await rm(generateSkill);
     const unavailable = await post({ revision: model.revision, values });
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.7/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.8/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -810,7 +810,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.7 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.8 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1358,6 +1358,207 @@ test("generated-only page validates typed assets, freezes winners and packages w
         `${definition.renderer}.mjs`)).href)).renderPage.name, "renderPage");
     assert.ok((await readFile(join(portable, "generated-only", "ui", "app.js"), "utf8"))
         .includes("wireGeneratedPages()"));
+});
+
+test("named value sources freeze typed values and run from a portable canvas without a design preset", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const preset = fileURLToPath(new URL(
+        "../../../../../spec-kit-presets/copilot-canvas-values-test/", import.meta.url));
+    const directory = join(project, ".specify", "presets");
+    await mkdir(directory);
+    const items = [
+        ["canvas-value-heading", "values/heading.json", "value.definition"],
+        ["canvas-value-enabled", "values/enabled.json", "value.definition"],
+        ["canvas-value-choice", "values/choice.json", "value.definition"],
+        ["canvas-value-note", "values/note.json", "value.definition"],
+        ["canvas-value-workflow", "values/workflow.json", "value.definition"],
+        ["canvas-value-workflow-provider", "values/workflow.mjs", "value.provider"],
+        ["canvas-value-processing", "values/processing.json", "value.definition"],
+        ["canvas-generated-values", "pages/values.json", "generated.page"],
+        ["canvas-generated-values-renderer", "pages/values.mjs", "generated.renderer"],
+    ];
+    const command = await readFile(join(preset, "commands", "load-page.md"), "utf8");
+    for (const [name, , kind] of items) {
+        assert.ok(command.includes(`- \`${name}\` — \`${kind}\`, \`replace\``));
+    }
+    const templates = await Promise.all(items.map(async ([name, file, kind]) => {
+        const path = join(directory, `${name}${file.endsWith(".mjs") ? ".mjs" : ".json"}`);
+        await copyFile(join(preset, ...file.split("/")), path);
+        return { name, path, kind, sourceId: "copilot-canvas-values-test", strategy: "replace" };
+    }));
+    const registration = () => ({ kind: "template", stack: [{
+        active: true, sourceId: "copilot-canvas-values-test", layer: "preset", strategy: "replace",
+    }] });
+    const load = (assets = templates, verify = registration) =>
+        loadResolvedDesignerPages(handoff, project, entries, assets, verify);
+    const definition = templates[0], provider = templates[5], page = templates[7];
+    const model = await load();
+    assert.deepEqual(model.valueSources.map(({ id }) => id).sort(),
+        ["demo.choice", "demo.enabled", "demo.heading", "demo.note", "demo.processing", "demo.workflow"]);
+    assert.deepEqual(model.generatedPages[0].values, ["demo.processing"]);
+    assert.equal(Object.hasOwn(model.values, "demo.note"), false);
+    assert.notEqual((await load(templates.filter((asset) => asset !== definition))).revision, model.revision);
+    for (const assets of [
+        templates.filter((asset) => asset !== provider),
+        templates.map((asset) => asset === provider ? { ...asset, kind: "designer.field" } : asset),
+        templates.map((asset) => asset === definition ? { ...asset, strategy: "append" } : asset),
+    ]) await assert.rejects(load(assets), /value provider|must be a \.json|Invalid or duplicate/);
+    await assert.rejects(load(templates, () => ({ kind: "template", stack: [{
+        active: true, sourceId: "copilot-canvas-values-test", layer: "preset", strategy: "append",
+    }] })), /replace-only Specify template/);
+    const originalDefinition = await readFile(definition.path, "utf8");
+    for (const invalid of [
+        { schema: { type: "string", maxLength: 0 } },
+        { source: { kind: "constant", value: 42 } },
+        { source: { kind: "provider", module: "../outside" } },
+        { presentation: "unknown" },
+    ]) {
+        await writeFile(definition.path, JSON.stringify({
+            ...JSON.parse(originalDefinition), ...invalid,
+        }));
+        await assert.rejects(load(), /invalid Canvas Design value source|invalid typed constant value/);
+    }
+    await writeFile(definition.path, originalDefinition);
+    await writeFile(definition.path, JSON.stringify({
+        ...JSON.parse(originalDefinition), section: { id: "demo", title: "Conflicting" },
+    }));
+    await assert.rejects(load(), /conflicting generated section demo/);
+    await writeFile(definition.path, originalDefinition);
+    for (const [asset, value] of [
+        [templates[1], "true"],
+        [templates[2], { level: "three" }],
+    ]) {
+        const original = await readFile(asset.path, "utf8");
+        await writeFile(asset.path, JSON.stringify({
+            ...JSON.parse(original), source: { kind: "constant", value },
+        }));
+        await assert.rejects(load(), /invalid typed constant value/);
+        await writeFile(asset.path, original);
+    }
+    const originalPage = await readFile(page.path, "utf8");
+    await writeFile(page.path, JSON.stringify({
+        ...JSON.parse(originalPage), values: ["demo.unregistered"],
+    }));
+    await assert.rejects(load(), /undeclared generated value|invalid generated page definition/);
+    await writeFile(page.path, originalPage);
+    const originalProvider = await readFile(provider.path, "utf8");
+    await writeFile(provider.path, "export const provideValue = ;");
+    await assert.rejects(load(), /invalid value.provider/);
+    await writeFile(provider.path, "export function otherValue() {}");
+    await assert.rejects(load(), /invalid value.provider/);
+    await writeFile(provider.path, "function provideValue() { return 'ok'; }\nexport { provideValue };");
+    await assert.rejects(load(), /value provider must declare only export function or const provideValue/);
+    await writeFile(provider.path, originalProvider);
+
+    const selected = { ...model.values, "canvas.id": "value-demo",
+        "canvas.displayName": "Value demo" };
+    const prepared = await freezeGeneration({ model, values: selected, handoff, project, workspace });
+    await writeFile(provider.path, `${originalProvider}\n// changed after freeze`);
+    await assert.rejects(freezeGeneration({ model, values: selected, handoff, project, workspace }),
+        /changed since Designer opened/);
+    await writeFile(provider.path, originalProvider);
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const originalRequest = await readFile(requestPath, "utf8");
+    const request = JSON.parse(originalRequest);
+    const broken = structuredClone(request);
+    broken.valueSources.find((value) => value.id === "demo.workflow").assets[1].hash = "0".repeat(64);
+    const { integrity: _previous, ...payload } = broken;
+    broken.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(broken));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen value source asset/);
+    await writeFile(requestPath, originalRequest);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const portable = join(workspace, "portable-values");
+    await cp(join(project, prepared.target), portable, { recursive: true });
+    const { readConfig, renderHtml } = await import(pathToFileURL(join(portable, "server.mjs")).href);
+    const config = readConfig();
+    assert.deepEqual(config.valueSources.map(({ id }) => id).sort(),
+        ["demo.choice", "demo.enabled", "demo.heading", "demo.note", "demo.processing", "demo.workflow"]);
+    assert.equal(config.valueSources.find((value) => value.id === "demo.note").presentation, "stock.editable");
+    assert.deepEqual(config.generatedPages[0].values, ["demo.processing"]);
+    assert.doesNotMatch(renderHtml(config), /private hint/);
+    assert.equal(await readFile(join(portable, "providers",
+        `${provider.name}.mjs`), "utf8"), originalProvider);
+    const packagedProvider = join(portable, "providers", `${provider.name}.mjs`);
+    await rm(packagedProvider);
+    const { createRuntime } = await import(pathToFileURL(join(portable, "runtime.mjs")).href);
+    const session = { sessionId: "values-test", on: () => () => {},
+        getEvents: async () => [], log: async () => {} };
+    const runtime = await createRuntime({ config, cwd: project, workspace, session });
+    t.after(() => runtime.close());
+    const initial = await runtime.snapshot();
+    assert.equal(initial.valueFields.find((field) => field.id === "demo.heading").value, "Sample heading");
+    assert.equal(initial.valueFields.find((field) => field.id === "demo.enabled").value, true);
+    assert.deepEqual(initial.valueFields.find((field) => field.id === "demo.choice").value, { level: "two" });
+    assert.equal(initial.valueFields.find((field) => field.id === "demo.note").value, "Initial note");
+    assert.equal(initial.valueFields.some((field) => field.id === "demo.workflow"), false);
+    assert.equal(Object.hasOwn(initial.valueErrors, "demo.workflow"), false);
+    assert.equal(initial.valueFields.some((field) => field.id === "demo.processing"), false);
+    assert.deepEqual(initial.pageValues["canvas-generated-values"], { "demo.processing": "private hint" });
+    await writeFile(packagedProvider, originalProvider);
+    await assert.rejects(runtime.saveValue({ id: "demo.heading", value: "new", revision: initial.revision }),
+        /not editable/);
+    await assert.rejects(runtime.saveValue({ id: "demo.note", value: "x".repeat(81),
+        revision: initial.revision }), /Invalid value/);
+    await assert.rejects(runtime.saveValue({ id: "demo.note", value: false,
+        revision: initial.revision }), /Invalid value/);
+    await runtime.saveValue({ id: "demo.note", value: "Changed globally", revision: initial.revision });
+    await assert.rejects(runtime.saveValue({ id: "demo.note", value: "stale",
+        revision: initial.revision }), /changed in another panel/);
+    const afterEdit = await runtime.snapshot();
+    assert.equal(afterEdit.valueFields.find((field) => field.id === "demo.note").value, "Changed globally");
+    await mkdir(join(project, "specs", "001-first"), { recursive: true });
+    await mkdir(join(project, "specs", "002-second"), { recursive: true });
+    await runtime.save({ selected: "specs/001-first", revision: afterEdit.revision });
+    const first = await runtime.snapshot();
+    assert.equal(first.valueFields.find((field) => field.id === "demo.workflow").value,
+        "001-first (001-first)");
+    await writeFile(packagedProvider, "export function provideValue() { return 12; }");
+    const invalidProvider = await runtime.snapshot();
+    assert.equal(invalidProvider.valueFields.some((field) => field.id === "demo.workflow"), false);
+    assert.match(invalidProvider.valueErrors["demo.workflow"], /failed validation/);
+    await writeFile(packagedProvider, originalProvider);
+    await runtime.save({ selected: "specs/002-second", revision: first.revision });
+    const second = await runtime.snapshot();
+    assert.equal(second.valueFields.find((field) => field.id === "demo.workflow").value,
+        "002-second (002-second)");
+    assert.equal(second.valueFields.find((field) => field.id === "demo.note").value, "Changed globally");
+    const reopened = await createRuntime({ config, cwd: project, workspace, session });
+    t.after(() => reopened.close());
+    assert.equal((await reopened.snapshot()).valueFields.find((field) => field.id === "demo.note").value,
+        "Changed globally");
+    const noConsumer = { ...config, generatedPages: config.generatedPages.map((entry) => ({
+        ...entry, values: [],
+    })) };
+    const withoutConsumer = await createRuntime({
+        config: noConsumer, cwd: project, workspace, session,
+    });
+    t.after(() => withoutConsumer.close());
+    assert.deepEqual((await withoutConsumer.snapshot()).pageValues, {});
+    assert.equal((await withoutConsumer.snapshot()).valueFields.some(
+        (field) => field.id === "demo.processing"), false);
+    const stateKey = createHash("sha256").update(JSON.stringify([project, config.canvas.id])).digest("hex");
+    const statePath = join(workspace, "generated-canvases", stateKey, "state.json");
+    const savedState = await readFile(statePath, "utf8");
+    const invalidState = JSON.parse(savedState);
+    invalidState.values["demo.note"] = 42;
+    await writeFile(statePath, JSON.stringify(invalidState));
+    await assert.rejects(createRuntime({ config, cwd: project, workspace, session }),
+        /Saved canvas state is invalid/);
+    await writeFile(statePath, savedState);
+    const recovered = await createRuntime({ config, cwd: project, workspace, session });
+    t.after(() => recovered.close());
+    assert.equal((await recovered.snapshot()).valueFields.find(
+        (field) => field.id === "demo.note").value, "Changed globally");
 });
 
 test("paired control validates both adapters, typed values and portable generated display", async (t) => {

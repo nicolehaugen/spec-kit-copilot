@@ -63,7 +63,24 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             && item.kind === "generated.renderer");
         if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
         const assets = await Promise.all([definition, renderer].map(asset));
-        generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
+        generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer,
+            ...(page.values ? { values: page.values } : {}), assets });
+    }
+    const valueSources = [];
+    for (const value of model.valueSources ?? []) {
+        const definition = model.templates.find((entry) => entry.name === value.name
+            && entry.kind === "value.definition");
+        if (!definition) throw new Error(`${value.name}: missing validated value definition`);
+        const provider = value.source.kind === "provider"
+            ? model.templates.find((entry) => entry.name === value.source.module
+                && entry.kind === "value.provider") : null;
+        if (value.source.kind === "provider" && !provider) {
+            throw new Error(`${value.name}: missing validated value provider`);
+        }
+        valueSources.push({ id: value.id, label: value.label, schema: value.schema,
+            source: value.source, presentation: value.presentation,
+            ...(value.section ? { section: value.section } : {}),
+            assets: await Promise.all([definition, ...(provider ? [provider] : [])].map(asset)) });
     }
     const generatedControls = [];
     for (const contribution of controlContributions) {
@@ -103,6 +120,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),
+        ...(valueSources.length ? { valueSources } : {}),
     };
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");

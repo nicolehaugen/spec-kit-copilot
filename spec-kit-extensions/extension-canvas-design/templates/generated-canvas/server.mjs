@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { UserError } from "./files.mjs";
-import { phaseContract } from "./contract.mjs";
+import { phaseContract, valueContract } from "./contract.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
@@ -55,7 +55,8 @@ export function readConfig() {
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
                 || config.generatedPages.some((page) => !page || typeof page !== "object"
-                            || Array.isArray(page) || Object.keys(page).sort().join() !== "id,renderer,title"
+                            || Array.isArray(page) || Object.keys(page).some((key) =>
+                                !["id", "renderer", "title", "values"].includes(key))
                             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
                             || page.id === RESERVED_GENERATED_PAGE_ID
                             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
@@ -97,6 +98,7 @@ export function readConfig() {
         sections.set(section.id, section.title);
     }
     phaseContract(config);
+    valueContract(config);
     return config;
 }
 
@@ -168,6 +170,7 @@ export function renderHtml(config, token = "") {
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
     ${readOnlySections(config.readOnlyFields)}
+    ${config.valueSources?.length ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
     ${config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
         `<section class="phase-card" aria-label="${escapeHtml(label)}">
             <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
@@ -261,7 +264,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && url.pathname === "/api/artifact") return json(response, 200, await runtime.artifact({
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
             }));
-            if (request.method !== "POST" || !["/api/run", "/api/state", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
+            if (request.method !== "POST" || !["/api/run", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;
             if (origin && origin !== `http://127.0.0.1:${port()}`) throw new UserError("Untrusted request origin.", 403);
             if (!request.headers["content-type"]?.startsWith("application/json")) throw new UserError("Expected a JSON request.", 415);
@@ -277,6 +280,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (!input || typeof input !== "object" || Array.isArray(input)) throw new UserError("Expected a JSON object.");
             const result = url.pathname === "/api/run" ? await runtime.run(input, instanceId)
                 : url.pathname === "/api/state" ? await runtime.save(input)
+                    : url.pathname === "/api/values" ? await runtime.saveValue(input)
                     : url.pathname === "/api/reveal" ? await runtime.reveal(input)
                         : url.pathname === "/api/workflow/delete" ? await runtime.deleteWorkflow(input)
                             : await runtime.refresh();

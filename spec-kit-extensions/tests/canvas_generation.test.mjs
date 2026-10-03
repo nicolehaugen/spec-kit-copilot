@@ -285,6 +285,76 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
 });
 
+test("frozen named values reject tampered modules and package independently of their preset", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(requestPath, "utf8"));
+    const preset = new URL("../../spec-kit-presets/copilot-canvas-values-test/", import.meta.url);
+    const sourceId = "copilot-canvas-values-test";
+    const asset = async (name, kind, file) => {
+        const content = await readFile(new URL(file, preset));
+        return { name, kind, sourceId, hash: createHash("sha256").update(content).digest("hex"),
+            content: content.toString("base64") };
+    };
+    const definitions = [
+        ["heading", "canvas-value-heading"],
+        ["enabled", "canvas-value-enabled"],
+        ["choice", "canvas-value-choice"],
+        ["note", "canvas-value-note"],
+        ["workflow", "canvas-value-workflow"],
+        ["processing", "canvas-value-processing"],
+    ];
+    const valueSources = await Promise.all(definitions.map(async ([file, name]) => {
+        const definition = JSON.parse(await readFile(new URL(`values/${file}.json`, preset)));
+        const assets = [await asset(name, "value.definition", `values/${file}.json`)];
+        if (definition.source.kind === "provider") {
+            assets.push(await asset(definition.source.module, "value.provider", "values/workflow.mjs"));
+        }
+        const { schemaVersion: _version, ...source } = definition;
+        return { ...source, assets };
+    }));
+    const page = JSON.parse(await readFile(new URL("pages/values.json", preset)));
+    const request = { ...original, valueSources, generatedPages: [{
+        id: page.id, title: page.title, renderer: page.renderer, values: page.values,
+        assets: [
+            await asset(page.id, "generated.page", "pages/values.json"),
+            await asset(page.renderer, "generated.renderer", "pages/values.mjs"),
+        ],
+    }] };
+    const persist = async (candidate) => {
+        const { integrity: _old, ...payload } = candidate;
+        await writeFile(requestPath, JSON.stringify({ ...payload,
+            integrity: createHash("sha256").update(JSON.stringify(payload)).digest("hex") }));
+    };
+    const tampered = structuredClone(request);
+    tampered.valueSources.find((entry) => entry.id === "demo.workflow").assets[1].hash = "0".repeat(64);
+    await persist(tampered);
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen value source asset/);
+    await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    const unregistered = structuredClone(request);
+    unregistered.generatedPages[0].values = ["demo.missing"];
+    await persist(unregistered);
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen generated page assets|Invalid frozen generated pages|invalid frozen generated page definition/);
+    await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    await persist(request);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    const config = readConfig();
+    assert.equal(config.valueSources.length, definitions.length);
+    assert.deepEqual(config.generatedPages[0].values, ["demo.processing"]);
+    assert.equal(config.valueSources.find((entry) => entry.id === "demo.note").presentation, "stock.editable");
+    assert.equal(await readFile(join(sdk, "providers", "canvas-value-workflow-provider.mjs"), "utf8"),
+        await readFile(new URL("values/workflow.mjs", preset), "utf8"));
+    const portable = join(workspace, "portable-values");
+    const { cp } = await import("node:fs/promises");
+    await cp(sdk, portable, { recursive: true });
+    const { readConfig: readPortableConfig } = await import(pathToFileURL(join(portable, "server.mjs")).href);
+    assert.deepEqual(readPortableConfig().valueSources, config.valueSources);
+});
+
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
     const page = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/essentials.json", import.meta.url)));
     assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
