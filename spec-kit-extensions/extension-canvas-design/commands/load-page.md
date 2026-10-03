@@ -35,6 +35,12 @@ the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions and host-specific adapters must each be explicitly registered.
 
+## Canvas Design templates
+
+- `canvas-stock-description` — `designer.field`, `replace`
+- `canvas-stock-workflow-heading` — `designer.field`, `replace`
+- `canvas-stock-custom-slug` — `designer.field`, `replace`
+
 ## Steps
 
 1. Read this entire composed command first. Collect the defaults and every name
@@ -50,7 +56,7 @@ themselves. Control definitions and host-specific adapters must each be explicit
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.6)
+         (top layer from: extension:extension-canvas-design v0.1.7)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on

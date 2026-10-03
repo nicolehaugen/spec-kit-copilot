@@ -234,7 +234,7 @@ plugins/spec-kit-copilot-wizard/
     speckit-canvas-designer/           Designer Canvas provider
       pages.mjs                        loads resolved pages
       settings.mjs                     validates and saves settings
-      generation.mjs                   freezes today's Essentials-only request
+      generation.mjs                   freezes validated fields across enabled pages
       ui/app.js                        today's text/checkbox renderer
 
 spec-kit-extensions/extension-canvas-design/

@@ -66,13 +66,13 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.deepEqual(request.installed.presets, handoff.workflow.installed.presets);
     assert.deepEqual(request.values, values);
     assert.throws(() => validateEssentials(model, { ...values, "canvas.id": "../bad" }), /canvas.id/);
-    assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /Title/);
+    assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /canvas.displayName/);
     assert.throws(() => validateEssentials(model, { ...values, "workflowSlug.userProvided": "true" }), /workflowSlug.userProvided/);
     const { ["workflowSlug.userProvided"]: omitted, ...missingToggle } = values;
-    assert.throws(() => validateEssentials(model, missingToggle), /workflowSlug.userProvided/);
+    assert.throws(() => validateEssentials(model, missingToggle), /unexpected or missing fields/);
 });
 
-test("Designer-only values are validated but excluded from frozen and generated files", async (t) => {
+test("all enabled Designer values are validated and frozen, with only bound fields rendered", async (t) => {
     const { project, workspace } = await fixture(t);
     const contributedModel = { ...model,
         constraints: { ...model.constraints,
@@ -90,12 +90,15 @@ test("Designer-only values are validated but excluded from frozen and generated 
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
     assert.equal(frozen.values["billing.costCode"], "CC-481");
-    assert.equal(Object.hasOwn(frozen.values, "designer.note"), false);
+    assert.equal(frozen.values["designer.note"], "Designer only");
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const setup = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-setup.json"), "utf8"));
     assert.equal(setup.values["billing.costCode"], "CC-481");
-    assert.equal(Object.hasOwn(setup.values, "designer.note"), false);
+    assert.equal(setup.values["designer.note"], "Designer only");
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-config.json"), "utf8"));
+    assert.equal(config.readOnlyFields.some((field) => field.id === "designer.note"), false);
 });
 
 test("100 bounded generated fields materialize when the frozen request exceeds 128KB", async (t) => {
@@ -284,11 +287,14 @@ test("generation rejects malformed or mismatched frozen page assets before creat
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
     const page = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/essentials.json", import.meta.url)));
-    assert.deepEqual(page.fields.find((entry) => entry.id === "workflowSlug.userProvided"), {
-        id: "workflowSlug.userProvided", type: "boolean", default: false, label: "Allow custom slug",
+    assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
+    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-workflow-heading.json", import.meta.url)));
+    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-custom-slug.json", import.meta.url)));
+    assert.deepEqual(slug.field, {
+        id: "workflowSlug.userProvided", type: "boolean", control: "stock.checkbox", default: false, label: "Allow custom slug",
         description: "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.",
     });
-    assert.equal(page.fields.find((entry) => entry.id === "canvas.workflowListName").label, "Workflow header");
+    assert.equal(heading.field.label, "Workflow header");
 });
 
 test("legacy result state stays on disk but is not evaluated or shown", async (t) => {
@@ -478,4 +484,29 @@ test("existing canvases are preserved and tampered requests fail before creation
     await writeFile(path, JSON.stringify(request));
     await assert.rejects(materialize(two.project, two.workspace, handoff.handoffId, two.prepared.requestId),
         /integrity mismatch/);
+});
+
+test("generator rejects inconsistent all-page values and stock defaults before writing", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(path, "utf8"));
+    const failures = [
+        (request) => { request.values["other.page"] = "unexpected"; },
+        (request) => { delete request.values["canvas.displayName"]; },
+        (request) => { request.values["workflowSlug.userProvided"] = "true"; },
+        (request) => { request.values["canvas.description"] = "x".repeat(241); },
+        (request) => { request.canvas.description = "not the frozen value"; },
+        (request) => { request.fieldConstraints["canvas.description"].type = "object"; },
+    ];
+    for (const change of failures) {
+        const request = structuredClone(original);
+        change(request);
+        const { integrity: _old, ...payload } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen Designer field|Invalid frozen Designer fields|Invalid frozen canvas identity/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
 });

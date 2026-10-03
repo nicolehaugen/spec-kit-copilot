@@ -28,6 +28,9 @@ FILES = {
     "scripts/generate.mjs",
     "schemas/page.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
+    *(f"pages/stock-{name}.json" for name in (
+        "description", "workflow-heading", "custom-slug",
+    )),
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
         "phase-response.mjs",
@@ -86,7 +89,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [(template["name"], template["file"])
              for template in self.manifest["provides"]["templates"]],
             [(f"canvas-settings-{page}", f"pages/{filename}.json")
-             for page, filename in zip(PAGE_IDS, PAGE_NAMES)],
+             for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
+            + [(f"canvas-stock-{name}", f"pages/stock-{name}.json")
+               for name in ("description", "workflow-heading", "custom-slug")],
         )
         actual_files = set()
         for path in PACKAGE.rglob("*"):
@@ -162,13 +167,19 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [
                 {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
                 {"id": "canvas.displayName", "label": "Title"},
-                {"id": "canvas.description", "label": "Description"},
-                {"id": "canvas.workflowListName", "label": "Workflow header"},
-                {"id": "workflowSlug.userProvided", "type": "boolean", "default": False,
-                 "label": "Allow custom slug",
-                 "description": "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default."},
             ],
         )
+        stock = [json.loads((PACKAGE / f"pages/stock-{name}.json").read_text("utf-8"))
+                 for name in ("description", "workflow-heading", "custom-slug")]
+        self.assertEqual([item["order"] for item in stock], [10, 20, 30])
+        self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 3)
+        self.assertEqual([item["field"]["id"] for item in stock],
+                         ["canvas.description", "canvas.workflowListName",
+                          "workflowSlug.userProvided"])
+        self.assertEqual(stock[-1]["field"]["default"], False)
+        for name in ("description", "workflow-heading", "custom-slug"):
+            self.assertIn(f"`canvas-stock-{name}` — `designer.field`, `replace`",
+                          self.command)
         self.assertTrue(all(page["fields"] == [] for page in self.pages[1:]))
         field_ids = [field["id"] for page in self.pages for field in page["fields"]]
         self.assertEqual(len(field_ids), len(set(field_ids)))
