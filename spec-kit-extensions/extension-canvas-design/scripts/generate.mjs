@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -74,7 +75,7 @@ function within(root, path) {
 
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
-        generatedPages, generatedControls } = request;
+        generatedPages, generatedControls, valueSources } = request;
     validateFrozenValues(values, fieldConstraints);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -132,6 +133,82 @@ function configuration(request) {
         }
         sections.set(section.id, section.title);
     }
+    if (valueSources !== undefined && (!Array.isArray(valueSources) || valueSources.length > 100
+        || new Set(valueSources.map((item) => item?.id)).size !== valueSources.length)) {
+        throw new Error("Invalid frozen value sources");
+    }
+    const frozenIds = new Set([...Object.keys(fieldConstraints), ...(valueSources ?? []).map((item) => item?.id)]);
+    if (frozenIds.size !== Object.keys(fieldConstraints).length + (valueSources?.length ?? 0)) {
+        throw new Error("Frozen value source collides with a Designer field");
+    }
+    const generatedIds = new Set([
+        ...(generatedFields ?? []).map((item) => item.id),
+        ...(valueSources ?? []).map((item) => item?.id),
+    ]);
+    const valueModules = new Map();
+    for (const item of valueSources ?? []) {
+        if (!item || typeof item !== "object" || Array.isArray(item)
+            || Object.keys(item).some((key) => !["id", "label", "schema", "source",
+                "presentation", "section", "assets"].includes(key))
+            || !fieldPattern.test(item.id)
+            || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+            || !["stock.readonly", "stock.editable", "processing-only"].includes(item.presentation)
+            || !item.source || typeof item.source !== "object" || Array.isArray(item.source)
+            || !(item.source.kind === "constant" && Object.keys(item.source).sort().join() === "kind,value"
+                || item.source.kind === "provider" && Object.keys(item.source).sort().join() === "kind,module"
+                    && typeof item.source.module === "string"
+                    && /^[a-z][a-z0-9-]{0,79}$/.test(item.source.module))
+            || (item.section !== undefined && (!item.section || typeof item.section !== "object"
+                || Object.keys(item.section).sort().join() !== "id,title"
+                || typeof item.section.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(item.section.id)
+                || typeof item.section.title !== "string" || !item.section.title.trim()
+                || item.section.title.length > 120))
+            || !Array.isArray(item.assets) || item.assets.length !== (item.source?.kind === "provider" ? 2 : 1)
+            || item.assets[0]?.kind !== "value.definition"
+            || item.assets[1] && (item.assets[1].kind !== "value.provider"
+                || item.assets[1].name !== item.source.module)
+            || item.source?.kind === "provider" && item.presentation === "stock.editable") {
+            throw new Error("Invalid frozen value source registration");
+        }
+        for (const asset of item.assets) {
+            if (!asset || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+                || typeof asset.name !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
+                || typeof asset.sourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+                || typeof asset.content !== "string"
+                || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+                || asset.content.length > 44 * 1024
+                || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash) {
+                throw new Error(`Invalid frozen value source asset: ${item.id}`);
+            }
+        }
+        let definition;
+        try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+        catch { throw new Error(`${item.id}: invalid frozen value definition`); }
+        if (!isDeepStrictEqual(definition, {
+            schemaVersion: 1, id: item.id, label: item.label, schema: item.schema,
+            source: item.source, presentation: item.presentation,
+            ...(item.section ? { section: item.section } : {}),
+        })) throw new Error(`${item.id}: frozen value definition differs from registration`);
+        validateFrozenValues({ [item.id]: item.source.kind === "constant"
+            ? item.source.value : item.schema.type === "string" ? ""
+                : item.schema.type === "boolean" ? false
+                    : Object.fromEntries(Object.entries(item.schema.properties ?? {})
+                        .map(([key, allowed]) => [key, allowed[0]])) },
+        { [item.id]: item.schema });
+        if (item.source.kind === "provider") {
+            const prior = valueModules.get(item.source.module);
+            if (prior && prior !== item.assets[1].hash) {
+                throw new Error(`Conflicting frozen value provider: ${item.source.module}`);
+            }
+            valueModules.set(item.source.module, item.assets[1].hash);
+        }
+        if (item.section) {
+            if (sections.has(item.section.id) && sections.get(item.section.id) !== item.section.title) {
+                throw new Error(`Conflicting frozen generated section: ${item.section.id}`);
+            }
+            sections.set(item.section.id, item.section.title);
+        }
+    }
     if (generatedPages !== undefined
         && (!Array.isArray(generatedPages) || generatedPages.length > 30
             || new Set(generatedPages.map((page) => page?.id)).size !== generatedPages.length
@@ -140,11 +217,14 @@ function configuration(request) {
     }
     for (const page of generatedPages ?? []) {
         if (!page || typeof page !== "object" || Array.isArray(page)
-            || Object.keys(page).sort().join() !== "assets,id,renderer,title"
+            || Object.keys(page).some((key) => !["assets", "id", "renderer", "title", "values"].includes(key))
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             || page.id === RESERVED_GENERATED_PAGE_ID
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
+            || (page.values !== undefined && (!Array.isArray(page.values)
+                || page.values.length > 100 || new Set(page.values).size !== page.values.length
+                || page.values.some((id) => !generatedIds.has(id))))
             || !Array.isArray(page.assets) || page.assets.length !== 2
             || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.page"
             || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.renderer"
@@ -162,9 +242,11 @@ function configuration(request) {
         let definition;
         try { definition = JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8")); }
         catch { throw new Error(`${page.id}: invalid frozen generated page definition`); }
-        if (!definition || Object.keys(definition).sort().join() !== "id,renderer,schemaVersion,title"
+        if (!definition || Object.keys(definition).some((key) =>
+            !["id", "renderer", "schemaVersion", "title", "values"].includes(key))
             || definition.schemaVersion !== 1 || definition.id !== page.id
-            || definition.renderer !== page.renderer || definition.title !== page.title) {
+            || definition.renderer !== page.renderer || definition.title !== page.title
+            || JSON.stringify(definition.values) !== JSON.stringify(page.values)) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
         }
     }
@@ -231,8 +313,13 @@ function configuration(request) {
         checklist: "specs/<slug>/checklists/<name>.md",
     };
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
-        ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer }) =>
-            ({ id, title, renderer })) } : {}),
+        ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer, values: declared }) =>
+            ({ id, title, renderer, ...(declared ? { values: declared } : {}) })) } : {}),
+        ...(valueSources?.length ? { valueSources: valueSources.map(
+            ({ id, label, schema, source, presentation, section, assets }) => ({
+                id, label, schema, source, presentation, provenance: assets[0].sourceId,
+                ...(section ? { section } : {}),
+            })) } : {}),
         ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>
             ({ id, label, value: values[id], ...(section ? { section } : {}) })) } : {}),
         ...(generatedControls?.length ? { generatedControls: generatedControls.map(
@@ -299,6 +386,11 @@ export async function materialize(project, workspace, handoffId, requestId) {
         { filename: `${item.assets[0].name}.json`, bytes: Buffer.from(item.assets[0].content, "base64") },
         { filename: `${item.assets[1].name}.mjs`, bytes: Buffer.from(item.assets[1].content, "base64") },
     ]);
+    const providerFiles = [...new Map((request.valueSources ?? []).filter(
+        (item) => item.source.kind === "provider").map((item) => [
+        item.source.module, { filename: `${item.source.module}.mjs`,
+            bytes: Buffer.from(item.assets[1].content, "base64") },
+    ])).values()];
     const distinctControlFiles = new Map();
     for (const file of controlFiles) {
         if (distinctControlFiles.has(file.filename)
@@ -332,6 +424,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
     await mkdir(join(target, "ui"));
     if (pageFiles.length) await mkdir(join(target, "pages"));
     if (controlFiles.length) await mkdir(join(target, "controls"));
+    if (providerFiles.length) await mkdir(join(target, "providers"));
     for (const { filename, bytes } of pageFiles) {
         const path = join(target, "pages", filename);
         await writeFile(path, bytes, { flag: "wx" });
@@ -341,6 +434,11 @@ export async function materialize(project, workspace, handoffId, requestId) {
         const path = join(target, "controls", filename);
         await writeFile(path, bytes, { flag: "wx" });
         if (filename.endsWith(".mjs")) checkSyntax(path);
+    }
+    for (const { filename, bytes } of providerFiles) {
+        const path = join(target, "providers", filename);
+        await writeFile(path, bytes, { flag: "wx" });
+        checkSyntax(path);
     }
     for (const [file, content] of files) {
         if (file !== "extension.mjs") {

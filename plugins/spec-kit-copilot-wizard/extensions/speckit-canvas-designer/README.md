@@ -59,6 +59,15 @@ Changed assets require reopening Designer. The browser reports non-function
 failures beside the affected control. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
+Registered `value.definition` JSON templates join the same field-ID collision
+registry and declare a typed constant or a workflow-scoped provider, plus
+read-only, runtime-editable, or processing-only presentation. A provider must
+have its own replace-only `value.provider` `.mjs` registration with a
+`provideValue` export. Designer validates the declaration and module syntax,
+but does not execute providers; Generate freezes their bytes and hashes for
+packaging. Generated pages may declare the IDs they consume in `values`.
+Runtime-editable values belong to the generated canvas shell, not to a
+particular workflow's drafts.
 Save rejects stale revisions and invalid values, and reports failures without
 discarding edits. Generate validates and freezes fields on every enabled page
 while requiring non-reserved Canvas ID and Title on Essentials, and dispatches the
@@ -66,7 +75,7 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.7 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.8 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

@@ -2,14 +2,63 @@ import { createHash, randomUUID } from "node:crypto";
 import { readdir, realpath, lstat, rm } from "node:fs/promises";
 import { posix } from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+import { createContext, runInContext } from "node:vm";
 import { UserError, confined, readBounded, directories, atomicJson, safePath, slugPattern } from "./files.mjs";
-import { phaseContract } from "./contract.mjs";
+import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 
+if (!isMainThread && workerData?.canvasValueProvider) {
+    try {
+        const { source, workflow } = workerData.canvasValueProvider;
+        const body = source.replace(/(^|\n)\s*export\s+(?=(?:async\s+)?function\s+provideValue\b|const\s+provideValue\b)/g, "$1");
+        const context = createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false } });
+        const serialized = runInContext(
+            `"use strict"; const workflow = Object.freeze(JSON.parse(${JSON.stringify(JSON.stringify(workflow))}));\n`
+            + `${body}\n`
+            + "if (typeof provideValue !== 'function') throw new Error('Missing provideValue export');\n"
+            + "const result = provideValue({ workflow });\n"
+            + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
+            + "JSON.stringify(result);",
+            context, { timeout: 300 });
+        if (typeof serialized !== "string" || serialized.length > 8192) throw new Error("Invalid provider result");
+        parentPort.postMessage({ value: JSON.parse(serialized) });
+    } catch (error) {
+        parentPort.postMessage({ error: error.message });
+    }
+}
+
+async function evaluateProvider(module, workflow) {
+    const source = await readBounded(fileURLToPath(new URL(".", import.meta.url)),
+        `providers/${module}.mjs`, 32 * 1024);
+    return new Promise((resolve, reject) => {
+        const worker = new Worker(new URL(import.meta.url), {
+            workerData: { canvasValueProvider: { source, workflow } },
+            execArgv: [],
+            resourceLimits: { maxOldGenerationSizeMb: 48, maxYoungGenerationSizeMb: 16 },
+        });
+        let finished = false;
+        const timer = setTimeout(() => finish(new Error("Provider exceeded its execution limit")), 2000);
+        function finish(error, value) {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            void worker.terminate();
+            if (error) reject(error);
+            else resolve(value);
+        }
+        worker.once("message", (result) => finish(result.error ? new Error(result.error) : null, result.value));
+        worker.once("error", (error) => finish(error));
+        worker.once("exit", (code) => finish(new Error(`Provider exited before returning a value (${code}).`)));
+    });
+}
+
 const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null, slug: "",
-    name: "", names: {}, drafts: {}, runs: [] });
+    name: "", names: {}, drafts: {}, runs: [], values: {} });
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
     const phases = phaseContract(config);
+    const valueFields = valueContract(config);
     const key = createHash("sha256").update(JSON.stringify([cwd, config.canvas.id])).digest("hex");
     const statePath = `generated-canvases/${key}/state.json`;
     let state;
@@ -35,7 +84,13 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                     && (typeof run.response !== "string" || Buffer.byteLength(run.response) > RESPONSE_LIMIT))
                 || (run.responseError !== undefined && run.responseError !== null && typeof run.responseError !== "string")
                 || (run.messageId !== null && typeof run.messageId !== "string"))
-            || Object.values(state.drafts).some((draft) => typeof draft !== "string" || draft.length > 32000)) {
+            || Object.values(state.drafts).some((draft) => typeof draft !== "string" || draft.length > 32000)
+            || (state.values !== undefined && (!state.values || typeof state.values !== "object"
+                || Array.isArray(state.values) || Object.entries(state.values).some(([id, value]) => {
+                    const field = valueFields.find((entry) => entry.id === id && entry.presentation === "stock.editable");
+                    if (!field) return true;
+                    try { validateValue(field.schema, value, id); return false; } catch { return true; }
+                })))) {
             throw new UserError("Saved canvas state is invalid. Restore its state.json before continuing.");
         }
     } catch (error) {
@@ -162,6 +217,35 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     async function snapshot() {
         const entries = await items();
         const item = state.selected;
+        const selectedWorkflow = item === "__new__" ? null : entries.find((entry) => entry.id === item);
+        const visibleValues = [], pageValues = {}, valueErrors = {};
+        for (const field of valueFields) {
+            if (field.source.kind === "provider" && !selectedWorkflow) continue;
+            let value;
+            try {
+                if (field.source.kind === "provider") {
+                    value = await evaluateProvider(field.source.module, {
+                        id: selectedWorkflow.id, slug: selectedWorkflow.slug,
+                        label: selectedWorkflow.label,
+                    });
+                } else if (field.presentation === "stock.editable") {
+                    value = Object.hasOwn(state.values ?? {}, field.id) ? state.values[field.id] : field.source.value;
+                } else value = field.source.value;
+                value = validateValue(field.schema, value, field.id);
+            } catch (error) {
+                valueErrors[field.id] = `Value ${field.label} could not be evaluated or failed validation.`;
+                await diagnostic(`Generated canvas value ${field.id} failed: ${error.message}`);
+                continue;
+            }
+            const entry = { id: field.id, label: field.label, schema: field.schema, value,
+                editable: field.presentation === "stock.editable",
+                ...(field.provenance ? { provenance: field.provenance } : {}),
+                ...(field.section ? { section: field.section } : {}) };
+            if (field.presentation !== "processing-only") visibleValues.push(entry);
+            for (const page of config.generatedPages ?? []) {
+                if (page.values?.includes(field.id)) (pageValues[page.id] ??= {})[field.id] = value;
+            }
+        }
         const statuses = {};
         for (const step of phases) {
             const run = runFor(step, item);
@@ -187,8 +271,22 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 error: run?.error ?? null };
         }
         return { ...structuredClone(state), userProvidesSlug: config.userProvidesSlug,
-            selected: item, runs: undefined, tagMatches: undefined,
-            phases, items: entries, statuses };
+            selected: item, runs: undefined, tagMatches: undefined, values: undefined,
+            phases, items: entries, statuses, valueFields: visibleValues, pageValues, valueErrors };
+    }
+    async function saveValue(input) {
+        if (!input || Object.keys(input).sort().join() !== "id,revision,value"
+            || typeof input.id !== "string" || !Number.isSafeInteger(input.revision)) {
+            throw new UserError("Invalid value update.");
+        }
+        const field = valueFields.find((entry) => entry.id === input.id && entry.presentation === "stock.editable");
+        if (!field) throw new UserError("This value is not editable.");
+        const value = validateValue(field.schema, input.value, field.id);
+        await update((next) => {
+            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before saving.", 409);
+            (next.values ??= {})[field.id] = value;
+        }, true);
+        return { revision: state.revision };
     }
     async function save(input) {
         if (deleting) throw new UserError("A workflow is being deleted. Refresh and try again.", 409);
@@ -477,6 +575,6 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         });
         return { message: "Opened the output folder." };
     }
-    return { snapshot, refresh, save, run, report, reportSlug, artifact, reveal, deleteWorkflow,
+    return { snapshot, refresh, save, saveValue, run, report, reportSlug, artifact, reveal, deleteWorkflow,
         close() { if (closed) return; closed = true; subscriptions.forEach((unsubscribe) => unsubscribe?.()); } };
 }

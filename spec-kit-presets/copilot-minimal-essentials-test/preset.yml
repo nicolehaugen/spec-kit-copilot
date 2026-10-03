@@ -3,7 +3,7 @@ schema_version: "1.0"
 preset:
   id: "copilot-minimal-essentials-test"
   name: "Copilot Minimal Essentials Test"
-  version: "0.1.0"
+  version: "0.1.1"
   description: "Test-only Canvas Designer Essentials with Canvas ID and Title."
   author: "spec-kit-copilot"
   license: "MIT"
