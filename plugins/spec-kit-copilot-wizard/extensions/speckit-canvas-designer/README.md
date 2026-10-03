@@ -39,7 +39,8 @@ Preset-registered stock text and checkbox fields render in their declared
 Designer page slot and are saved alongside built-in values. A registered
 `control.definition` for a typed object field must reference both a
 `designer.adapter` and `generated.adapter` replace-only template. Both modules
-export `mount`, `controlId`, and a matching `valueContract`. The Designer
+export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
+to one control definition; multiple fields may reuse that control. The Designer
 mount receives the field, draft value, and change callback; the generated
 mount receives the frozen value and displays it read-only in the declared
 `details.content` slot. Missing or incompatible control assets fail before

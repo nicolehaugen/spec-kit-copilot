@@ -1271,6 +1271,35 @@ test("paired control validates both adapters, typed values and portable generate
     assert.deepEqual(model.values["risk.rating"], null);
     assert.equal(model.generatedPages.length, 0);
     assert.equal(model.adapters["risk-matrix"], "canvas-control-risk-matrix-designer");
+    const controlDocument = JSON.parse(await readFile(templates[0].path, "utf8"));
+    const contributionDocument = JSON.parse(await readFile(templates[1].path, "utf8"));
+    const secondField = { ...contributionDocument, id: "risk-second-field",
+        field: { ...contributionDocument.field, id: "risk.second", label: "Second risk" } };
+    const secondFieldTemplate = { ...templates[1], name: "canvas-contributions-risk-second",
+        path: join(directory, "risk-second.json") };
+    await writeFile(secondFieldTemplate.path, JSON.stringify(secondField));
+    assert.equal((await load([...templates, secondFieldTemplate])).pages[0].fields
+        .filter((field) => field.control === "risk-matrix").length, 2);
+    const secondControlTemplate = { ...templates[0], name: "canvas-control-risk-other",
+        path: join(directory, "risk-other.json") };
+    await writeFile(secondControlTemplate.path, JSON.stringify({
+        ...controlDocument, id: "risk-other",
+    }));
+    await writeFile(secondFieldTemplate.path, JSON.stringify({
+        ...secondField, requires: [secondControlTemplate.name],
+        field: { ...secondField.field, control: "risk-other" },
+    }));
+    await assert.rejects(load([...templates, secondControlTemplate, secondFieldTemplate]),
+        /designer adapter belongs to both risk-matrix and risk-other/);
+    const secondDesignerAdapter = { ...templates[2], name: "canvas-control-risk-other-designer",
+        path: join(directory, "risk-other.mjs") };
+    await copyFile(templates[2].path, secondDesignerAdapter.path);
+    await writeFile(secondControlTemplate.path, JSON.stringify({
+        ...controlDocument, id: "risk-other",
+        adapters: { ...controlDocument.adapters, designer: secondDesignerAdapter.name },
+    }));
+    await assert.rejects(load([...templates, secondControlTemplate, secondFieldTemplate,
+        secondDesignerAdapter]), /generated adapter belongs to both risk-matrix and risk-other/);
     const designerAdapter = templates[2];
     const designerModule = await readFile(designerAdapter.path, "utf8");
     await writeFile(designerAdapter.path, `${designerModule}\nprocess.exit(57);`);

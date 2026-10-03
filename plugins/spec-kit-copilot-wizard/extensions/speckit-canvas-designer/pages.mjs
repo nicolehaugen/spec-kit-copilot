@@ -416,6 +416,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
     }
     const controls = loaded.filter((entry) => entry.kind === "control.definition");
+    const adapterOwners = new Map();
     for (const control of controls) {
         const fields = loaded.filter((entry) => entry.kind === "designer.field"
             && entry.document.field.control === control.document.id);
@@ -428,6 +429,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             if (!adapter || adapter.kind !== kind) {
                 throw new Error(`${control.name}: missing ${host} adapter ${control.document.adapters[host]}`);
             }
+            const owner = adapterOwners.get(adapter.name);
+            if (owner) {
+                throw new Error(`${adapter.name}: ${host} adapter belongs to both ${owner} and ${control.document.id}`);
+            }
+            adapterOwners.set(adapter.name, control.document.id);
         }
         for (const field of fields) {
             if (!field.document.generatedBinding || field.document.field.type !== "object") {
