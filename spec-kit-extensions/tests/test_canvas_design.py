@@ -110,20 +110,12 @@ class CanvasDesignPackageTests(unittest.TestCase):
                    ("description", "description"), ("workflow-heading", "workflow-heading"),
                    ("custom-slug", "custom-slug"), ("logo", "header-logo"),
                    ("logo-main-page", "main-page-logo"))]
-            + [(name, f"controls/stock-image/{file}") for name, file in (
-                ("canvas-stock-image", "control.json"),
-                ("canvas-stock-image-designer", "designer.mjs"),
-                ("canvas-stock-image-generated", "generated.mjs"),
-            )]
-            + [(name, f"controls/stock-text/{file}") for name, file in (
-                ("canvas-stock-text", "control.json"),
-                ("canvas-stock-text-designer", "designer.mjs"),
-                ("canvas-stock-text-generated", "generated.mjs"),
-            )]
-            + [(name, f"controls/stock-checkbox/{file}") for name, file in (
-                ("canvas-stock-checkbox", "control.json"),
-                ("canvas-stock-checkbox-designer", "designer.mjs"),
-            )],
+            + [(f"canvas-stock-{name}", f"controls/stock-{name}/control.json")
+               for name in ("image", "text", "checkbox")]
+            + [(f"canvas-stock-{name}-designer", f"controls/stock-{name}/designer.mjs")
+               for name in ("image", "text", "checkbox")]
+            + [(f"canvas-stock-{name}-generated", f"controls/stock-{name}/generated.mjs")
+               for name in ("image", "text")],
         )
         actual_files = set()
         for path in PACKAGE.rglob("*"):
