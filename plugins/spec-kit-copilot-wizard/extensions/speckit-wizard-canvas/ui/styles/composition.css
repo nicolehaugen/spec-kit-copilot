@@ -142,9 +142,9 @@
     font-size: 14px;
     line-height: 1;
     cursor: pointer;
-    border-radius: 50%;
-    width: 20px;
+    border-radius: 4px;
     height: 20px;
+    gap: 0.3rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -155,12 +155,15 @@
     background: var(--background-color-subtle, rgba(0, 0, 0, 0.06));
 }
 .comp-refresh-icon:disabled { cursor: default; opacity: 0.4; }
+.comp-refresh-icon span { display: inline-block; }
 .comp-refresh-icon[aria-busy="true"] {
     color: var(--accent-color);
+}
+.comp-refresh-icon[aria-busy="true"] span {
     animation: comp-refresh-spin 0.9s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-    .comp-refresh-icon[aria-busy="true"] { animation: none; }
+    .comp-refresh-icon[aria-busy="true"] span { animation: none; }
 }
 @keyframes comp-refresh-spin { to { transform: rotate(360deg); } }
 .comp-reload-skills-btn {

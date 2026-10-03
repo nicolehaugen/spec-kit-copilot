@@ -96,8 +96,9 @@ Phase cards list the Markdown files and folders their commands produce,
 including multiple outputs when the installed skill identifies them. The
 default output opens in the artifact viewer when the file exists; folders
 and not-yet-created files offer a link to an existing parent folder instead.
-The **Composition** refresh button rechecks installed skills and refreshes
-the phase output evidence; catalog install/remove actions refresh it as
+The **Composition** button reads **Refresh** when idle, whether or not the latest
+data is up to date; progress and retry messages appear beside it. It rechecks
+installed skills and refreshes the phase output evidence; catalog install/remove actions refresh it as
 part of their normal update. On the Phases tab, a prominent status row above
 the phase cards stays visible while pipeline or output inference is pending,
 briefly confirms completion, and remains visible with retry guidance if a

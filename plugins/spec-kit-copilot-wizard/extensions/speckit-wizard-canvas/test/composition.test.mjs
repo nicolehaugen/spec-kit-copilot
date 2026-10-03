@@ -45,7 +45,7 @@ import {
     setGraphPhaseCardDeps,
 } from "../ui/phase-card.js";
 import { buildExecutionReport, renderOutputRows } from "../ui/phase-contributors.js";
-import { compositionProgressText, reconcileCompositionRefresh } from "../ui/composition.js";
+import { compositionProgressText, reconcileCompositionRefresh, renderCompositionProgress } from "../ui/composition.js";
 import { PHASE_ORDER as RUNTIME_PHASE_ORDER } from "../canvas-runtime/wizard-phases.mjs";
 
 function makeScannerFs(files) {
@@ -214,6 +214,39 @@ test("refresh UI waits for backend completion and shows retry on failure", () =>
     } finally {
         state.compositionRequested = priorRequested;
         state.compositionRefreshId = priorId;
+    }
+});
+
+test("Composition leaves the Refresh button as the only idle label without hiding active progress", () => {
+    const previousDocument = globalThis.document;
+    const previousSnapshot = state.snapshot;
+    const previousRequested = state.compositionRequested;
+    const meta = { dataset: {} };
+    const label = { textContent: "" };
+    globalThis.document = { getElementById: (id) => ({
+        "comp-meta": meta, "comp-meta-text": label,
+    })[id] };
+    state.compositionRequested = false;
+    try {
+        for (const refreshStatus of ["ready", "up-to-date"]) {
+            state.snapshot = { refreshStatus };
+            renderCompositionProgress();
+            assert.equal(label.textContent, "");
+            assert.equal(meta.dataset.progress, "idle");
+        }
+        state.snapshot = { refreshStatus: "refreshing" };
+        renderCompositionProgress();
+        assert.equal(label.textContent, "Refreshing…");
+        assert.equal(meta.dataset.progress, "updating");
+        state.snapshot = { refreshStatus: "incomplete" };
+        renderCompositionProgress();
+        assert.equal(label.textContent, "Refresh incomplete — retry");
+        assert.equal(meta.dataset.progress, "incomplete");
+    } finally {
+        state.snapshot = previousSnapshot;
+        state.compositionRequested = previousRequested;
+        if (previousDocument === undefined) delete globalThis.document;
+        else globalThis.document = previousDocument;
     }
 });
 
