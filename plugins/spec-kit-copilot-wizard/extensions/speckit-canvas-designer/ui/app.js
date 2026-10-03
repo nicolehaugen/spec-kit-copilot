@@ -38,7 +38,7 @@ function validImage(value) {
 }
 
 function updateGenerate() {
-    const setup = model?.pages.find((page) => page.page === "canvas-settings-setup");
+    const setup = model?.pages.find((page) => page.page === "designer-essentials");
     const generationError = document.getElementById("generation-error");
     const failed = model?.pages.find((page) => page.error);
     const missingIdentity = model && !failed && (!setup || setup.enabled === false
@@ -76,10 +76,10 @@ generate.addEventListener("click", async () => {
             || value.length > rules.maxLength
             || (rules.pattern && !new RegExp(rules.pattern).test(value))
             || !value.trim()) {
-            renderPage("canvas-settings-setup");
+            renderPage("designer-essentials");
             const input = [...root.querySelectorAll("input")].find((item) => item.name === field);
             const hint = field === "canvas.id" ? model.pages
-                .find((page) => page.page === "canvas-settings-setup")?.fields
+                .find((page) => page.page === "designer-essentials")?.fields
                 .find((item) => item.id === field)?.description : "";
             showError(`Enter a valid ${field === "canvas.id" ? "Canvas ID" : "Title"} before generating.${hint ? ` ${hint}` : ""}`);
             input?.focus();
@@ -88,7 +88,7 @@ generate.addEventListener("click", async () => {
         }
         if (["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]
             .includes(draft["canvas.id"])) {
-            renderPage("canvas-settings-setup");
+            renderPage("designer-essentials");
             showError("Canvas ID is reserved. Choose a different Canvas ID before generating.");
             root.querySelector('[name="canvas.id"]')?.focus();
             return;
@@ -348,7 +348,7 @@ function applyState(next) {
             tabs.append(tab);
         }
         const selected = model.pages.find((page) => page.page === currentPage)
-            ?? model.pages.find((page) => page.page === "canvas-settings-setup")
+            ?? model.pages.find((page) => page.page === "designer-essentials")
             ?? model.pages[0];
         renderPage(selected.page);
         updateSave();

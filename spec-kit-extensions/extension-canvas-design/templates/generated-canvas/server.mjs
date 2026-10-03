@@ -80,10 +80,9 @@ export function readConfig() {
                                 || page.slots.length > 30
                                 || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
                                 || page.slots.some((slot) => !slot || typeof slot !== "object"
-                                    || Object.keys(slot).sort().join() !== "accepts,id"
+                                    || Object.keys(slot).join() !== "id"
                                     || typeof slot.id !== "string"
-                                    || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
-                                    || JSON.stringify(slot.accepts) !== '["asset"]'))))))
+                                    || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)))))))
         || (config.generatedPageAssets !== undefined
             && (!Array.isArray(config.generatedPageAssets)
                 || config.generatedPageAssets.length > 10
@@ -97,8 +96,7 @@ export function readConfig() {
                     || typeof asset.label !== "string" || !asset.label.trim() || asset.label.length > 120
                     || typeof asset.page !== "string" || typeof asset.slot !== "string"
                     || !config.generatedPages?.some((page) => page.id === asset.page
-                        && page.slots?.some((slot) => slot.id === asset.slot
-                            && slot.accepts.includes("asset")))
+                        && page.slots?.some((slot) => slot.id === asset.slot))
                     || !validImageAsset({ file: asset.file, hash: asset.hash, mime: asset.mime },
                         `asset-${createHash("sha256").update(asset.id).digest("hex").slice(0,24)}`))))
         || (config.generatedControls !== undefined

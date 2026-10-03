@@ -70,7 +70,7 @@ The **Canvas Design Specify Extension is the base contributor to declarative fie
 
 ## 4. Essentials: two required fields, optional contributions
 
-The core Essentials page (`canvas-settings-setup`) in the **Designer Canvas** contains only:
+The core Essentials page (`designer-essentials`) in the **Designer Canvas** contains only:
 
 | Required field | Invariant |
 | --- | --- |
@@ -267,8 +267,8 @@ spec-kit-extensions/extension-canvas-design/
   designer/tabs/essentials.json        required identity fields and an optional-field slot
   designer/tabs/artifacts.json         currently empty placeholder
   designer/tabs/appearance.json        currently empty placeholder
-  designer/settings/*.json             optional fields placed into Designer tabs
-  schemas/designer.default-tab-definition.schema.json  currently string/boolean fields
+  designer/essentials-settings/*.json  optional Essentials fields
+  schemas/designer.tab-definition.schema.json  currently string/boolean fields
   scripts/generate.mjs
   templates/generated-canvas/
     extension.mjs
@@ -294,8 +294,9 @@ spec-kit-extensions/extension-canvas-design/
     essentials.json                    core ID/name fields; optional-field slot
     artifacts.json                     phase-output review slot
     appearance.json                    palette/theme slot
-  designer/settings/
+  designer/essentials-settings/
     stock-essentials.json              optional Essentials fields
+  designer/settings/
     stock-artifacts.json               Artifacts page control registration
     stock-appearance.json              Appearance page control registration
   generated/
@@ -319,7 +320,7 @@ spec-kit-extensions/extension-canvas-design/
       feature.json
       generated.mjs                    setup UI, not package installer
   schemas/
-    designer.default-tab-definition.schema.json
+    designer.tab-definition.schema.json
     contribution.schema.json           proposed versioned contribution schema
   scripts/generate.mjs
   templates/generated-canvas/
@@ -374,20 +375,18 @@ For the future standalone Copilot plugin, those app files would be placed under 
 
 ## 13. Illustrative JSON contracts
 
-These examples describe the **proposed Canvas Design contract**, not the current `designer.default-tab-definition.schema.json`. Specify can resolve the JSON templates; the Designer Canvas interprets and validates their contents.
+These examples describe the **proposed Canvas Design contract**, not the current `designer.tab-definition.schema.json`. Specify can resolve the JSON templates; the Designer Canvas interprets and validates their contents.
 
 Core Essentials defines the required fields and a documented slot:
 
 ```json
 {
   "schemaVersion": 2,
-  "id": "canvas-settings-setup",
+  "id": "designer-essentials",
   "title": "Essentials",
   "slots": [
     {
-      "id": "essentials.options",
-      "accepts": ["field"],
-      "orderBy": ["order", "presetId", "id"]
+      "id": "essentials.options"
     }
   ],
   "fields": [
@@ -397,7 +396,7 @@ Core Essentials defines the required fields and a documented slot:
 }
 ```
 
-Here `presetId` comes from the resolved file's provenance (the base extension uses its own ID); `id` is the unique field or contribution item ID, not the reusable `control` type ID.
+The host sorts contributed settings by their `order`, then source ID and contribution ID for ties. A slot ID identifies the destination tab; it is not a control type.
 
 An optional stock field targets that slot:
 
@@ -425,7 +424,7 @@ An optional stock field targets that slot:
 
 Billing declares `billing.costCode` as a bounded string field with `control: "stock.text"` and a stock read-only generated binding. The base extension resolves `stock.text` and its Designer/generated adapters; Billing reuses those registrations without per-field adapter files. Each field's control ID selects exactly one resolved definition, with no separate contribution-level template dependency declaration; missing or duplicate definitions fail. Generate packages the winning generated adapter once. A **new** control such as the risk matrix in section 14 instead registers its own definition and paired adapters.
 
-The Canvas Design schemas should distinguish **ordinary fields**, **asset fields** such as Logo, and **feature settings** such as Setup confirm. A slot declares which kinds it accepts; providing JSON does not grant a page arbitrary capabilities.
+The Canvas Design schemas should distinguish **ordinary fields**, **asset fields** such as Logo, and **feature settings** such as Setup confirm. The host determines placement behavior from the setting and page contracts; providing JSON does not grant a page arbitrary capabilities.
 
 ## 14. Canonical Billing example, including the composed command
 
@@ -560,17 +559,17 @@ provides:
       file: commands/generate.md
       description: Materialize the validated frozen canvas app.
   templates:
-    - name: canvas-settings-setup
+    - name: designer-essentials
       file: designer/tabs/essentials.json
       description: Required canvas identity fields and Essentials slot.
-    - name: canvas-settings-artifacts
+    - name: designer-artifacts
       file: designer/tabs/artifacts.json
       description: Artifacts page and phase-output review slot.
-    - name: canvas-settings-appearance
+    - name: designer-appearance
       file: designer/tabs/appearance.json
       description: Appearance page and palette slot.
     - name: canvas-contributions-stock-essentials
-      file: designer/settings/stock-essentials.json
+      file: designer/essentials-settings/stock-essentials.json
       description: Optional stock Essentials fields.
     - name: canvas-contributions-stock-artifacts
       file: designer/settings/stock-artifacts.json
@@ -645,7 +644,7 @@ The appended command matches the base `load-page` command by its `type: command`
 
 ## 16. How Artifacts and Appearance fit
 
-The existing `canvas-settings-artifacts` and `canvas-settings-appearance` JSON files are currently **enabled Designer pages with empty `fields` arrays**. Their intended behavior fits the same page, slot, control, value, and generated-binding architecture. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
+The existing `designer-artifacts` and `designer-appearance` JSON files are currently **enabled Designer pages with empty `fields` arrays**. Their intended behavior fits the same page, slot, control, value, and generated-binding architecture. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
 
 | Page | Proposed stock Designer contribution | What Generate packages into the app |
 | --- | --- | --- |

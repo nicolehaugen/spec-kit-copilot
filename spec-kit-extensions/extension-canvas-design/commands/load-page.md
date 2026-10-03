@@ -12,12 +12,12 @@ do not guess or select another session's handoff.
 
 Load these default pages:
 
-- Essentials (`canvas-settings-setup`)
-- `canvas-settings-artifacts`
-- `canvas-settings-appearance`
+- Essentials (`designer-essentials`)
+- `designer-artifacts`
+- `designer-appearance`
 
 Use **Essentials** in progress messages and other user-facing descriptions of
-the first page. `canvas-settings-setup` remains its stable template ID for
+the first page. `designer-essentials` is its template ID for
 `specify preset resolve` and the Designer page input; do not rename the ID.
 
 Presets may add pages in sections titled **Additional Designer pages** anywhere
@@ -33,16 +33,16 @@ Each registration declares its Canvas Design kind (`designer.setting-definition`
 `generated.value-definition`, or `generated.computed-value-provider`) and strategy
 (`replace`). A `designer.setting-definition` can also
 register `stock.image` assets, bound to the generated `header.brand` or
-`workflow.intro` slot, or to a named `asset` slot on a registered generated
-page via `generatedBinding.page` and `.slot`. Each slot accepts one independent
+`workflow.intro` slot, or to a named slot on a registered generated
+page via `generatedBinding.page` and `.slot`. Each slot holds one independent
 image; the generated page renderer places a `data-asset-slot` element where
 the image belongs. The `stock.image` control definition and its paired
 Designer/generated adapters must be resolved alongside any image field.
 Generate packages the frozen image and winning generated adapter into the
 generated app; it never loads Specify at runtime.
-The three default Designer tabs have kind `designer.default-tab-definition`;
-explicit additional tabs have kind `designer.added-tab-definition`. Both use
-strategy `replace` (implicit for the extension's default page templates).
+All Designer tabs have kind `designer.tab-definition` and strategy `replace`
+(implicit for the extension's three required tabs). The required tabs are
+identified by their registered names, not by a separate kind.
 A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions, host-specific adapters, value definitions,
@@ -54,19 +54,19 @@ Computed-value providers are packaged, never evaluated by Designer.
 
 ## Canvas Design templates
 
-- `canvas-stock-description` — `designer.setting-definition`, `replace`
-- `canvas-stock-workflow-heading` — `designer.setting-definition`, `replace`
-- `canvas-stock-custom-slug` — `designer.setting-definition`, `replace`
-- `canvas-stock-logo` — `designer.setting-definition`, `replace`
-- `canvas-stock-logo-main-page` — `designer.setting-definition`, `replace`
-- `canvas-stock-image` — `shared.control-definition`, `replace`
-- `canvas-stock-image-designer` — `designer.control-adapter`, `replace`
-- `canvas-stock-image-generated` — `generated.control-adapter`, `replace`
-- `canvas-stock-text` — `shared.control-definition`, `replace`
-- `canvas-stock-text-designer` — `designer.control-adapter`, `replace`
-- `canvas-stock-text-generated` — `generated.control-adapter`, `replace`
-- `canvas-stock-checkbox` — `shared.control-definition`, `replace`
-- `canvas-stock-checkbox-designer` — `designer.control-adapter`, `replace`
+- `designer-essentials-description` — `designer.setting-definition`, `replace`
+- `designer-essentials-workflow-heading` — `designer.setting-definition`, `replace`
+- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
+- `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
+- `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
+- `shared-controls-image` — `shared.control-definition`, `replace`
+- `designer-control-adapter-image` — `designer.control-adapter`, `replace`
+- `generated-control-adapter-image` — `generated.control-adapter`, `replace`
+- `shared-controls-text` — `shared.control-definition`, `replace`
+- `designer-control-adapter-text` — `designer.control-adapter`, `replace`
+- `generated-control-adapter-text` — `generated.control-adapter`, `replace`
+- `shared-controls-checkbox` — `shared.control-definition`, `replace`
+- `designer-control-adapter-checkbox` — `designer.control-adapter`, `replace`
 
 ## Steps
 
@@ -82,7 +82,7 @@ Computed-value providers are packaged, never evaluated by Designer.
    opening Designer. Its order and winning files belong to Specify.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
-       canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
+       designer-essentials: C:\project\.specify\extensions\extension-canvas-design\designer\tabs\essentials.json
          (top layer from: extension:extension-canvas-design v0.1.16)
 
    Ignore leading indentation and record the complete path following the exact
@@ -107,8 +107,8 @@ Computed-value providers are packaged, never evaluated by Designer.
    `open_canvas({canvasId:"speckit-canvas-designer",
    extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer",
    instanceId:"designer-<handoffId>",input:{handoffId:"<handoffId>",
-   pages:[{"name":"<default-page-name>","path":"<resolved-path>","kind":"designer.default-tab-definition","strategy":"replace"},
-          {"name":"<additional-page-name>","path":"<resolved-path>","kind":"designer.added-tab-definition","strategy":"replace"},...],
+   pages:[{"name":"<default-page-name>","path":"<resolved-path>","kind":"designer.tab-definition","strategy":"replace"},
+          {"name":"<additional-page-name>","path":"<resolved-path>","kind":"designer.tab-definition","strategy":"replace"},...],
    templates:[{"name":"<asset-name>","path":"<resolved-path>","sourceId":"<Specify-reported-source-ID>","kind":"<declared-kind>","strategy":"replace"},...]}})`.
    Obtain each `sourceId` from that name's `top layer from:` metadata:
    map the exact versionless `project override` marker to `project`; for a

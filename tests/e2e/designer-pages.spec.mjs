@@ -14,7 +14,7 @@ import { materialize } from "../../spec-kit-extensions/extension-canvas-design/s
 import { renderHtml } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 
 const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer/tabs/", import.meta.url);
-const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer/settings/", import.meta.url);
+const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer/essentials-settings/", import.meta.url);
 const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
@@ -31,11 +31,11 @@ function supportsSpecifyVersion(output) {
 
 function scalarRegistrations(resolve) {
     return [
-        ["canvas-stock-text", "shared.control-definition"],
-        ["canvas-stock-text-designer", "designer.control-adapter"],
-        ["canvas-stock-text-generated", "generated.control-adapter"],
-        ["canvas-stock-checkbox", "shared.control-definition"],
-        ["canvas-stock-checkbox-designer", "designer.control-adapter"],
+        ["shared-controls-text", "shared.control-definition"],
+        ["designer-control-adapter-text", "designer.control-adapter"],
+        ["generated-control-adapter-text", "generated.control-adapter"],
+        ["shared-controls-checkbox", "shared.control-definition"],
+        ["designer-control-adapter-checkbox", "designer.control-adapter"],
     ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
 }
 
@@ -79,12 +79,12 @@ async function prepareScalarAdapters(project, state) {
     state.controls = [...(state.controls ?? []),
         ...await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
             JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extensionRoot), "utf8"))))];
-    state.adapters = { ...state.adapters, "stock.text": "canvas-stock-text-designer",
-        "stock.checkbox": "canvas-stock-checkbox-designer" };
+    state.adapters = { ...state.adapters, "stock.text": "designer-control-adapter-text",
+        "stock.checkbox": "designer-control-adapter-checkbox" };
     state.templates ??= [];
     for (const [name, file] of [
-        ["canvas-stock-text-designer", "stock-text"],
-        ["canvas-stock-checkbox-designer", "stock-checkbox"],
+        ["designer-control-adapter-text", "stock-text"],
+        ["designer-control-adapter-checkbox", "stock-checkbox"],
     ]) {
         const path = join(project, ".specify", "extensions", "extension-canvas-design",
             "controls", file, "designer.mjs");
@@ -116,7 +116,7 @@ async function startPreparedShell(state) {
                 "controls", "stock-image"), { recursive: true });
             await copyFile(new URL("controls/stock-image/designer.mjs", extensionRoot), path);
             const bytes = await readFile(path);
-            state.templates.push({ name: "canvas-stock-image-designer", path,
+            state.templates.push({ name: "designer-control-adapter-image", path,
                 hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.control-adapter" });
         }
         const shell = await startShell(handoff, state, { workspace, project });
@@ -151,7 +151,7 @@ test("Main page Logo upload explains rejection beside the picker and clears on r
     state.values[field.id] = "";
     state.controls = [JSON.parse(await readFile(
         new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
-    state.adapters = { "stock.image": "canvas-stock-image-designer" };
+    state.adapters = { "stock.image": "designer-control-adapter-image" };
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
@@ -215,10 +215,10 @@ test("configured image reports an incompatible Designer adapter beside its field
     state.values[field.id] = "";
     state.controls = [JSON.parse(await readFile(
         new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
-    state.adapters = { "stock.image": "canvas-stock-image-designer" };
+    state.adapters = { "stock.image": "designer-control-adapter-image" };
     const shell = await startPreparedShell(state);
     try {
-        await page.route(/\/adapters\/canvas-stock-image-designer\.mjs/, (route) =>
+        await page.route(/\/adapters\/designer-control-adapter-image\.mjs/, (route) =>
             route.fulfill({ contentType: "text/javascript", body:
                 'export const controlId = "wrong"; export const valueContract = { type: "image" }; export function mount() {}' }));
         await page.goto(shell.url);
@@ -277,11 +277,10 @@ test("isolated test preset resolves through Specify and renders its contributed 
             expect(source, output).not.toBeNull();
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
-        const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
-            "canvas-settings-appearance", "canvas-settings-pr1-test"]
+        const pages = ["designer-essentials", "designer-artifacts",
+            "designer-appearance", "canvas-settings-pr1-test"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: name === "canvas-settings-pr1-test"
-                    ? "designer.added-tab-definition" : "designer.default-tab-definition", strategy: "replace" }; });
+                return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contribution-pr1-test"),
             kind: "designer.setting-definition", strategy: "replace" },
         ...scalarRegistrations(resolve)];
@@ -364,11 +363,10 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
             expect(source, output).not.toBeNull();
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
-        const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
-            "canvas-settings-appearance", "canvas-settings-billing"]
+        const pages = ["designer-essentials", "designer-artifacts",
+            "designer-appearance", "canvas-settings-billing"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: name === "canvas-settings-billing"
-                    ? "designer.added-tab-definition" : "designer.default-tab-definition", strategy: "replace" }; });
+                return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contributions-billing"),
             kind: "designer.setting-definition", strategy: "replace" },
         ...scalarRegistrations(resolve)];
@@ -475,9 +473,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             expect(source, output).not.toBeNull();
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
-        const pages = ["canvas-settings-setup", "canvas-settings-artifacts", "canvas-settings-appearance"]
+        const pages = ["designer-essentials", "designer-artifacts", "designer-appearance"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: "designer.default-tab-definition", strategy: "replace" }; });
+                return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [
             ["canvas-control-risk-matrix", "shared.control-definition"],
             ["canvas-contributions-risk-designer", "designer.setting-definition"],
@@ -485,7 +483,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             ["canvas-control-risk-matrix-generated", "generated.control-adapter"],
         ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
         templates.push(...scalarRegistrations(resolve));
-        templates.push(...["canvas-stock-description", "canvas-stock-workflow-heading"]
+        templates.push(...["designer-essentials-description", "designer-essentials-workflow-heading"]
             .map((name) => ({ ...resolve(name), kind: "designer.setting-definition", strategy: "replace" })));
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -698,13 +696,13 @@ test("handoff cannot serve a loading shell without validated pages", async () =>
 });
 
 test("failed optional page shows safe diagnostics while Essentials remains editable", async ({ page }) => {
-    const shell = await openWithError(page, "canvas-settings-artifacts");
+    const shell = await openWithError(page, "designer-artifacts");
     try {
         await expect(page.getByRole("status")).toHaveText("Pages need attention (1)");
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         await id.fill("my-canvas");
-        await page.getByRole("tab", { name: "canvas-settings-artifacts (error)" }).click();
-        await expect(page.getByRole("heading", { name: "Could not load canvas-settings-artifacts" })).toBeVisible();
+        await page.getByRole("tab", { name: "designer-artifacts (error)" }).click();
+        await expect(page.getByRole("heading", { name: "Could not load designer-artifacts" })).toBeVisible();
         await expect(page.getByText("Resolved path: C:\\project\\.specify\\bad.json")).toBeVisible();
         await expect(page.getByText("Reason: Invalid JSON: <b>unexpected</b>")).toBeVisible();
         await expect(page.locator("#settings-page b")).toHaveCount(0);
@@ -777,11 +775,11 @@ test("Save validates values, persists edits and reports stale revisions", async 
 });
 
 test("failed Essentials remains selected with no identity fields; other tabs work", async ({ page }) => {
-    const shell = await openWithError(page, "canvas-settings-setup");
+    const shell = await openWithError(page, "designer-essentials");
     try {
-        await expect(page.getByRole("tab", { name: "canvas-settings-setup (error)" }))
+        await expect(page.getByRole("tab", { name: "designer-essentials (error)" }))
             .toHaveAttribute("aria-selected", "true");
-        await expect(page.getByRole("heading", { name: "Could not load canvas-settings-setup" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Could not load designer-essentials" })).toBeVisible();
         await expect(page.getByRole("textbox")).toHaveCount(0);
         await page.getByRole("tab", { name: "Artifacts" }).click();
         await expect(page.getByText("This template defines no fields.")).toBeVisible();
@@ -793,8 +791,8 @@ test("failed Essentials remains selected with no identity fields; other tabs wor
 
 test("failed Essentials stays selected when a custom page sorts before it", async ({ page }) => {
     const state = await model();
-    state.pages[0] = { page: "canvas-settings-setup", title: "canvas-settings-setup", order: 10,
-        error: { name: "canvas-settings-setup", path: "C:\\project\\.specify\\missing.json",
+    state.pages[0] = { page: "designer-essentials", title: "designer-essentials", order: 10,
+        error: { name: "designer-essentials", path: "C:\\project\\.specify\\missing.json",
             reason: "resolved page file is missing" } };
     state.pages.push({ page: "custom-settings", id: "custom-settings", title: "Custom",
         order: 5, fields: [] });
@@ -802,9 +800,9 @@ test("failed Essentials stays selected when a custom page sorts before it", asyn
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
-        await expect(page.getByRole("tab", { name: "canvas-settings-setup (error)" }))
+        await expect(page.getByRole("tab", { name: "designer-essentials (error)" }))
             .toHaveAttribute("aria-selected", "true");
-        await expect(page.getByRole("heading", { name: "Could not load canvas-settings-setup" }))
+        await expect(page.getByRole("heading", { name: "Could not load designer-essentials" }))
             .toBeVisible();
     } finally {
         await shell.close();

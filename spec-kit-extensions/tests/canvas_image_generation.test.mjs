@@ -31,8 +31,8 @@ async function setup(t, selected = [logo, logo, logo]) {
     await mkdir(handoffFolder, { recursive: true });
     await writeFile(join(handoffFolder, "handoff.json"), JSON.stringify(handoff));
     const names = [
-        ["canvas-stock-image", "shared.control-definition", "controls/stock-image/control.json"],
-        ["canvas-stock-image-generated", "generated.control-adapter", "controls/stock-image/generated.mjs"],
+        ["shared-controls-image", "shared.control-definition", "controls/stock-image/control.json"],
+        ["generated-control-adapter-image", "generated.control-adapter", "controls/stock-image/generated.mjs"],
     ];
     const templates = [];
     for (const [name, kind, file] of names) {
@@ -43,7 +43,7 @@ async function setup(t, selected = [logo, logo, logo]) {
             strategy: "replace", path: await realpath(path), hash: digest(bytes) });
     }
     const page = { schemaVersion: 1, id: "gallery", title: "Gallery", renderer: "gallery-renderer",
-        slots: [{ id: "gallery.logo", accepts: ["asset"] }] };
+        slots: [{ id: "gallery.logo" }] };
     const pageFiles = [
         ["gallery", "generated.added-page-definition", JSON.stringify(page)],
         ["gallery-renderer", "generated.added-page-renderer",
@@ -72,10 +72,10 @@ async function setup(t, selected = [logo, logo, logo]) {
             ...(index === 2 ? { page: "gallery" } : {}) },
     }));
     const model = { revision: "image-revision",
-        pages: [{ page: "canvas-settings-setup", fields: [
+        pages: [{ page: "designer-essentials", fields: [
             { id: "canvas.id" }, { id: "canvas.displayName" }] }],
         constraints: { ...baseConstraints, ...constraints }, templates, contributions,
-        controls: [{ id: "stock.image", adapters: { generated: "canvas-stock-image-generated" } }],
+        controls: [{ id: "stock.image", adapters: { generated: "generated-control-adapter-image" } }],
         generatedPages: [{ id: "gallery", name: "gallery", title: "Gallery",
             renderer: "gallery-renderer", slots: page.slots }] };
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
@@ -94,11 +94,11 @@ async function rewrite(requestPath, edit) {
 test("stock.image resolves a unique frozen definition by control ID", async (t) => {
     const { project, workspace, templates, model, values } = await setup(t);
     const missing = { ...model, templates: templates.filter((entry) =>
-        entry.name !== "canvas-stock-image") };
+        entry.name !== "shared-controls-image") };
     await assert.rejects(freezeGeneration({ model: missing, values, handoff, project, workspace }),
         /Missing paired stock.image definition or generated adapter/);
     const duplicate = { ...model, templates: [...templates, {
-        ...templates.find((entry) => entry.name === "canvas-stock-image"),
+        ...templates.find((entry) => entry.name === "shared-controls-image"),
         name: "another-stock-image",
     }] };
     await assert.rejects(freezeGeneration({ model: duplicate, values, handoff, project, workspace }),
@@ -112,16 +112,25 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig, renderHtml, createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     const config = readConfig();
-    assert.equal(config.imageControl.adapter, "canvas-stock-image-generated");
+    assert.equal(config.imageControl.adapter, "generated-control-adapter-image");
     assert.equal(config.generatedPageAssets.length, 1);
+    const configPath = join(sdk, "canvas-config.json");
+    const configText = await readFile(configPath, "utf8");
+    for (const obsolete of [{ accepts: ["asset"] }, { orderBy: ["order"] }]) {
+        const invalid = structuredClone(config);
+        invalid.generatedPages[0].slots[0] = { ...invalid.generatedPages[0].slots[0], ...obsolete };
+        await writeFile(configPath, JSON.stringify(invalid));
+        assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    }
+    await writeFile(configPath, configText);
     const html = renderHtml(config, "secret");
     assert.match(html, /data-stock-image="header.brand"/);
     assert.match(html, /data-stock-image="workflow.intro"/);
     assert.match(html, /gallery.logo/);
     assert.doesNotMatch(html, /<img src="\/assets\/logo/);
-    const packaged = join(sdk, "controls", "canvas-stock-image-generated.mjs");
+    const packaged = join(sdk, "controls", "generated-control-adapter-image.mjs");
     assert.deepEqual((await readdir(join(sdk, "controls"))).sort(),
-        ["canvas-stock-image-generated.mjs", "canvas-stock-image.json"]);
+        ["generated-control-adapter-image.mjs", "shared-controls-image.json"]);
     assert.equal(await readFile(packaged, "utf8"),
         await readFile(new URL("controls/stock-image/generated.mjs", source), "utf8"));
     const routes = createWorkflowRoutes(config, { token: "secret", runtime: null });
@@ -133,8 +142,8 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
         return new Promise((resolve) => server.close(resolve));
     });
     const url = `http://127.0.0.1:${server.address().port}`;
-    assert.equal((await fetch(`${url}/controls/canvas-stock-image-generated.mjs`)).status, 401);
-    assert.equal((await fetch(`${url}/controls/canvas-stock-image-generated.mjs?token=secret`)).status, 200);
+    assert.equal((await fetch(`${url}/controls/generated-control-adapter-image.mjs`)).status, 401);
+    assert.equal((await fetch(`${url}/controls/generated-control-adapter-image.mjs?token=secret`)).status, 200);
     assert.equal((await fetch(`${url}/assets/logo.png?token=secret`)).status, 200);
     assert.equal((await fetch(`${url}/assets/unlisted.png?token=secret`)).status, 503);
     const portable = join(workspace, "portable");
@@ -143,7 +152,7 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
         .readConfig().imageControl.hash, config.imageControl.hash);
     await writeFile(packaged, "export const controlId = 'tampered';");
     assert.throws(() => readConfig(), /adapter does not match its frozen hash/);
-    assert.equal((await fetch(`${url}/controls/canvas-stock-image-generated.mjs?token=secret`)).status, 500);
+    assert.equal((await fetch(`${url}/controls/generated-control-adapter-image.mjs?token=secret`)).status, 500);
     await writeFile(packaged, await readFile(new URL("controls/stock-image/generated.mjs", source)));
     await writeFile(join(sdk, "assets", "logo.png"), "tampered");
     assert.throws(() => readConfig(), /image does not match its frozen hash/);
@@ -175,8 +184,8 @@ test("missing Logo keeps diamond; frozen image and adapter tampering fail before
         candidate.generatedImageControl.assets[0].content = Buffer.from(JSON.stringify({
             schemaVersion: 1, id: "stock.image",
             value: { type: "image", maxBytes: 64, mimeTypes: ["image/png"] },
-            adapters: { designer: "canvas-stock-image-designer",
-                generated: "canvas-stock-image-generated" },
+            adapters: { designer: "designer-control-adapter-image",
+                generated: "generated-control-adapter-image" },
         })).toString("base64");
         candidate.generatedImageControl.assets[0].hash =
             digest(Buffer.from(candidate.generatedImageControl.assets[0].content, "base64"));
@@ -199,13 +208,13 @@ test("missing Logo keeps diamond; frozen image and adapter tampering fail before
     await writeFile(requestPath, JSON.stringify(request));
     await writeFile(templates[1].path, "export const controlId = 'changed';");
     await assert.rejects(freezeGeneration({
-        model: { revision: "changed", pages: [{ page: "canvas-settings-setup",
+        model: { revision: "changed", pages: [{ page: "designer-essentials",
             fields: [{ id: "canvas.id" }, { id: "canvas.displayName" }] }],
         constraints: request.fieldConstraints,
         contributions: [{ field: { id: "canvas.logo", type: "image", control: "stock.image" },
             generatedBinding: { presentation: "asset", slot: "header.brand" } }],
         templates, controls: [{ id: "stock.image",
-            adapters: { generated: "canvas-stock-image-generated" } }] },
+            adapters: { generated: "generated-control-adapter-image" } }] },
         values: request.values, handoff, project, workspace }), /generated asset changed/);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig, renderHtml } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
@@ -213,7 +222,7 @@ test("missing Logo keeps diamond; frozen image and adapter tampering fail before
     assert.equal(config.brandAsset, undefined);
     assert.match(renderHtml(config), /brand-mark" aria-hidden="true">&#9671;/);
     await assert.rejects(readFile(join(sdk, "assets", "logo.png")), { code: "ENOENT" });
-    assert.equal(config.imageControl.adapter, "canvas-stock-image-generated");
+    assert.equal(config.imageControl.adapter, "generated-control-adapter-image");
 });
 
 test("the shared image adapter mounts only its authorized presentation; gallery slots remain host-owned", async () => {
@@ -222,7 +231,7 @@ test("the shared image adapter mounts only its authorized presentation; gallery 
     const definition = JSON.parse(await readFile(new URL(
         "../extension-canvas-design/controls/stock-image/control.json", import.meta.url)));
     assert.equal(controlId, definition.id);
-    assert.equal(definition.adapters.generated, "canvas-stock-image-generated");
+    assert.equal(definition.adapters.generated, "generated-control-adapter-image");
     assert.deepEqual(valueContract, definition.value);
     assert.deepEqual(definition.value, { type: "image", maxBytes: 32768,
         mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] });
@@ -250,12 +259,12 @@ test("the shared image adapter mounts only its authorized presentation; gallery 
         const assets = [{ id: "gallery.logo", label: "Gallery Logo",
             slot: "gallery.logo", file: "asset-local.png" }];
         const mounted = [];
-        await mountPageAssets(content, [{ id: "gallery.logo", accepts: ["asset"] }],
+        await mountPageAssets(content, [{ id: "gallery.logo" }],
             assets, async (root, asset) => mounted.push([root, asset]));
         assert.deepEqual(mounted, [[slot, assets[0]]]);
         await assert.rejects(mountPageAssets(content, [], assets, async () => {}),
             /Unknown or duplicate generated asset slot/);
-        await assert.rejects(mountPageAssets(content, [{ id: "gallery.logo", accepts: ["asset"] }],
+        await assert.rejects(mountPageAssets(content, [{ id: "gallery.logo" }],
             assets, async () => { throw new Error("adapter failed"); }), /adapter failed/);
     } finally {
         globalThis.document = previousDocument;
@@ -263,7 +272,7 @@ test("the shared image adapter mounts only its authorized presentation; gallery 
 });
 
 test("generated host exposes adapter failure rather than hiding or replacing a configured Logo", async () => {
-    const registration = { dataset: { module: "/controls/canvas-stock-image-generated.mjs",
+    const registration = { dataset: { module: "/controls/generated-control-adapter-image.mjs",
         assets: '["logo.png"]' } };
     const field = { id: "canvas.logo", label: "Logo" };
     const asset = { file: "logo.png" };

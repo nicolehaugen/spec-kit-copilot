@@ -10,7 +10,7 @@ const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-
 const REQUEST_LIMIT = 512 * 1024;
 
 export function validateEssentials(model, values) {
-    const setup = model.pages.find((page) => page.page === "canvas-settings-setup");
+    const setup = model.pages.find((page) => page.page === "designer-essentials");
     if (!setup || setup.error || !Array.isArray(setup.fields)
         || required.some((id) => !setup.fields.some((field) => field.id === id))) {
         throw new Error("Essentials must load with Canvas ID and Title before generation");

@@ -17,25 +17,25 @@ project extension directory, then validates the result in place.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
-| `canvas-settings-setup` | Essentials | Required Canvas ID and Title |
-| `canvas-stock-description` | Essentials slot | Optional Description |
-| `canvas-stock-workflow-heading` | Essentials slot | Optional Workflow header |
-| `canvas-stock-custom-slug` | Essentials slot | Optional Allow custom slug |
-| `canvas-stock-logo` | Essentials slot | Optional small header logo |
-| `canvas-stock-logo-main-page` | Essentials slot | Optional larger main-page logo |
-| `canvas-stock-image` | Shared control | Image value contract and paired adapter names |
-| `canvas-stock-image-designer` | Designer | Upload, preview, replace, and remove images |
-| `canvas-stock-image-generated` | Generated app | Render packaged images in authorized slots |
-| `canvas-stock-text` | Shared control | String value contract and adapter names |
-| `canvas-stock-text-designer` | Designer | Edit text, including required Canvas ID and Title |
-| `canvas-stock-text-generated` | Generated app | Render visible text in authorized placements |
-| `canvas-stock-checkbox` | Shared control | Boolean value contract and Designer adapter name |
-| `canvas-stock-checkbox-designer` | Designer | Edit boolean settings |
-| `canvas-settings-artifacts` | Artifacts | Empty placeholder |
-| `canvas-settings-appearance` | Appearance | Empty placeholder |
+| `designer-essentials` | Essentials | Required Canvas ID and Title |
+| `designer-essentials-description` | Essentials slot | Optional Description |
+| `designer-essentials-workflow-heading` | Essentials slot | Optional Workflow header |
+| `designer-essentials-custom-slug` | Essentials slot | Optional Allow custom slug |
+| `designer-essentials-header-logo` | Essentials slot | Optional small header logo |
+| `designer-essentials-main-page-logo` | Essentials slot | Optional larger main-page logo |
+| `shared-controls-image` | Shared control | Image value contract and paired adapter names |
+| `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
+| `generated-control-adapter-image` | Generated app | Render packaged images in authorized slots |
+| `shared-controls-text` | Shared control | String value contract and adapter names |
+| `designer-control-adapter-text` | Designer | Edit text, including required Canvas ID and Title |
+| `generated-control-adapter-text` | Generated app | Render visible text in authorized placements |
+| `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
+| `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
+| `designer-artifacts` | Artifacts | Empty placeholder |
+| `designer-appearance` | Appearance | Empty placeholder |
 
 The Essentials core template lives in `designer/tabs/essentials.json`; its
-`canvas-settings-setup` ID stays stable for preset resolution.
+`designer-essentials` is the template ID used for preset resolution.
 Its required Canvas ID and Title are fixed fields that share the `stock.text`
 editor with optional text contributions; a preset cannot remove them by
 omitting an optional contribution. Field-specific length, requiredness, and
@@ -77,15 +77,15 @@ such as alt text in `context`. Neither adapter selects a slot or reads files.
 
 Preset-generated pages can also place a `stock.image` contribution. Declare a
 slot on the generated page, for example
-`"slots": [{"id": "hero.logo", "accepts": ["asset"]}]`, and bind the image
+`"slots": [{"id": "hero.logo"}]`, and bind the image
 field with `"control": "stock.image"` and
 `"generatedBinding": {"presentation": "asset",
 "page": "canvas-generated-gallery", "slot": "hero.logo"}`. The page renderer
 puts a `<div data-asset-slot="hero.logo"></div>` at the desired location; the
-generated host mounts the packaged image there, with the field label as its
-accessible description. The renderer may style the slot to choose the size
+generated host matches the slot ID and mounts the packaged image there, with
+the field label as its accessible description. The renderer may style the slot to choose the size
 and layout. Every page, field, and renderer must be explicitly registered as
-a named replace-only template. Unknown, duplicate, or incompatible slots fail
+a named replace-only template. Unknown or duplicate slots fail
 validation; a selected image whose slot is not rendered fails visibly when
 the generated page opens. Neither preset files nor the Canvas Design package
 are needed at runtime.
@@ -255,8 +255,7 @@ not the JSON document. No kind is inferred from a filename.
 
 | Kind | Shape | JSON Schema |
 | --- | --- | --- |
-| `designer.default-tab-definition` | Built-in Designer tab | [default tab](schemas/designer.default-tab-definition.schema.json) |
-| `designer.added-tab-definition` | Additional Designer tab | [added tab](schemas/designer.added-tab-definition.schema.json) |
+| `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
@@ -266,8 +265,8 @@ not the JSON document. No kind is inferred from a filename.
 | `generated.value-definition` | Generated constant or computed value | [generated value](schemas/generated.value-definition.schema.json) |
 | `generated.computed-value-provider` | Generated `.mjs` provider | Module contract below |
 
-Each JSON kind has a matching schema filename. The added-tab schema references
-the default-tab schema because the two kinds have the same document shape.
+Each JSON kind has a matching schema filename. The three required tabs are
+identified by their registered names; added tabs use the same document shape.
 These schemas describe document shapes, not the entire loader:
 the loader additionally verifies template-name/ID equality where applicable,
 cross-template references and slots, field collisions, schema-dependent constant

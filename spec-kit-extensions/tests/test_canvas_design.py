@@ -12,14 +12,13 @@ from zipfile import ZipFile
 
 import yaml
 from jsonschema import Draft202012Validator, ValidationError
-from referencing import Registry, Resource
 
 
 EXTENSIONS = Path(__file__).resolve().parents[1]
 EXTENSION_ID = "extension-canvas-design"
 PACKAGE = EXTENSIONS / EXTENSION_ID
 PAGE_NAMES = ("essentials", "artifacts", "appearance")
-PAGE_IDS = ("setup", "artifacts", "appearance")
+PAGE_IDS = PAGE_NAMES
 FILES = {
     "extension.yml",
     "README.md",
@@ -27,14 +26,13 @@ FILES = {
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
-    "schemas/designer.default-tab-definition.schema.json",
-    "schemas/designer.added-tab-definition.schema.json",
+    "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
     *(f"designer/tabs/{name}.json" for name in PAGE_NAMES),
-    *(f"designer/settings/{name}.json" for name in (
+    *(f"designer/essentials-settings/{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "header-logo", "main-page-logo",
     )),
     "controls/stock-image/control.json",
@@ -59,7 +57,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
     def setUpClass(cls):
         cls.manifest = yaml.safe_load((PACKAGE / "extension.yml").read_text("utf-8"))
         cls.catalog = json.loads((EXTENSIONS / "catalog.json").read_text("utf-8"))
-        cls.schema = json.loads((PACKAGE / "schemas/designer.default-tab-definition.schema.json").read_text("utf-8"))
+        cls.schema = json.loads((PACKAGE / "schemas/designer.tab-definition.schema.json").read_text("utf-8"))
         cls.validator = Draft202012Validator(cls.schema)
         cls.pages = [
             json.loads((PACKAGE / f"designer/tabs/{name}.json").read_text("utf-8"))
@@ -103,19 +101,18 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             [(template["name"], template["file"])
              for template in self.manifest["provides"]["templates"]],
-            [(f"canvas-settings-{page}", f"designer/tabs/{filename}.json")
+            [(f"designer-{page}", f"designer/tabs/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
-            + [(f"canvas-stock-{name}", f"designer/settings/{filename}.json")
-               for name, filename in (
-                   ("description", "description"), ("workflow-heading", "workflow-heading"),
-                   ("custom-slug", "custom-slug"), ("logo", "header-logo"),
-                   ("logo-main-page", "main-page-logo"))]
-            + [(f"canvas-stock-{name}", f"controls/stock-{name}/control.json")
-               for name in ("image", "text", "checkbox")]
-            + [(f"canvas-stock-{name}-designer", f"controls/stock-{name}/designer.mjs")
-               for name in ("image", "text", "checkbox")]
-            + [(f"canvas-stock-{name}-generated", f"controls/stock-{name}/generated.mjs")
-               for name in ("image", "text")],
+            + [(f"designer-essentials-{filename}", f"designer/essentials-settings/{filename}.json")
+               for filename in ("description", "workflow-heading", "custom-slug",
+                                "header-logo", "main-page-logo")]
+            + [(name, f"controls/stock-{control}/{filename}")
+               for control in ("image", "text", "checkbox")
+               for name, filename in [
+                   (f"shared-controls-{control}", "control.json"),
+                   (f"designer-control-adapter-{control}", "designer.mjs"),
+               ] + ([(f"generated-control-adapter-{control}", "generated.mjs")]
+                    if control != "checkbox" else [])],
         )
         actual_files = set()
         for path in PACKAGE.rglob("*"):
@@ -179,7 +176,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         for index, page in enumerate(self.pages):
             with self.subTest(page=page["id"]):
                 self.validator.validate(page)
-                self.assertEqual(page["id"], f"canvas-settings-{PAGE_IDS[index]}")
+                self.assertEqual(page["id"], f"designer-{PAGE_IDS[index]}")
                 self.assertEqual(page["order"], (index + 1) * 10)
                 self.assertTrue(page["enabled"])
         self.assertEqual(
@@ -193,7 +190,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
             ],
         )
-        stock = [json.loads((PACKAGE / f"designer/settings/{name}.json").read_text("utf-8"))
+        stock = [json.loads((PACKAGE / f"designer/essentials-settings/{name}.json").read_text("utf-8"))
                  for name in ("description", "workflow-heading", "custom-slug")]
         self.assertEqual([item["order"] for item in stock], [10, 20, 30])
         self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 3)
@@ -202,7 +199,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                           "workflowSlug.userProvided"])
         self.assertEqual(stock[-1]["field"]["default"], False)
         for name in ("description", "workflow-heading", "custom-slug"):
-            self.assertIn(f"`canvas-stock-{name}` — `designer.setting-definition`, `replace`",
+            self.assertIn(f"`designer-essentials-{name}` — `designer.setting-definition`, `replace`",
                           self.command)
         self.assertTrue(all(page["fields"] == [] for page in self.pages[1:]))
         field_ids = [field["id"] for page in self.pages for field in page["fields"]]
@@ -210,24 +207,18 @@ class CanvasDesignPackageTests(unittest.TestCase):
 
     def test_all_json_contract_schemas_and_fixtures(self):
         kinds = (
-            "designer.default-tab-definition", "designer.added-tab-definition",
+            "designer.tab-definition",
             "designer.setting-definition", "generated.added-page-definition",
             "shared.control-definition", "generated.value-definition",
         )
         schemas = {kind: json.loads((PACKAGE / f"schemas/{kind}.schema.json").read_text("utf-8"))
                    for kind in kinds}
-        registry = Registry().with_resource(
-            "designer.default-tab-definition.schema.json", Resource.from_contents(self.schema))
         preset_tabs = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/tabs/*.json"))
         preset_generated_pages = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/generated/pages/*.json"))
         fixtures = {
-            "designer.default-tab-definition": [PACKAGE / f"designer/tabs/{name}.json" for name in PAGE_NAMES]
-                + [path for path in preset_tabs if json.loads(path.read_text("utf-8")).get("id")
-                   in (f"canvas-settings-{name}" for name in PAGE_IDS)],
-            "designer.added-tab-definition": [path for path in preset_tabs
-                if json.loads(path.read_text("utf-8")).get("id")
-                not in (f"canvas-settings-{name}" for name in PAGE_IDS)],
-            "designer.setting-definition": list(PACKAGE.glob("designer/settings/*.json"))
+            "designer.tab-definition": [PACKAGE / f"designer/tabs/{name}.json" for name in PAGE_NAMES]
+                + preset_tabs,
+            "designer.setting-definition": list(PACKAGE.glob("designer/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
             "generated.added-page-definition": preset_generated_pages,
             "shared.control-definition": list(PACKAGE.glob("controls/*/control.json"))
@@ -240,11 +231,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
             for template in manifest.get("provides", {}).get("templates", []):
                 with self.subTest(preset=manifest_path.parent.name, template=template["name"]):
                     self.assertTrue((manifest_path.parent / template["file"]).is_file())
-        self.assertEqual(schemas["designer.added-tab-definition"]["$ref"],
-                         "designer.default-tab-definition.schema.json")
         for kind, schema in schemas.items():
             Draft202012Validator.check_schema(schema)
-            validator = Draft202012Validator(schema, registry=registry)
+            validator = Draft202012Validator(schema)
             for path in fixtures[kind]:
                 doc = json.loads(path.read_text("utf-8"))
                 with self.subTest(kind=kind, path=str(path)):
@@ -253,6 +242,16 @@ class CanvasDesignPackageTests(unittest.TestCase):
                         self.assertEqual(doc["$schema"], os.path.relpath(
                             PACKAGE / "schemas" / f"{kind}.schema.json",
                             path.parent).replace("\\", "/"))
+        for kind, obsolete in (
+            ("designer.tab-definition", {"accepts": ["field"]}),
+            ("designer.tab-definition", {"orderBy": ["order", "presetId", "id"]}),
+            ("generated.added-page-definition", {"accepts": ["asset"]}),
+        ):
+            page = json.loads(fixtures[kind][0].read_text("utf-8"))
+            page["slots"] = [{"id": "test.slot", **obsolete}]
+            with self.subTest(kind=kind, obsolete=obsolete):
+                with self.assertRaises(ValidationError):
+                    Draft202012Validator(schemas[kind]).validate(page)
         value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
         validator = Draft202012Validator(schemas["generated.value-definition"])
@@ -282,7 +281,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             },
             {
                 "type": "template",
-                "name": "canvas-settings-setup",
+                "name": "designer-essentials",
                 "file": "designer/tabs/essentials.json",
                 "description": "Replace Essentials with required identity fields only.",
                 "strategy": "replace",
@@ -294,27 +293,27 @@ class CanvasDesignPackageTests(unittest.TestCase):
                          {key: value for key, value in self.pages[0].items() if key != "$schema"})
         stock_section = (
             "## Canvas Design templates\n\n"
-            "- `canvas-stock-description` — `designer.setting-definition`, `replace`\n"
-            "- `canvas-stock-workflow-heading` — `designer.setting-definition`, `replace`\n"
-            "- `canvas-stock-custom-slug` — `designer.setting-definition`, `replace`\n"
-            "- `canvas-stock-logo` — `designer.setting-definition`, `replace`\n"
-            "- `canvas-stock-logo-main-page` — `designer.setting-definition`, `replace`\n"
-            "- `canvas-stock-image` — `shared.control-definition`, `replace`\n"
-            "- `canvas-stock-image-designer` — `designer.control-adapter`, `replace`\n"
-            "- `canvas-stock-image-generated` — `generated.control-adapter`, `replace`\n"
-            "- `canvas-stock-text` — `shared.control-definition`, `replace`\n"
-            "- `canvas-stock-text-designer` — `designer.control-adapter`, `replace`\n"
-            "- `canvas-stock-text-generated` — `generated.control-adapter`, `replace`\n"
-            "- `canvas-stock-checkbox` — `shared.control-definition`, `replace`\n"
-            "- `canvas-stock-checkbox-designer` — `designer.control-adapter`, `replace`\n\n"
+            "- `designer-essentials-description` — `designer.setting-definition`, `replace`\n"
+            "- `designer-essentials-workflow-heading` — `designer.setting-definition`, `replace`\n"
+            "- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`\n"
+            "- `designer-essentials-header-logo` — `designer.setting-definition`, `replace`\n"
+            "- `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`\n"
+            "- `shared-controls-image` — `shared.control-definition`, `replace`\n"
+            "- `designer-control-adapter-image` — `designer.control-adapter`, `replace`\n"
+            "- `generated-control-adapter-image` — `generated.control-adapter`, `replace`\n"
+            "- `shared-controls-text` — `shared.control-definition`, `replace`\n"
+            "- `designer-control-adapter-text` — `designer.control-adapter`, `replace`\n"
+            "- `generated-control-adapter-text` — `generated.control-adapter`, `replace`\n"
+            "- `shared-controls-checkbox` — `shared.control-definition`, `replace`\n"
+            "- `designer-control-adapter-checkbox` — `designer.control-adapter`, `replace`\n\n"
         )
         self.assertEqual(self.command.count(stock_section), 1)
         replaced = (fixture / "commands/load-page.md").read_text("utf-8")
-        self.assertIn("canvas-settings-setup", replaced)
+        self.assertIn("designer-essentials", replaced)
         self.assertIn("## Canvas Design templates", replaced)
-        self.assertIn("canvas-stock-text-designer", replaced)
-        self.assertNotIn("canvas-stock-custom-slug", replaced)
-        self.assertNotIn("canvas-stock-image", replaced)
+        self.assertIn("designer-control-adapter-text", replaced)
+        self.assertNotIn("designer-essentials-custom-slug", replaced)
+        self.assertNotIn("shared-controls-image", replaced)
         self.assertNotIn(manifest["preset"]["id"],
                          json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
                                     .read_text("utf-8"))["presets"])
@@ -387,10 +386,10 @@ class CanvasDesignPackageTests(unittest.TestCase):
             self.manifest["provides"]["commands"][0]["description"],
         )
         defaults = re.findall(
-            r"^- (?:Essentials \()?`(canvas-settings-[a-z]+)`(?:\))?$",
+            r"^- (?:Essentials \()?`(designer-[a-z]+)`(?:\))?$",
             self.command, re.M,
         )
-        self.assertEqual(defaults, [f"canvas-settings-{name}" for name in PAGE_IDS])
+        self.assertEqual(defaults, [f"designer-{name}" for name in PAGE_IDS])
         normalized = " ".join(self.command.split())
         for required in (
             "$ARGUMENTS", "`handoffId`",
@@ -410,8 +409,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             'open_canvas({canvasId:"speckit-canvas-designer"',
             'extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"',
             "open the official installed Copilot provider exactly once",
-            'pages:[{"name":"<default-page-name>","path":"<resolved-path>","kind":"designer.default-tab-definition","strategy":"replace"},',
-            '{"name":"<additional-page-name>","path":"<resolved-path>","kind":"designer.added-tab-definition","strategy":"replace"},...]',
+            'pages:[{"name":"<default-page-name>","path":"<resolved-path>","kind":"designer.tab-definition","strategy":"replace"},',
+            '{"name":"<additional-page-name>","path":"<resolved-path>","kind":"designer.tab-definition","strategy":"replace"},...]',
             'templates:[{"name":"<asset-name>","path":"<resolved-path>"',
             '"kind":"<declared-kind>","strategy":"replace"',
             "Submit all defaults, additional pages, and registered templates",

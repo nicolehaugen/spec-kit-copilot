@@ -5,7 +5,6 @@
   "description": "Configure the generated canvas's billing details.",
   "order": 35,
   "enabled": true,
-  "slots": [{"id": "billing.options", "accepts": ["field"],
-    "orderBy": ["order", "presetId", "id"]}],
+  "slots": [{"id": "billing.options"}],
   "fields": []
 }

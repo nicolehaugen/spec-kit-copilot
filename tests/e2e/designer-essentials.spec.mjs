@@ -23,9 +23,9 @@ async function openDesigner(page, fields, extraPage) {
         JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extension), "utf8"))));
     const state = { handoffId: "test", revision: "test", generationAvailable: true,
         settingsRevision: 0, persisted: false, templates: [], controls,
-        adapters: { "stock.text": "canvas-stock-text-designer",
-            "stock.checkbox": "canvas-stock-checkbox-designer" },
-        pages: [{ page: "canvas-settings-setup", title: "Essentials", order: 10,
+        adapters: { "stock.text": "designer-control-adapter-text",
+            "stock.checkbox": "designer-control-adapter-checkbox" },
+        pages: [{ page: "designer-essentials", title: "Essentials", order: 10,
             description: "Configure your canvas.", fields },
         ...(extraPage ? [extraPage] : [])],
         constraints: Object.fromEntries(ids.map((id) => [id, constraints[id]])),
@@ -38,8 +38,8 @@ async function openDesigner(page, fields, extraPage) {
         } else if (path === "/api/generate") {
             requests.push(route.request().postDataJSON());
             await route.fulfill({ status: 202, json: { target: ".github/extensions/test/" } });
-        } else if (path === "/adapters/canvas-stock-text-designer.mjs"
-            || path === "/adapters/canvas-stock-checkbox-designer.mjs") {
+        } else if (path === "/adapters/designer-control-adapter-text.mjs"
+            || path === "/adapters/designer-control-adapter-checkbox.mjs") {
             const name = path.includes("checkbox") ? "stock-checkbox" : "stock-text";
             await route.fulfill({ body: await readFile(new URL(`controls/${name}/designer.mjs`, extension)),
                 contentType: "text/javascript" });

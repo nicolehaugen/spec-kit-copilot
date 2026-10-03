@@ -1,7 +1,7 @@
 {
-  "$schema": "../../schemas/designer.default-tab-definition.schema.json",
+  "$schema": "../../schemas/designer.tab-definition.schema.json",
   "schemaVersion": 1,
-  "id": "canvas-settings-artifacts",
+  "id": "designer-artifacts",
   "title": "Artifacts",
   "description": "Configure canvas artifacts.",
   "order": 20,

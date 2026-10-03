@@ -58,11 +58,11 @@ Header logo, the existing brand mark remains unchanged. Without optional text
 fields, generated description, heading and custom slug default to
 `Spec Kit workflow canvas.`, `Workflows` and off.
 
-Preset-generated pages can publish `asset` slots and receive any registered
+Preset-generated pages can publish ID-only slots and receive any registered
 `stock.image` field by `generatedBinding.page` and `.slot`, independent of the
 field's Designer page. The renderer places a `data-asset-slot` element where it
-wants the image; the generated host mounts the packaged asset. Missing,
-incompatible, and duplicate placements fail explicitly. The generated host
+wants the image; the generated host matches the ID and mounts the packaged asset.
+Missing and duplicate placements fail explicitly. The generated host
 supplies an authorized URL and mount node to the packaged image adapter, which
 is shared across Header, Main, and preset placements. An absent Header logo
 retains the brand mark; a configured image with a failing adapter reports a

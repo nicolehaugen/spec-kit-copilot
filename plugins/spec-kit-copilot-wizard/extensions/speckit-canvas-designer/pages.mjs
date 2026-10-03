@@ -7,8 +7,8 @@ import { Script } from "node:vm";
 import { fingerprint } from "./handoff.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
-const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
-    "canvas-settings-appearance"];
+const REQUIRED_PAGES = ["designer-essentials", "designer-artifacts",
+    "designer-appearance"];
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
@@ -158,9 +158,9 @@ function buildModel(entries, schema) {
             }
             const slotIds = new Set();
             for (const slot of document.slots ?? []) {
-                if (slotIds.has(slot.id) || !slot.accepts.includes("field")
-                    || JSON.stringify(slot.orderBy) !== '["order","presetId","id"]') {
-                    throw new Error(`${name}: invalid or duplicate slot ${slot.id}`);
+                if (!slot || typeof slot !== "object" || Array.isArray(slot)
+                    || Object.keys(slot).join() !== "id" || slotIds.has(slot.id)) {
+                    throw new Error(`${name}: invalid or duplicate slot ${slot?.id}`);
                 }
                 slotIds.add(slot.id);
             }
@@ -201,8 +201,8 @@ function validateContribution(document, name, slots, fieldOrigins) {
         throw new Error(`${name}: invalid Canvas Design contribution`);
     }
     const slot = slots.get(document.slot)?.slot;
-    if (!slot || !slot.accepts.includes("field")) {
-        throw new Error(`${name}: unknown or incompatible Designer slot ${document.slot}`);
+    if (!slot) {
+        throw new Error(`${name}: unknown Designer slot ${document.slot}`);
     }
     const field = document.field;
     if (!field || typeof field !== "object" || Array.isArray(field)
@@ -324,9 +324,8 @@ function validateGeneratedPage(document, name) {
             || document.slots.length > 30
             || new Set(document.slots.map((slot) => slot?.id)).size !== document.slots.length
             || document.slots.some((slot) => !slot || typeof slot !== "object"
-                || Array.isArray(slot) || Object.keys(slot).sort().join() !== "accepts,id"
-                || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
-                || JSON.stringify(slot.accepts) !== '["asset"]')))) {
+                || Array.isArray(slot) || Object.keys(slot).join() !== "id"
+                || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))))) {
         throw new Error(`${name}: invalid generated page definition`);
     }
 }
@@ -579,9 +578,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (binding.page) {
             const page = loaded.find((item) => item.kind === "generated.added-page-definition"
                 && item.document.id === binding.page);
-            if (!page?.document.slots?.some((slot) =>
-                slot.id === binding.slot && slot.accepts.includes("asset"))) {
-                throw new Error(`${entry.name}: unknown or incompatible generated page asset slot ${binding.page}.${binding.slot}`);
+            if (!page?.document.slots?.some((slot) => slot.id === binding.slot)) {
+                throw new Error(`${entry.name}: unknown generated page asset slot ${binding.page}.${binding.slot}`);
             }
         }
         const key = `${binding.page ?? "workflow"}:${binding.slot}`;
@@ -678,7 +676,7 @@ async function context(project) {
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
     const schemaPath = join(specify, "extensions", "extension-canvas-design", "schemas",
-        "designer.default-tab-definition.schema.json");
+        "designer.tab-definition.schema.json");
     let schema;
     try {
         // Presets replace page content; the installed extension supplies the evolving validation contract.
@@ -690,7 +688,7 @@ async function context(project) {
             || !schema.properties.fields.items.properties) {
             throw new Error("Invalid shared Designer page schema");
         }
-        checkSchema({ schemaVersion: 1, id: "canvas-settings-setup", title: "Essentials",
+        checkSchema({ schemaVersion: 1, id: "designer-essentials", title: "Essentials",
             order: 10, fields: [{ id: "canvas.id", label: "Canvas ID" }] }, schema, "Designer page schema");
     } catch (error) {
         throw new Error(`Cannot load Canvas Design page schema at ${schemaPath}: ${error.message}. `
@@ -727,8 +725,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (!item || typeof item !== "object" || Array.isArray(item)
             || Object.keys(item).some((key) => !["name", "path", "kind", "strategy"].includes(key))
             || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
-            || item.kind !== (REQUIRED_PAGES.includes(item.name)
-                ? "designer.default-tab-definition" : "designer.added-tab-definition")
+            || item.kind !== "designer.tab-definition"
             || item.strategy !== "replace"
             || typeof item.path !== "string" || !item.path || item.path.length > 4096
             || /[\x00-\x1f\x7f]/.test(item.path)) throw new Error("Invalid Designer page name/path");

@@ -17,11 +17,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "accepts", "orderBy"],
+        "required": ["id"],
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z][a-z0-9.-]{0,79}$"},
-          "accepts": {"type": "array", "maxItems": 10, "items": {"enum": ["field"]}},
-          "orderBy": {"type": "array", "maxItems": 3, "items": {"type": "string"}}
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9.-]{0,79}$"}
         }
       }
     },

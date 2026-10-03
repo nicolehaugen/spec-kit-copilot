@@ -436,9 +436,8 @@ function configuration(request) {
                 || page.slots.length > 30
                 || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
                 || page.slots.some((slot) => !slot || typeof slot !== "object"
-                    || Object.keys(slot).sort().join() !== "accepts,id"
-                    || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
-                    || JSON.stringify(slot.accepts) !== '["asset"]')))
+                    || Object.keys(slot).join() !== "id"
+                    || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))))
             || !Array.isArray(page.assets) || page.assets.length !== 2
             || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.added-page-definition"
             || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.added-page-renderer"
@@ -467,7 +466,7 @@ function configuration(request) {
     }
     for (const image of generatedAssets ?? []) {
         if (image.page && !generatedPages?.some((page) => page.id === image.page
-            && page.slots?.some((slot) => slot.id === image.slot && slot.accepts.includes("asset")))) {
+            && page.slots?.some((slot) => slot.id === image.slot))) {
             throw new Error(`${image.id}: unknown generated page asset slot`);
         }
     }

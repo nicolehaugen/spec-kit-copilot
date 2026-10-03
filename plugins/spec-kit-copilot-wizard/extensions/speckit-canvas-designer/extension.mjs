@@ -68,8 +68,7 @@ const session = await joinSession({
                     type: "object", additionalProperties: false, required: ["name", "path", "kind", "strategy"],
                     properties: { name: { type: "string", pattern: PAGE_NAME },
                         path: { type: "string", minLength: 1, maxLength: 4096 },
-                        kind: { type: "string", enum: ["designer.default-tab-definition",
-                            "designer.added-tab-definition"] }, strategy: { const: "replace" } },
+                        kind: { const: "designer.tab-definition" }, strategy: { const: "replace" } },
                 } },
                 templates: { type: "array", maxItems: 100, items: {
                     type: "object", additionalProperties: false,

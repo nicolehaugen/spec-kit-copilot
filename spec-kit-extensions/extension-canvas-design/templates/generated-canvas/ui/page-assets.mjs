@@ -32,7 +32,7 @@ export async function mountPageAssets(content, slots, assets, mountImage) {
     const rendered = new Set();
     for (const target of content.querySelectorAll("[data-asset-slot]")) {
         const slotId = target.dataset.assetSlot;
-        if (!slots.some((slot) => slot.id === slotId && slot.accepts.includes("asset"))
+        if (!slots.some((slot) => slot.id === slotId)
             || rendered.has(slotId)) {
             throw new Error(`Unknown or duplicate generated asset slot: ${slotId}`);
         }
