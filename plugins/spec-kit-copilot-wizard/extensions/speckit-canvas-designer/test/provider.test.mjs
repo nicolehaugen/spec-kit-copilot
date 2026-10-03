@@ -1118,6 +1118,23 @@ test("generated-only page validates typed assets, freezes winners and packages w
     assert.deepEqual(loaded.pages.map((page) => page.page), defaults.pages.map((page) => page.page));
     assert.deepEqual(loaded.values, defaults.values);
     assert.deepEqual(loaded.generatedPages, [{ name: definition.id, ...definition }]);
+    const projectPages = pages.map((page) => ({ ...page, sourceId: "project" }));
+    const projectRegistration = () => ({ kind: "template", stack: [{
+        active: true, sourceId: "_", layer: "project", strategy: "replace",
+    }] });
+    assert.deepEqual((await loadResolvedDesignerPages(handoff, project, entries,
+        projectPages, projectRegistration)).generatedPages, loaded.generatedPages);
+    for (const [assets, source] of [
+        [projectPages, { sourceId: "_", layer: "preset" }],
+        [pages, { sourceId: "copilot-generated-page-test", layer: "project" }],
+        [pages.map((page) => ({ ...page, sourceId: "extension:copilot-generated-page-test" })),
+            { sourceId: "copilot-generated-page-test", layer: "preset" }],
+    ]) {
+        await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, assets,
+            () => ({ kind: "template", stack: [{
+                active: true, ...source, strategy: "replace",
+            }] })), /replace-only Specify template/);
+    }
     for (const candidate of [
         [pages.slice(0, 1), /missing generated renderer/],
         [pages.slice(1), /renderer must belong to exactly one page/],
