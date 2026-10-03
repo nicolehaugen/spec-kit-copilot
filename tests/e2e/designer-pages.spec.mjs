@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test, expect } from "./playwright.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
@@ -15,6 +16,7 @@ const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/
 const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
+const riskRoot = new URL("../../spec-kit-presets/copilot-risk-matrix-test/", import.meta.url);
 
 function supportsSpecifyVersion(output) {
     const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
@@ -264,6 +266,123 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveCount(0);
     } finally {
+        await reopened?.close();
+        await shell?.close();
+        await rm(workspace, { recursive: true, force: true });
+    }
+});
+
+test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
+    test.setTimeout(90_000);
+    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
+    if (available.error?.code === "ENOENT") {
+        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
+        return;
+    }
+    expect(available.status, available.stderr).toBe(0);
+    const workspace = await mkdtemp(join(tmpdir(), "risk-preset-e2e-"));
+    const project = join(workspace, "project");
+    const handoff = {
+        schemaVersion: 1, handoffId: "risk-test",
+        workflow: { selectedPhases: ["specify"],
+            installed: { presets: [], extensions: [], bundles: [] } },
+        selections: { presets: [], extensions: [], bundles: [] },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    let shell, reopened, server;
+    try {
+        await mkdir(project);
+        const run = (...args) => {
+            const result = spawnSync("specify", args, {
+                cwd: project, encoding: "utf8", timeout: 120000,
+                env: { ...process.env, COLUMNS: "500" },
+            });
+            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
+            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
+            return result.stdout;
+        };
+        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
+            "--integration", "copilot", "--integration-options=--skills",
+            "--script", process.platform === "win32" ? "ps" : "sh");
+        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        run("preset", "add", "--dev", fileURLToPath(riskRoot));
+        const command = await readFile(join(project, ".github", "skills",
+            "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
+        for (const name of ["canvas-control-risk-matrix", "canvas-contributions-risk-designer",
+            "canvas-control-risk-matrix-designer", "canvas-control-risk-matrix-generated"]) {
+            expect(command).toContain(`- \`${name}\``);
+        }
+        const resolve = (name) => {
+            const output = run("preset", "resolve", name);
+            const line = output.split(/\r?\n/).map((item) => item.trim())
+                .find((item) => item.startsWith(`${name}: `));
+            expect(line, output).toBeDefined();
+            expect(output).not.toMatch(/not found|composition warning/i);
+            const source = output.match(/\(top layer from: (\S+) v[\d.]+\)/);
+            expect(source, output).not.toBeNull();
+            return { name, path: line.slice(name.length + 2), sourceId: source[1] };
+        };
+        const pages = ["canvas-settings-setup", "canvas-settings-artifacts", "canvas-settings-appearance"]
+            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
+                return { ...entry, kind: "designer.page", strategy: "replace" }; });
+        const templates = [
+            ["canvas-control-risk-matrix", "control.definition"],
+            ["canvas-contributions-risk-designer", "designer.field"],
+            ["canvas-control-risk-matrix-designer", "designer.adapter"],
+            ["canvas-control-risk-matrix-generated", "generated.adapter"],
+        ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
+        const folder = handoffDirectory(workspace, handoff.handoffId);
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        const load = async () => loadDesignerSettings(workspace, handoff,
+            await loadResolvedDesignerPages(handoff, project, pages, templates));
+        shell = await startShell(handoff, await load(), { project, workspace,
+            session: { send: async () => {} } });
+        await page.goto(shell.url);
+        const group = page.getByRole("radiogroup", { name: "Risk rating: impact by likelihood" });
+        await expect(group.getByRole("radio")).toHaveCount(9);
+        await group.getByRole("radio", { name: "Impact low, likelihood low" }).focus();
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.press("ArrowDown");
+        await expect(group.getByRole("radio",
+            { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("risk-canvas");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Risk Canvas");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+        expect((await load()).values["risk.rating"]).toEqual({
+            impact: "medium", likelihood: "medium",
+        });
+        reopened = await startShell(handoff, await load(), { project, workspace,
+            session: { send: async () => {} } });
+        await page.goto(reopened.url);
+        await expect(page.getByRole("radio",
+            { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
+        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+        const [requestId] = await readdir(join(folder, "generations"));
+        await materialize(project, workspace, handoff.handoffId, requestId);
+        const portable = join(workspace, "portable-risk");
+        await cp(join(project, ".github", "extensions", "risk-canvas"), portable, { recursive: true });
+        const { readConfig, createWorkflowRoutes } = await import(
+            pathToFileURL(join(portable, "server.mjs")).href);
+        const config = readConfig();
+        expect(config.generatedControls[0].value).toEqual({
+            impact: "medium", likelihood: "medium",
+        });
+        const routes = createWorkflowRoutes(config, {
+            runtime: null, instanceId: "risk-browser", token: "risk-token",
+            port: () => server.address().port,
+        });
+        server = createServer(routes.handle);
+        await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+        await page.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
+        await expect(page.getByRole("table", { name: /impact medium, likelihood medium/ })).toBeVisible();
+        await expect(page.locator('[data-control-id="risk.rating"] [aria-current="true"]')).toHaveText("Selected");
+    } finally {
+        if (server) await new Promise((resolve) => server.close(resolve));
         await reopened?.close();
         await shell?.close();
         await rm(workspace, { recursive: true, force: true });
