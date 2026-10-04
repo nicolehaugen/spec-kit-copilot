@@ -255,6 +255,18 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
             id: "workflow", title: "Workflow", renderer: "workflow-renderer",
         }] }));
     assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        for (const field of ["id", "renderer"]) {
+            await writeFile(join(target, "canvas-config.json"),
+                JSON.stringify({ ...defaultConfig, generatedPages: [{
+                    id: "overview", title: "Overview", renderer: "overview-renderer", [field]: name,
+                }] }));
+            assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+        }
+    }
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ ...defaultConfig, canvas: { ...defaultConfig.canvas, id: "con" } }));
+    assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
 });
 
 test("materialization rejects a re-signed request with a Windows device Canvas ID", async (t) => {
@@ -394,7 +406,22 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         await writeFile(path, JSON.stringify(trial));
         await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
             /Invalid frozen generated page assets|frozen generated page definition|Invalid frozen generated pages/);
-        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+        await assert.rejects(readdir(sdk), { code: "ENOENT" });
+    }
+    for (const [field, name] of [["id", "con"], ["renderer", "nul"]]) {
+        const trial = structuredClone(request);
+        const page = trial.generatedPages[0];
+        page[field] = name;
+        page.assets[0] = asset(page.id, "generated.page", JSON.stringify({
+            schemaVersion: 1, id: page.id, renderer: page.renderer, title: page.title,
+        }));
+        page.assets[1] = asset(page.renderer, "generated.renderer", module);
+        const { integrity: _old, ...payload } = trial;
+        trial.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(trial));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen generated page assets/);
+        await assert.rejects(readdir(sdk), { code: "ENOENT" });
     }
     const boundary = structuredClone(request);
     boundary.generatedPages[0].assets[1] = asset("canvas-generated-overview-renderer",

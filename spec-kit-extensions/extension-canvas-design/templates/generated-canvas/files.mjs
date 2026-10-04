@@ -7,12 +7,14 @@ export class UserError extends Error {
     constructor(message, status = 400) { super(message); this.status = status; }
 }
 export const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const isWindowsDeviceName = (name) =>
+    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 export function safePath(value, template = false) {
     if (typeof value !== "string" || !value || value.length > 2048) throw new UserError("Invalid artifact path.");
     const parts = value.replaceAll("\\", "/").split("/");
     if (parts.some((part) => !part || part === "." || part === ".."
         || (!(template && ["<slug>", "<name>.md"].includes(part)) && /[<>:"|?*\x00-\x1f]/.test(part))
-        || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(part))) {
+        || /[. ]$/.test(part) || isWindowsDeviceName(part))) {
         throw new UserError("This path is outside the supported artifact locations.");
     }
     return parts.join("/");

@@ -14,6 +14,8 @@ const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
 // The generated shell uses "workflow" for its built-in page navigation.
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+export const isWindowsDeviceName = (name) =>
+    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
@@ -235,10 +237,10 @@ function validateGeneratedPage(document, name) {
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).sort().join() !== "id,renderer,schemaVersion,title"
         || document.schemaVersion !== 1 || document.id !== name
-        || document.id === RESERVED_GENERATED_PAGE_ID
+        || document.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(document.id)
         || typeof document.title !== "string" || !document.title.trim()
         || document.title.length > 120 || typeof document.renderer !== "string"
-        || !PAGE_PATTERN.test(document.renderer)) {
+        || !PAGE_PATTERN.test(document.renderer) || isWindowsDeviceName(document.renderer)) {
         throw new Error(`${name}: invalid generated page definition`);
     }
 }

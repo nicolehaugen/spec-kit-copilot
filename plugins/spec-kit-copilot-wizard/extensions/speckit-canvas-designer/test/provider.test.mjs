@@ -1225,6 +1225,14 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await writeFile(definitionPath, JSON.stringify({ ...definition, id: "workflow" }));
     await assert.rejects(load([{ ...pages[0], name: "workflow" }, pages[1]]),
         /invalid generated page definition/);
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        await writeFile(definitionPath, JSON.stringify({ ...definition, id: name }));
+        await assert.rejects(load([{ ...pages[0], name }, pages[1]]),
+            /invalid generated page definition/);
+        await writeFile(definitionPath, JSON.stringify({ ...definition, renderer: name }));
+        await assert.rejects(load([pages[0], { ...pages[1], name }]),
+            /invalid generated page definition/);
+    }
     await writeFile(definitionPath, JSON.stringify(definition));
     await writeFile(rendererPath, "export function renderPage( {");
     await assert.rejects(load(pages), /invalid generated renderer/);
