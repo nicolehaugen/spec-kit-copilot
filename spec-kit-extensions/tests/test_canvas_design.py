@@ -22,6 +22,7 @@ PAGE_IDS = ("setup", "artifacts", "appearance")
 FILES = {
     "extension.yml",
     "README.md",
+    "ARCHITECTURE.md",
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
