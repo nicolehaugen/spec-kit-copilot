@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
+const failedPatches = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
 let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
@@ -62,11 +63,22 @@ function remember(step, value) {
     return { item: step.project ? "project" : model.selected, phase: step.id, value };
 }
 function persist(patch) {
+    const parts = [];
+    if (Object.hasOwn(patch, "name") || Object.hasOwn(patch, "slug")) {
+        parts.push([`identity:${model.selected}`, {
+            ...(Object.hasOwn(patch, "name") ? { name: patch.name } : {}),
+            ...(Object.hasOwn(patch, "slug") ? { slug: patch.slug } : {}),
+        }]);
+    }
+    if (patch.draft) parts.push([`draft:${JSON.stringify([patch.draft.item, patch.draft.phase])}`,
+        { draft: patch.draft }]);
     saving = saving.catch(() => {}).then(async () => {
         const saved = await api("/api/state", { revision: model.revision, ...patch });
         model.revision = saved.revision;
-        saveFailure = null;
+        for (const [key] of parts) failedPatches.delete(key);
+        if (!failedPatches.size) saveFailure = null;
     }).catch((error) => {
+        for (const [key, value] of parts) failedPatches.set(key, value);
         saveFailure = error;
         message(`Inputs could not be saved: ${error.message} Your draft is retained in this panel.`, "canvas-message", true);
         throw error;
@@ -443,9 +455,15 @@ document.addEventListener("click", (event) => {
             await saving.catch(() => {});
             await refresh(true);
             if (saveFailure) {
-                if (constitutionDraft) await saveConstitutionDraft();
+                if (failedPatches.size) {
+                    for (const patch of [...failedPatches.values()]) {
+                        await persist(patch);
+                        if (patch.draft === constitutionDraft) constitutionDraft = null;
+                    }
+                } else if (constitutionDraft) await saveConstitutionDraft();
                 else await saveInputs();
             }
+            if (saveFailure) throw saveFailure;
             message("Canvas refreshed.");
             return;
         }

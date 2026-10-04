@@ -257,6 +257,40 @@ test("refresh clears resolved phase and Constitution errors", async ({ page }) =
     }
 });
 
+test("a later successful save does not hide a failed phase draft", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    const saves = [];
+    let failPhase = true;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                const patch = JSON.parse(route.request().postData());
+                saves.push(patch);
+                if (failPhase && patch.draft?.phase === "specify") {
+                    failPhase = false;
+                    return route.fulfill({ status: 503, contentType: "application/json",
+                        body: JSON.stringify({ error: "Phase draft save failed" }) });
+                }
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await page.locator("#phase-args").fill("Keep this draft");
+        await expect(page.locator("#canvas-message")).toContainText("Phase draft save failed");
+        await page.locator("#run-constitution").click();
+        await page.locator("#constitution-args").fill("Constitution guidance");
+        await expect.poll(() => saves.some((patch) => patch.draft?.phase === "constitution")).toBe(true);
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["__new__", "specify"])]).toBeUndefined();
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["__new__", "specify"])])
+            .toBe("Keep this draft");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("Constitution guidance saves once after typing and flushes before sending", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
     const saves = [];
