@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "templates", "generated-canvas");
@@ -13,7 +14,6 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
-const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
@@ -27,7 +27,7 @@ function within(root, path) {
 function configuration(request) {
     const { canvas, workflow, values, installed, generatedFields, generatedPages } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
-        || windowsDeviceName.test(canvas.id)
+        || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]
@@ -92,8 +92,9 @@ function configuration(request) {
         if (!page || typeof page !== "object" || Array.isArray(page)
             || Object.keys(page).sort().join() !== "assets,id,renderer,title"
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
-            || page.id === RESERVED_GENERATED_PAGE_ID
+            || page.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(page.id)
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            || isWindowsDeviceName(page.renderer)
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
             || !Array.isArray(page.assets) || page.assets.length !== 2
             || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.page"
