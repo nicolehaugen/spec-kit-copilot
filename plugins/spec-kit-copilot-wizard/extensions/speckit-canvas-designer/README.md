@@ -58,7 +58,10 @@ and replace-only renderer add a page only to the generated app, not Designer's
 tabs. The provider verifies the executable Specify template stack (and rejects
 native script registrations), checks module syntax and declared exports without executing
 the bytes in Node, and rechecks Designer adapters before serving captured bytes.
-Changed assets require reopening Designer. The browser reports non-function
+Changed assets require reopening Designer. The Designer document's CSP allows
+same-origin scripts, API calls, and styles but blocks ordinary cross-origin
+requests from adapters; it does not sandbox approved adapter code.
+The browser reports non-function
 `mount` exports, incompatible `controlId` or `valueContract` exports, and mount
 failures beside the affected control. Callbacks from controls removed during a
 tab change cannot overwrite the current draft. It validates the page/renderer pair and freezes

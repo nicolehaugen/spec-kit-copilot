@@ -73,6 +73,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
     }
     const generatedControls = [];
+    const controlAssets = new Map();
     for (const contribution of controlContributions) {
         const control = model.controls.find((entry) => entry.id === contribution.field.control);
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
@@ -87,9 +88,13 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             model.templates.find((entry) => entry.name === control.adapters.generated
                 && entry.kind === "generated.adapter"),
         ];
+        if (!controlAssets.has(control.id)) {
+            controlAssets.set(control.id, { control: control.id,
+                assets: await Promise.all(names.map(asset)) });
+        }
         generatedControls.push({ id: contribution.field.id, label: contribution.field.label,
             control: control.id, slot: contribution.generatedBinding.slot,
-            value: values[contribution.field.id], assets: await Promise.all(names.map(asset)) });
+            value: values[contribution.field.id] });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -114,6 +119,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),
+        ...(controlAssets.size ? { controlAssets: [...controlAssets.values()] } : {}),
     };
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");

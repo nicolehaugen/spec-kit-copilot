@@ -94,6 +94,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
         }
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Content-Security-Policy",
+            "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         if (handoff && workspace && req.method === "POST" && url.pathname === "/api/save") {
             const sendError = (status, message) => {
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });

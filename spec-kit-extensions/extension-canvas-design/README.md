@@ -144,7 +144,9 @@ The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
 `{root, field, value}`. Designer validates and persists changes; Generate
 freezes the validated object and packages the effective generated adapter and
-definition into the app, up to 30 generated controls. Missing, wrong-kind,
+definition into the app, up to 30 generated controls. The frozen request holds
+one asset pair per control ID; each field registration refers to that pair by
+its control ID, so reused controls do not repeat module bytes. Missing, wrong-kind,
 non-replace, or multiply owned adapters stop Designer opening rather than
 falling back to a stock control.
 The Designer, generator, and standalone generated app apply the same object

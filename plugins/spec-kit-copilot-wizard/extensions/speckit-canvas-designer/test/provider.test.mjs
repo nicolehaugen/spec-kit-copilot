@@ -562,9 +562,14 @@ test("shell serves validated pages behind its token", async (t) => {
     assert.match(good.headers.get("content-type"), /text\/html/);
     assert.equal(good.headers.get("cache-control"), "no-store");
     assert.equal(good.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(good.headers.get("content-security-policy"),
+        "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
     assert.match(await good.text(), /Spec Kit Canvas Designer/);
     const stateUrl = new URL(`/api/state?token=${url.searchParams.get("token")}`, url);
-    const state = await (await fetch(stateUrl)).json();
+    const stateResponse = await fetch(stateUrl);
+    assert.equal(stateResponse.headers.get("content-security-policy"),
+        good.headers.get("content-security-policy"));
+    const state = await stateResponse.json();
     assert.equal(state.pages[0].title, "Essentials");
     assert.equal(state.handoffId, handoff.handoffId);
     assert.equal((await fetch(new URL(`/events?token=${url.searchParams.get("token")}`, url))).status, 404);
@@ -1546,7 +1551,9 @@ test("paired control validates both adapters, typed values and portable generate
     await writeFile(designerAdapter.path, "export function mount() { throw new Error('unvalidated'); }");
     const adapterUrl = new URL(shell.url);
     adapterUrl.pathname = `/adapters/${designerAdapter.name}.mjs`;
-    assert.equal(await (await fetch(adapterUrl)).text(), designerModule);
+    const adapterResponse = await fetch(adapterUrl);
+    assert.match(adapterResponse.headers.get("content-security-policy"), /connect-src 'self'/);
+    assert.equal(await adapterResponse.text(), designerModule);
     await writeFile(designerAdapter.path, designerModule);
     const moved = `${directory}-original`;
     const outside = join(workspace, "untrusted-presets");
@@ -1602,8 +1609,74 @@ test("paired control validates both adapters, typed values and portable generate
     const atLimitRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", atLimit.requestId, "request.json")));
     assert.equal(atLimitRequest.generatedControls.length, 30);
+    assert.equal(atLimitRequest.controlAssets.length, 1);
     assert.ok(atLimitRequest.generatedControls.every((item) =>
-        item.assets[0].name === templates[0].name));
+        item.control === "risk-matrix" && !Object.hasOwn(item, "assets")));
+    assert.equal(atLimitRequest.controlAssets[0].assets[0].name, templates[0].name);
+    atLimitRequest.canvas.id = "risk-many";
+    atLimitRequest.values["canvas.id"] = "risk-many";
+    atLimitRequest.target = ".github/extensions/risk-many/";
+    const { integrity: _atLimitHash, ...atLimitPayload } = atLimitRequest;
+    atLimitRequest.integrity = createHash("sha256").update(JSON.stringify(atLimitPayload)).digest("hex");
+    await writeFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", atLimit.requestId, "request.json"),
+    JSON.stringify(atLimitRequest));
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    await materialize(project, workspace, handoff.handoffId, atLimit.requestId);
+    assert.deepEqual((await readdir(join(project, ".github", "extensions", "risk-many", "controls"))).sort(),
+        [`${templates[0].name}.json`, `${templates[3].name}.mjs`].sort());
+    assert.equal(JSON.parse(await readFile(join(project, ".github", "extensions", "risk-many",
+        "canvas-config.json"))).generatedControls.length, 30);
+    const originalDefinition = await readFile(templates[0].path, "utf8");
+    const originalGeneratedAdapter = await readFile(templates[3].path, "utf8");
+    const fillAsset = (content) => content + " ".repeat(32 * 1024 - Buffer.byteLength(content));
+    try {
+        await writeFile(templates[0].path, fillAsset(originalDefinition));
+        await writeFile(templates[3].path, fillAsset(originalGeneratedAdapter));
+        const sizedModel = await load();
+        const pageTemplates = [];
+        const largePages = [];
+        for (let index = 0; index < 19; index++) {
+            const id = `canvas-generated-risk-${index}`;
+            const renderer = `${id}-renderer`;
+            const definition = fillAsset(JSON.stringify({
+                schemaVersion: 1, id, renderer, title: `Page ${index}`,
+            }));
+            const module = fillAsset("export function renderPage() { return ''; }");
+            for (const [name, kind, extension, content] of [
+                [id, "generated.page", ".json", definition],
+                [renderer, "generated.renderer", ".mjs", module],
+            ]) {
+                const path = join(directory, `${name}${extension}`);
+                await writeFile(path, content);
+                pageTemplates.push({ name, kind, path, sourceId: "copilot-risk-matrix-test",
+                    strategy: "replace", hash: createHash("sha256").update(content).digest("hex") });
+            }
+            largePages.push({ name: id, id, title: `Page ${index}`, renderer });
+        }
+        const large = await freezeGeneration({
+            model: { ...sizedModel, constraints: controlConstraints,
+                contributions: controls.slice(0, 30), generatedPages: largePages,
+                templates: [...sizedModel.templates, ...pageTemplates] },
+            values: { ...controlValues, "canvas.id": "risk-full" },
+            handoff, project, workspace,
+        });
+        const largeRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+            "handoffs", handoff.handoffId, "generations", large.requestId, "request.json")));
+        assert.equal(largeRequest.controlAssets.length, 1);
+        assert.ok(Buffer.byteLength(JSON.stringify(largeRequest)) < 4 * 1024 * 1024);
+        assert.ok(Buffer.byteLength(JSON.stringify(largeRequest))
+            + 29 * Buffer.byteLength(JSON.stringify(largeRequest.controlAssets[0].assets)) > 4 * 1024 * 1024);
+        await materialize(project, workspace, handoff.handoffId, large.requestId);
+        const largeConfig = JSON.parse(await readFile(join(project, ".github", "extensions",
+            "risk-full", "canvas-config.json")));
+        assert.equal(largeConfig.generatedControls.length, 30);
+        assert.equal(largeConfig.generatedPages.length, 19);
+    } finally {
+        await writeFile(templates[0].path, originalDefinition);
+        await writeFile(templates[3].path, originalGeneratedAdapter);
+    }
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { modelRevision: model.revision, revision: 0, values });
     const reopened = await loadDesignerSettings(workspace, handoff, await load());
@@ -1670,18 +1743,61 @@ test("paired control validates both adapters, typed values and portable generate
     await assert.rejects(load(), /invalid generated.adapter/);
     await writeFile(generated.path, module);
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
-    const { materialize } = await import(new URL(
-        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const originalRequest = await readFile(requestPath, "utf8");
+    for (const [change, message] of [
+        [(request) => { delete request.controlAssets; }, /Missing frozen generated control assets/],
+        [(request) => { request.controlAssets.push(structuredClone(request.controlAssets[0])); },
+            /Invalid frozen generated control assets/],
+        [(request) => { request.generatedControls[0].control = "missing"; },
+            /Invalid frozen generated control registration/],
+        [(request) => { request.generatedControls[0].assets = request.controlAssets[0].assets; },
+            /Invalid frozen generated control registration/],
+        [(request) => {
+            const extra = structuredClone(request.controlAssets[0]);
+            extra.control = "unused";
+            extra.assets[1].name = "unused-generated";
+            const definition = JSON.parse(Buffer.from(extra.assets[0].content, "base64").toString("utf8"));
+            definition.id = "unused";
+            definition.adapters.generated = extra.assets[1].name;
+            const bytes = Buffer.from(JSON.stringify(definition));
+            extra.assets[0].content = bytes.toString("base64");
+            extra.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+            request.controlAssets.push(extra);
+        }, /Unused frozen generated control assets/],
+        [(request) => {
+            const extra = structuredClone(request.controlAssets[0]);
+            extra.control = "risk-other";
+            extra.assets[0].name = "canvas-control-risk-other";
+            const definition = JSON.parse(Buffer.from(extra.assets[0].content, "base64").toString("utf8"));
+            definition.id = "risk-other";
+            const bytes = Buffer.from(JSON.stringify(definition));
+            extra.assets[0].content = bytes.toString("base64");
+            extra.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+            request.controlAssets.push(extra);
+            request.generatedControls.push({ ...request.generatedControls[0],
+                id: "risk.other", control: "risk-other" });
+            request.values["risk.other"] = request.generatedControls[1].value;
+            request.fieldConstraints["risk.other"] = request.fieldConstraints["risk.rating"];
+        }, /generated adapter belongs to both risk-matrix and risk-other/],
+    ]) {
+        const request = JSON.parse(originalRequest);
+        change(request);
+        const { integrity: _hash, ...unsigned } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            message);
+        await assert.rejects(readdir(join(project, prepared.target)), { code: "ENOENT" });
+    }
     for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
         for (const kind of ["control.definition", "generated.adapter"]) {
             const request = JSON.parse(originalRequest);
-            const asset = request.generatedControls[0].assets.find((entry) => entry.kind === kind);
+            const asset = request.controlAssets[0].assets.find((entry) => entry.kind === kind);
             asset.name = name;
             if (kind === "generated.adapter") {
-                const definitionAsset = request.generatedControls[0].assets[0];
+                const definitionAsset = request.controlAssets[0].assets[0];
                 const definition = JSON.parse(Buffer.from(definitionAsset.content, "base64").toString("utf8"));
                 definition.adapters.generated = name;
                 const bytes = Buffer.from(JSON.stringify(definition));
@@ -1704,7 +1820,7 @@ test("paired control validates both adapters, typed values and portable generate
         { impact: ["x".repeat(81)] },
     ]) {
         const request = JSON.parse(originalRequest);
-        const asset = request.generatedControls[0].assets[0];
+        const asset = request.controlAssets[0].assets[0];
         const definition = JSON.parse(Buffer.from(asset.content, "base64").toString("utf8"));
         definition.value.properties = invalidProperties;
         const bytes = Buffer.from(JSON.stringify(definition));
@@ -1714,7 +1830,7 @@ test("paired control validates both adapters, typed values and portable generate
         request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
         await writeFile(requestPath, JSON.stringify(request));
         await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-            /incompatible frozen control value or adapters/);
+            /incompatible frozen control assets/);
     }
     for (const [change, error] of [
         [(request) => { request.values["designer.unbound"] = "not generated"; },
@@ -1739,8 +1855,8 @@ test("paired control validates both adapters, typed values and portable generate
         /incompatible frozen control value or adapters/);
     const oversizedRequest = JSON.parse(originalRequest);
     const oversized = Buffer.alloc(32 * 1024 + 1);
-    oversizedRequest.generatedControls[0].assets[1].content = oversized.toString("base64");
-    oversizedRequest.generatedControls[0].assets[1].hash =
+    oversizedRequest.controlAssets[0].assets[1].content = oversized.toString("base64");
+    oversizedRequest.controlAssets[0].assets[1].hash =
         createHash("sha256").update(oversized).digest("hex");
     const { integrity: _oversizedIntegrity, ...oversizedPayload } = oversizedRequest;
     oversizedRequest.integrity = createHash("sha256").update(JSON.stringify(oversizedPayload)).digest("hex");
