@@ -260,8 +260,9 @@ addition to) the hosted registry entry:
   presets/extensions must also match the CLI's reported catalog source;
   locally installed ones are reproduced from their installed copies in
   the Wizard checkout, not from an ID/version-matched catalog entry. Bundle
-  members are checked against the installed bundle rather than installed
-  again; a bundle without verifiable install provenance blocks launch.
+  membership does not prove a component's installed source; each runtime
+  preset/extension is replayed from its own locator even if a bundle lists
+  the same ID. A bundle without verifiable install provenance blocks launch.
   Missing or ambiguous provenance, version mismatches, and sources that
   change before dispatch block launch instead of guessing. It installs
   remaining standalone extensions (including local overrides), then

@@ -14,8 +14,7 @@ import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
-import { readInstalledBundleMembers, resolveRuntimeInstallLocators }
-    from "../server/runtime-provenance.mjs";
+import { resolveRuntimeInstallLocators } from "../server/runtime-provenance.mjs";
 
 // Real, valid manifests in this repo (same fixtures e2e/canvas-designer.spec.mjs
 // uses), so local-dev validation and precedence are exercised against actual
@@ -57,7 +56,6 @@ function fixture(overrides = {}) {
         getInstance: () => inst,
         getState: async () => current,
         getInstalledWorkflow: async () => empty,
-        getBundleMembers: async () => ({}),
         registerSse() {}, broadcast() {},
         ...overrides,
         session: { ...session, ...overrides.session },
@@ -299,13 +297,13 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         }, sources), /Cannot identify a unique approved install source/);
         assert.deepEqual(resolveRuntimeInstallLocators({
             ...installed, presets: [{ ...installed.presets[0], source: "local" }],
-        }, sources, undefined, {}, process.cwd()).presets, [{
+        }, sources, undefined, process.cwd()).presets, [{
             installedId: "pirate-full-preset", source: "local",
             path: join(process.cwd(), ".specify", "presets", "pirate-full-preset"),
         }]);
         const localLocators = resolveRuntimeInstallLocators({
             ...installed, presets: [{ ...installed.presets[0], source: "local" }],
-        }, sources, undefined, {}, process.cwd());
+        }, sources, undefined, process.cwd());
         const prompt = buildDesignerLaunchPrompt(buildDesignerHandoff(snapshot, empty,
             undefined, { ...installed, presets: [{ ...installed.presets[0], source: "local" }] },
             randomUUID(), localLocators));
@@ -316,38 +314,39 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         }, sources), /Cannot verify the installed source/);
     });
 
-    test("bundle members resolve to a verified bundle rather than a standalone install", async () => {
+    test("bundle membership does not override a standalone component's installed source", () => {
         const bundles = [{ id: "kit", version: "2.0.0", source: "community" }];
-        const members = await readInstalledBundleMembers(process.cwd(), bundles,
-            async (binary, args) => {
-                assert.deepEqual(args, ["bundle", "info", "kit", "--json"]);
-                return { stdout: JSON.stringify({ id: "kit", source: "community",
-                    components: [{ kind: "presets", id: "member" }] }) };
-            });
         const installed = { presets: [{ id: "member", version: "1.0.0",
             priority: 3, enabled: true, source: "community" }], extensions: [], bundles };
         const locators = resolveRuntimeInstallLocators(installed, {
-            presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
+            presets: [{ id: "member", installedId: "member", source: "community",
+                version: "1.0.0", downloadUrl: "https://example.org/member.zip" }],
+            extensions: [], bundles: [{ id: "kit", installedId: "kit",
                 source: "community", version: "2.0.0", downloadUrl: "https://example.org/kit.zip" }],
-        }, undefined, members);
-        assert.deepEqual(locators.presets, [{ installedId: "member", source: "bundle", bundleId: "kit" }]);
+        });
+        assert.deepEqual(locators.presets, [{ installedId: "member", source: "community",
+            catalogId: "member", downloadUrl: "https://example.org/member.zip" }]);
+        const prompt = buildDesignerLaunchPrompt(buildDesignerHandoff(snapshot, empty,
+            undefined, installed, randomUUID(), locators));
+        assert.match(prompt, /Bundle membership does not establish the source of an installed preset/);
+        assert.match(prompt, /replace it with the runtime preset or extension from its own frozen locator/);
+        assert.doesNotMatch(prompt, /Skip a bundle-provided member/);
         assert.deepEqual(resolveRuntimeInstallLocators({
             ...installed, presets: [{ ...installed.presets[0], source: "local" }],
         }, { presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
             source: "community", version: "2.0.0",
-            downloadUrl: "https://example.org/kit.zip" }] }, undefined, members,
+            downloadUrl: "https://example.org/kit.zip" }] }, undefined,
         process.cwd()).presets, [{ installedId: "member", source: "local",
             path: join(process.cwd(), ".specify", "presets", "member") }]);
         assert.equal(locators.bundles[0].catalogId, "kit");
         assert.throws(() => resolveRuntimeInstallLocators({
             ...installed, bundles: [{ id: "kit", version: "2.0.0" }],
         }, {
-            presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
+            presets: [{ id: "member", installedId: "member", source: "community",
+                version: "1.0.0", downloadUrl: "https://example.org/member.zip" }],
+            extensions: [], bundles: [{ id: "kit", installedId: "kit",
                 source: "community", version: "2.0.0", downloadUrl: "https://example.org/kit.zip" }],
-        }, undefined, members), /Cannot verify the installed source for bundles kit/);
-        assert.throws(() => resolveRuntimeInstallLocators({
-            ...installed, bundles: [...bundles, { id: "other", version: "2.0.0" }],
-        }, empty, undefined, { kit: members.kit, other: members.kit }), /Ambiguous bundle source/);
+        }), /Cannot verify the installed source for bundles kit/);
     });
 
     test("runtime source drift during readiness prevents Designer dispatch", async () => {

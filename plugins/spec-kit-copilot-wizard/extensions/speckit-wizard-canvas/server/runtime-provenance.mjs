@@ -1,27 +1,8 @@
-import { execFile } from "node:child_process";
 import { join } from "node:path";
-import { promisify } from "node:util";
-import { bundleSelectionMembers } from "../catalog/bundles.mjs";
 
-const execFileAsync = promisify(execFile);
 const KINDS = ["presets", "extensions", "bundles"];
 
-export async function readInstalledBundleMembers(workspacePath, bundles, run = execFileAsync) {
-    const members = {};
-    for (const bundle of bundles) {
-        const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
-            ["bundle", "info", bundle.id, "--json"],
-            { cwd: workspacePath, timeout: 10000, maxBuffer: 128 * 1024 });
-        let info;
-        try { info = JSON.parse(stdout); }
-        catch { throw new Error(`Invalid installed bundle metadata for ${bundle.id}`); }
-        members[bundle.id] = bundleSelectionMembers(info, bundle.id).members;
-    }
-    return members;
-}
-
-export function resolveRuntimeInstallLocators(installed, catalog, localSelections, bundleMembers = {},
-    workspacePath) {
+export function resolveRuntimeInstallLocators(installed, catalog, localSelections, workspacePath) {
     const locators = { presets: [], extensions: [], bundles: [] };
     for (const kind of KINDS) {
         for (const item of installed[kind]) {
@@ -36,17 +17,6 @@ export function resolveRuntimeInstallLocators(installed, catalog, localSelection
             if (item.source === "local" && kind !== "bundles" && workspacePath) {
                 locators[kind].push({ installedId: item.id, source: "local",
                     path: join(workspacePath, ".specify", kind, item.id) });
-                continue;
-            }
-            const providers = kind === "bundles" ? [] : installed.bundles.filter((bundle) =>
-                bundleMembers[bundle.id]?.some((member) =>
-                    member.kind === kind && member.id === item.id));
-            if (providers.length > 1) {
-                throw new Error(`Ambiguous bundle source for installed ${kind} ${item.id}`);
-            }
-            if (providers.length) {
-                locators[kind].push({ installedId: item.id, source: "bundle",
-                    bundleId: providers[0].id });
                 continue;
             }
             if (!item.source || item.source === "local") {
