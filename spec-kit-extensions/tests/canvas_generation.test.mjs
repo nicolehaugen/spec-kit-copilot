@@ -90,7 +90,8 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
             "designer.note": { type: "string", maxLength: 80 } },
         contributions: [{ field: { id: "billing.costCode", label: "Cost code" },
             generatedBinding: { presentation: "stock.readonly",
-                section: { id: "billing", title: "Billing" } } }] };
+                section: { id: "billing", title: "Billing" } } },
+        { field: { id: "designer.note", label: "Internal note" } }] };
     const supplied = { ...values, "billing.costCode": "CC-481", "designer.note": "Designer only" };
     await assert.rejects(freezeGeneration({ model: contributedModel,
         values: { ...supplied, "designer.note": "x".repeat(81) },
@@ -101,6 +102,7 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
     assert.equal(frozen.values["billing.costCode"], "CC-481");
     assert.equal(frozen.values["designer.note"], "Designer only");
+    assert.deepEqual(frozen.generatedFields.map(({ id }) => id), ["billing.costCode"]);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const setup = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-setup.json"), "utf8"));
@@ -111,7 +113,7 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
     assert.equal(config.readOnlyFields.some((field) => field.id === "designer.note"), false);
 });
 
-test("re-signed requests reject unbound, missing, and colliding generated values", async (t) => {
+test("re-signed requests reject inconsistent, missing, and colliding generated values", async (t) => {
     for (const [name, change, error] of [
         ["undeclared value", (request) => { request.values["designer.note"] = "not generated"; },
             /Invalid frozen Designer fields/],
@@ -123,6 +125,9 @@ test("re-signed requests reject unbound, missing, and colliding generated values
         ["bound ID collides with Essential", (request) => {
             request.generatedFields = [{ id: "canvas.displayName", label: "Title", maxLength: 120 }];
         }, /Invalid frozen generated values/],
+        ["generated field maxLength differs from its constraint", (request) => {
+            request.generatedFields = [{ id: "canvas.description", label: "Description", maxLength: 1000 }];
+        }, /Invalid frozen generated fields/],
     ]) {
         await t.test(name, async (child) => {
             const { project, workspace, prepared, sdk } = await fixture(child);

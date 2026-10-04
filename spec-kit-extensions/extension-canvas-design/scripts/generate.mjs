@@ -119,7 +119,10 @@ function configuration(request) {
                 || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
                 || typeof field.label !== "string" || !field.label || field.label.length > 120
                 || !Number.isInteger(field.maxLength) || field.maxLength < 1
-                || field.maxLength > 1000 || typeof values[field.id] !== "string"
+                || field.maxLength > 1000
+                || fieldConstraints[field.id]?.type !== "string"
+                || fieldConstraints[field.id].maxLength !== field.maxLength
+                || typeof values[field.id] !== "string"
                 || values[field.id].length > field.maxLength
                 || (field.section !== undefined
                     && (!field.section || typeof field.section !== "object"
@@ -252,7 +255,9 @@ function configuration(request) {
             throw new Error("Invalid frozen generated control registration");
         }
         const { contract } = assetsByControl.get(item.control);
-        if (!validControlValue(item.value, contract)
+        if (fieldConstraints[item.id]?.type !== "object"
+            || JSON.stringify(fieldConstraints[item.id].properties) !== JSON.stringify(contract.properties)
+            || !validControlValue(item.value, contract)
             || JSON.stringify(values[item.id]) !== JSON.stringify(item.value)) {
             throw new Error(`${item.id}: incompatible frozen control value or adapters`);
         }

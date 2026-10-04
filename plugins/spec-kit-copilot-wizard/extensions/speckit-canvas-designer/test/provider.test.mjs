@@ -1752,6 +1752,9 @@ test("paired control validates both adapters, typed values and portable generate
             /Invalid frozen generated control assets/],
         [(request) => { request.generatedControls[0].control = "missing"; },
             /Invalid frozen generated control registration/],
+        [(request) => {
+            request.fieldConstraints["risk.rating"].properties.impact.push("critical");
+        }, /incompatible frozen control value or adapters/],
         [(request) => { request.generatedControls[0].assets = request.controlAssets[0].assets; },
             /Invalid frozen generated control registration/],
         [(request) => {

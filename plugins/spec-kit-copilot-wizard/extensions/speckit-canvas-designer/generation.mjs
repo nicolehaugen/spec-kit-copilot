@@ -44,16 +44,6 @@ export function validateEssentials(model, values) {
 
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
-    const generatedFields = (model.contributions ?? [])
-        .filter((item) => item.generatedBinding?.presentation === "stock.readonly")
-        .map((item) => ({ id: item.field.id, label: item.field.label,
-            maxLength: model.constraints[item.field.id].maxLength,
-            ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
-    const controlContributions = (model.contributions ?? [])
-        .filter((item) => item.generatedBinding?.presentation === "control");
-    if (controlContributions.length > 30) {
-        throw new Error("Generated controls exceed the 30-control limit");
-    }
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
     const generatedPages = [];
@@ -72,9 +62,28 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         const assets = await Promise.all([definition, renderer].map(asset));
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
     }
+    const generatedFields = [];
     const generatedControls = [];
     const controlAssets = new Map();
-    for (const contribution of controlContributions) {
+    for (const contribution of model.contributions ?? []) {
+        const binding = contribution.generatedBinding;
+        if (!binding) continue;
+        const { id, label } = contribution.field;
+        const rule = model.constraints[id];
+        if (binding.presentation === "stock.readonly") {
+            if (rule?.type !== "string") {
+                throw new Error(`${id}: generated stock field requires a string constraint`);
+            }
+            generatedFields.push({ id, label, maxLength: rule.maxLength,
+                ...(binding.section ? { section: binding.section } : {}) });
+            continue;
+        }
+        if (binding.presentation !== "control" || rule?.type !== "object") {
+            throw new Error(`${id}: incompatible generated binding`);
+        }
+        if (generatedControls.length >= 30) {
+            throw new Error("Generated controls exceed the 30-control limit");
+        }
         const control = model.controls.find((entry) => entry.id === contribution.field.control);
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
         const definition = model.templates.find((entry) => entry.name === control.template
@@ -92,9 +101,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             controlAssets.set(control.id, { control: control.id,
                 assets: await Promise.all(names.map(asset)) });
         }
-        generatedControls.push({ id: contribution.field.id, label: contribution.field.label,
-            control: control.id, slot: contribution.generatedBinding.slot,
-            value: values[contribution.field.id] });
+        generatedControls.push({ id, label, control: control.id, slot: binding.slot,
+            value: essentials[id] });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);

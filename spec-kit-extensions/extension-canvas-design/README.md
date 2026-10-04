@@ -160,6 +160,13 @@ non-function `mount` exports, and mount failures beside the affected control.
 The frozen generation request is bounded to 4 MiB, allowing registered assets
 to be packaged after base64 encoding while retaining the 32 KiB limit on each
 definition and renderer.
+Designer derives generated field and control registrations only from resolved
+`generatedBinding` contributions when freezing. All validated Designer values
+remain in the request, including Designer-only values, but only bound values
+become generated displays. The generator checks registrations against frozen
+value constraints and control definitions, as well as file and asset limits.
+The request's SHA-256 integrity value catches accidental edits; it is not an
+authentication mechanism for a locally rewritten and re-signed request.
 For stock read-only fields, an optional `generatedBinding.section` with a
 stable `id` and display `title` groups fields under that heading without
 changing the Designer slot; fields without a section keep the **Configured
