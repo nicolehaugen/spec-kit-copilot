@@ -53,7 +53,11 @@ function configuration(request) {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
             return [phase, { expectsArtifact: !!path, outputPath: path }];
         })), phaseArtifacts: {},
-        installed };
+        installed: {
+            presets: installed.presets.map(({ id, version, priority }) => ({ id, version, priority })),
+            extensions: installed.extensions.map(({ id, version, priority }) => ({ id, version, priority })),
+            bundles: installed.bundles.map(({ id, version }) => ({ id, version })),
+        } };
 }
 
 function checkSyntax(path) {

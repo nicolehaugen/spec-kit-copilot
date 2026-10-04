@@ -149,7 +149,8 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.phases, handoff.workflow.selectedPhases);
     assert.equal(config.userProvidesSlug, false);
-    assert.deepEqual(config.installed, handoff.workflow.installed);
+    assert.deepEqual(config.installed, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [], bundles: [] });
     assert.equal(Object.hasOwn(config, "resultTags"), false);
     assert.equal(Object.hasOwn(config, "phaseResults"), false);
     for (const removed of ["result-tags.mjs", "tag-evaluator.mjs", "staleness.mjs"]) {
@@ -361,7 +362,33 @@ test("local development selections remain bound to the frozen handoff at publica
     await materialize(project, workspace, local.handoffId, prepared.requestId);
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
-    assert.deepEqual(config.installed.presets, local.workflow.installed.presets);
+    assert.deepEqual(config.installed.presets, [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }]);
+});
+
+test("generated config excludes session-only installed package locators", async (t) => {
+    const withLocators = { ...handoff, workflow: { ...handoff.workflow, installed: {
+        presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1,
+            path: join(tmpdir(), "private-preset"), source: "local",
+            downloadUrl: "https://example.com/preset.zip" }],
+        extensions: [{ id: "runtime-extension", version: "2.0.0", priority: 2,
+            path: join(tmpdir(), "private-extension"), downloadUrl: "https://example.com/extension.zip" }],
+        bundles: [{ id: "runtime-bundle", version: "3.0.0", source: "community",
+            downloadUrl: "https://example.com/bundle.zip", catalogId: "community-bundle" }],
+    } } };
+    withLocators.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: withLocators.workflow, selections: withLocators.selections,
+    })).digest("hex");
+    const { project, workspace, prepared, sdk } = await fixture(t, withLocators);
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        withLocators.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.installed, withLocators.workflow.installed);
+    await materialize(project, workspace, withLocators.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.installed, {
+        presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [{ id: "runtime-extension", version: "2.0.0", priority: 2 }],
+        bundles: [{ id: "runtime-bundle", version: "3.0.0" }],
+    });
 });
 
 test("existing canvases are preserved and tampered requests fail before creation", async (t) => {
