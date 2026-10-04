@@ -26,10 +26,14 @@ If the installed Canvas Design page schema itself is missing or unusable,
 Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
-Essentials displays Canvas ID, Title, Description and Workflow header from the
-resolved template. Workflow name appears in the generated canvas's workflow
-collection, before phase navigation, while creating a workflow. It labels the
-workflow there. Essentials'
+Essentials requires Canvas ID and Title from the resolved core page. Description,
+Workflow header and Allow custom slug are separate ordered stock contributions
+registered by the composed load-page command. With all three registered, the
+same five controls appear in the same order. Without them, generated description,
+heading and custom slug default to `Spec Kit workflow canvas.`, `Workflows` and
+off. Workflow name appears in the generated canvas's workflow collection,
+before phase navigation, while creating a workflow. It labels the workflow
+there. Essentials'
 default-off Allow custom slug setting controls whether an optional Workflow slug
 field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
@@ -64,11 +68,16 @@ tab change cannot overwrite the current draft. It validates the page/renderer pa
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Save rejects stale revisions and invalid values, and reports failures without
-discarding edits. Generate freezes valid Essentials values and dispatches the
+discarding edits. Generate validates and freezes fields on every enabled page
+while requiring non-reserved Canvas ID and Title on Essentials, and dispatches the
 installed Canvas Design generate command to create a new source-owned
-workflow canvas; the button is unavailable without a complete Wizard handoff,
-a valid Essentials page, or the installed Generate skill in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.6 or the current
+workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
+Essentials is missing or invalid, any enabled page is invalid, or the Generate
+skill is not installed in the child checkout.
+Pages explicitly marked `enabled: false` are omitted even if their other fields
+are malformed; unreadable pages still show errors because their enabled state
+cannot be determined.
+A missing skill shows how to relaunch with Canvas Design v0.1.7 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

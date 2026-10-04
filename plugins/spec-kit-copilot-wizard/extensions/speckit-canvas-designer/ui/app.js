@@ -8,21 +8,26 @@ let model, currentPage, draft, saving = false;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
-const essentials = ["canvas.id", "canvas.displayName", "canvas.description",
-    "canvas.workflowListName", "workflowSlug.userProvided"];
+const required = ["canvas.id", "canvas.displayName"];
 
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "canvas-settings-setup");
     const generationError = document.getElementById("generation-error");
-    generationError.textContent = model?.generationError ?? "";
+    const failed = model?.pages.find((page) => page.error);
+    const missingIdentity = model && !failed && (!setup || setup.enabled === false
+        || !required.every((field) => setup.fields?.some((item) => item.id === field)));
+    generationError.textContent = failed
+        ? `Cannot generate: ${failed.page} could not load. ${failed.error.reason}`
+        : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
+            : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
     generate.disabled = saving || generating || queued || !model?.handoffId
-        || !model.generationAvailable || !setup || !!setup.error
-        || !essentials.every((field) => setup.fields?.some((item) => item.id === field));
+        || !model.generationAvailable || !setup || !!failed || setup.enabled === false
+        || missingIdentity;
 }
 
 generate.addEventListener("click", async () => {
-    if (generate.disabled) return;
+    if (generate.disabled || !validateDraft("generating")) return;
     for (const field of ["canvas.id", "canvas.displayName"]) {
         const value = draft[field];
         const rules = model.constraints[field];
@@ -38,6 +43,13 @@ generate.addEventListener("click", async () => {
             showError(`Enter a valid ${field === "canvas.id" ? "Canvas ID" : "Title"} before generating.${hint ? ` ${hint}` : ""}`);
             input?.focus();
             input?.reportValidity();
+            return;
+        }
+        if (["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]
+            .includes(draft["canvas.id"])) {
+            renderPage("canvas-settings-setup");
+            showError("Canvas ID is reserved. Choose a different Canvas ID before generating.");
+            root.querySelector('[name="canvas.id"]')?.focus();
             return;
         }
     }
@@ -90,15 +102,15 @@ function updateSave() {
     updateGenerate();
 }
 
-function validateDraft() {
+function validateDraft(action = "saving") {
     for (const [id, rules] of Object.entries(model.constraints)) {
         const value = draft[id];
-        if (rules.type === "boolean") continue;
+        if (rules.type === "boolean" && typeof value === "boolean") continue;
         if (rules.type === "object" ? (!value || typeof value !== "object"
             || Array.isArray(value)
             || Object.keys(value).sort().join() !== Object.keys(rules.properties).sort().join()
             || Object.entries(rules.properties).some(([key, allowed]) => !allowed.includes(value[key])))
-            : (value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
+            : (typeof value !== "string" || value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
             || (rules.pattern && !new RegExp(rules.pattern).test(value)))) {
             const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
             if (page) {
@@ -111,7 +123,7 @@ function validateDraft() {
                 }
             }
             const field = page?.fields.find((item) => item.id === id);
-            showError(`Enter a valid ${field?.label ?? id} before saving.${id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
+            showError(`Enter a valid ${field?.label ?? id} before ${action}.${id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
             return false;
         }
     }

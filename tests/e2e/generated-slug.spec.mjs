@@ -8,7 +8,7 @@ import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas
 import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
-    generatedPages, generatedControls, readOnlyFields) {
+    generatedPages, readOnlyFields, generatedControls) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug,
@@ -25,8 +25,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         phaseArtifacts: {},
         installed: { presets: [], extensions: [], bundles: [] },
         ...(generatedPages ? { generatedPages } : {}),
-        ...(generatedControls ? { generatedControls } : {}),
         ...(readOnlyFields ? { readOnlyFields } : {}),
+        ...(generatedControls ? { generatedControls } : {}),
     };
     let runtime, routes, server;
     try {
@@ -75,7 +75,7 @@ test("slow control mount leaves other controls and the workflow shell interactiv
     });
     const canvas = await openGeneratedCanvas(false, ["specify"],
         [{ id: "extra", title: "Extra", renderer: "extra" }],
-        ["slow", "broken"].map(control));
+        undefined, ["slow", "broken"].map(control));
     try {
         await page.route("**/controls/slow.mjs*", (route) => route.fulfill({
             contentType: "text/javascript",
@@ -117,7 +117,7 @@ test("slow control mount leaves other controls and the workflow shell interactiv
 test("generated page hides all Workflow content and restores it on return", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["constitution", "specify"],
         [{ id: "overview", title: "Overview", renderer: "overview" }],
-        undefined, [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
+        [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
     try {
         await page.route("**/pages/overview.mjs*", (route) => route.fulfill({
             contentType: "text/javascript",

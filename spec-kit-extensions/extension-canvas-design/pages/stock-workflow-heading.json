@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "stock.workflow-heading",
+  "host": "designer",
+  "slot": "essentials.options",
+  "order": 20,
+  "field": {"id": "canvas.workflowListName", "type": "string", "control": "stock.text",
+    "label": "Workflow header"}
+}

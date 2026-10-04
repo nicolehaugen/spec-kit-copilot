@@ -4,32 +4,36 @@ import { join } from "node:path";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 
-const fields = ["canvas.id", "canvas.displayName", "canvas.description",
-    "canvas.workflowListName", "workflowSlug.userProvided"];
+const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "canvas-settings-setup");
     if (!setup || setup.error || !Array.isArray(setup.fields)
-        || fields.some((id) => !setup.fields.some((field) => field.id === id))) {
-        throw new Error("Essentials must load with all required fields before generation");
+        || required.some((id) => !setup.fields.some((field) => field.id === id))) {
+        throw new Error("Essentials must load with Canvas ID and Title before generation");
     }
-    if (!values || typeof values !== "object" || Array.isArray(values)
-        || Object.keys(values).some((key) => !fields.includes(key))) {
-        throw new Error("Invalid Essentials values");
+    const failed = model.pages.find((page) => page.error);
+    if (failed) {
+        throw new Error(`Cannot generate while ${failed.page} is invalid: ${failed.error.reason}`);
     }
-    const result = {};
-    for (const id of fields) {
+    if (typeof values?.["canvas.id"] === "string"
+        && (reserved.has(values["canvas.id"]) || isWindowsDeviceName(values["canvas.id"]))) {
+        throw new Error("Canvas ID must be non-reserved");
+    }
+    validateValues(values, model.constraints);
+    const result = { ...values };
+    for (const id of required) {
         const rule = model.constraints[id];
         const value = values[id];
-        if (!rule || typeof value !== rule.type
-            || (rule.type === "string" && (value.length < (rule.minLength ?? 0)
-                || value.length > rule.maxLength
-                || (rule.pattern && !new RegExp(rule.pattern).test(value))))) {
+        if (rule?.type !== "string" || !value.trim()) {
             throw new Error(`Invalid Essentials field: ${id}`);
         }
-        result[id] = rule.type === "string" ? value.trim() : value;
+        result[id] = value.trim();
+    }
+    for (const id of ["canvas.description", "canvas.workflowListName"]) {
+        if (Object.hasOwn(result, id)) result[id] = result[id].trim();
     }
     if (!result["canvas.id"] || !result["canvas.displayName"]
         || reserved.has(result["canvas.id"]) || isWindowsDeviceName(result["canvas.id"])) {
@@ -39,19 +43,7 @@ export function validateEssentials(model, values) {
 }
 
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
-    validateValues(values, model.constraints);
-    const essentials = validateEssentials(model,
-        Object.fromEntries(fields.map((id) => [id, values[id]])));
-    const generatedFields = (model.contributions ?? [])
-        .filter((item) => item.generatedBinding?.presentation === "stock.readonly")
-        .map((item) => ({ id: item.field.id, label: item.field.label,
-            maxLength: model.constraints[item.field.id].maxLength,
-            ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
-    const controlContributions = (model.contributions ?? [])
-        .filter((item) => item.generatedBinding?.presentation === "control");
-    if (controlContributions.length > 30) {
-        throw new Error("Generated controls exceed the 30-control limit");
-    }
+    const essentials = validateEssentials(model, values);
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
     const generatedPages = [];
@@ -70,9 +62,28 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         const assets = await Promise.all([definition, renderer].map(asset));
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
     }
+    const generatedFields = [];
     const generatedControls = [];
     const controlAssets = new Map();
-    for (const contribution of controlContributions) {
+    for (const contribution of model.contributions ?? []) {
+        const binding = contribution.generatedBinding;
+        if (!binding) continue;
+        const { id, label } = contribution.field;
+        const rule = model.constraints[id];
+        if (binding.presentation === "stock.readonly") {
+            if (rule?.type !== "string") {
+                throw new Error(`${id}: generated stock field requires a string constraint`);
+            }
+            generatedFields.push({ id, label, maxLength: rule.maxLength,
+                ...(binding.section ? { section: binding.section } : {}) });
+            continue;
+        }
+        if (binding.presentation !== "control" || rule?.type !== "object") {
+            throw new Error(`${id}: incompatible generated binding`);
+        }
+        if (generatedControls.length >= 30) {
+            throw new Error("Generated controls exceed the 30-control limit");
+        }
         const control = model.controls.find((entry) => entry.id === contribution.field.control);
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
         const definition = model.templates.find((entry) => entry.name === control.template
@@ -90,9 +101,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             controlAssets.set(control.id, { control: control.id,
                 assets: await Promise.all(names.map(asset)) });
         }
-        generatedControls.push({ id: contribution.field.id, label: contribution.field.label,
-            control: control.id, slot: contribution.generatedBinding.slot,
-            value: values[contribution.field.id] });
+        generatedControls.push({ id, label, control: control.id, slot: binding.slot,
+            value: essentials[id] });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -112,9 +122,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
         workflow: { selectedPhases: handoff.workflow.selectedPhases },
         installed: handoff.workflow.installed,
-        values: { ...essentials,
-            ...Object.fromEntries(generatedFields.map(({ id }) => [id, values[id]])),
-            ...Object.fromEntries(generatedControls.map(({ id, value }) => [id, value])) },
+        values: essentials,
+        fieldConstraints: model.constraints,
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),

@@ -5,7 +5,8 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.6** registers three JSON page templates and the
+Canvas Design **0.1.7** registers three JSON page templates and three ordered
+stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -15,12 +16,21 @@ project extension directory, then validates the result in place.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
-| `canvas-settings-setup` | Essentials | Canvas ID, Title, Description, Workflow header, Allow custom slug |
+| `canvas-settings-setup` | Essentials | Required Canvas ID and Title |
+| `canvas-stock-description` | Essentials slot | Optional Description |
+| `canvas-stock-workflow-heading` | Essentials slot | Optional Workflow header |
+| `canvas-stock-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
-The Essentials template lives in `pages/essentials.json`; its
+The Essentials core template lives in `pages/essentials.json`; its
 `canvas-settings-setup` ID stays stable for preset resolution.
+The composed load-page command explicitly resolves each stock contribution into
+`essentials.options` in the order shown. Omitting or replacing a stock contribution
+does not remove the required Canvas ID and Title. If absent, generated description
+defaults to `Spec Kit workflow canvas.`, heading to `Workflows`, and custom slug
+to off. Generate validates all enabled Designer pages, including custom fields;
+an invalid page blocks generation until repaired.
 
 The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
@@ -81,7 +91,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.6/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.7/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -123,10 +133,8 @@ names such as `con`, `nul`, and `com1` are rejected before generation.
 Switching to a generated page hides Workflow-owned content and restores it on
 return; the canvas header and status remain available on either page.
 The frozen definition and module are copied into the generated app, which
-needs no design-time packages to render them. The frozen generation request is
-bounded to 4 MiB to accommodate base64-encoded page assets while retaining
-the 32 KiB limit on each page definition and renderer. A typed object field can
-use a shared `control.definition` naming separate replace-only `designer.adapter`
+needs no design-time packages to render them. A typed object field can use a
+shared `control.definition` naming separate replace-only `designer.adapter`
 and `generated.adapter` templates; each module exports `mount`, `controlId`,
 and `valueContract`. Each object-field contribution requires exactly one
 `control.definition` template matching its `field.control`, and Generate uses
@@ -149,11 +157,29 @@ the Wizard provider includes a byte-checked copy, without a runtime dependency
 on the design-time extension.
 The browser reports incompatible `controlId` or `valueContract` exports,
 non-function `mount` exports, and mount failures beside the affected control.
+The frozen generation request is bounded to 4 MiB, allowing registered assets
+to be packaged after base64 encoding while retaining the 32 KiB limit on each
+definition and renderer.
+Designer derives generated field and control registrations only from resolved
+`generatedBinding` contributions when freezing. All validated Designer values
+remain in the request, including Designer-only values, but only bound values
+become generated displays. The generator checks registrations against frozen
+value constraints and control definitions, as well as file and asset limits.
+The request's SHA-256 integrity value catches accidental edits; it is not an
+authentication mechanism for a locally rewritten and re-signed request.
 For stock read-only fields, an optional `generatedBinding.section` with a
 stable `id` and display `title` groups fields under that heading without
 changing the Designer slot; fields without a section keep the **Configured
 fields** heading. Opening the shell does not mean all pages loaded or that
 Essentials is valid for generation.
+
+The repository-local `copilot-billing-canvas-test` preset exercises stock
+read-only placement on Billing and Essentials. The isolated
+[test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
+registers an additional Designer page with stock text and checkbox fields. The
+browser integration test covers the checkbox default, rendering, save, and
+reopen. The preset is installed locally, not published in the canonical preset
+catalog. Billing and generated-only pages have separate test fixtures.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
 request prepared by the Designer. It writes the **source-owned SDK entry point**

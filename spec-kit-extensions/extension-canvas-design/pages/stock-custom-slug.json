@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "stock.custom-slug",
+  "host": "designer",
+  "slot": "essentials.options",
+  "order": 30,
+  "field": {"id": "workflowSlug.userProvided", "type": "boolean", "control": "stock.checkbox",
+    "default": false, "label": "Allow custom slug",
+    "description": "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default."}
+}

@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.6"
+  version: "0.1.7"
   description: Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.
   category: process
   author: spec-kit-copilot
@@ -31,6 +31,15 @@ provides:
     - name: canvas-settings-appearance
       file: pages/appearance.json
       description: Appearance settings placeholder.
+    - name: canvas-stock-description
+      file: pages/stock-description.json
+      description: Optional Essentials collection description.
+    - name: canvas-stock-workflow-heading
+      file: pages/stock-workflow-heading.json
+      description: Optional Essentials workflow heading.
+    - name: canvas-stock-custom-slug
+      file: pages/stock-custom-slug.json
+      description: Optional Essentials custom slug option.
 
 tags:
   - copilot

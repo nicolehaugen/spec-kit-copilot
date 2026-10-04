@@ -43,6 +43,11 @@ async function model(revision = "first") {
         const document = JSON.parse(await readFile(new URL(`${name}.json`, templateRoot), "utf8"));
         pages.push({ ...document, page: document.id });
     }
+    for (const name of ["description", "workflow-heading", "custom-slug"]) {
+        const { field } = JSON.parse(await readFile(new URL(`stock-${name}.json`, templateRoot), "utf8"));
+        const { control: _control, ...stockField } = field;
+        pages[0].fields.push(stockField);
+    }
     return {
         pages, revision,
         constraints: {
@@ -560,7 +565,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.6 or the current local source.");
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.7 or the current local source.");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();

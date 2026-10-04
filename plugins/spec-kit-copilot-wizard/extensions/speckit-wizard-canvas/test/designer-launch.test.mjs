@@ -117,7 +117,7 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.ok(sent[0].prompt.indexOf("Immediately after bundles, inspect extension list --json")
         < sent[0].prompt.indexOf("Install ALL remaining standalone extensions"));
     assert.match(sent[0].prompt, /even when it is absent from handoff\.workflow\.installed/);
-    assert.match(sent[0].prompt, /Require extension-canvas-design to remain at hosted version 0\.1\.6 from the registered approved catalog/);
+    assert.match(sent[0].prompt, /Require extension-canvas-design to remain at hosted version 0\.1\.7 from the registered approved catalog/);
     assert.match(sent[0].prompt, /If a bundle replaced it, reinstall extension-canvas-design by ID with --force.*verify its version and source again/);
     assert.ok(sent[0].prompt.indexOf("remaining standalone extensions")
         < sent[0].prompt.indexOf("Only after ALL extensions"));
@@ -134,7 +134,7 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /If the generated skill is unavailable after reload, report the concrete error and stop/);
     assert.match(sent[0].prompt, /Follow its entire composed command for the complete named-template resolution/);
     assert.match(sent[0].prompt, /ONCE after all installations/);
-    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.6/);
+    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.7/);
     assert.deepEqual(JSON.parse(sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1])
         .workflow.installed, { presets: [], extensions: [], bundles: [] });
     assert.match(sent[0].prompt, /Confirm the open_canvas result has the requested canvasId:.*input\.handoffId/);
@@ -188,14 +188,14 @@ test("selected catalog entries are validated and normalized from the server's ca
 test("current hosted Canvas Design launches without a local override", async () => {
     const hosted = { ...catalog, extensions: [{
         id: "extension-canvas-design", source: "copilot", tags: ["canvas-design"],
-        version: "0.1.6", downloadUrl: "https://example.org/extension-canvas-design.zip",
+        version: "0.1.7", downloadUrl: "https://example.org/extension-canvas-design.zip",
     }] };
     const selection = { ...empty, extensions: [{
         id: "extension-canvas-design", source: "copilot", approved: true,
     }] };
     const { post, sent } = fixture({ getState: async () => ({ ...snapshot, catalog: hosted }) });
     assert.equal((await post(request(selection))).statusCode, 202);
-    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.6/);
+    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.7/);
 });
 
 test("outdated hosted Canvas Design requires a checked local override before dispatch", async () => {
@@ -210,7 +210,7 @@ test("outdated hosted Canvas Design requires a checked local override before dis
     const response = await noLocal.post(request(selection));
     assert.equal(response.statusCode, 422);
     assert.equal(response.body.error,
-        "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.6. Use compatible canvas versions or add a compatible extension under Local development.");
+        "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.7. Use compatible canvas versions or add a compatible extension under Local development.");
     assert.equal(noLocal.sent.length, 0);
 
     const withLocal = fixture({ getState: async () => ({ ...snapshot, catalog: hosted }) });
@@ -682,7 +682,7 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     // No local extension-canvas-design selection here, so the required
     // hosted install step must use its unchanged, legacy wording.
     assert.match(prompt, /Install extension-canvas-design by ID/);
-    assert.match(prompt, /Require the installed version to be 0\.1\.6/);
+    assert.match(prompt, /Require the installed version to be 0\.1\.7/);
     assert.doesNotMatch(prompt, /skip the official by-ID install/);
 
     const withLocalCanvasDesignExt = buildDesignerHandoff(snapshot, empty, {
@@ -691,10 +691,10 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     }, empty, randomUUID());
     const promptWithExt = buildDesignerLaunchPrompt(withLocalCanvasDesignExt);
     // With a local core extension approved, the official by-ID install and
-    // its mandatory version-0.1.6 check are skipped entirely (not merely
+    // its mandatory version-0.1.7 check are skipped entirely (not merely
     // suffixed with a contradicting note) in favor of the local --dev
     // --force install producing the generated skill/schema instead.
-    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.6 check entirely/);
+    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.7 check entirely/);
     assert.match(promptWithExt, /verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force/);
     assert.ok(promptWithExt.indexOf("then install it now with specify extension add <path> --dev --force")
         < promptWithExt.indexOf("Then install approved bundles"));
@@ -703,7 +703,7 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
         < promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path"));
     assert.ok(promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path")
         < promptWithExt.indexOf("Only after ALL extensions"));
-    assert.doesNotMatch(promptWithExt, /Require extension-canvas-design to remain at hosted version 0\.1\.6/);
+    assert.doesNotMatch(promptWithExt, /Require extension-canvas-design to remain at hosted version 0\.1\.7/);
     assert.doesNotMatch(promptWithExt, /Install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
 });
 

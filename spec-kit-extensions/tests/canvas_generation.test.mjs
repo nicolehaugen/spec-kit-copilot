@@ -20,7 +20,8 @@ const model = {
         { id: "canvas.workflowListName" }, { id: "workflowSlug.userProvided" },
     ] }],
     constraints: {
-        "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$" },
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100,
+            pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
         "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
         "canvas.description": { type: "string", maxLength: 240 },
         "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -75,13 +76,13 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     for (const id of ["com0", "com10", "lpt0", "lpt10", "con-1"]) {
         assert.equal(validateEssentials(model, { ...values, "canvas.id": id })["canvas.id"], id);
     }
-    assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /Title/);
+    assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /canvas.displayName/);
     assert.throws(() => validateEssentials(model, { ...values, "workflowSlug.userProvided": "true" }), /workflowSlug.userProvided/);
     const { ["workflowSlug.userProvided"]: omitted, ...missingToggle } = values;
-    assert.throws(() => validateEssentials(model, missingToggle), /workflowSlug.userProvided/);
+    assert.throws(() => validateEssentials(model, missingToggle), /unexpected or missing fields/);
 });
 
-test("Designer-only values are validated but excluded from frozen and generated files", async (t) => {
+test("all enabled Designer values are validated and frozen, with only bound fields rendered", async (t) => {
     const { project, workspace } = await fixture(t);
     const contributedModel = { ...model,
         constraints: { ...model.constraints,
@@ -89,7 +90,8 @@ test("Designer-only values are validated but excluded from frozen and generated 
             "designer.note": { type: "string", maxLength: 80 } },
         contributions: [{ field: { id: "billing.costCode", label: "Cost code" },
             generatedBinding: { presentation: "stock.readonly",
-                section: { id: "billing", title: "Billing" } } }] };
+                section: { id: "billing", title: "Billing" } } },
+        { field: { id: "designer.note", label: "Internal note" } }] };
     const supplied = { ...values, "billing.costCode": "CC-481", "designer.note": "Designer only" };
     await assert.rejects(freezeGeneration({ model: contributedModel,
         values: { ...supplied, "designer.note": "x".repeat(81) },
@@ -99,26 +101,33 @@ test("Designer-only values are validated but excluded from frozen and generated 
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
     assert.equal(frozen.values["billing.costCode"], "CC-481");
-    assert.equal(Object.hasOwn(frozen.values, "designer.note"), false);
+    assert.equal(frozen.values["designer.note"], "Designer only");
+    assert.deepEqual(frozen.generatedFields.map(({ id }) => id), ["billing.costCode"]);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const setup = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-setup.json"), "utf8"));
     assert.equal(setup.values["billing.costCode"], "CC-481");
-    assert.equal(Object.hasOwn(setup.values, "designer.note"), false);
+    assert.equal(setup.values["designer.note"], "Designer only");
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-config.json"), "utf8"));
+    assert.equal(config.readOnlyFields.some((field) => field.id === "designer.note"), false);
 });
 
-test("re-signed requests reject unbound, missing, and colliding generated values", async (t) => {
+test("re-signed requests reject inconsistent, missing, and colliding generated values", async (t) => {
     for (const [name, change, error] of [
-        ["unbound value", (request) => { request.values["designer.note"] = "not generated"; },
-            /Invalid frozen generated values/],
+        ["undeclared value", (request) => { request.values["designer.note"] = "not generated"; },
+            /Invalid frozen Designer fields/],
         ["missing Essential", (request) => { delete request.values["canvas.description"]; },
-            /Invalid frozen canvas identity/],
+            /Invalid frozen Designer fields/],
         ["missing bound value", (request) => {
             request.generatedFields = [{ id: "billing.costCode", label: "Cost code", maxLength: 64 }];
         }, /Invalid frozen generated fields/],
         ["bound ID collides with Essential", (request) => {
             request.generatedFields = [{ id: "canvas.displayName", label: "Title", maxLength: 120 }];
         }, /Invalid frozen generated values/],
+        ["generated field maxLength differs from its constraint", (request) => {
+            request.generatedFields = [{ id: "canvas.description", label: "Description", maxLength: 1000 }];
+        }, /Invalid frozen generated fields/],
     ]) {
         await t.test(name, async (child) => {
             const { project, workspace, prepared, sdk } = await fixture(child);
@@ -436,11 +445,14 @@ test("generation rejects malformed or mismatched frozen page assets before creat
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
     const page = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/essentials.json", import.meta.url)));
-    assert.deepEqual(page.fields.find((entry) => entry.id === "workflowSlug.userProvided"), {
-        id: "workflowSlug.userProvided", type: "boolean", default: false, label: "Allow custom slug",
+    assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
+    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-workflow-heading.json", import.meta.url)));
+    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-custom-slug.json", import.meta.url)));
+    assert.deepEqual(slug.field, {
+        id: "workflowSlug.userProvided", type: "boolean", control: "stock.checkbox", default: false, label: "Allow custom slug",
         description: "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.",
     });
-    assert.equal(page.fields.find((entry) => entry.id === "canvas.workflowListName").label, "Workflow header");
+    assert.equal(heading.field.label, "Workflow header");
 });
 
 test("legacy result state stays on disk but is not evaluated or shown", async (t) => {
@@ -656,6 +668,34 @@ test("existing canvases are preserved and tampered requests fail before creation
     await writeFile(path, JSON.stringify(request));
     await assert.rejects(materialize(two.project, two.workspace, handoff.handoffId, two.prepared.requestId),
         /integrity mismatch/);
+});
+
+test("generator rejects inconsistent all-page values and stock defaults before writing", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(path, "utf8"));
+    const failures = [
+        (request) => { request.values["other.page"] = "unexpected"; },
+        (request) => { delete request.values["canvas.displayName"]; },
+        (request) => { request.values["workflowSlug.userProvided"] = "true"; },
+        (request) => { request.values["canvas.description"] = "x".repeat(241); },
+        (request) => { request.canvas.description = "not the frozen value"; },
+        (request) => { request.fieldConstraints["canvas.description"].type = "object"; },
+        (request) => { request.fieldConstraints["canvas.id"].pattern = "^(a+)+$"; },
+        (request) => { delete request.fieldConstraints["canvas.id"].pattern; },
+        (request) => { request.fieldConstraints["canvas.description"].pattern = "^(a+)+$"; },
+    ];
+    for (const change of failures) {
+        const request = structuredClone(original);
+        change(request);
+        const { integrity: _old, ...payload } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen Designer field|Invalid frozen Designer fields|Invalid frozen canvas identity/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
 });
 
 test("generation request and Wizard handoff reject symlinks and oversized files", async (t) => {
