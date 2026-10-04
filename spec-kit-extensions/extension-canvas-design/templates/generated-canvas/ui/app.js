@@ -23,8 +23,9 @@ const $ = (id) => document.getElementById(id);
 const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
+const failedValueDrafts = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
-let viewer = null, timer, saveFailure = null, valueSaveFailure = null, pendingValueSaves = 0, workflowQuery = "";
+let viewer = null, timer, saveFailure = null, pendingValueSaves = 0, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
 function wireGeneratedPages() {
@@ -151,10 +152,12 @@ function renderValues() {
         } else {
             const editor = document.createElement("div");
             editor.dataset.editValue = field.id;
+            const retained = failedValueDrafts.get(field.id);
+            const value = retained ? retained.value : field.value;
             if (field.schema.type === "boolean") {
                 const input = document.createElement("input");
                 input.type = "checkbox";
-                input.checked = field.value;
+                input.checked = value;
                 input.id = `value-${field.id}`;
                 label.htmlFor = input.id;
                 editor.append(input);
@@ -171,7 +174,7 @@ function renderValues() {
                         item.textContent = option;
                         select.append(item);
                     }
-                    select.value = field.value[key];
+                    select.value = value[key];
                     property.append(select);
                     editor.append(property);
                 }
@@ -180,7 +183,7 @@ function renderValues() {
                 input.type = "text";
                 input.className = "phase-input-control";
                 input.maxLength = field.schema.maxLength;
-                input.value = field.value;
+                input.value = value;
                 input.id = `value-${field.id}`;
                 label.htmlFor = input.id;
                 editor.append(input);
@@ -226,9 +229,9 @@ function editValue(element) {
         if (saveFailure) throw saveFailure;
         const result = await api("/api/values", { id: field.id, value, revision: model.revision });
         model.revision = result.revision;
-        valueSaveFailure = null;
+        failedValueDrafts.delete(field.id);
     }).catch((error) => {
-        valueSaveFailure = error;
+        failedValueDrafts.set(field.id, { value, error });
         throw error;
     }).finally(() => { pendingValueSaves--; });
     saving.catch(() => {});
@@ -283,7 +286,7 @@ async function flush() {
     if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
     await saving;
     if (saveFailure) throw saveFailure;
-    if (valueSaveFailure) throw valueSaveFailure;
+    if (failedValueDrafts.size) throw failedValueDrafts.values().next().value.error;
 }
 function renderStatus() {
     function pendingLabel(step) {
@@ -654,7 +657,7 @@ events.onmessage = () => {
 };
 events.onerror = () => { setConnectionStatus("lost"); message("Connection interrupted. Drafts are retained; use Refresh if reconnection fails."); };
 window.addEventListener("beforeunload", (event) => {
-    if (timer || saveFailure || pendingValueSaves || valueSaveFailure) {
+    if (timer || saveFailure || pendingValueSaves || failedValueDrafts.size) {
         event.preventDefault();
         event.returnValue = "";
     }

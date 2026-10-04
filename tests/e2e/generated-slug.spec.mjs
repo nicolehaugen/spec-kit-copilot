@@ -44,6 +44,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         return {
             url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
             root,
+            broadcast: () => routes.broadcast(),
             close: async () => {
                 routes.close();
                 runtime.close();
@@ -119,6 +120,7 @@ test("generated value editors render typed controls without exposing processing-
 
 test("generated value editors save typed changes canvas-wide and retain failed edits", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, sampleValueSources());
+    let otherPanel;
     try {
         await mkdir(join(canvas.root, "specs", "first"), { recursive: true });
         await mkdir(join(canvas.root, "specs", "second"), { recursive: true });
@@ -176,6 +178,32 @@ test("generated value editors save typed changes canvas-wide and retain failed e
             window.dispatchEvent(event);
             return event.defaultPrevented;
         })).toBe(true);
+        otherPanel = await page.context().newPage();
+        await otherPanel.goto(canvas.url);
+        await page.locator("#refresh-state").focus();
+        await expect(page.locator("#connection-status")).toHaveText("Live");
+        const externalSave = otherPanel.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().id === "demo.enabled");
+        await otherPanel.locator('[data-edit-value="demo.enabled"] input').check();
+        expect((await externalSave).status()).toBe(200);
+        const refreshed = page.waitForResponse((response) =>
+            response.url().includes("/api/state") && response.request().method() === "GET");
+        canvas.broadcast();
+        expect((await refreshed).status()).toBe(200);
+        await expect(enabled).toBeChecked();
+        await expect(note).toHaveValue("Unsaved draft");
+        const separateSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().id === "demo.enabled");
+        await enabled.uncheck();
+        expect((await separateSave).status()).toBe(200);
+        await expect(note).toHaveValue("Unsaved draft");
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(true);
         const retry = page.waitForResponse((response) =>
             response.url().includes("/api/values")
             && response.request().postDataJSON().value === "Recovered edit");
@@ -189,6 +217,7 @@ test("generated value editors save typed changes canvas-wide and retain failed e
             return event.defaultPrevented;
         })).toBe(false);
     } finally {
+        await otherPanel?.close();
         await canvas.close();
     }
 });
