@@ -7,8 +7,10 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { mountPageAssets, createStockImageRenderer } from
     "../extension-canvas-design/templates/generated-canvas/ui/page-assets.mjs";
+import { addDesignerAdapterFixture } from "./designer_adapter_fixture.mjs";
 
 const source = new URL("../extension-canvas-design/", import.meta.url);
 const logo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YC24x8AAAAASUVORK5CYII=";
@@ -78,6 +80,8 @@ async function setup(t, selected = [logo, logo, logo]) {
         controls: [{ id: "stock.image", adapters: { generated: "generated-control-adapter-image" } }],
         generatedPages: [{ id: "gallery", name: "gallery", title: "Gallery",
             renderer: "gallery-renderer", slots: page.slots }] };
+    await addDesignerAdapterFixture(project, model);
+    await addWorkflowFixture(project, model);
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     const requestPath = join(handoffFolder, "generations", prepared.requestId, "request.json");
     const sdk = join(project, ".github", "extensions", "image-canvas");
@@ -160,7 +164,7 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
 });
 
 test("missing Logo keeps diamond; frozen image and adapter tampering fail before packaging", async (t) => {
-    const { project, workspace, prepared, sdk, requestPath, templates } = await setup(t, ["", logo, ""]);
+    const { project, workspace, prepared, sdk, requestPath, templates, model } = await setup(t, ["", logo, ""]);
     const request = JSON.parse(await readFile(requestPath, "utf8"));
     await rewrite(requestPath, (candidate) => { candidate.generatedImageControl.assets[1].hash = "0".repeat(64); });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
@@ -208,13 +212,7 @@ test("missing Logo keeps diamond; frozen image and adapter tampering fail before
     await writeFile(requestPath, JSON.stringify(request));
     await writeFile(templates[1].path, "export const controlId = 'changed';");
     await assert.rejects(freezeGeneration({
-        model: { revision: "changed", pages: [{ page: "designer-essentials",
-            fields: [{ id: "canvas.id" }, { id: "canvas.displayName" }] }],
-        constraints: request.fieldConstraints,
-        contributions: [{ field: { id: "canvas.logo", type: "image", control: "stock.image" },
-            generatedBinding: { presentation: "asset", slot: "header.brand" } }],
-        templates, controls: [{ id: "stock.image",
-            adapters: { generated: "generated-control-adapter-image" } }] },
+        model: { ...model, revision: "changed", templates },
         values: request.values, handoff, project, workspace }), /generated asset changed/);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig, renderHtml } = await import(pathToFileURL(join(sdk, "server.mjs")).href);

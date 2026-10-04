@@ -3,7 +3,7 @@ schema_version: "1.0"
 preset:
   id: "copilot-risk-matrix-test"
   name: "Copilot Risk Matrix Test"
-  version: "0.1.0"
+  version: "0.1.1"
   description: "Test-only paired Designer and generated risk-matrix control."
   author: "spec-kit-copilot"
   license: "MIT"

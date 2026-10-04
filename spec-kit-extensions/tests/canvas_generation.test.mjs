@@ -9,6 +9,8 @@ import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
 import { freezeGeneration, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { addWorkflowFixture } from "./workflow_fixture.mjs";
+import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
 
 const entryTemplate = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/extension.mjs",
     import.meta.url), "utf8");
@@ -45,6 +47,8 @@ async function fixture(t, selectedHandoff = handoff, selectedValues = values) {
     const project = join(root, "project"), workspace = join(root, "workspace");
     await mkdir(project);
     await mkdir(workspace);
+    await addDesignerAdapterFixture(project, model);
+    await addWorkflowFixture(project, model);
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, "handoff.json"), JSON.stringify(selectedHandoff));
@@ -65,8 +69,10 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.deepEqual(request.workflow.selectedPhases, handoff.workflow.selectedPhases);
     assert.deepEqual(request.installed.presets, handoff.workflow.installed.presets);
     assert.deepEqual(request.values, values);
-    assert.throws(() => validateEssentials(model, { ...values, "canvas.id": "../bad" }), /canvas.id/);
-    assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /canvas.displayName/);
+    await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.id": "../bad" },
+        handoff, project, workspace }), /Invalid canvas.id \(canvas.id\)/);
+    await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.displayName": " " },
+        handoff, project, workspace }), /Invalid canvas.displayName \(canvas.displayName\)/);
     assert.throws(() => validateEssentials(model, { ...values, "workflowSlug.userProvided": "true" }), /workflowSlug.userProvided/);
     const { ["workflowSlug.userProvided"]: omitted, ...missingToggle } = values;
     assert.throws(() => validateEssentials(model, missingToggle), /unexpected or missing fields/);
@@ -75,16 +81,18 @@ test("Essentials are validated before freezing a bounded, immutable generation r
 test("all enabled Designer values are validated and frozen, with only bound fields rendered", async (t) => {
     const { project, workspace } = await fixture(t);
     const contributedModel = { ...model,
+        pages: model.pages.map((page) => ({ ...page, fields: [...page.fields] })),
         constraints: { ...model.constraints,
             "billing.costCode": { type: "string", maxLength: 64 },
             "designer.note": { type: "string", maxLength: 80 } },
         contributions: [{ field: { id: "billing.costCode", label: "Cost code" },
             generatedBinding: { presentation: "stock.readonly",
                 section: { id: "billing", title: "Billing" } } }] };
+    resolveFixtureFields(contributedModel);
     const supplied = { ...values, "billing.costCode": "CC-481", "designer.note": "Designer only" };
     await assert.rejects(freezeGeneration({ model: contributedModel,
         values: { ...supplied, "designer.note": "x".repeat(81) },
-        handoff, project, workspace }), /Invalid Designer setting: designer.note/);
+        handoff, project, workspace }), /Invalid designer.note \(designer.note\)/);
     const prepared = await freezeGeneration({ model: contributedModel, values: supplied,
         handoff, project, workspace });
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
@@ -283,6 +291,75 @@ test("generation rejects malformed or mismatched frozen page assets before creat
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     assert.equal((await readFile(join(project, ".github", "extensions", "my-workflow",
         "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
+});
+
+test("Workflow layout and renderer freeze, validate and package independently of the preset", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(requestPath, "utf8"));
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    const rewrite = async (edit) => {
+        const request = structuredClone(original);
+        edit(request);
+        const { integrity: _old, ...payload } = request;
+        request.integrity = digest(JSON.stringify(payload));
+        await writeFile(requestPath, JSON.stringify(request));
+    };
+    for (const edit of [
+        (page) => { page.regions.pop(); },
+        (page) => { page.regions[1] = page.regions[0]; },
+        (page) => { page.pipeline = "../escape"; },
+        (page) => { page.assets[1].hash = "0".repeat(64); },
+        (page) => {
+            const bytes = Buffer.from("export function mount( {");
+            page.assets[1].content = bytes.toString("base64");
+            page.assets[1].hash = digest(bytes);
+        },
+    ]) {
+        await rewrite((request) => edit(request.workflowPage));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen Workflow page assets|Frozen Workflow page definition|Invalid frozen pipeline renderer/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
+    const replacement = await readFile(new URL(
+        "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/pipeline.mjs", import.meta.url));
+    const presetPath = join(project, ".specify", "templates", "generated-pipeline.mjs");
+    await writeFile(presetPath, replacement);
+    const presetModel = { ...model, templates: model.templates.map((entry) =>
+        entry.name === "generated-pipeline"
+            ? { ...entry, sourceId: "copilot-vertical-pipeline-test", hash: digest(replacement) }
+            : entry) };
+    const frozen = await freezeGeneration({ model: presetModel, values, handoff, project, workspace });
+    await rm(presetPath);
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    assert.deepEqual(await readFile(join(sdk, "pages", "generated-pipeline.mjs")), replacement);
+    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    assert.equal(readConfig().workflowPage.hash, digest(replacement));
+    assert.deepEqual(await readdir(join(sdk, "pages")), ["generated-pipeline.mjs", "workflow.json"]);
+    await writeFile(join(sdk, "pages", "generated-pipeline.mjs"), "export function mount() {}");
+    assert.throws(() => readConfig(), /Workflow page|pipeline|Invalid generated canvas/);
+});
+
+test("reordered Workflow regions render in their declared order", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    const regions = request.workflowPage.regions.reverse();
+    const definition = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
+    definition.regions = regions;
+    const bytes = Buffer.from(JSON.stringify(definition));
+    request.workflowPage.assets[0].content = bytes.toString("base64");
+    request.workflowPage.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+    const { integrity: _old, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const { readConfig, renderHtml: renderPackaged } = await import(
+        pathToFileURL(join(sdk, "server.mjs")).href);
+    const html = renderPackaged(readConfig());
+    assert.ok(html.indexOf('id="workflow-pipeline"') < html.indexOf('id="instance-collection"'));
 });
 
 test("frozen named values reject tampered modules and package independently of their preset", async (t) => {

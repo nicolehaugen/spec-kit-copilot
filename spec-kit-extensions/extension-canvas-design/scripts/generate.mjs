@@ -13,6 +13,8 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
+    "pages", "constitution", "message", "pipeline"];
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 512 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
@@ -224,11 +226,51 @@ const imageFile = (item) => `${item.page
     "image/webp": "webp",
 }[item.mime]}`;
 
+function frozenWorkflowPage(page) {
+    if (!page || Object.keys(page).sort().join() !== "assets,id,pipeline,regions"
+        || page.id !== "workflow" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.pipeline)
+        || !Array.isArray(page.regions) || page.regions.length !== WORKFLOW_REGIONS.length
+        || new Set(page.regions).size !== WORKFLOW_REGIONS.length
+        || page.regions.some((region) => !WORKFLOW_REGIONS.includes(region))
+        || !Array.isArray(page.assets) || page.assets.length !== 2
+        || page.assets[0]?.name !== "generated-workflow"
+        || page.assets[0]?.kind !== "generated.workflow-page-definition"
+        || page.assets[1]?.name !== page.pipeline
+        || page.assets[1]?.kind !== "generated.pipeline-renderer"
+        || page.assets.some((asset) => !asset || typeof asset !== "object"
+            || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+            || typeof asset.sourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+            || typeof asset.content !== "string"
+            || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+            || Buffer.from(asset.content, "base64").length > 32 * 1024
+            || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash)) {
+        throw new Error("Invalid frozen Workflow page assets");
+    }
+    let definition;
+    try { definition = withoutSchema(JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8"))); }
+    catch { throw new Error("Invalid frozen Workflow page definition"); }
+    if (!definition || Object.keys(definition).sort().join() !== "id,pipeline,regions,schemaVersion"
+        || definition.schemaVersion !== 1 || definition.id !== page.id
+        || definition.pipeline !== page.pipeline
+        || JSON.stringify(definition.regions) !== JSON.stringify(page.regions)) {
+        throw new Error("Frozen Workflow page definition differs from registration");
+    }
+    const module = Buffer.from(page.assets[1].content, "base64").toString("utf8");
+    const check = spawnSync("node", ["--check", "--input-type=module"],
+        { input: module, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
+    if (check.error || check.status !== 0) {
+        throw new Error(`Invalid frozen pipeline renderer: ${check.stderr || check.error || "module validation failed"}`);
+    }
+    return { regions: page.regions, pipeline: page.pipeline,
+        definitionHash: page.assets[0].hash, hash: page.assets[1].hash };
+}
+
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
         generatedPages, generatedControls, generatedAssets, generatedImageControl,
-        generatedTextControl, generatedTextPlacements, valueSources } = request;
+        generatedTextControl, generatedTextPlacements, valueSources, workflowPage } = request;
     validateFrozenValues(values, fieldConstraints);
+    const workflowLayout = frozenWorkflowPage(workflowPage);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
@@ -428,6 +470,7 @@ function configuration(request) {
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             || page.id === RESERVED_GENERATED_PAGE_ID
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            || page.renderer === workflowLayout.pipeline
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
             || (page.values !== undefined && (!Array.isArray(page.values)
                 || page.values.length > 100 || new Set(page.values).size !== page.values.length
@@ -537,6 +580,7 @@ function configuration(request) {
     const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
+        workflowPage: workflowLayout,
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
         ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
         ...(pageImages.length ? { generatedPageAssets: pageImages.map((item) =>
@@ -616,6 +660,10 @@ export async function materialize(project, workspace, handoffId, requestId) {
         { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
         { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },
     ]);
+    pageFiles.push(
+        { filename: "workflow.json", bytes: Buffer.from(request.workflowPage.assets[0].content, "base64") },
+        { filename: `${request.workflowPage.pipeline}.mjs`,
+            bytes: Buffer.from(request.workflowPage.assets[1].content, "base64") });
     const controlFiles = (request.generatedControls ?? []).flatMap((item) => [
         { filename: `${item.assets[0].name}.json`, bytes: Buffer.from(item.assets[0].content, "base64") },
         { filename: `${item.assets[1].name}.mjs`, bytes: Buffer.from(item.assets[1].content, "base64") },

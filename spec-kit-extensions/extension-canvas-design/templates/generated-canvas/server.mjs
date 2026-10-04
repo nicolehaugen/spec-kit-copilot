@@ -9,6 +9,8 @@ const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "ut
 const pageAssets = readFileSync(new URL("./ui/page-assets.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
+    "pages", "constitution", "message", "pipeline"];
 const imageValueContract = { type: "image", maxBytes: 32768,
     mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
 
@@ -66,6 +68,14 @@ export function readConfig() {
                             || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
                             || typeof field.section.title !== "string"
                             || !field.section.title.trim() || field.section.title.length > 120)))))
+        || !config.workflowPage || !Array.isArray(config.workflowPage.regions)
+        || config.workflowPage.regions.length !== WORKFLOW_REGIONS.length
+        || new Set(config.workflowPage.regions).size !== WORKFLOW_REGIONS.length
+        || config.workflowPage.regions.some((region) => !WORKFLOW_REGIONS.includes(region))
+        || !/^[a-z][a-z0-9-]{0,79}$/.test(config.workflowPage.pipeline)
+        || !/^[a-f0-9]{64}$/.test(config.workflowPage.hash)
+        || !/^[a-f0-9]{64}$/.test(config.workflowPage.definitionHash)
+        || Object.keys(config.workflowPage).sort().join() !== "definitionHash,hash,pipeline,regions"
         || (config.generatedPages !== undefined
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
@@ -75,6 +85,7 @@ export function readConfig() {
                             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
                             || page.id === RESERVED_GENERATED_PAGE_ID
                             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+                            || page.renderer === config.workflowPage.pipeline
                             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
                             || (page.slots !== undefined && (!Array.isArray(page.slots)
                                 || page.slots.length > 30
@@ -171,6 +182,7 @@ export function readConfig() {
     }
     if (config.imageControl) readImageControl(config.imageControl);
     if (config.textControl) readTextControl(config.textControl);
+    readWorkflowPage(config.workflowPage);
     const sections = new Map();
     for (const { section } of config.readOnlyFields ?? []) {
         if (!section) continue;
@@ -182,6 +194,25 @@ export function readConfig() {
     phaseContract(config);
     valueContract(config);
     return config;
+}
+
+function readWorkflowPage(page) {
+    const definition = readFileSync(new URL("./pages/workflow.json", import.meta.url));
+    if (createHash("sha256").update(definition).digest("hex") !== page.definitionHash) {
+        throw new Error("Packaged Workflow page definition does not match its frozen hash");
+    }
+    const parsed = JSON.parse(definition);
+    if (parsed.schemaVersion !== 1 || parsed.id !== "workflow" || parsed.pipeline !== page.pipeline
+        || Object.keys(parsed).filter((key) => key !== "$schema").sort().join() !== "id,pipeline,regions,schemaVersion"
+        || JSON.stringify(parsed.regions) !== JSON.stringify(page.regions)) {
+        throw new Error("Packaged Workflow page definition differs from its frozen contract");
+    }
+    const bytes = readFileSync(new URL(`./pages/${page.pipeline}.mjs`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== page.hash) {
+        throw new Error("Packaged pipeline renderer does not match its frozen hash");
+    }
+    return bytes;
 }
 
 function readImageAsset(asset) {
@@ -230,32 +261,6 @@ function phaseLabel(phase) {
         .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
 }
 
-function renderPhase(config, phases, index) {
-    const phase = phases[index];
-    const outputPath = phaseContract(config).find((step) => step.id === phase).output ?? "No declared output";
-    return `<header class="workflow-header">
-        <div class="workflow-header-main"><div class="phase-heading"><h2>${escapeHtml(phaseLabel(phase))}</h2><span class="phase-notice">Not run</span></div>
-        <p class="tagline">${escapeHtml(phase.startsWith("speckit.") ? phase : `speckit.${phase}`)}</p></div>
-    </header>
-    <dl class="phase-facts"><dt>View target</dt><dd><button class="phase-artifact-link" id="browse-output-folder" type="button" title="Open the viewer target's folder"><code>${escapeHtml(outputPath)}</code></button></dd></dl>
-    <p id="phase-artifact-status" class="muted" role="status"></p>
-    <p id="phase-other-outputs" class="muted" hidden></p>
-    <label class="field" for="phase-args">
-        <span class="field-label" id="phase-input-label">Phase input</span>
-        <span class="visually-hidden" id="phase-input-help">Add details or direction for this phase.</span>
-        <textarea class="phase-input-control" id="phase-args" aria-labelledby="phase-input-label" aria-describedby="phase-input-help" placeholder="Add details or direction for this phase."></textarea>
-    </label>
-    <div id="phase-message" class="muted" role="status"></div>
-    <footer class="phase-actions phase-actions-nav">
-        <div class="phase-actions-left"><button class="btn btn-secondary" id="previous-phase" type="button">&#9664; Back</button></div>
-        <div class="phase-actions-center">
-            <button class="btn btn-primary" id="run-phase" type="button" aria-describedby="phase-message">Run phase</button>
-            <button class="btn btn-secondary" id="view-artifact" type="button" aria-describedby="phase-artifact-status" hidden>View artifact</button>
-        </div>
-        <div class="phase-actions-right"><button class="btn btn-secondary" id="next-phase" type="button">Continue &#9654;</button></div>
-    </footer>`;
-}
-
 export function renderHtml(config, token = "") {
     const { canvas } = config;
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
@@ -269,19 +274,8 @@ export function renderHtml(config, token = "") {
         ? `<span data-stock-text="workflow.heading" data-field-id="canvas.workflowListName" data-text-label="${escapeHtml(headingAdapter.label)}">${escapeHtml(canvas.workflowListName)}</span>`
         : escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted"${descriptionAdapter
         ? ` data-stock-text="workflow.description" data-field-id="canvas.description" data-text-label="${escapeHtml(descriptionAdapter.label)}"` : ""}>${escapeHtml(canvas.description)}</p></div>`;
-    return `<!doctype html>
-<html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}</style></head>
-<body>
-<header class="app-header">
-    <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}"${config.brandAsset
-        ? ` data-stock-image="header.brand" data-image-file="${escapeHtml(config.brandAsset.file)}" data-image-alt="" data-image-class="generated-image"`
-        : ' aria-hidden="true"'}>${config.brandAsset ? "" : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
-    <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
-</header>
-<main class="app-body workflow-surface">
-    <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
+    const regions = {
+        collection: `<section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
         <div class="instance-collection-head">
             ${config.mainPageAsset
                 ? `<div class="collection-intro"><span data-stock-image="workflow.intro" data-image-file="${escapeHtml(config.mainPageAsset.file)}" data-image-alt="${escapeHtml(canvas.displayName)} logo" data-image-class="collection-logo generated-image"></span>${intro}</div>`
@@ -302,41 +296,47 @@ export function renderHtml(config, token = "") {
         <div id="workflow-list" class="instance-list" role="list" aria-label="Existing workflows" hidden></div>
         <div id="workflow-empty" class="instance-list" hidden><button id="create-first-workflow" class="instance-select empty-workflow" type="button"><span class="empty-workflow-mark" aria-hidden="true">+</span><span class="instance-select-main"><strong>No workflows yet</strong><span class="muted">Create a workflow to see it here.</span></span><span class="empty-workflow-action" aria-hidden="true">Create workflow &#8594;</span></button></div>
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
-    </section>
-    ${readOnlySections(config.readOnlyFields, config.textPlacements)}
-    ${config.valueSources?.length ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
-    ${config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
-        `<section class="phase-card" aria-label="${escapeHtml(label)}">
-            <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
-                data-field-label="${escapeHtml(label)}"
-                data-control-type="${escapeHtml(control)}"
-                data-contract="${escapeHtml(JSON.stringify({ type: "object", properties }))}"
-                data-module="/controls/${escapeHtml(adapter)}.mjs"
-                data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("") ?? ""}
-    ${config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
-        <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">Workflow</button>
-        ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
-    </nav>
-    <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
-        data-canvas-title="${escapeHtml(canvas.displayName)}"
-        data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>` : ""}
-    ${hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
-        <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
-        <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
-        <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create / update</button></div></div>
-    </details>` : ""}
-    <p id="canvas-message" role="status"></p>
-    <nav id="phase-navigation" class="phase-navigation" aria-label="Workflow phases">
-        ${phases.length ? `<div class="phase-mobile-nav"><label class="visually-hidden" for="mobile-phase-select">Jump to phase</label><select id="mobile-phase-select" class="phase-input-control">${phases.map((phase, index) =>
-            `<option value="${index}">Phase ${index + 1} of ${phases.length}: ${escapeHtml(phaseLabel(phase))}</option>`).join("")}</select><span id="mobile-next-phase" class="muted"></span></div>` : ""}
-        ${phases.length ? `<ol class="stepper">${phases.map((phase, index) => `
-            ${index > 0 ? '<li class="step-sep" aria-hidden="true"></li>' : ""}
-            <li><button class="step${index === 0 ? " active" : ""}" type="button" data-phase-index="${index}" data-phase-label="${escapeHtml(phaseLabel(phase))}"${index === 0 ? ' aria-current="step"' : ""} aria-label="Phase ${index + 1} of ${phases.length}: ${escapeHtml(phaseLabel(phase))}">
-                <span class="step-order" aria-hidden="true">${index + 1}</span>
-                <span class="step-label"><span class="step-name">${escapeHtml(phaseLabel(phase))}</span></span>
-            </button></li>`).join("")}</ol>` : ""}
-    </nav>
-    <section id="phase-card" class="phase-card" aria-label="Selected phase">${phases.length ? renderPhase(config, phases, 0) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>
+    </section>`,
+        details: readOnlySections(config.readOnlyFields, config.textPlacements),
+        values: config.valueSources?.length ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : "",
+        controls: config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
+            `<section class="phase-card" aria-label="${escapeHtml(label)}">
+                <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
+                    data-field-label="${escapeHtml(label)}"
+                    data-control-type="${escapeHtml(control)}"
+                    data-contract="${escapeHtml(JSON.stringify({ type: "object", properties }))}"
+                    data-module="/controls/${escapeHtml(adapter)}.mjs"
+                    data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("") ?? "",
+        pages: config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
+            <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">Workflow</button>
+            ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
+        </nav>
+        <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
+            data-canvas-title="${escapeHtml(canvas.displayName)}"
+            data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>` : "",
+        constitution: hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
+            <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
+            <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
+            <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create / update</button></div></div>
+        </details>` : "",
+        message: '<p id="canvas-message" role="status"></p>',
+        pipeline: `<div id="workflow-pipeline" data-module="/pages/${escapeHtml(config.workflowPage.pipeline)}.mjs"
+            data-phases="${escapeHtml(JSON.stringify(phaseContract(config).filter((step) => !step.project)
+                .map((step) => ({ id: step.id, label: phaseLabel(step.id), output: step.output }))))}"></div>`,
+    };
+    return `<!doctype html>
+<html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}</style></head>
+<body>
+<header class="app-header">
+    <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}"${config.brandAsset
+        ? ` data-stock-image="header.brand" data-image-file="${escapeHtml(config.brandAsset.file)}" data-image-alt="" data-image-class="generated-image"`
+        : ' aria-hidden="true"'}>${config.brandAsset ? "" : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
+    <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
+</header>
+<main class="app-body workflow-surface">
+    ${config.workflowPage.regions.map((region) => regions[region]).join("")}
     ${config.generatedPages?.map(({ id, renderer, slots }) =>
         `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"
             data-asset-slots="${escapeHtml(JSON.stringify(slots ?? []))}"
@@ -348,7 +348,6 @@ export function renderHtml(config, token = "") {
             ...(config.generatedPageAssets ?? [])].filter(Boolean).map((asset) => asset.file)))}"></span>` : ""}
     ${config.textControl ? `<span hidden id="stock-text-registration"
         data-module="/controls/${escapeHtml(config.textControl.adapter)}.mjs"></span>` : ""}
-    ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
 <dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title"><h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2><p>This permanently deletes the selected workflow directory and everything in it:</p><p><code id="delete-workflow-directory"></code></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow" type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow" type="button">Delete workflow</button></footer></dialog>
@@ -395,8 +394,11 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             }
             const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
             if (request.method === "GET" && moduleName
-                && config.generatedPages?.some((page) => page.renderer === moduleName)) {
-                const module = readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
+                && (config.workflowPage.pipeline === moduleName
+                    || config.generatedPages?.some((page) => page.renderer === moduleName))) {
+                const module = config.workflowPage.pipeline === moduleName
+                    ? readWorkflowPage(config.workflowPage)
+                    : readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }).end(module);
                 return;
             }

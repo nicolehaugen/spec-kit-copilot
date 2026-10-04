@@ -28,6 +28,7 @@ The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.setting-definition`,
+`generated.workflow-page-definition`, `generated.pipeline-renderer`,
 `generated.added-page-definition`, `generated.added-page-renderer`, `shared.control-definition`,
 `designer.control-adapter`, `generated.control-adapter`, `generated.value-definition`, or
 `generated.computed-value-provider`) and strategy (`replace`).
@@ -44,6 +45,8 @@ Providers are packaged, never evaluated by Designer.
 
 ## Canvas Design templates
 
+- `generated-workflow` — `generated.workflow-page-definition`, `replace`
+- `generated-pipeline` — `generated.pipeline-renderer`, `replace`
 - `shared-controls-text` — `shared.control-definition`, `replace`
 - `designer-control-adapter-text` — `designer.control-adapter`, `replace`
 - `generated-control-adapter-text` — `generated.control-adapter`, `replace`
@@ -63,7 +66,7 @@ Providers are packaged, never evaluated by Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        designer-essentials: C:\project\.specify\extensions\extension-canvas-design\designer\tabs\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.16)
+         (top layer from: extension:extension-canvas-design v0.1.17)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on

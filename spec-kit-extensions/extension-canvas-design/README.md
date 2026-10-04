@@ -5,15 +5,22 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.16** registers three JSON page templates, five ordered
+Canvas Design **0.1.18** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
-adapters, and a shared image definition with paired adapters, plus the
+adapters, a shared image definition with paired adapters, and a source-owned
+Workflow page definition and pipeline renderer, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
 then opens the Designer with the complete resolved set.
 The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
+
+Replaceable templates are organized by host: `designer/` contains Designer
+tabs and settings, while `generated/pages/` contains the Workflow definition
+and pipeline renderer. `templates/generated-canvas/` is the static app
+scaffold; Generate copies the resolved `generated/` assets into its `pages/`
+directory, so the finished app does not depend on this extension at runtime.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
@@ -23,6 +30,8 @@ project extension directory, then validates the result in place.
 | `designer-essentials-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `designer-essentials-header-logo` | Essentials slot | Optional small header logo |
 | `designer-essentials-main-page-logo` | Essentials slot | Optional larger main-page logo |
+| `generated-workflow` | Generated Workflow page | Ordered, required host regions |
+| `generated-pipeline` | Generated Workflow page | Replaceable phase navigation and card presentation |
 | `shared-controls-image` | Shared control | Image value contract and paired adapter names |
 | `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
 | `generated-control-adapter-image` | Generated app | Render packaged images in authorized slots |
@@ -39,11 +48,12 @@ The Essentials core template lives in `designer/tabs/essentials.json`; its
 Its required Canvas ID and Title are fixed fields that share the `stock.text`
 editor with optional text contributions; a preset cannot remove them by
 omitting an optional contribution. Field-specific length, requiredness, and
-identifier rules remain enforced by the Designer host. Description and
+identifier rules are shown and validated by the Designer adapter at Generate;
+the generator independently guards the generated extension path. Description and
 Workflow header use the packaged stock-text adapter for their visible
 generated presentation. Authors may set `"required": true` on a text field
 in a page or a field contribution to reject empty or whitespace-only values.
-The shared Designer adapter shows an inline error; Save and Generate verify
+The shared Designer adapter shows the field's syntax guidance; Generate verifies
 the constraint independently. Omitted `required` preserves optional text.
 Allow custom slug uses the stock-checkbox editor
 but only its boolean value is consumed by the generated shell; it does not
@@ -71,7 +81,7 @@ or modified packaged images instead of silently rendering a different logo.
 Without a Header logo the existing brand mark remains; a configured image
 that cannot mount its adapter shows a local error.
 Both adapters receive an image-source string as `value`. Designer supplies
-the editable data URI and upload capabilities in `context`; the generated
+the editable data URI and upload processing in the Designer adapter; the generated
 host supplies an authorized packaged URL as `value` and presentation options
 such as alt text in `context`. Neither adapter selects a slot or reads files.
 
@@ -145,7 +155,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.16/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.18/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -188,7 +198,7 @@ shared `shared.control-definition` naming separate replace-only `designer.contro
 and `generated.control-adapter` templates; each module exports `mount`, `controlId`,
 and `valueContract`. The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
-`{root, field, value}`. Designer validates and persists changes; Generate
+`{root, field, value}`. Designer saves drafts, including incomplete values; Generate
 freezes the validated object and packages the effective generated adapter and
 definition into the app, up to 30 generated controls. Missing, wrong-kind,
 non-replace, or multiply owned adapters stop Designer opening rather than
@@ -257,6 +267,8 @@ not the JSON document. No kind is inferred from a filename.
 | --- | --- | --- |
 | `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
+| `generated.workflow-page-definition` | Required generated Workflow layout | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `generated.pipeline-renderer` | Workflow pipeline `.mjs` presentation | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
 | `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
@@ -283,6 +295,56 @@ module under its own name as well as its referencing JSON template. The generate
 app packages the winning generated-host modules; it does not load source presets
 at runtime. Do not import another module from a renderer or provider.
 
+The required `generated-workflow` definition has `id: "workflow"`, a `pipeline`
+reference to the registered `generated.pipeline-renderer`, and an ordered
+`regions` array containing each of `collection`, `details`, `values`,
+`controls`, `pages`, `constitution`, `message`, and `pipeline` exactly once.
+The generated host renders these regions in the declared order. Presets may
+replace the whole JSON template to reorder them, but cannot remove host
+regions, invent new ones, or change the phase-dispatch rules. Regions without
+configured content render nothing. This is intentionally distinct from an
+added generated page's `renderPage` contract.
+
+The pipeline module exports `mount({ root, phases, actions })`. It owns the
+navigation and selected-phase card within `root` and returns `{ steps }`, an
+ordered array of its phase buttons. `phases` contains `{ id, label, output }`
+display data; the host supplies `actions.select(index, focusId?)`,
+`actions.run(args)`, `actions.view()`, `actions.reveal()`,
+`actions.draft(value)`, and `actions.error(error)`. The first four request
+host-validated operations; adapters do not call workflow endpoints directly.
+For this initial proof, the renderer must retain the host's documented
+`phase-navigation`, `phase-card`, `phase-args`, status/action IDs,
+`data-phase-index`/`data-phase-label` buttons and `phase-template-N` elements
+used for state and focus updates. The test-only vertical preset demonstrates
+replacing the module while retaining those interactions; a fully independent
+feature-control lifecycle is a later milestone. A minimal static phase list:
+
+```js
+export function mount({ root, phases, actions }) {
+  const list = document.createElement("ol");
+  const steps = phases.map((phase, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.phaseIndex = String(index);
+    button.dataset.phaseLabel = phase.label;
+    button.textContent = phase.label;
+    button.addEventListener("click", () =>
+      Promise.resolve(actions.select(index)).catch(actions.error));
+    const item = document.createElement("li");
+    item.append(button);
+    list.append(item);
+    return button;
+  });
+  root.replaceChildren(list);
+  return { steps };
+}
+```
+
+The snippet illustrates the callback shape only; a working replacement must
+also render the required phase card and status/action elements. See
+[`generated-pipeline`](generated/pages/generated-pipeline.mjs)
+for the complete stock implementation. Module imports are not packaged.
+
 `generated.added-page-renderer` exports
 `renderPage({ root, canvas, values })`. `root` is the owned DOM element;
 `canvas` contains frozen canvas configuration, and `values` contains only
@@ -298,20 +360,65 @@ export function renderPage({ root, canvas, values }) {
 ```
 
 Each registered control adapter exports a `controlId` string matching the control definition
-`id`, a `valueContract` object matching its `value`, and
-`mount({ root, field, value, context, onChange })`. `root` is exclusively owned,
-`field` contains the resolved field definition, and `value` is host validated.
-`onChange(nextValue)` is provided only in Designer and requests a draft update;
-the adapter updates its own DOM after the call (the host does not remount it).
+`id` and a `valueContract` object matching its `value`. A Designer adapter also
+exports a pure, synchronous `validate(value, field): boolean` and
+`mount({ root, field, value, onChange })`, returning `{ isReady(): boolean }`.
+`field.validation` is the resolved field's canonical rule object: string fields
+receive `type`, `maxLength`, and optional `minLength`, `required`, `pattern`, and
+`forbiddenValues`; object fields receive `type` and `properties`; image fields
+receive `type`, `maxBytes`, and `mimeTypes`. Canvas ID includes its reserved
+IDs in `forbiddenValues`. The Designer derives these rules from approved fields,
+not request bodies. A shared adapter checks the rules, not specific field IDs.
+The validator must not access browser globals or return a Promise: Generate
+executes the approved, hash-checked module in local Node. A false result shows
+the host's field-ID-and-label error; thrown errors are reported separately.
+Save stores bounded, mountable drafts without invoking `validate`, including
+incomplete values; Generate validates the values it freezes. The generator
+independently checks its output identity, paths, and frozen request, but cannot
+prove every custom adapter's semantics if a replacement ignores its rules.
+
+### Reducing customization breakage
+
+Preset adapters can break if they depend on the Designer's internal layout,
+CSS, or validation logic when those internals change. The Designer creates a
+separate, initially empty `<div>` for each control and passes it as `root`.
+Adapters must not query, modify, or style elements outside that div, or rely on
+the surrounding page's CSS. This is a compatibility contract, not JavaScript
+isolation; approved adapter modules are trusted code.
+
+The adapter owns how its control works. On an edit, it calls `onChange(value)`
+to give the Designer a new unsaved draft value without remounting. It does not
+need to know how the Designer stores drafts, switches tabs, or saves settings.
+It returns an `isReady()` handle to report unfinished work and exports
+`validate(value, field)` to check whether its value is acceptable. The Designer
+calls these functions without depending on the adapter's UI or internal
+validation logic. An image adapter keeps readiness false during upload and
+after failure until retry or explicit cancellation; it owns decoding, upload
+progress, and errors.
+
+Save can retain unfinished work. The browser checks `isReady()` before Save,
+Generate, or leaving the tab; the server invokes the approved adapter's
+validator on the values it will freeze before creating a canvas. Keeping these
+responsibilities behind a small, documented contract lets the Designer evolve
+without requiring presets to follow changes to its internals. There is no
+public Designer `context` or readiness callback.
+
+Generated adapters have a separate contract: they receive
+`{ root, field, value, context }`, with generated-only presentation information
+such as `alt` and `className`.
 `stock.checkbox` has only a Designer adapter; generated presentation is
-required for image, text and object controls. `context` provides host-specific image capabilities: Designer's `inputId`,
-`constraints`, `validateImage` and `setBusy`, or generated `alt` and
-`className`. Ordinary object controls need not use `context`. A minimal pair
+required for image, text and object controls. A minimal pair
 for a control with `{type:"object",properties:{level:["low","high"]}}`:
 
 ```js
 export const controlId = "rating";
 export const valueContract = { type: "object", properties: { level: ["low", "high"] } };
+export function validate(value, field) {
+  return field.validation.type === "object"
+    && value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).join() === "level"
+    && field.validation.properties.level.includes(value.level);
+}
 export function mount({ root, field, value, onChange }) {
   const select = document.createElement("select");
   for (const level of valueContract.properties.level) {
@@ -323,6 +430,7 @@ export function mount({ root, field, value, onChange }) {
   select.setAttribute("aria-label", field.label);
   select.onchange = () => onChange({ level: select.value });
   root.replaceChildren(select);
+  return { isReady: () => true };
 }
 ```
 

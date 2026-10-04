@@ -49,7 +49,7 @@ async function mountGeneratedControl(root) {
     }
 }
 const $ = (id) => document.getElementById(id);
-const steps = [...document.querySelectorAll("[data-phase-index]")];
+let steps = [];
 const drafts = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
 let viewer = null, timer, saveFailure = null, workflowQuery = "";
@@ -69,8 +69,7 @@ function wireGeneratedPages() {
         root.hidden = workflow;
         root.replaceChildren();
         root.classList.remove("workflow-error");
-        $("phase-navigation").hidden = !workflow;
-        $("phase-card").hidden = !workflow;
+        $("workflow-pipeline").hidden = !workflow;
         for (const candidate of buttons) {
             if (candidate === button) candidate.setAttribute("aria-current", "page");
             else candidate.removeAttribute("aria-current");
@@ -601,7 +600,6 @@ async function openArtifact(step) {
 }
 document.addEventListener("input", (event) => {
     if (!model) return;
-    if (event.target.id === "phase-args") { remember(phase(), event.target.value); queueInput(); }
     if (event.target.id === "workflow-name") {
         model.name = event.target.value;
         queueInput();
@@ -618,13 +616,6 @@ document.addEventListener("change", (event) => {
 $("workflow-search").addEventListener("input", (event) => {
     workflowQuery = event.target.value;
     if (model) filterWorkflowList();
-});
-$("mobile-phase-select")?.addEventListener("change", (event) => {
-    selectPhase(Number(event.target.value), "mobile-phase-select")
-        .catch((error) => {
-            event.target.value = String(current);
-            message(error.message, "canvas-message", true);
-        });
 });
 document.addEventListener("click", (event) => {
     const button = event.target.closest("button");
@@ -646,21 +637,12 @@ document.addEventListener("click", (event) => {
         if (!model) throw new Error("The canvas is connecting. Use Refresh to try again.");
         if (button.dataset.deleteWorkflowId) { await deleteFeature(button.dataset.deleteWorkflowId); return; }
         if (button.dataset.workflowId) { await selectFeature(button.dataset.workflowId); return; }
-        if (button.hasAttribute("data-phase-index")) await selectPhase(Number(button.dataset.phaseIndex));
-        else if (button.id === "previous-phase") await selectPhase(current - 1, button.id);
-        else if (button.id === "next-phase") await selectPhase(current + 1, button.id);
-        else if (button.id === "new-workflow" || button.id === "create-first-workflow") {
+        if (button.id === "new-workflow" || button.id === "create-first-workflow") {
             await selectFeature("__new__");
             $("workflow-name")?.focus();
         }
-        else if (button.id === "run-phase") await send(phase(), $("phase-args").value);
-        else if (button.id === "view-artifact") await openArtifact(phase());
         else if (button.id === "view-constitution") await openArtifact(constitution());
-        else if (button.id === "browse-output-folder") {
-            await flush();
-            const result = await api("/api/reveal", { phase: phase().id, itemId: model.selected });
-            message(result.message, "phase-message");
-        } else if (button.id === "run-constitution") {
+        else if (button.id === "run-constitution") {
             const key = draftKey(constitution());
             $("constitution-args").value = drafts.get(key) ?? model.drafts[key] ?? "";
             $("constitution-dialog").showModal();
@@ -669,6 +651,32 @@ document.addEventListener("click", (event) => {
     })().catch((error) => message(error.message, "canvas-message", true));
 });
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
+const pipelineRoot = $("workflow-pipeline");
+try {
+    const { mount } = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
+    if (typeof mount !== "function") throw new Error("Missing pipeline mount export");
+    ({ steps } = mount({ root: pipelineRoot, phases: JSON.parse(pipelineRoot.dataset.phases),
+        actions: {
+            select: (index, focusId) => selectPhase(index, focusId),
+            run: (value) => send(phase(), value),
+            view: () => openArtifact(phase()),
+            reveal: async () => {
+                await flush();
+                const result = await api("/api/reveal", { phase: phase().id, itemId: model.selected });
+                message(result.message, "phase-message");
+            },
+            draft: (value) => {
+                if (model) { remember(phase(), value); queueInput(); }
+            },
+            error: (error) => message(error.message, "canvas-message", true),
+        } }));
+    if (!Array.isArray(steps) || steps.length !== JSON.parse(pipelineRoot.dataset.phases).length) {
+        throw new Error("Pipeline renderer did not return the declared phases");
+    }
+} catch (error) {
+    message(`Pipeline could not render: ${error.message}`, "canvas-message", true);
+    throw error;
+}
 wireThemeToggle();
 wireGeneratedPages();
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);

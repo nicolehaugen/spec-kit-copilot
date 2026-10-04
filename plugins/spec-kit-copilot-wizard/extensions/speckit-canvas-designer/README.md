@@ -31,12 +31,12 @@ Workflow header, Allow custom slug, Header logo, and Main page logo are separate
 ordered stock contributions registered by the composed load-page command. The
 two required fields stay fixed but mount the same registered `stock.text`
 Designer adapter as optional text fields. `stock.checkbox` similarly provides
-the optional boolean editor. Their field-specific constraints and saved values
-remain host-owned. Generate packages the winning stock-text generated adapter
+the optional boolean editor. Their field-specific resolved rules come from approved declarations; the
+adapter validates the values at Generate. Generate packages the winning stock-text generated adapter
 for visible Description, Workflow header, or read-only text placements. Text
 fields on a page or in a contribution can opt into `"required": true`; the
-shared text editor reports blank or whitespace-only values beside the input,
-while Designer Save and Generate independently enforce the same constraint.
+shared text validator rejects blank or whitespace-only values at Generate,
+while Save can keep an incomplete draft.
 Canvas ID and Title remain unconditionally required, and other text fields
 remain optional unless configured otherwise. The custom-slug boolean is
 consumed by the generated shell, so it needs no
@@ -45,12 +45,13 @@ can follow this pattern without delegating project setup to adapter code. The
 optional image controls upload, preview, replace, and remove independent PNG,
 JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
 reason beside their picker, including the actual size when over the limit;
-successful replacement or removal clears the message. All image fields,
+successful replacement or removal clears the message. A failed upload blocks
+Save, Generate, and tab departure until retry or explicit cancellation. All image fields,
 including preset-owned asset slots, require the same resolved `stock.image`
-definition and paired adapters; the host validates saved bytes while the
-Designer adapter renders the picker and preview. Both adapters receive an
-image-source string as `value`; host-specific upload capabilities or packaged
-alt text and styling are passed separately as `context`. The smaller Header
+definition and paired adapters; the Designer adapter validates images for
+Generate and renders the picker and preview. Both adapters receive an
+image-source string as `value`; only the generated adapter receives
+presentation `context` for packaged alt text and styling. The smaller Header
 logo replaces the generated header's brand mark; the larger Main page logo appears beside the
 workflow heading. Either can be set alone. Both use the shared field/slot
 validation path and freeze the selected bytes and hashes at Generate. With no
@@ -73,14 +74,17 @@ workflow-creation phase and labels the workflow there. Essentials' default-off
 Allow custom slug setting controls whether an optional Workflow slug
 field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
-Artifacts and Appearance are empty by default. Save persists validated field values to `settings.json`
+Artifacts and Appearance are empty by default. Save persists bounded, structurally
+valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff restores them when its resolved pages are unchanged.
 Preset-registered stock text and checkbox fields mount their shared adapters
 in their declared Designer page slot and are saved alongside required values. A registered
 `shared.control-definition` for a typed object or image field must reference both a
 `designer.control-adapter` and `generated.control-adapter` replace-only template. Both modules
-export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
+export `mount`, `controlId`, and a matching `valueContract`; Designer adapters also
+export pure `validate(value, field): boolean` and return an `isReady()` handle from
+`mount({ root, field, value, onChange })`. Each adapter belongs
 to one control definition; multiple fields may reuse that control. The Designer
 mount receives the field, draft value, and change callback; the generated
 mount receives the frozen value and displays it read-only in the declared
@@ -110,14 +114,15 @@ the IDs they consume in `values`. The packaged app rejects changed provider
 bytes before execution; this is not a sandbox for approved provider code.
 Runtime-editable values belong to the generated canvas shell, not to a
 particular workflow's drafts.
-Save rejects stale revisions and invalid values, and reports failures without
-discarding edits. Generate validates and freezes fields on every enabled page
+Save rejects stale revisions and malformed draft shapes, but accepts incomplete
+field values and reports failures without discarding edits. Generate invokes the
+approved Designer adapter validator and freezes fields on every enabled page
 while requiring non-reserved Canvas ID and Title on Essentials, and dispatches the
 installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.16 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.18 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

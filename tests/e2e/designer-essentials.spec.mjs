@@ -21,6 +21,12 @@ async function openDesigner(page, fields, extraPage) {
     const ids = [...fields, ...(extraPage?.fields ?? [])].map((field) => field.id);
     const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
         JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extension), "utf8"))));
+    for (const field of [...fields, ...(extraPage?.fields ?? [])]) {
+        field.validation = { ...constraints[field.id],
+            ...(field.id === "canvas.id" ? { forbiddenValues: [
+                "speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator",
+            ] } : {}) };
+    }
     const state = { handoffId: "test", revision: "test", generationAvailable: true,
         settingsRevision: 0, persisted: false, templates: [], controls,
         adapters: { "stock.text": "designer-control-adapter-text",
@@ -36,8 +42,16 @@ async function openDesigner(page, fields, extraPage) {
         if (path === "/api/state") {
             await route.fulfill({ json: state });
         } else if (path === "/api/generate") {
-            requests.push(route.request().postDataJSON());
-            await route.fulfill({ status: 202, json: { target: ".github/extensions/test/" } });
+            const request = route.request().postDataJSON();
+            requests.push(request);
+            const invalid = !/^[a-z0-9][a-z0-9-]*$/.test(request.values["canvas.id"])
+                ? "Canvas ID (canvas.id)"
+                : !request.values["canvas.displayName"]?.trim() ? "Title (canvas.displayName)"
+                    : request.values["billing.costCode"]?.length > 64
+                        ? "Cost code (billing.costCode)" : null;
+            await route.fulfill(invalid
+                ? { status: 400, json: { error: `Invalid ${invalid}` } }
+                : { status: 202, json: { target: ".github/extensions/test/" } });
         } else if (path === "/adapters/designer-control-adapter-text.mjs"
             || path === "/adapters/designer-control-adapter-checkbox.mjs") {
             const name = path.includes("checkbox") ? "stock-checkbox" : "stock-text";
@@ -68,15 +82,15 @@ test("stock Essentials keep five ordered controls and Generate submits all enabl
         "Workflow header", "Allow custom slug",
     ]);
     await page.getByRole("button", { name: "Generate", exact: true }).click();
-    await expect(page.locator("#page-error")).toContainText("valid Canvas ID before generating");
+    await expect(page.locator("#page-error")).toContainText("Invalid Canvas ID (canvas.id)");
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("stock-canvas");
     await page.getByRole("textbox", { name: /Title/ }).fill("Stock Canvas");
     await page.getByRole("textbox", { name: "Description" }).fill("A description");
     await page.getByRole("textbox", { name: "Workflow header" }).fill("My workflows");
     await page.getByRole("checkbox", { name: "Allow custom slug" }).check();
     await page.getByRole("button", { name: "Generate", exact: true }).click();
-    await expect.poll(() => requests.length).toBe(1);
-    expect(requests[0].values).toEqual({
+    await expect.poll(() => requests.length).toBe(2);
+    expect(requests[1].values).toEqual({
         "canvas.id": "stock-canvas", "canvas.displayName": "Stock Canvas",
         "canvas.description": "A description", "canvas.workflowListName": "My workflows",
         "workflowSlug.userProvided": true,
@@ -108,12 +122,12 @@ test("minimal Essentials submit only identity and invalid enabled Billing values
         input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await page.getByRole("button", { name: "Generate", exact: true }).click();
-    await expect(page.locator("#page-error")).toContainText("valid Cost code before generating");
-    expect(requests).toHaveLength(0);
+    await expect(page.locator("#page-error")).toContainText("Invalid Cost code (billing.costCode)");
+    expect(requests).toHaveLength(1);
     await page.getByRole("textbox", { name: "Cost code" }).fill("CC-481");
     await page.getByRole("button", { name: "Generate", exact: true }).click();
-    await expect.poll(() => requests.length).toBe(1);
-    expect(requests[0].values).toEqual({
+    await expect.poll(() => requests.length).toBe(2);
+    expect(requests[1].values).toEqual({
         "canvas.id": "minimal-canvas", "canvas.displayName": "Minimal Canvas",
         "billing.costCode": "CC-481",
     });

@@ -8,34 +8,9 @@ let model, currentPage, draft, saving = false;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
-let uploading = false;
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
-
-function validImage(value) {
-    if (value === "") return true;
-    const match = typeof value === "string"
-        && /^data:(image\/(?:png|jpeg|gif|webp));base64,((?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)$/.exec(value);
-    if (!match || match[2].length > Math.ceil(32768 / 3) * 4) return false;
-    const binary = atob(match[2]);
-    const signatures = {
-        "image/png": [137, 80, 78, 71, 13, 10, 26, 10],
-        "image/jpeg": [255, 216, 255],
-        "image/gif": [71, 73, 70, 56],
-        "image/webp": [82, 73, 70, 70],
-    };
-    return binary.length > 0 && binary.length <= 32768
-        && signatures[match[1]].every((byte, index) => binary.charCodeAt(index) === byte)
-        && (match[1] !== "image/png" || binary.length >= 24 && binary.slice(12, 16) === "IHDR")
-        && (match[1] !== "image/jpeg" || binary.length >= 5
-            && binary.charCodeAt(binary.length - 2) === 255 && binary.charCodeAt(binary.length - 1) === 217)
-        && (match[1] !== "image/gif" || binary.length >= 14
-            && ["GIF87a", "GIF89a"].includes(binary.slice(0, 6)))
-        && (match[1] !== "image/webp" || binary.length >= 16
-            && binary.slice(8, 12) === "WEBP"
-            && new DataView(new Uint8Array([...binary.slice(4, 8)]
-                .map((character) => character.charCodeAt(0))).buffer).getUint32(0, true) + 8 === binary.length);
-}
+const mounted = new Map();
 
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "designer-essentials");
@@ -48,7 +23,7 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = saving || uploading || generating || queued || !model?.handoffId
+    generate.disabled = saving || generating || queued || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity;
 }
@@ -68,32 +43,7 @@ function confirmProviders(providers) {
 }
 
 generate.addEventListener("click", async () => {
-    if (generate.disabled || !validateDraft("generating")) return;
-    for (const field of ["canvas.id", "canvas.displayName"]) {
-        const value = draft[field];
-        const rules = model.constraints[field];
-        if (typeof value !== "string" || value.length < rules.minLength
-            || value.length > rules.maxLength
-            || (rules.pattern && !new RegExp(rules.pattern).test(value))
-            || !value.trim()) {
-            renderPage("designer-essentials");
-            const input = [...root.querySelectorAll("input")].find((item) => item.name === field);
-            const hint = field === "canvas.id" ? model.pages
-                .find((page) => page.page === "designer-essentials")?.fields
-                .find((item) => item.id === field)?.description : "";
-            showError(`Enter a valid ${field === "canvas.id" ? "Canvas ID" : "Title"} before generating.${hint ? ` ${hint}` : ""}`);
-            input?.focus();
-            input?.reportValidity();
-            return;
-        }
-        if (["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]
-            .includes(draft["canvas.id"])) {
-            renderPage("designer-essentials");
-            showError("Canvas ID is reserved. Choose a different Canvas ID before generating.");
-            root.querySelector('[name="canvas.id"]')?.focus();
-            return;
-        }
-    }
+    if (generate.disabled || !checkReady()) return;
     const providers = model.templates.filter((item) => item.kind === "generated.computed-value-provider")
         .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
@@ -112,7 +62,7 @@ generate.addEventListener("click", async () => {
         status.textContent = `Generation queued: ${result.target}`;
         queued = true;
     } catch (error) {
-        showError(error.message);
+        showFieldError(error.message);
     } finally {
         generating = false;
         updateGenerate();
@@ -132,10 +82,43 @@ function showError(message) {
     if (message) errorBox.focus();
 }
 
+function showFieldError(message) {
+    showError(message);
+    const id = /\(([A-Za-z][A-Za-z0-9_.-]*)\)/.exec(message)?.[1];
+    const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
+    if (!page) return;
+    if (page.page !== currentPage) renderPage(page.page, id);
+    else {
+        const mount = [...root.querySelectorAll("[data-field-id]")]
+            .find((item) => item.dataset.fieldId === id);
+        if (mount) {
+            mount.nextElementSibling.hidden = false;
+            mount.parentElement.focus();
+        }
+    }
+}
+
+function checkReady() {
+    const page = model.pages.find((entry) => entry.page === currentPage);
+    for (const field of page?.fields ?? []) {
+        const handle = mounted.get(field.id);
+        try {
+            if (typeof handle?.isReady !== "function" || handle.isReady() !== true) {
+                showFieldError(`${field.label} (${field.id}) is still processing or needs attention.`);
+                return false;
+            }
+        } catch (error) {
+            showFieldError(`${field.label} (${field.id}) readiness failed: ${error.message}`);
+            return false;
+        }
+    }
+    return true;
+}
+
 function updateSave() {
     const noChanges = model?.persisted
         && JSON.stringify(draft) === JSON.stringify(model.values);
-    saveButton.disabled = saving || uploading || !model || noChanges;
+    saveButton.disabled = saving || !model || noChanges;
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
@@ -146,38 +129,8 @@ function updateSave() {
     updateGenerate();
 }
 
-function validateDraft(action = "saving") {
-    for (const [id, rules] of Object.entries(model.constraints)) {
-        const value = draft[id];
-        if (rules.type === "boolean" && typeof value === "boolean") continue;
-        if (rules.type === "image" ? !validImage(value)
-            : rules.type === "object" ? (!value || typeof value !== "object"
-            || Array.isArray(value)
-            || Object.keys(value).sort().join() !== Object.keys(rules.properties).sort().join()
-            || Object.entries(rules.properties).some(([key, allowed]) => !allowed.includes(value[key])))
-            : (typeof value !== "string" || value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
-            || (rules.required && !value.trim())
-            || (rules.pattern && !new RegExp(rules.pattern).test(value)))) {
-            const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
-            const field = page?.fields.find((item) => item.id === id);
-            showError(`Enter a valid ${field?.label ?? id} before ${action}.${rules.type === "image" ? " Use a PNG, JPEG, GIF, or WebP under 32 KiB." : id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
-            if (page) {
-                renderPage(page.page, id);
-                root.querySelectorAll("input").forEach((input) => {
-                    if (input.name === id) { input.focus(); input.reportValidity(); }
-                });
-                if (rules.type === "object") {
-                    root.querySelector(`[data-field-id="${CSS.escape(id)}"] [role="radio"]`)?.focus();
-                }
-            }
-            return false;
-        }
-    }
-    return true;
-}
-
 saveButton.addEventListener("click", async () => {
-    if (saving || !model || !validateDraft()) return;
+    if (saving || !model || !checkReady()) return;
     saving = true;
     messageBox.hidden = true;
     showError("");
@@ -206,6 +159,7 @@ function renderPage(pageId, invalidFieldId) {
     const page = model.pages.find((entry) => entry.page === pageId);
     if (!page) throw new Error("Unknown Designer page");
     currentPage = pageId;
+    mounted.clear();
     for (const tab of tabs.children) {
         const active = tab.dataset.page === pageId;
         tab.setAttribute("aria-selected", String(active));
@@ -221,7 +175,7 @@ function renderPage(pageId, invalidFieldId) {
             element("p", `Reason: ${reason}`));
         root.replaceChildren(details);
         root.setAttribute("aria-busy", "false");
-        return;
+        return true;
     }
     root.replaceChildren(element("h1", page.title), element("p", page.description ?? "", "muted"));
     const form = element("form");
@@ -232,18 +186,28 @@ function renderPage(pageId, invalidFieldId) {
     });
     if (!page.fields.length) form.append(element("p", "This template defines no fields.", "settings-note"));
     root.append(form);
-    for (const [index, field] of page.fields.entries()) {
+    for (const field of page.fields) {
         const rules = model.constraints[field.id];
         const image = rules.type === "image";
         const object = rules.type === "object";
         const wrapper = element("div", undefined, `settings-field${image ? " settings-image"
             : rules.type === "boolean" ? " settings-checkbox" : ""}`);
+        wrapper.tabIndex = -1;
+        wrapper.setAttribute("role", "group");
+        wrapper.setAttribute("aria-label", field.label);
         if (object) wrapper.append(element("p", field.label));
         const mount = element("div");
         if (object) mount.setAttribute("aria-label", field.label);
         mount.dataset.fieldId = field.id;
         wrapper.append(mount);
+        const fieldError = element("p", `Invalid ${field.label} (${field.id}).`, "settings-field-error");
+        fieldError.id = `setting-error-${field.id}`;
+        fieldError.setAttribute("role", "alert");
+        fieldError.hidden = field.id !== invalidFieldId;
+        wrapper.setAttribute("aria-describedby", fieldError.id);
+        wrapper.append(fieldError);
         form.append(wrapper);
+        if (field.id === invalidFieldId) wrapper.focus();
         const control = field.control ?? (rules.type === "boolean" ? "stock.checkbox" : "stock.text");
         const adapter = model.adapters[control];
         if (!adapter) {
@@ -251,8 +215,9 @@ function renderPage(pageId, invalidFieldId) {
             mount.textContent = `Could not load ${field.label}: missing Designer adapter`;
             continue;
         }
-        const mountAdapter = ({ mount: render, controlId, valueContract }) => {
+        const mountAdapter = ({ mount: render, validate, controlId, valueContract }) => {
                 if (typeof render !== "function") throw new Error("Missing mount export");
+                if (typeof validate !== "function") throw new Error("Missing validate export");
                 const expected = model.controls.find((item) => item.id === control)?.value;
                 if (controlId !== control || valueContract?.type !== expected?.type
                     || (image
@@ -265,26 +230,26 @@ function renderPage(pageId, invalidFieldId) {
                     throw new Error("Incompatible control ID or value contract");
                 }
                 if (!mount.isConnected) return;
-                return render({ root: mount, field, value: draft[field.id],
-                    context: { constraints: rules, inputId: `setting-field-${index}`,
-                        showValidationError: field.id === invalidFieldId,
-                        ...(image ? { validateImage: validImage, setBusy(busy) {
-                            uploading = busy;
-                            updateSave();
-                        } } : {}) },
+                const handle = render({ root: mount, field, value: draft[field.id],
                     onChange(value) {
-                        if (image ? !validImage(value)
+                        if (rules.type === "image" ? typeof value !== "string"
+                            || value.length > Math.ceil(rules.maxBytes / 3) * 4 + 64
                             : rules.type === "boolean" ? typeof value !== "boolean"
                                 : rules.type === "string" ? typeof value !== "string"
-                                    : false) {
+                                    : value !== null && (typeof value !== "object" || Array.isArray(value))) {
                             throw new Error(`Invalid Designer setting: ${field.id}`);
                         }
                         draft[field.id] = value;
+                        fieldError.hidden = true;
                         messageBox.hidden = true;
                         showError("");
                         updateSave();
                         updateGenerate();
                     } });
+                if (typeof handle?.isReady !== "function") {
+                    throw new Error("Missing isReady handle");
+                }
+                mounted.set(field.id, handle);
         };
         const showAdapterError = (error) => {
             if (!mount.isConnected) return;
@@ -307,11 +272,12 @@ function renderPage(pageId, invalidFieldId) {
         }
     }
     root.setAttribute("aria-busy", "false");
+    return true;
 }
 
 tabs.addEventListener("click", (event) => {
     const tab = event.target.closest("[data-page]");
-    if (tab) renderPage(tab.dataset.page);
+    if (tab && tab.dataset.page !== currentPage && checkReady()) renderPage(tab.dataset.page);
 });
 tabs.addEventListener("keydown", (event) => {
     const buttons = [...tabs.children];
@@ -324,8 +290,10 @@ tabs.addEventListener("keydown", (event) => {
     else if (event.key === "End") next = buttons.length - 1;
     else return;
     event.preventDefault();
-    renderPage(buttons[next].dataset.page);
-    buttons[next].focus();
+    if (buttons[next].dataset.page !== currentPage && checkReady()) {
+        renderPage(buttons[next].dataset.page);
+        buttons[next].focus();
+    }
 });
 
 function applyState(next) {

@@ -31,6 +31,11 @@ const RULES = {
     "canvas.workflowListName": { type: "string", maxLength: 80 },
     "workflowSlug.userProvided": { type: "boolean" },
 };
+const RESERVED_CANVAS_IDS = ["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"];
+function resolvedField(field, rule) {
+    return { ...field, validation: { ...rule,
+        ...(field.id === "canvas.id" ? { forbiddenValues: RESERVED_CANVAS_IDS } : {}) } };
+}
 
 function inside(root, path) {
     const rel = relative(root, path);
@@ -178,9 +183,9 @@ function buildModel(entries, schema) {
             values[field.id] = type === "boolean" ? (field.default ?? false) : "";
             fieldOrigins.set(field.id, name);
         }
-        pages.push({ ...document, fields: document.fields.map((field) => ({
+        pages.push({ ...document, fields: document.fields.map((field) => resolvedField({
             ...field, control: field.control ?? (field.type === "boolean"
-                ? "stock.checkbox" : "stock.text") })),
+                ? "stock.checkbox" : "stock.text") }, constraints[field.id])),
             page: name, provenance: { template: name, path, fingerprint: hash } });
     }
     pages.sort((a, b) => a.order - b.order || a.page.localeCompare(b.page));
@@ -330,6 +335,21 @@ function validateGeneratedPage(document, name) {
     }
 }
 
+const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
+    "pages", "constitution", "message", "pipeline"];
+function validateWorkflowPage(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).sort().join() !== "id,pipeline,regions,schemaVersion"
+        || document.schemaVersion !== 1 || document.id !== "workflow" || name !== "generated-workflow"
+        || typeof document.pipeline !== "string" || !PAGE_PATTERN.test(document.pipeline)
+        || !Array.isArray(document.regions) || document.regions.length !== WORKFLOW_REGIONS.length
+        || new Set(document.regions).size !== WORKFLOW_REGIONS.length
+        || document.regions.some((region) => !WORKFLOW_REGIONS.includes(region))) {
+        throw new Error(`${name}: invalid Workflow page definition`);
+    }
+}
+
 function validateValueSource(document, name, fieldOrigins) {
     schemaMetadata(document, name);
     const schema = document?.schema;
@@ -441,6 +461,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || typeof item.sourceId !== "string"
             || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
             || !["designer.setting-definition", "generated.added-page-definition", "generated.added-page-renderer",
+                "generated.workflow-page-definition", "generated.pipeline-renderer",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                 "generated.value-definition", "generated.computed-value-provider"].includes(item.kind)
             || item.strategy !== "replace") {
@@ -449,7 +470,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         names.add(item.name);
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
-        const executable = ["generated.added-page-renderer", "designer.control-adapter", "generated.control-adapter",
+        const executable = ["generated.added-page-renderer", "generated.pipeline-renderer",
+            "designer.control-adapter", "generated.control-adapter",
             "generated.computed-value-provider"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
@@ -482,6 +504,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             if (item.kind === "generated.added-page-definition") {
                 validateGeneratedPage(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
+            } else if (item.kind === "generated.workflow-page-definition") {
+                validateWorkflowPage(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: Workflow page definition exceeds 32 KiB`);
             } else if (item.kind === "shared.control-definition") {
                 validateControl(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: control definition exceeds 32 KiB`);
@@ -504,6 +529,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                             ? "computed value provider" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
                 const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
+                    : item.kind === "generated.pipeline-renderer" ? "mount"
                     : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
                 const check = spawnSync("node", ["--check", "--input-type=module"],
                     { input: document, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
@@ -514,6 +540,10 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (!exports.some((entry) => entry.n === requiredExport)) {
                     throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
+                }
+                if (item.kind === "designer.control-adapter"
+                    && !exports.some((entry) => entry.n === "validate")) {
+                    throw new Error(`${item.name}: Designer adapter is missing validate export`);
                 }
                 if (item.kind === "generated.computed-value-provider") {
                     const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:function|const)\s+provideValue\b/g)];
@@ -547,6 +577,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (uses.length !== 1) {
             throw new Error(`${entry.name}: generated renderer must belong to exactly one page`);
         }
+    }
+    const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
+    if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
+    const pipelines = loaded.filter((item) => item.kind === "generated.pipeline-renderer");
+    if (pipelines.length !== 1 || pipelines[0].name !== workflowPages[0].document.pipeline) {
+        throw new Error(`${workflowPages[0].name}: missing or unreferenced generated pipeline renderer`);
     }
     const sources = loaded.filter((entry) => entry.kind === "generated.value-definition");
     for (const entry of sources) {
@@ -778,6 +814,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         ({ name, sourceId, ...document }));
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")
         .map(({ name, document }) => ({ name, ...document }));
+    const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
+    model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
     model.valueSources = loaded.filter((entry) => entry.kind === "generated.value-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.controls = controls.map(({ document }) => document);
@@ -789,7 +827,6 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
             for (const { document } of ordered.filter((entry) => entry.document.slot === slot.id)) {
                 if (page.fields.length >= 100) throw new Error(`${page.page}: too many resolved fields`);
                 const field = document.field;
-                page.fields.push(field);
                 model.constraints[field.id] = Object.hasOwn(RULES, field.id)
                     ? { ...RULES[field.id], ...(field.required ? { required: true } : {}) }
                     : { type: field.type, ...(field.type === "string"
@@ -803,6 +840,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
                                 mimeTypes: controls.find((item) =>
                                     item.document.id === field.control).document.value.mimeTypes,
                             } : {}) };
+                page.fields.push(resolvedField(field, model.constraints[field.id]));
                 model.values[field.id] = field.type === "boolean" ? (field.default ?? false)
                     : field.type === "object" ? null : "";
             }
