@@ -12,6 +12,7 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
+const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 function within(root, path) {
@@ -22,9 +23,14 @@ function within(root, path) {
 function configuration(request) {
     const { canvas, workflow, values, installed } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
+        || windowsDeviceName.test(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]
+        || typeof values?.["canvas.description"] !== "string"
+        || typeof values?.["canvas.workflowListName"] !== "string"
+        || canvas.description !== (values["canvas.description"] || "Spec Kit workflow canvas.")
+        || canvas.workflowListName !== (values["canvas.workflowListName"] || "Workflows")
         || typeof values?.["workflowSlug.userProvided"] !== "boolean"
         || !workflow || !Array.isArray(workflow.selectedPhases) || !workflow.selectedPhases.length
         || workflow.selectedPhases.length > 30 || new Set(workflow.selectedPhases).size !== workflow.selectedPhases.length
@@ -47,7 +53,11 @@ function configuration(request) {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
             return [phase, { expectsArtifact: !!path, outputPath: path }];
         })), phaseArtifacts: {},
-        installed };
+        installed: {
+            presets: installed.presets.map(({ id, version, priority }) => ({ id, version, priority })),
+            extensions: installed.extensions.map(({ id, version, priority }) => ({ id, version, priority })),
+            bundles: installed.bundles.map(({ id, version }) => ({ id, version })),
+        } };
 }
 
 function checkSyntax(path) {

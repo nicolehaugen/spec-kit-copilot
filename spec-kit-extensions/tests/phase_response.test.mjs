@@ -27,5 +27,15 @@ test("task failure after a tool-using turn records failure", () => {
     assert.deepEqual(phaseResponse(events, "sent"), {
         response: null, error: "The phase did not complete successfully.", success: false,
     });
+
+    test("matching message without an interaction ID is a terminal association failure", () => {
+        assert.deepEqual(phaseResponse([
+            { type: "user.message", data: { messageId: "other" } },
+            { type: "user.message", data: { messageId: "sent" } },
+        ], "sent"), {
+            response: null, error: "The phase response could not be associated with its dispatched message.",
+            success: false,
+        });
+    });
     assert.equal(phaseResponse(events, "another"), null);
 });

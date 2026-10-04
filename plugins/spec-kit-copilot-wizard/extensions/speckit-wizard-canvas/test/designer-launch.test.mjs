@@ -10,10 +10,11 @@ import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     checkDesignerProvider, DESIGNER_EXTENSION_ID, enableDesignerProvider,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
-    readInstalledWorkflowInventory, validateDesignerSelections,
+    readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
+import { buildAugmentedPath } from "../env/resolve-path.mjs";
 
 // Real, valid manifests in this repo (same fixtures e2e/canvas-designer.spec.mjs
 // uses), so local-dev validation and precedence are exercised against actual
@@ -106,22 +107,43 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /if the session folder cannot be identified or the file is missing, stop and report the error/);
     assert.doesNotMatch(sent[0].prompt, /bytes equal HANDOFF_JSON/);
     assert.match(sent[0].prompt, /Do not edit it afterward/);
-    assert.match(sent[0].prompt, /speckit-extension.*--install-allowed.*extension-canvas-design by ID/);
-    assert.match(sent[0].prompt, /speckit-bundle.*speckit-preset/);
+    assert.match(sent[0].prompt, /speckit-extension.*--install-allowed/);
+    assert.match(sent[0].prompt, /Install extension-canvas-design by ID/);
+    assert.match(sent[0].prompt, /install the required Canvas Design base before any bundle or preset/);
+    assert.ok(sent[0].prompt.indexOf("Install extension-canvas-design by ID")
+        < sent[0].prompt.indexOf("Then install approved bundles"));
+    assert.ok(sent[0].prompt.indexOf("Immediately after bundles, inspect extension list --json")
+        > sent[0].prompt.indexOf("Then install approved bundles"));
+    assert.ok(sent[0].prompt.indexOf("Immediately after bundles, inspect extension list --json")
+        < sent[0].prompt.indexOf("Install ALL remaining standalone extensions"));
+    assert.match(sent[0].prompt, /even when it is absent from handoff\.workflow\.installed/);
+    assert.match(sent[0].prompt, /Require extension-canvas-design to remain at hosted version 0\.1\.5 from the registered approved catalog/);
+    assert.match(sent[0].prompt, /If a bundle replaced it, reinstall extension-canvas-design by ID with --force.*verify its version and source again/);
+    assert.ok(sent[0].prompt.indexOf("remaining standalone extensions")
+        < sent[0].prompt.indexOf("Only after ALL extensions"));
+    assert.match(sent[0].prompt, /running specify extension add separately for each ID or path/);
+    assert.match(sent[0].prompt, /running specify preset add separately for each ID or path/);
+    assert.match(sent[0].prompt, /composition warning.*is a failure even with exit code 0/);
+    assert.match(sent[0].prompt, /verify ALL handoff\.workflow\.installed presets and extensions/);
+    assert.match(sent[0].prompt, /Verify runtime bundles separately with bundle list --json \(bundle_id and version only\)/);
+    assert.match(sent[0].prompt, /bundle IDs have no enabled state or priority and do not appear in preset\/extension lists/);
+    assert.doesNotMatch(sent[0].prompt, /verify ALL handoff\.workflow\.installed IDs, versions, enabled states/);
+    assert.match(sent[0].prompt, /confirm it includes any page and template names registered by the installed Canvas Design presets/);
     assert.match(sent[0].prompt, /speckit-extension-canvas-design-load-page/);
     assert.match(sent[0].prompt, /Invoke the generated, preset-composed speckit-extension-canvas-design-load-page skill with handoffId/);
     assert.match(sent[0].prompt, /If the generated skill is unavailable after reload, report the concrete error and stop/);
-    assert.match(sent[0].prompt, /check the full output and exit status of specify preset resolve/);
+    assert.match(sent[0].prompt, /Follow its entire composed command for the complete named-template resolution/);
     assert.match(sent[0].prompt, /ONCE after all installations/);
-    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.4/);
+    assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.5/);
     assert.deepEqual(JSON.parse(sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1])
         .workflow.installed, { presets: [], extensions: [], bundles: [] });
-    assert.match(sent[0].prompt, /Confirm the open_canvas result has the requested canvasId, extensionId, instanceId and input\.handoffId/);
+    assert.match(sent[0].prompt, /Confirm the open_canvas result has the requested canvasId:.*input\.handoffId/);
     assert.match(sent[0].prompt, /Do not use Playwright or inspect page tabs after opening/);
     assert.match(sent[0].prompt, /Do not claim all pages loaded or generation is ready/);
     assert.doesNotMatch(sent[0].prompt, /identify any page-error tabs by name and reason/);
-    assert.match(sent[0].prompt, /open_canvas exactly once/);
-    assert.match(sent[0].prompt, /input:\{handoffId:.*pages:\[\{name,path\}/);
+    assert.match(sent[0].prompt, /single official Designer open/);
+    assert.match(sent[0].prompt, /The composed skill owns the names to resolve and the open_canvas input/);
+    assert.doesNotMatch(sent[0].prompt, /input:\{handoffId:.*pages:\[\{name,path\}/);
     assert.match(sent[0].prompt, /plugin:spec-kit-copilot-wizard:speckit-canvas-designer/);
     assert.doesNotMatch(sent[0].prompt, /extensions_manage|list_canvas_capabilities|extensions_reload/);
     assert.match(sent[0].prompt, /canvasId:"speckit-canvas-designer", extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"/);
@@ -175,7 +197,7 @@ test("outdated hosted Canvas Design requires a checked local override before dis
     const response = await noLocal.post(request(selection));
     assert.equal(response.statusCode, 422);
     assert.equal(response.body.error,
-        "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.4. Use compatible canvas versions or add a compatible extension under Local development.");
+        "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.5. Use compatible canvas versions or add a compatible extension under Local development.");
     assert.equal(noLocal.sent.length, 0);
 
     const withLocal = fixture({ getState: async () => ({ ...snapshot, catalog: hosted }) });
@@ -208,7 +230,9 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         bundles: [{ bundle_id: "workflow-kit", version: "2.0.0" }],
     });
     const runtime = fixture({ getInstalledWorkflow: async () => installed });
-    runtime.setSnapshot({ ...snapshot, composition: {
+    runtime.setSnapshot({ ...snapshot, catalog: { ...catalog,
+        bundles: [{ id: "workflow-kit", version: "2.0.0", source: "default" }] },
+    composition: {
         presets: [{ id: "copilot-sub-agents", priority: 10 }],
         extensions: [{ id: "extension-writer", priority: 10 }],
         bundles: [{ id: "workflow-kit", version: "2.0.0" }],
@@ -217,7 +241,8 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         extensions: [], bundles: [] };
     assert.equal((await runtime.post(request(selection))).statusCode, 202);
     const handoff = JSON.parse(runtime.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
-    assert.deepEqual(handoff.workflow.installed, installed);
+    assert.deepEqual(handoff.workflow.installed, { ...installed,
+        bundles: [{ id: "workflow-kit", version: "2.0.0", source: "default", downloadUrl: null }] });
     assert.match(runtime.sent[0].prompt, /--priority.*set-priority/);
     assert.match(runtime.sent[0].prompt, /including entries not tagged canvas-design/);
     assert.deepEqual(handoff.selections.presets.map((item) => item.id), ["theme"]);
@@ -234,17 +259,54 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
     }, handoff.handoffId), /fingerprint mismatch/);
 });
 
+test("runtime bundles reuse Wizard catalog locators and reject missing or ambiguous sources before dispatch", async () => {
+    const bundles = [{ id: "community-kit", version: "1.0.0" }];
+    const entry = { id: "community-kit", version: "1.0.0", source: "community",
+        downloadUrl: "https://example.org/community-kit.zip" };
+    assert.deepEqual(resolveInstalledBundleSources(bundles, [entry]),
+        [{ ...bundles[0], source: "community", downloadUrl: entry.downloadUrl }]);
+    assert.deepEqual(resolveInstalledBundleSources([{ id: "built-in", version: "2.0.0" }],
+        [{ id: "catalog-alias", installedId: "built-in", version: "2.0.0", source: "default" }]),
+    [{ id: "built-in", version: "2.0.0", source: "default",
+        downloadUrl: null, catalogId: "catalog-alias" }]);
+    const runtime = fixture({ getInstalledWorkflow: async () => ({
+        ...empty, bundles,
+    }) });
+    runtime.setSnapshot({ ...snapshot, catalog: { ...catalog, bundles: [entry] } });
+    assert.equal((await runtime.post(request())).statusCode, 202);
+    const handoff = JSON.parse(runtime.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
+    assert.deepEqual(handoff.workflow.installed.bundles,
+        [{ ...bundles[0], source: "community", downloadUrl: entry.downloadUrl }]);
+    assert.match(runtime.sent[0].prompt, /Bundles with a downloadUrl require downloading a temporary ZIP/);
+    for (const entries of [
+        [], [entry, { ...entry, source: "default" }],
+        [{ ...entry, downloadUrl: null }],
+        [{ ...entry, downloadUrl: "http://example.org/unsafe.zip" }],
+    ]) {
+        const blocked = fixture({ getInstalledWorkflow: async () => ({ ...empty, bundles }) });
+        blocked.setSnapshot({ ...snapshot, catalog: { ...catalog, bundles: entries } });
+        const response = await blocked.post(request());
+        assert.equal(response.statusCode, 422);
+        assert.equal(blocked.sent.length, 0);
+    }
+});
+
 test("live CLI inventory is read from the Wizard checkout, including priorities", async () => {
     const path = await mkdtemp(join(tmpdir(), "designer-inventory-"));
     try {
-        await mkdir(join(path, ".specify"));
+        const presetPath = join(path, ".specify", "presets", "preset");
+        await mkdir(presetPath, { recursive: true });
+        await writeFile(join(presetPath, "preset.yml"),
+            "preset:\n  id: preset\n  name: Test preset\n  version: 1.0.0\n");
         const calls = [];
         const installed = await readInstalledWorkflowInventory({ workspacePath: path },
             async (binary, args, options) => {
-                calls.push({ binary, args, cwd: options.cwd });
+                calls.push({ binary, args, cwd: options.cwd, env: options.env });
                 const item = args[0] === "bundle"
                     ? [{ bundle_id: "kit", version: "2.0.0" }]
-                    : [{ id: args[0], version: "1.0.0", priority: 1, enabled: true }];
+                    : args[0] === "preset"
+                        ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                            source: { kind: "local" } }] : [];
                 return { stdout: JSON.stringify(item) };
             });
         assert.deepEqual(calls.map(({ args }) => args), [
@@ -252,8 +314,33 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
             ["bundle", "list", "--json"],
         ]);
         assert.ok(calls.every(({ cwd }) => cwd === path));
-        assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0", priority: 1 }]);
+        const augmentedPath = await buildAugmentedPath();
+        assert.ok(calls.every(({ env }) => env?.PATH === augmentedPath));
+        assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0",
+            priority: 1, source: "local", path: presetPath }]);
         assert.deepEqual(installed.bundles, [{ id: "kit", version: "2.0.0" }]);
+        const catalogInstalled = await readInstalledWorkflowInventory({
+            workspacePath: path, catalog: { presets: [{ id: "preset", version: "1.0.0",
+                source: "community", downloadUrl: "https://example.org/preset.zip" }] },
+        }, async (binary, args) => ({ stdout: JSON.stringify(args[0] === "preset"
+            ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                source: { kind: "catalog", catalog: "community" } }] : []) }));
+        assert.deepEqual(catalogInstalled.presets, [{ id: "preset", version: "1.0.0",
+            priority: 1, source: "community", downloadUrl: "https://example.org/preset.zip" }]);
+        const unavailableCatalog = await readInstalledWorkflowInventory({
+            workspacePath: path, catalog: { presets: [], extensions: [] },
+        }, async (binary, args) => ({ stdout: JSON.stringify(args[0] === "preset"
+            ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                source: { kind: "catalog", catalog: "community" } }] : []) }));
+        assert.deepEqual(unavailableCatalog.presets, [{ id: "preset", version: "1.0.0",
+            priority: 1, source: "community", path: presetPath }]);
+        await assert.rejects(readInstalledWorkflowInventory({
+            workspacePath: path, catalog: { presets: [{ id: "preset", version: "1.0.0",
+                source: "community", downloadUrl: "http://example.org/preset.zip" }] },
+        }, async (binary, args) => ({ stdout: JSON.stringify(args[0] === "preset"
+            ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                source: { kind: "catalog", catalog: "community" } }] : []) })),
+        /Invalid installed presets download URL/);
         await assert.rejects(readInstalledWorkflowInventory({ workspacePath: path },
             async () => ({ stdout: "not-json" })), /Invalid installed presets inventory/);
     } finally {
@@ -491,6 +578,20 @@ test("invalid fingerprints, oversized handoffs and unsafe IDs are rejected", asy
         workflow: malformed.workflow, selections: malformed.selections,
     });
     assert.throws(() => validateHandoff(malformed, handoff.handoffId), /Invalid Designer handoff/);
+    for (const invalid of [
+        { source: "local", path: "../outside" },
+        { source: "community", downloadUrl: "http://example.org/preset.zip" },
+        { source: "local", path: LOCAL_PRESET_PATH, downloadUrl: "https://example.org/preset.zip" },
+    ]) {
+        const withLocator = { ...handoff, workflow: { ...handoff.workflow,
+            installed: { ...empty, presets: [{ id: "preset", version: "1.0.0",
+                priority: 1, ...invalid }] } } };
+        withLocator.sourceFingerprint = fingerprint({
+            workflow: withLocator.workflow, selections: withLocator.selections,
+        });
+        assert.throws(() => validateHandoff(withLocator, handoff.handoffId),
+            /Invalid Designer handoff/);
+    }
     await assert.rejects(readHandoff(tmpdir(), "../escape"), /Invalid Designer handoff ID/);
 });
 
@@ -534,10 +635,24 @@ test("buildDesignerLaunchPrompt is purely additive: no local-dev step or wording
     const prompt = buildDesignerLaunchPrompt(handoff);
     assert.doesNotMatch(prompt, /localSelections/);
     assert.doesNotMatch(prompt, /local development sources/i);
-    assert.doesNotMatch(prompt, /specify preset add --dev/);
-    assert.doesNotMatch(prompt, /specify extension add .* --dev/);
+    assert.doesNotMatch(prompt, /For each approved entry in localSelections\.presets/);
+    assert.doesNotMatch(prompt, /specify extension add <path> --dev/);
     assert.doesNotMatch(prompt, /skip this required-by-ID install/);
     assert.equal(handoff.localSelections, undefined);
+});
+
+test("runtime package locators are carried into the child installation instructions", () => {
+    const installed = { presets: [{ id: "local-runtime", version: "1.0.0", priority: 2,
+        source: "local", path: LOCAL_PRESET_PATH }],
+    extensions: [{ id: "remote-runtime", version: "1.0.0", priority: 3,
+        source: "community", downloadUrl: "https://example.org/extension.zip" }],
+    bundles: [] };
+    const handoff = buildDesignerHandoff(snapshot, empty, undefined, installed, randomUUID());
+    assert.deepEqual(handoff.workflow.installed, installed);
+    const prompt = buildDesignerLaunchPrompt(handoff);
+    assert.match(prompt, /runtime preset.*frozen downloadUrl.*frozen path.*--dev <path>/);
+    assert.match(prompt, /runtime extension.*frozen downloadUrl.*frozen path.*--dev/);
+    assert.match(prompt, /manifest id and version against the frozen entry/);
 });
 
 test("buildDesignerLaunchPrompt documents local-wins precedence, including the extension-canvas-design special case", () => {
@@ -553,8 +668,8 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     assert.match(prompt, /A local entry always takes precedence over a hosted selection or bundle member sharing the same ID/);
     // No local extension-canvas-design selection here, so the required
     // hosted install step must use its unchanged, legacy wording.
-    assert.match(prompt, /install extension-canvas-design by ID/);
-    assert.match(prompt, /Require the installed version to be 0\.1\.4/);
+    assert.match(prompt, /Install extension-canvas-design by ID/);
+    assert.match(prompt, /Require the installed version to be 0\.1\.5/);
     assert.doesNotMatch(prompt, /skip the official by-ID install/);
 
     const withLocalCanvasDesignExt = buildDesignerHandoff(snapshot, empty, {
@@ -563,12 +678,41 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     }, empty, randomUUID());
     const promptWithExt = buildDesignerLaunchPrompt(withLocalCanvasDesignExt);
     // With a local core extension approved, the official by-ID install and
-    // its mandatory version-0.1.4 check are skipped entirely (not merely
+    // its mandatory version-0.1.5 check are skipped entirely (not merely
     // suffixed with a contradicting note) in favor of the local --dev
     // --force install producing the generated skill/schema instead.
-    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.4 check entirely/);
-    assert.match(promptWithExt, /the local development step below installs and overwrites it in place with --dev --force instead/);
-    assert.doesNotMatch(promptWithExt, /install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
+    assert.match(promptWithExt, /skip the official by-ID install of extension-canvas-design and its required-version-0\.1\.5 check entirely/);
+    assert.match(promptWithExt, /verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force/);
+    assert.ok(promptWithExt.indexOf("then install it now with specify extension add <path> --dev --force")
+        < promptWithExt.indexOf("Then install approved bundles"));
+    assert.match(promptWithExt, /Verify extension-canvas-design still comes from the approved local path; if a bundle replaced it, restore that local override with specify extension add <path> --dev --force and verify its source again/);
+    assert.ok(promptWithExt.indexOf("Then install approved bundles")
+        < promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path"));
+    assert.ok(promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path")
+        < promptWithExt.indexOf("Only after ALL extensions"));
+    assert.doesNotMatch(promptWithExt, /Require extension-canvas-design to remain at hosted version 0\.1\.5/);
+    assert.doesNotMatch(promptWithExt, /Install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
+});
+
+test("Designer launch installs every extension before standalone presets, including local overrides", () => {
+    const handoff = buildDesignerHandoff(snapshot, empty, {
+        presets: [{ id: "copilot-sub-agents", source: "local", approved: true,
+            path: LOCAL_PRESET_PATH }],
+        extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
+            path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
+    }, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [], bundles: [] }, randomUUID());
+    const prompt = buildDesignerLaunchPrompt(handoff);
+    const extensionStep = prompt.indexOf("Install ALL remaining standalone extensions");
+    const localExtension = prompt.indexOf("For each approved entry in localSelections.extensions");
+    const presetStep = prompt.indexOf("Only after ALL extensions");
+    const localPreset = prompt.indexOf("For each approved entry in localSelections.presets");
+    assert.ok(prompt.indexOf("then install it now with specify extension add <path> --dev --force")
+        < prompt.indexOf("Then install approved bundles"));
+    assert.ok(extensionStep > 0 && extensionStep < localExtension
+        && localExtension < presetStep && presetStep < localPreset);
+    assert.match(prompt, /including 'no base command layer'/);
+    assert.match(prompt, /If any registration is missing, stop and report incomplete command composition/);
 });
 
 test("handleDesignerLaunch inlines validated localSelections into the handoff end-to-end", async () => {

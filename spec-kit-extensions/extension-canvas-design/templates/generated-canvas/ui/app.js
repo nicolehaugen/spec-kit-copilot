@@ -3,8 +3,9 @@ const $ = (id) => document.getElementById(id);
 const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
+const failedPatches = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
-let viewer = null, timer, saveFailure = null, workflowQuery = "";
+let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
 function currentTheme() {
@@ -62,11 +63,23 @@ function remember(step, value) {
     return { item: step.project ? "project" : model.selected, phase: step.id, value };
 }
 function persist(patch) {
+    const parts = [];
+    if (Object.hasOwn(patch, "selected") || Object.hasOwn(patch, "name") || Object.hasOwn(patch, "slug")) {
+        parts.push([`identity:${patch.selected ?? model.selected}`, {
+            ...(Object.hasOwn(patch, "selected") ? { selected: patch.selected } : {}),
+            ...(Object.hasOwn(patch, "name") ? { name: patch.name } : {}),
+            ...(Object.hasOwn(patch, "slug") ? { slug: patch.slug } : {}),
+        }]);
+    }
+    if (patch.draft) parts.push([`draft:${JSON.stringify([patch.draft.item, patch.draft.phase])}`,
+        { draft: patch.draft }]);
     saving = saving.catch(() => {}).then(async () => {
         const saved = await api("/api/state", { revision: model.revision, ...patch });
         model.revision = saved.revision;
-        saveFailure = null;
+        for (const [key] of parts) failedPatches.delete(key);
+        if (!failedPatches.size) saveFailure = null;
     }).catch((error) => {
+        for (const [key, value] of parts) failedPatches.set(key, value);
         saveFailure = error;
         message(`Inputs could not be saved: ${error.message} Your draft is retained in this panel.`, "canvas-message", true);
         throw error;
@@ -87,8 +100,23 @@ function saveInputs() {
     if (selected) patch.draft = { item: model.selected, phase: selected.id, value: drafts.get(draftKey(selected)) ?? $("phase-args")?.value ?? "" };
     return persist(patch);
 }
+function saveConstitutionDraft() {
+    const draft = constitutionDraft;
+    if (draft) {
+        const pending = persist({ draft });
+        pending.then(() => {
+            if (constitutionDraft === draft) constitutionDraft = null;
+        }, () => {});
+        return pending;
+    }
+}
 async function flush() {
     if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
+    if (constitutionTimer) {
+        clearTimeout(constitutionTimer);
+        constitutionTimer = null;
+        saveConstitutionDraft();
+    }
     await saving;
     if (saveFailure) throw saveFailure;
 }
@@ -278,6 +306,16 @@ async function refresh(reconcile = false) {
         model.slug = previous.slug;
         model.name = previous.name;
     }
+    const selected = phase();
+    if (selected && !model.statuses[selected.id]?.error
+        && $("phase-message")?.classList.contains("workflow-error")) {
+        message("", "phase-message");
+    }
+    const project = constitution();
+    if (project && !model.statuses[project.id]?.error
+        && $("constitution-message")?.classList.contains("workflow-error")) {
+        message("", "constitution-message");
+    }
     renderCollection();
     if (!previous || previous.selected !== model.selected) renderPhase();
     else renderStatus();
@@ -359,7 +397,7 @@ async function refreshArtifact() {
         const result = await api(`/api/artifact?${query}`);
         if (viewer !== context) return;
         $("artifact-path").textContent = result.path;
-        if (result.content.trim() || !context.loaded) $("artifact-content").innerHTML = renderMarkdown(result.content);
+        $("artifact-content").innerHTML = renderMarkdown(result.content);
         context.loaded = true;
         message(result.message ?? "", "artifact-message");
     } catch (error) {
@@ -387,7 +425,11 @@ document.addEventListener("input", (event) => {
         queueInput();
     }
     if (event.target.id === "workflow-slug") { model.slug = event.target.value; queueInput(); renderStatus(); }
-    if (event.target.id === "constitution-args") persist({ draft: remember(constitution(), event.target.value) });
+    if (event.target.id === "constitution-args") {
+        constitutionDraft = remember(constitution(), event.target.value);
+        clearTimeout(constitutionTimer);
+        constitutionTimer = setTimeout(() => { constitutionTimer = null; saveConstitutionDraft(); }, 400);
+    }
 });
 $("workflow-search").addEventListener("input", (event) => {
     workflowQuery = event.target.value;
@@ -413,7 +455,19 @@ document.addEventListener("click", (event) => {
             // Fetch the current revision first; retry locally retained drafts explicitly.
             await saving.catch(() => {});
             await refresh(true);
-            if (saveFailure) await saveInputs();
+            if (saveFailure) {
+                if (failedPatches.size) {
+                    let selectionRetried = false;
+                    for (const patch of [...failedPatches.values()]) {
+                        await persist(patch);
+                        if (Object.hasOwn(patch, "selected")) selectionRetried = true;
+                        if (patch.draft === constitutionDraft) constitutionDraft = null;
+                    }
+                    if (selectionRetried) await refresh();
+                } else if (constitutionDraft) await saveConstitutionDraft();
+                else await saveInputs();
+            }
+            if (saveFailure) throw saveFailure;
             message("Canvas refreshed.");
             return;
         }
@@ -447,12 +501,13 @@ wireThemeToggle();
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {
-    if (!timer) saving.catch(() => {}).then(() => refresh()).catch((error) => message(error.message, "canvas-message", true));
+    if (!timer && !constitutionTimer) saving.catch(() => {}).then(() => refresh())
+        .catch((error) => message(error.message, "canvas-message", true));
     if (viewer) refreshArtifact();
 };
 events.onerror = () => { setConnectionStatus("lost"); message("Connection interrupted. Drafts are retained; use Refresh if reconnection fails."); };
 window.addEventListener("beforeunload", (event) => {
-    if (timer || saveFailure) { event.preventDefault(); event.returnValue = ""; }
+    if (timer || constitutionTimer || saveFailure) { event.preventDefault(); event.returnValue = ""; }
 });
 window.addEventListener("pagehide", () => events.close());
 await refresh().catch((error) => message(error.message, "canvas-message", true));

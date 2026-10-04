@@ -14,6 +14,7 @@ const entryTemplate = await readFile(new URL("../extension-canvas-design/templat
     import.meta.url), "utf8");
 const model = {
     revision: "test-revision",
+    settingsRevision: 0,
     pages: [{ page: "canvas-settings-setup", fields: [
         { id: "canvas.id" }, { id: "canvas.displayName" }, { id: "canvas.description" },
         { id: "canvas.workflowListName" }, { id: "workflowSlug.userProvided" },
@@ -66,10 +67,67 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.deepEqual(request.installed.presets, handoff.workflow.installed.presets);
     assert.deepEqual(request.values, values);
     assert.throws(() => validateEssentials(model, { ...values, "canvas.id": "../bad" }), /canvas.id/);
+    for (const id of ["con", "prn", "aux", "nul",
+        ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+        ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`)]) {
+        assert.throws(() => validateEssentials(model, { ...values, "canvas.id": id }), /non-reserved/);
+    }
+    for (const id of ["com0", "com10", "lpt0", "lpt10", "con-1"]) {
+        assert.equal(validateEssentials(model, { ...values, "canvas.id": id })["canvas.id"], id);
+    }
     assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /Title/);
     assert.throws(() => validateEssentials(model, { ...values, "workflowSlug.userProvided": "true" }), /workflowSlug.userProvided/);
     const { ["workflowSlug.userProvided"]: omitted, ...missingToggle } = values;
     assert.throws(() => validateEssentials(model, missingToggle), /workflowSlug.userProvided/);
+});
+
+test("materialization rejects a re-signed request with a Windows device Canvas ID", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(path, "utf8"));
+    request.canvas.id = "con";
+    request.values["canvas.id"] = "con";
+    request.target = ".github/extensions/con/";
+    const { integrity, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(path, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen canvas identity/);
+    await assert.rejects(readdir(join(project, ".github", "extensions")), { code: "ENOENT" });
+});
+
+test("materialization rejects re-signed requests that diverge from frozen Essentials", async (t) => {
+    for (const [field, canvasField, original] of [
+        ["canvas.description", "description", values["canvas.description"]],
+        ["canvas.workflowListName", "workflowListName", values["canvas.workflowListName"]],
+        ["canvas.description", "description", ""],
+        ["canvas.workflowListName", "workflowListName", ""],
+    ]) {
+        await t.test(`${field} ${original ? "explicit" : "default"}`, async (child) => {
+            const selectedValues = { ...values, [field]: original };
+            const { project, workspace, prepared, sdk } = await fixture(child, handoff, selectedValues);
+            const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                "generations", prepared.requestId, "request.json");
+            const request = JSON.parse(await readFile(path, "utf8"));
+            request.canvas[canvasField] = "A different value";
+            const { integrity, ...payload } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+            await writeFile(path, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /Invalid frozen canvas identity/);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
+});
+
+test("materialization accepts frozen default description and workflow header", async (t) => {
+    const selectedValues = { ...values, "canvas.description": "", "canvas.workflowListName": "" };
+    const { project, workspace, prepared, sdk } = await fixture(t, handoff, selectedValues);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.equal(config.canvas.description, "Spec Kit workflow canvas.");
+    assert.equal(config.canvas.workflowListName, "Workflows");
 });
 
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
@@ -92,7 +150,8 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.phases, handoff.workflow.selectedPhases);
     assert.equal(config.userProvidesSlug, false);
-    assert.deepEqual(config.installed, handoff.workflow.installed);
+    assert.deepEqual(config.installed, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [], bundles: [] });
     assert.equal(Object.hasOwn(config, "resultTags"), false);
     assert.equal(Object.hasOwn(config, "phaseResults"), false);
     for (const removed of ["result-tags.mjs", "tag-evaluator.mjs", "staleness.mjs"]) {
@@ -304,7 +363,33 @@ test("local development selections remain bound to the frozen handoff at publica
     await materialize(project, workspace, local.handoffId, prepared.requestId);
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
-    assert.deepEqual(config.installed.presets, local.workflow.installed.presets);
+    assert.deepEqual(config.installed.presets, [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }]);
+});
+
+test("generated config excludes session-only installed package locators", async (t) => {
+    const withLocators = { ...handoff, workflow: { ...handoff.workflow, installed: {
+        presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1,
+            path: join(tmpdir(), "private-preset"), source: "local",
+            downloadUrl: "https://example.com/preset.zip" }],
+        extensions: [{ id: "runtime-extension", version: "2.0.0", priority: 2,
+            path: join(tmpdir(), "private-extension"), downloadUrl: "https://example.com/extension.zip" }],
+        bundles: [{ id: "runtime-bundle", version: "3.0.0", source: "community",
+            downloadUrl: "https://example.com/bundle.zip", catalogId: "community-bundle" }],
+    } } };
+    withLocators.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: withLocators.workflow, selections: withLocators.selections,
+    })).digest("hex");
+    const { project, workspace, prepared, sdk } = await fixture(t, withLocators);
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        withLocators.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.installed, withLocators.workflow.installed);
+    await materialize(project, workspace, withLocators.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.installed, {
+        presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [{ id: "runtime-extension", version: "2.0.0", priority: 2 }],
+        bundles: [{ id: "runtime-bundle", version: "3.0.0" }],
+    });
 });
 
 test("existing canvases are preserved and tampered requests fail before creation", async (t) => {

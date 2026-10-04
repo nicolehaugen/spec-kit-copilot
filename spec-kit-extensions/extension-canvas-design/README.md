@@ -5,10 +5,11 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.4** registers three JSON page templates and the
+Canvas Design **0.1.5** registers three JSON page templates and the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
-project's preset-composed pages and opens the Designer with the complete set.
+project's preset-composed pages and explicitly named contribution templates,
+then opens the Designer with the complete resolved set.
 The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
 
@@ -36,6 +37,10 @@ the list's place and starts a new workflow without leaving a detached status
 message.
 Each row offers a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
+Deletion verifies the directory and its parent, moves it to a temporary
+location, and checks the moved directory's identity before removing it. If
+the parent changes during deletion, the moved directory is retained for manual
+recovery at the path shown in the error.
 An optional **Workflow name**
 appears just below it while creating a workflow; it labels the workflow in
 the canvas (falling back to the actual directory name when blank) and does not
@@ -57,7 +62,7 @@ separate Refresh button.
 
 - Specify CLI **>=1.0.7** and an initialized Spec Kit project.
 - GitHub Copilot with a separately installed, compatible Canvas Designer
-  provider accepting the resolved pages in its open input.
+  provider accepting the resolved pages and templates in its open input.
 - A launching integration that supplies the Designer handoff.
 
 Installing this extension does not install or open a Designer. Compatibility
@@ -76,7 +81,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.4/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.5/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -93,15 +98,26 @@ or changing composed skills to make them available in the current session.
 
 ## How It Works
 
-The [page-loading command](commands/load-page.md) collects the default template
-names and any additional names contributed by presets. It uses
-`specify preset resolve <name>` to find each project's effective page. Only
-after all paths resolve does it open the official Designer provider once with
-the complete set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
+The [page-loading command](commands/load-page.md) collects default page
+names and additional page or Canvas Design template names explicitly registered
+in the composed command by presets. It uses `specify preset resolve <name>`
+to find each project's effective named file; package tags alone do not register
+files. Only after all paths resolve does it open the official Designer provider
+once with the complete set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
 handoffs, and an unavailable provider stop the operation before an open URL is
 returned. A resolved page whose file is missing or invalid shows an error tab
-with a path and reason; healthy pages stay usable. Opening the shell does not
-mean all pages loaded or that Essentials is valid for generation.
+with a path and reason; healthy pages stay usable. Invalid registered field
+contributions stop the open with both names on a field collision; newly
+registered stock text/checkbox fields render on their declared Designer page
+and can be saved, but custom control modules and contributed settings are not
+included in Generate yet. Opening the
+shell does not mean all pages loaded or that Essentials is valid for generation.
+
+The isolated [test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
+registers an additional Designer page with stock text and checkbox fields. The
+browser integration test covers the checkbox default, rendering, save, and
+reopen. The preset is installed locally, not published in the canonical preset
+catalog; Billing generation and generated-only pages remain future work.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
 request prepared by the Designer. It writes the **source-owned SDK entry point**

@@ -26,20 +26,24 @@ Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
 Essentials displays Canvas ID, Title, Description and Workflow header from the
-resolved template. Workflow name appears after Phase input in the generated
-canvas's first workflow-creation phase and labels the workflow there. Essentials'
+resolved template. Workflow name appears in the generated canvas's workflow
+collection, before phase navigation, while creating a workflow. It labels the
+workflow there. Essentials'
 default-off Allow custom slug setting controls whether an optional Workflow slug
 field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
 Artifacts and Appearance are empty by default. Save persists validated field values to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff restores them when its resolved pages are unchanged.
+Preset-registered stock text and checkbox fields render in their declared
+Designer page slot and are saved alongside built-in values. Custom control
+adapters and generated use of contributed settings are not implemented yet.
 Save rejects stale revisions and invalid values, and reports failures without
 discarding edits. Generate freezes valid Essentials values and dispatches the
 installed Canvas Design generate command to create a new source-owned
 workflow canvas; the button is unavailable without a complete Wizard handoff,
 a valid Essentials page, or the installed Generate skill in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.4 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.5 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

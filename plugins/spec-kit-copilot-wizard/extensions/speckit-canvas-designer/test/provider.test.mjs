@@ -460,6 +460,13 @@ test("Save persists values beside the handoff and rejects stale or invalid chang
     await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
         ...request, values: { ...values, "canvas.id": "../escape" },
     }), /Invalid Designer setting: canvas.id/);
+    for (const id of ["con", "prn", "aux", "nul",
+        ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+        ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`)]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+            ...request, values: { ...values, "canvas.id": id },
+        }), /Invalid Designer setting: canvas.id/);
+    }
     await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
         ...request, values: { ...values, unexpected: "extra" },
     }), /unexpected or missing fields/);
@@ -581,7 +588,8 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries));
     const prompts = [];
     const shell = await startShell(handoff, model, { project, workspace,
         session: { send: async (value) => prompts.push(value.prompt) } });
@@ -595,22 +603,35 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         method: "POST", headers: { "Content-Type": "application/json", Origin: url.origin },
         body: JSON.stringify(body),
     });
-    assert.equal((await post({ revision: "stale", values })).status, 422);
-    assert.equal((await post({ revision: model.revision, values: {
+    const generationRequest = (settingsRevision, draft) => ({
+        modelRevision: model.revision, settingsRevision, values: draft,
+    });
+    assert.equal((await post(generationRequest("stale", values))).status, 422);
+    assert.equal((await post(generationRequest(0, {
         ...values, "canvas.id": "../outside",
-    } })).status, 422);
-    assert.equal((await post({ revision: model.revision, values },
+    }))).status, 422);
+    assert.equal((await post(generationRequest(0, values),
         new URL("/api/generate?token=wrong", url))).status, 404);
     assert.equal(prompts.length, 0);
     await rm(generateSkill);
-    const unavailable = await post({ revision: model.revision, values });
+    const unavailable = await post(generationRequest(0, values));
     assert.equal(unavailable.status, 409);
-    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.4/);
+    assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.5/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const response = await post({ revision: model.revision, values });
+    const newerValues = { ...values, "canvas.description": "Newer settings" };
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { revision: 0, modelRevision: model.revision, values: newerValues });
+    assert.equal(saved.settingsRevision, 1);
+    const stale = await post(generationRequest(0, values));
+    assert.equal(stale.status, 409);
+    assert.match((await stale.json()).error, /settings changed elsewhere/);
+    assert.equal(prompts.length, 0);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
+    const response = await post(generationRequest(saved.settingsRevision, newerValues));
     assert.equal(response.status, 202);
     const generated = await response.json();
     assert.equal(generated.target, ".github/extensions/my-canvas/");
@@ -618,7 +639,8 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", generated.requestId, "request.json")));
     assert.equal(frozen.canvas.id, "my-canvas");
-    assert.equal(frozen.canvas.description, "Spec Kit workflow canvas.");
+    assert.equal(frozen.canvas.description, "Newer settings");
+    assert.equal(frozen.settingsRevision, 1);
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
 });
 
@@ -639,11 +661,11 @@ test("missing Generate skill disables the button and reports a repair path witho
     const state = await (await fetch(stateUrl)).json();
     assert.equal(state.generationAvailable, false);
     assert.equal(state.generationError,
-        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.4 or the current local source.");
+        "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.5 or the current local source.");
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ revision: model.revision, values: { ...model.values,
+        body: JSON.stringify({ modelRevision: model.revision, settingsRevision: 0, values: { ...model.values,
             "canvas.id": "my-canvas", "canvas.displayName": "My Canvas" } }) });
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, state.generationError);
@@ -725,11 +747,19 @@ test("reads the complete effective page set from the child checkout without a sn
         title: "Extra", order: 5, enabled: false, fields: [] }));
     assert.equal((await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra }])).pages.length, 3);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }],
+        [{ name: "extra-settings", path: extra, sourceId: "aaa" }]),
+    /Invalid or duplicate Canvas Design template: extra-settings/);
     await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
         title: "Extra", order: "invalid", fields: [] }));
     const invalidOrder = await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra }]);
     assert.match(invalidOrder.pages.at(-1).error.reason, /expected integer/);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra }],
+        [{ name: "extra-settings", path: extra, sourceId: "aaa" }]),
+    /Invalid or duplicate Canvas Design template: extra-settings/);
     await writeFile(extra, " ".repeat(256 * 1024 + 1));
     const oversized = await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra }]);
@@ -743,6 +773,136 @@ test("reads the complete effective page set from the child checkout without a sn
         { code: "ENOENT" });
 });
 
+test("registered contributions validate slots, sources, references and deterministic order", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const handoff = validHandoff();
+    const directory = join(project, ".specify", "presets");
+    await mkdir(directory);
+    const make = (id, sourceId, fieldId, overrides = {}) => ({
+        name: `canvas-contribution-${id}`, path: join(directory, `${id}.json`), sourceId,
+        document: { schemaVersion: 1, id, host: "designer", slot: "essentials.options",
+            order: 30, field: { id: fieldId, label: id, type: "string", control: "stock.text" },
+            ...overrides },
+    });
+    const beta = make("beta", "zzz", "billing.beta");
+    const alpha = make("alpha", "aaa", "billing.alpha");
+    for (const item of [beta, alpha]) await writeFile(item.path, JSON.stringify(item.document));
+    const paths = [beta, alpha].map(({ name, path, sourceId }) => ({ name, path, sourceId }));
+    const model = await loadResolvedDesignerPages(handoff, project, entries, paths);
+    assert.deepEqual(model.contributions.map((item) => item.id), ["alpha", "beta"]);
+    assert.deepEqual(model.pages[0].fields.slice(-2).map((field) => field.id),
+        ["billing.alpha", "billing.beta"]);
+    assert.equal(model.constraints["billing.alpha"].maxLength, 1000);
+    assert.equal(model.values["billing.alpha"], "");
+    assert.equal(model.pages.length, 3);
+    const defaultModel = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.deepEqual(defaultModel.contributions, []);
+    assert.equal(defaultModel.pages[0].fields.length, 5);
+    assert.notEqual((await loadResolvedDesignerPages(handoff, project, entries, paths.slice(1))).revision,
+        model.revision);
+
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, [...paths, paths[0]]),
+        /duplicate Canvas Design template/);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, [
+        { ...paths[0], name: entries[0].name },
+    ]), /duplicate Canvas Design template/);
+    await writeFile(beta.path, JSON.stringify({ ...beta.document,
+        field: { ...beta.document.field, id: "billing.alpha" } }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
+        /canvas-contribution-beta: duplicate field billing.alpha also defined by canvas-contribution-alpha|canvas-contribution-alpha: duplicate field billing.alpha also defined by canvas-contribution-beta/);
+    await writeFile(beta.path, JSON.stringify({ ...beta.document,
+        field: { ...beta.document.field, id: "canvas.id" } }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
+        /canvas-contribution-beta: duplicate field canvas.id also defined by canvas-settings-setup/);
+    await writeFile(beta.path, JSON.stringify({ ...beta.document, slot: "unknown.slot" }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
+        /canvas-contribution-beta: unknown or incompatible Designer slot unknown.slot/);
+    await writeFile(beta.path, JSON.stringify({ ...beta.document, requires: ["missing-template"] }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
+        /unresolved required Canvas Design template missing-template/);
+    await writeFile(beta.path, JSON.stringify(beta.document));
+    const replacement = join(directory, "project-replacement.json");
+    await writeFile(replacement, JSON.stringify({ ...beta.document,
+        field: { ...beta.document.field, label: "Replaced cost code" } }));
+    const projectWinner = { ...paths[0], path: replacement, sourceId: "project" };
+    const projectModel = await loadResolvedDesignerPages(handoff, project, entries,
+        [projectWinner, paths[1]]);
+    assert.equal(projectModel.contributions.find((item) => item.id === "beta").sourceId, "project");
+    assert.equal(projectModel.pages[0].fields.at(-1).label, "Replaced cost code");
+    assert.notEqual(projectModel.revision, model.revision);
+    const duplicateSlot = JSON.parse(await readFile(entries[1].path, "utf8"));
+    duplicateSlot.slots = [{ id: "essentials.options", accepts: ["field"],
+        orderBy: ["order", "presetId", "id"] }];
+    await writeFile(entries[1].path, JSON.stringify(duplicateSlot));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
+        /duplicate Designer slot essentials.options also defined by canvas-settings-setup/);
+    delete duplicateSlot.slots;
+    await writeFile(entries[1].path, JSON.stringify(duplicateSlot));
+    const modulePath = join(directory, "new-control.mjs");
+    await writeFile(modulePath, "export const control = () => null;\n");
+    const moduleEntry = { name: "canvas-control-new", path: modulePath, sourceId: "aaa" };
+    const withModule = await loadResolvedDesignerPages(handoff, project, entries,
+        [...paths, moduleEntry]);
+    assert.notEqual(withModule.revision, model.revision);
+    assert.deepEqual(withModule.templates.map((item) => item.name),
+        [...paths.map((item) => item.name), moduleEntry.name]);
+    await writeFile(modulePath, Buffer.from([0xff]));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
+        [...paths, moduleEntry]), /Invalid Designer UTF-8/);
+    await writeFile(modulePath, "export const control = () => null;\n");
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
+        [...paths, { ...moduleEntry, path: join(directory, "missing.mjs") }]), /ENOENT/);
+    const oversized = [];
+    for (let i = 0; i < 9; i++) {
+        const path = join(directory, `module-${i}.mjs`);
+        await writeFile(path, "a".repeat(245 * 1024));
+        oversized.push({ name: `canvas-module-${i}`, path, sourceId: "aaa" });
+    }
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, oversized),
+        /template inventory exceeds its size limit/);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, [
+        { ...paths[0], path: join(workspace, "outside.json") },
+    ]), /inside \.specify/);
+});
+
+test("resolved contributions cannot enlarge the assembled Designer model past its limit", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const handoff = validHandoff();
+    const directory = join(project, ".specify", "presets");
+    await mkdir(directory);
+    const pages = [...entries];
+    for (let pageIndex = 0; pageIndex < 17; pageIndex++) {
+        const name = `canvas-settings-extra-${pageIndex}`;
+        const path = join(directory, `${name}.json`);
+        await writeFile(path, JSON.stringify({
+            schemaVersion: 1, id: name, title: name, order: 100 + pageIndex,
+            fields: Array.from({ length: 100 }, (_, fieldIndex) => ({
+                id: `extra.${pageIndex}.${fieldIndex}`, label: "Field",
+                description: "x".repeat(1000),
+            })),
+        }));
+        pages.push({ name, path });
+    }
+    const baseline = await loadResolvedDesignerPages(handoff, project, pages);
+    assert.ok(Buffer.byteLength(JSON.stringify(baseline)) <= 2 * 1024 * 1024);
+    const contributions = [];
+    for (let index = 0; index < 95; index++) {
+        const name = `canvas-contribution-extra-${index}`;
+        const path = join(directory, `${name}.json`);
+        await writeFile(path, JSON.stringify({
+            schemaVersion: 1, id: `extra-${index}`, host: "designer",
+            slot: "essentials.options", order: index,
+            field: { id: `added.${index}`, label: "Field", description: "y".repeat(1000),
+                type: "string", control: "stock.text" },
+        }));
+        contributions.push({ name, path, sourceId: "test" });
+    }
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, pages, contributions),
+        /Designer page model exceeds its size limit/);
+});
+
 test("page errors retain healthy fields and never accept unsafe or incomplete input", async (t) => {
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
@@ -750,12 +910,9 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
     const extra = join(project, ".specify", "extra.json");
     await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
         title: "Extra", order: 5, fields: [{ id: "canvas.id", label: "Collision" }] }));
-    const conflict = await loadResolvedDesignerPages(handoff, project,
-        [...entries, { name: "extra-settings", path: extra }]);
-    assert.match(conflict.pages.find((page) => page.page === "extra-settings").error.reason,
-        /duplicate enabled field canvas.id/);
-    assert.equal(conflict.constraints["canvas.id"].minLength, 1);
-    assert.equal(conflict.pages[0].page, "canvas-settings-setup");
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [...entries, { name: "extra-settings", path: extra }]),
+    /extra-settings: duplicate enabled field canvas.id also defined by canvas-settings-setup/);
 
     await writeFile(entries[0].path, "{invalid");
     const broken = await loadResolvedDesignerPages(handoff, project, entries);
@@ -883,27 +1040,33 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.deepEqual(canvas.inputSchema.properties.handoffId.type, "string");
     assert.equal(canvas.inputSchema.properties.pages.minItems, 3);
     assert.equal(canvas.inputSchema.properties.pages.maxItems, 100);
+    assert.equal(canvas.inputSchema.properties.templates.maxItems, 100);
 
     let releaseShell;
     try {
         const empty = await canvas.open({ instanceId: "same", input: {} });
         assert.match(await (await fetch(empty.url)).text(), /No Wizard handoff is attached yet/);
         await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID } }),
-            /complete page list/);
+            /complete resolved inventory/);
         await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } }),
-            (error) => error.code === "designer_handoff_invalid");
+            /complete resolved inventory/);
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries, templates: [],
+        } }), (error) => error.code === "designer_handoff_invalid");
         await saveHandoff(workspace);
         await assert.rejects(canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries.slice(1),
+            handoffId: ID, pages: entries.slice(1), templates: [],
         } }), /all three Canvas Design pages/);
         await assert.rejects(canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: [...entries, entries[0]],
+            handoffId: ID, pages: [...entries, entries[0]], templates: [],
         } }), /duplicate Designer page name/);
         const schema = join(project, ".specify", "extensions", "extension-canvas-design",
             "schemas", "page.schema.json");
         const installedSchema = await readFile(schema);
         await rm(schema);
-        await assert.rejects(canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } }),
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries, templates: [],
+        } }),
             (error) => error.code === "designer_open_failed"
                 && error.message.includes(schema)
                 && /Repair or reinstall extension-canvas-design/.test(error.message));
@@ -911,12 +1074,14 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         await writeFile(schema, installedSchema);
         const missing = await canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [{ name: entries[0].name, path: join(project, ".specify", "missing.json") },
-                ...entries.slice(1)],
+                ...entries.slice(1)], templates: [],
         } });
         const missingStateUrl = new URL(missing.url);
         missingStateUrl.pathname = "/api/state";
         assert.match((await (await fetch(missingStateUrl)).json()).pages[0].error.reason, /missing/);
-        const filled = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
+        const filled = await canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries, templates: [],
+        } });
         assert.notEqual(filled.url, empty.url);
         assert.match(await (await fetch(filled.url)).text(), /Spec Kit Canvas Designer/);
         const stateUrl = new URL(filled.url);
@@ -924,10 +1089,59 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         const initial = await (await fetch(stateUrl)).json();
         assert.equal(initial.pages.length, 3);
         assert.equal((await fetch(new URL("/api/reload", filled.url), { method: "POST" })).status, 404);
+        const templatePath = join(project, ".specify", "billing.json");
+        await writeFile(templatePath, JSON.stringify({
+            schemaVersion: 1, id: "billing-code", host: "designer",
+            slot: "essentials.options", order: 30,
+            field: { id: "billing.costCode", label: "Cost code",
+                type: "string", control: "stock.text" },
+        }));
+        const withTemplate = await canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries,
+            templates: [{ name: "canvas-contribution-billing", path: templatePath,
+                sourceId: "billing" }],
+        } });
+        const templateStateUrl = new URL(withTemplate.url);
+        templateStateUrl.pathname = "/api/state";
+        const templateState = await (await fetch(templateStateUrl)).json();
+        assert.deepEqual(templateState.contributions.map((item) => item.id), ["billing-code"]);
+        assert.deepEqual(Object.fromEntries(Object.entries(templateState.values)
+            .filter(([id]) => id !== "billing.costCode")), initial.values);
+        assert.equal(templateState.values["billing.costCode"], "");
+        assert.ok(templateState.pages[0].fields.some((field) => field.id === "billing.costCode"));
+        assert.equal(templateState.pages.length, initial.pages.length);
+        assert.notEqual(templateState.revision, initial.revision);
+        const preset = fileURLToPath(new URL(
+            "../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url));
+        const testPage = join(project, ".specify", "pr1-test-page.json");
+        const testField = join(project, ".specify", "pr1-test-field.json");
+        const testToggle = join(project, ".specify", "pr1-test-toggle.json");
+        await copyFile(join(preset, "pages", "pr1-test.json"), testPage);
+        await copyFile(join(preset, "contributions", "pr1-test.json"), testField);
+        await copyFile(join(preset, "contributions", "pr1-toggle.json"), testToggle);
+        const withPreset = await canvas.open({ instanceId: "same", input: {
+            handoffId: ID,
+            pages: [...entries, { name: "canvas-settings-pr1-test", path: testPage }],
+            templates: [{ name: "canvas-contribution-pr1-test", path: testField,
+                sourceId: "copilot-canvas-design-test" },
+            { name: "canvas-contribution-pr1-toggle", path: testToggle,
+                sourceId: "copilot-canvas-design-test" }],
+        } });
+        const presetStateUrl = new URL(withPreset.url);
+        presetStateUrl.pathname = "/api/state";
+        const presetState = await (await fetch(presetStateUrl)).json();
+        assert.equal(presetState.pages.at(-1).title, "Test settings");
+        assert.deepEqual(presetState.pages.at(-1).fields.map((field) => field.id),
+            ["pr1Test.label", "pr1Test.enabled"]);
+        assert.deepEqual(presetState.constraints["pr1Test.enabled"], { type: "boolean" });
+        assert.equal(presetState.values["pr1Test.enabled"], true);
+        assert.equal(presetState.contributions[0].sourceId, "copilot-canvas-design-test");
         const changed = JSON.parse(await readFile(entries[0].path, "utf8"));
         changed.title = "Updated Essentials";
         await writeFile(entries[0].path, JSON.stringify(changed));
-        const reopened = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
+        const reopened = await canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries, templates: [],
+        } });
         assert.notEqual(reopened.url, filled.url);
         await assert.rejects(fetch(stateUrl));
         const latest = new URL(reopened.url);
@@ -936,7 +1150,9 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         assert.equal(updated.pages[0].title, "Updated Essentials");
         assert.notEqual(updated.revision, initial.revision);
         await writeFile(entries[1].path, "{broken");
-        const broken = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
+        const broken = await canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries, templates: [],
+        } });
         await assert.rejects(fetch(latest));
         const brokenStateUrl = new URL(broken.url);
         brokenStateUrl.pathname = "/api/state";
@@ -953,7 +1169,9 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             body: JSON.stringify({ modelRevision: brokenState.revision,
                 revision: brokenState.settingsRevision, values: savedValues }) });
         assert.equal(savedResponse.status, 200);
-        const restored = await canvas.open({ instanceId: "same", input: { handoffId: ID, pages: entries } });
+        const restored = await canvas.open({ instanceId: "same", input: {
+            handoffId: ID, pages: entries, templates: [],
+        } });
         const restoredUrl = new URL(restored.url);
         restoredUrl.pathname = "/api/state";
         const restoredState = await (await fetch(restoredUrl)).json();

@@ -12,8 +12,10 @@ const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
+class ContributionCollisionError extends Error {}
 const RULES = {
-    "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$" },
+    "canvas.id": { type: "string", minLength: 1, maxLength: 100,
+        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
     "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -25,7 +27,7 @@ function inside(root, path) {
     return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-async function boundedJson(path, root, limit, openFile = open) {
+async function boundedJson(path, root, limit, openFile = open, parse = true) {
     const target = await realpath(path);
     if (!inside(root, target)) throw new Error(`Designer file escapes its allowed directory: ${path}`);
     const file = await openFile(target, constants.O_RDONLY
@@ -56,9 +58,15 @@ async function boundedJson(path, root, limit, openFile = open) {
         if (length > limit) throw new PageContentError(`Designer file exceeds its size limit: ${path}`);
         const bytes = buffer.subarray(0, length);
         let document;
-        try { document = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
-        catch (error) { throw new PageContentError(`Invalid Designer JSON in ${path}: ${error.message}`); }
-        return { document, path: target, hash: createHash("sha256").update(bytes).digest("hex") };
+        try {
+            const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+            if (parse) document = JSON.parse(text);
+        }
+        catch (error) {
+            throw new PageContentError(`Invalid Designer ${parse ? "JSON" : "UTF-8"} in ${path}: ${error.message}`);
+        }
+        return { document, path: target, size: length,
+            hash: createHash("sha256").update(bytes).digest("hex") };
     } finally {
         await file.close();
     }
@@ -97,6 +105,7 @@ function checkSchema(value, schema, location) {
 
 function buildModel(entries, schema) {
     const pages = [], constraints = Object.create(null), values = Object.create(null);
+    const fieldOrigins = new Map();
     for (const [index, entry] of entries.entries()) {
         const { name, path, document, hash, error } = entry;
         const fallbackOrder = REQUIRED_PAGES.includes(name)
@@ -117,11 +126,20 @@ function buildModel(entries, schema) {
                     throw new Error(`${name}: duplicate or invalid field ${field.id}`);
                 }
                 ids.add(field.id);
-                if (document.enabled !== false && Object.hasOwn(constraints, field.id)) {
-                    throw new Error(`${name}: duplicate enabled field ${field.id}`);
+                if (document.enabled !== false && fieldOrigins.has(field.id)) {
+                    throw new ContributionCollisionError(`${name}: duplicate enabled field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
                 }
             }
+            const slotIds = new Set();
+            for (const slot of document.slots ?? []) {
+                if (slotIds.has(slot.id) || !slot.accepts.includes("field")
+                    || JSON.stringify(slot.orderBy) !== '["order","presetId","id"]') {
+                    throw new Error(`${name}: invalid or duplicate slot ${slot.id}`);
+                }
+                slotIds.add(slot.id);
+            }
         } catch (cause) {
+            if (cause instanceof ContributionCollisionError) throw cause;
             fail(cause.message);
             continue;
         }
@@ -131,11 +149,108 @@ function buildModel(entries, schema) {
             constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
                 : { type, ...(type === "string" ? { maxLength: 1000 } : {}) };
             values[field.id] = type === "boolean" ? (field.default ?? false) : "";
+            fieldOrigins.set(field.id, name);
         }
         pages.push({ ...document, page: name, provenance: { template: name, path, fingerprint: hash } });
     }
     pages.sort((a, b) => a.order - b.order || a.page.localeCompare(b.page));
-    return { pages, constraints, values };
+    return { pages, constraints, values, fieldOrigins };
+}
+
+function validateContribution(document, name, slots, fieldOrigins) {
+    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires"];
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || Object.keys(document).some((key) => !keys.includes(key))
+        || document.schemaVersion !== 1 || typeof document.id !== "string"
+        || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.id)
+        || document.host !== "designer" || !Number.isInteger(document.order)
+        || document.order < -100000 || document.order > 100000
+        || typeof document.slot !== "string"
+        || !Array.isArray(document.requires ?? [])) {
+        throw new Error(`${name}: invalid Canvas Design contribution`);
+    }
+    const slot = slots.get(document.slot)?.slot;
+    if (!slot || !slot.accepts.includes("field")) {
+        throw new Error(`${name}: unknown or incompatible Designer slot ${document.slot}`);
+    }
+    const field = document.field;
+    if (!field || typeof field !== "object" || Array.isArray(field)
+        || Object.keys(field).some((key) =>
+            !["id", "label", "description", "type", "default", "control"].includes(key))
+        || typeof field.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
+        || typeof field.label !== "string" || !field.label || field.label.length > 120
+        || (field.description !== undefined
+            && (typeof field.description !== "string" || field.description.length > 1000))
+        || !["string", "boolean"].includes(field.type)
+        || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== field.type)
+        || field.control !== (field.type === "boolean" ? "stock.checkbox" : "stock.text")
+        || (Object.hasOwn(field, "default")
+            && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
+        throw new Error(`${name}: incompatible field or control definition`);
+    }
+    if (fieldOrigins.has(field.id)) {
+        throw new Error(`${name}: duplicate field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
+    }
+    fieldOrigins.set(field.id, name);
+}
+
+async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes) {
+    if (!Array.isArray(templates) || templates.length > 100) {
+        throw new Error("Invalid Canvas Design template inventory");
+    }
+    const names = new Set(pageNames);
+    const loaded = [];
+    const slots = new Map();
+    for (const page of pageEntries.filter((entry) => !entry.error)) {
+        for (const slot of page.slots ?? []) {
+            if (slots.has(slot.id)) {
+                throw new Error(`${page.page}: duplicate Designer slot ${slot.id} also defined by ${slots.get(slot.id).page.page}`);
+            }
+            slots.set(slot.id, { page, slot });
+        }
+    }
+    const ids = new Set();
+    let size = 0;
+    for (const item of templates) {
+        if (!item || typeof item !== "object" || Array.isArray(item)
+            || Object.keys(item).some((key) => !["name", "path", "sourceId"].includes(key))
+            || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
+            || names.has(item.name) || typeof item.path !== "string"
+            || !item.path || item.path.length > 4096 || /[\x00-\x1f\x7f]/.test(item.path)
+            || typeof item.sourceId !== "string"
+            || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)) {
+            throw new Error(`Invalid or duplicate Canvas Design template: ${item?.name ?? ""}`);
+        }
+        names.add(item.name);
+        const path = resolve(dirname(specify), item.path);
+        const extension = extname(path).toLowerCase();
+        if (!inside(specify, path) || ![".json", ".mjs"].includes(extension)) {
+            throw new Error(`${item.name}: templates must be .json or .mjs files inside .specify`);
+        }
+        const { document, hash, size: bytes } = await boundedJson(
+            path, specify, FILE_LIMIT, open, extension === ".json");
+        size += bytes;
+        if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
+        if (extension === ".json") {
+            validateContribution(document, item.name, slots, fieldOrigins);
+            if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
+            ids.add(document.id);
+        }
+        loaded.push({ ...item, path, hash, ...(document === undefined ? {} : { document }) });
+    }
+    for (const entry of loaded) {
+        for (const name of entry.document?.requires ?? []) {
+            if (typeof name !== "string" || !names.has(name)) {
+                throw new Error(`${entry.name}: unresolved required Canvas Design template ${name}`);
+            }
+        }
+    }
+    const ordered = loaded.filter((entry) => entry.document?.field);
+    const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+    ordered.sort((a, b) => a.document.order - b.document.order
+        || compare(a.sourceId.split(":").at(-1), b.sourceId.split(":").at(-1))
+        || compare(a.document.id, b.document.id));
+    return { loaded, ordered };
 }
 
 async function context(project) {
@@ -178,7 +293,7 @@ export async function assertPageCommand(project) {
     }
 }
 
-export async function loadResolvedDesignerPages(handoff, project, input) {
+export async function loadResolvedDesignerPages(handoff, project, input, templates = []) {
     const { checkout, schema } = await context(project);
     if (!Array.isArray(input) || !input.length || input.length > 100) {
         throw new Error("Designer requires between 1 and 100 resolved page paths");
@@ -234,8 +349,32 @@ export async function loadResolvedDesignerPages(handoff, project, input) {
         size += Buffer.byteLength(JSON.stringify(entries.at(-1)));
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
-    const model = buildModel(entries, schema);
-    return { ...model, revision: fingerprint({
+    const { fieldOrigins, ...model } = buildModel(entries, schema);
+    const { loaded, ordered } = await loadTemplates(
+        templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192);
+    model.contributions = ordered.map(({ name, sourceId, document }) =>
+        ({ name, sourceId, ...document }));
+    for (const page of model.pages) {
+        if (page.error) continue;
+        for (const slot of page.slots ?? []) {
+            for (const { document } of ordered.filter((entry) => entry.document.slot === slot.id)) {
+                if (page.fields.length >= 100) throw new Error(`${page.page}: too many resolved fields`);
+                const { control: _control, ...field } = document.field;
+                page.fields.push(field);
+                model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
+                    : { type: field.type, ...(field.type === "string" ? { maxLength: 1000 } : {}) };
+                model.values[field.id] = field.type === "boolean" ? (field.default ?? false) : "";
+            }
+        }
+    }
+    model.templates = loaded.map(({ name, path, hash, sourceId }) =>
+        ({ name, path, hash, sourceId }));
+    const result = { ...model, revision: fingerprint({
         handoffId: handoff.handoffId, sourceFingerprint: handoff.sourceFingerprint, checkout, entries,
+        templates: loaded,
     }) };
+    if (Buffer.byteLength(JSON.stringify(result)) > MODEL_LIMIT) {
+        throw new Error("Designer page model exceeds its size limit");
+    }
+    return result;
 }

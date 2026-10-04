@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
-import { lstat, open, realpath, readdir, mkdir, rename, unlink } from "node:fs/promises";
-import { resolve, relative, isAbsolute, dirname, join } from "node:path";
+import { lstat, open, realpath, readdir, mkdir, mkdtemp, rename, rm, rmdir, unlink } from "node:fs/promises";
+import { resolve, relative, isAbsolute, dirname, join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export class UserError extends Error {
@@ -74,6 +74,67 @@ export async function directories(root, path) {
     } catch (error) {
         if (error.code === "ENOENT") return [];
         throw error;
+    }
+}
+
+export async function deleteConfinedDirectory(root, path, move = rename) {
+    const checkout = await realpath(root);
+    const parentPath = dirname(safePath(path)).replaceAll("\\", "/");
+    const parent = await confined(checkout, parentPath);
+    const target = await confined(checkout, path);
+    const parentBefore = await lstat(parent);
+    const targetBefore = await lstat(target);
+    if (!targetBefore.isDirectory()) throw new UserError("Workflow directory is unavailable.", 404);
+    const same = (a, b) => a.dev === b.dev && a.ino === b.ino;
+    let entries = 0;
+    async function inspect(directory, depth) {
+        if (depth > 16) throw new UserError("Workflow directory is too deep to delete safely.");
+        for (const entry of await readdir(await confined(checkout, directory), { withFileTypes: true })) {
+            if (++entries > 20000) throw new UserError("Workflow directory is too large to delete safely.");
+            const child = `${directory}/${entry.name}`;
+            if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
+                throw new UserError("Workflow directory contains a link or unsupported file. Remove it manually before deleting.");
+            }
+            await confined(checkout, child);
+            if (entry.isDirectory()) await inspect(child, depth + 1);
+        }
+    }
+    async function checkParent() {
+        const current = await confined(checkout, parentPath);
+        if (current !== parent || !same(parentBefore, await lstat(current))) {
+            throw new UserError("Workflow parent changed while deleting. Nothing was deleted.", 409);
+        }
+    }
+    await inspect(path, 0);
+    const staging = await mkdtemp(join(checkout, ".speckit-delete-"));
+    const staged = join(staging, "workflow");
+    let moved = false;
+    try {
+        await checkParent();
+        if (!same(targetBefore, await lstat(await confined(checkout, path)))) {
+            throw new UserError("Workflow directory changed while deleting. Nothing was deleted.", 409);
+        }
+        await move(target, staged);
+        moved = true;
+        await checkParent();
+        if (!same(targetBefore, await lstat(await confined(checkout, `${basename(staging)}/workflow`)))) {
+            throw new UserError("Workflow directory changed while deleting.", 409);
+        }
+        entries = 0;
+        await inspect(`${basename(staging)}/workflow`, 0);
+        await checkParent();
+        if (!same(targetBefore, await lstat(await confined(checkout, `${basename(staging)}/workflow`)))) {
+            throw new UserError("Workflow directory changed while deleting.", 409);
+        }
+        await rm(staged, { recursive: true });
+        moved = false;
+    } catch (error) {
+        if (moved) {
+            throw new UserError(`Deletion stopped; the moved directory is retained at ${staged} for recovery: ${error.message}`, 409);
+        }
+        throw error;
+    } finally {
+        if (!moved) await rmdir(staging);
     }
 }
 

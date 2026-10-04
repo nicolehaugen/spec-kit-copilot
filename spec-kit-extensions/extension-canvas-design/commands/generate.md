@@ -22,8 +22,10 @@ packages or run workflow phases.
 3. Run `node .specify/extensions/extension-canvas-design/scripts/generate.mjs
    "<child-checkout>" "<session.workspacePath>" "<handoffId>" "<requestId>"`.
    This copies the maintained SDK entry point and workflow modules into a
-   new `.github/extensions/<canvas-id>/`, writes the frozen configuration,
-   then validates the extension. It never overwrites an existing target.
+   new `.github/extensions/<canvas-id>/`, writes the frozen configuration
+   with runtime package IDs, versions, and priorities but no install-source
+   paths or URLs, then validates the extension. The full install locators stay
+   in the session-scoped handoff and request. It never overwrites an existing target.
    On failure, report the error unchanged and leave any partial target for
    inspection; do not create an alternative implementation or retry.
 4. After successful validation, call `extensions_reload`, inspect the project
