@@ -317,7 +317,10 @@ export async function collectArtifactEvidence(cwd, snapshot, openFile = open) {
                 const inferred = normalizeInferredEvidence(
                     validateCandidates(cached.outputEvidence.candidates, { inference: true }),
                     validatePrimaryIndex(cached.outputEvidence.primaryIndex, cached.outputEvidence.candidates));
+                const hasExplicitPath = candidates.some(({ kind, source }) =>
+                    ["file", "folder"].includes(kind) && ["declaration", "manual"].includes(source));
                 for (const candidate of inferred.candidates) {
+                    if (hasExplicitPath && candidate.kind === "none") continue;
                     if (!candidates.some((item) => item.path && item.path === candidate.path
                         && item.relativeTo === candidate.relativeTo && item.root?.name === candidate.root?.name
                         && item.root?.path === candidate.root?.path)) {
