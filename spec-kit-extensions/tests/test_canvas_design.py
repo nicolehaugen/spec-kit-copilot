@@ -208,7 +208,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         field_ids = [field["id"] for page in self.pages for field in page["fields"]]
         self.assertEqual(len(field_ids), len(set(field_ids)))
 
-    def test_minimal_essentials_test_preset_replaces_only_stock_registration(self):
+    def test_minimal_essentials_test_preset_registers_only_required_controls(self):
         fixture = EXTENSIONS.parent / "spec-kit-presets/copilot-minimal-essentials-test"
         manifest = yaml.safe_load((fixture / "preset.yml").read_text("utf-8"))
         self.assertEqual(manifest["preset"]["id"], "copilot-minimal-essentials-test")
@@ -233,29 +233,19 @@ class CanvasDesignPackageTests(unittest.TestCase):
         page = json.loads((fixture / "pages/essentials.json").read_text("utf-8"))
         self.validator.validate(page)
         self.assertEqual(page, self.pages[0])
-        stock_section = (
-            "## Canvas Design templates\n\n"
-            "- `canvas-stock-description` — `designer.field`, `replace`\n"
-            "- `canvas-stock-workflow-heading` — `designer.field`, `replace`\n"
-            "- `canvas-stock-custom-slug` — `designer.field`, `replace`\n"
-            "- `canvas-stock-logo` — `designer.field`, `replace`\n"
-            "- `canvas-stock-logo-main-page` — `designer.field`, `replace`\n"
-            "- `canvas-stock-image` — `control.definition`, `replace`\n"
-            "- `canvas-stock-image-designer` — `designer.adapter`, `replace`\n"
-            "- `canvas-stock-image-generated` — `generated.adapter`, `replace`\n"
-            "- `canvas-stock-text` — `control.definition`, `replace`\n"
-            "- `canvas-stock-text-designer` — `designer.adapter`, `replace`\n"
-            "- `canvas-stock-text-generated` — `generated.adapter`, `replace`\n"
-            "- `canvas-stock-checkbox` — `control.definition`, `replace`\n"
-            "- `canvas-stock-checkbox-designer` — `designer.adapter`, `replace`\n\n"
-        )
-        self.assertEqual(self.command.count(stock_section), 1)
         replaced = (fixture / "commands/load-page.md").read_text("utf-8")
-        self.assertIn("canvas-settings-setup", replaced)
-        self.assertIn("## Canvas Design templates", replaced)
-        self.assertIn("canvas-stock-text-designer", replaced)
-        self.assertNotIn("canvas-stock-custom-slug", replaced)
-        self.assertNotIn("canvas-stock-image", replaced)
+        for page_id in ("setup", "artifacts", "appearance"):
+            self.assertIn(f"`canvas-settings-{page_id}`", replaced)
+        registrations = re.findall(
+            r"^- `(canvas-[a-z0-9-]+)` — `([^`]+)`, `([^`]+)`$",
+            replaced,
+            re.MULTILINE,
+        )
+        self.assertEqual(registrations, [
+            ("canvas-stock-text", "control.definition", "replace"),
+            ("canvas-stock-text-designer", "designer.adapter", "replace"),
+            ("canvas-stock-text-generated", "generated.adapter", "replace"),
+        ])
         self.assertNotIn(manifest["preset"]["id"],
                          json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
                                     .read_text("utf-8"))["presets"])
