@@ -36,7 +36,7 @@ export async function confined(root, path, { createDirectories = false } = {}) {
     return target;
 }
 
-export async function readBounded(root, path, cap = 512 * 1024) {
+export async function readBoundedBytes(root, path, cap = 512 * 1024) {
     const target = await confined(root, path);
     const handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
@@ -55,8 +55,13 @@ export async function readBounded(root, path, cap = 512 * 1024) {
             || before.size !== after.size || before.size !== size) {
             throw new UserError("Artifact changed while reading. Refresh to try again.", 409);
         }
-        return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, size));
+        return buffer.subarray(0, size);
     } finally { await handle.close(); }
+}
+
+export async function readBounded(root, path, cap = 512 * 1024) {
+    return new TextDecoder("utf-8", { fatal: true })
+        .decode(await readBoundedBytes(root, path, cap));
 }
 
 export async function directories(root, path) {

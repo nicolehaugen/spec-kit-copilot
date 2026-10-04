@@ -1471,6 +1471,10 @@ test("named value sources freeze typed values and run from a portable canvas wit
     await writeFile(provider.path, localResultProvider);
     assert.equal((await load()).valueSources.find((value) => value.id === "demo.workflow").id,
         "demo.workflow");
+    const bomProvider = `\uFEFF${originalProvider}`;
+    await writeFile(provider.path, bomProvider);
+    assert.equal((await load()).templates.find((item) => item.name === provider.name).hash,
+        createHash("sha256").update(Buffer.from(bomProvider, "utf8")).digest("hex"));
     await writeFile(provider.path, originalProvider);
 
     const selected = { ...model.values, "canvas.id": "value-demo",
@@ -1601,6 +1605,15 @@ test("named value sources freeze typed values and run from a portable canvas wit
     const localResultSnapshot = await localResultRuntime.snapshot();
     assert.equal(localResultSnapshot.valueFields.find((field) => field.id === "demo.workflow").value,
         "Provider result: helper: 002-second");
+    await writeFile(packagedProvider, bomProvider);
+    const bomConfig = structuredClone(config);
+    bomConfig.valueSources.find((value) => value.id === "demo.workflow").source.hash =
+        createHash("sha256").update(Buffer.from(bomProvider, "utf8")).digest("hex");
+    const bomRuntime = await createRuntime({ config: bomConfig, cwd: project, workspace, session });
+    t.after(() => bomRuntime.close());
+    const bomSnapshot = await bomRuntime.snapshot();
+    assert.equal(bomSnapshot.valueFields.find((field) => field.id === "demo.workflow").value,
+        "002-second (002-second)");
     await writeFile(packagedProvider, originalProvider);
     const reopened = await createRuntime({ config, cwd: project, workspace, session });
     t.after(() => reopened.close());

@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
 import { createContext, runInContext } from "node:vm";
-import { UserError, confined, readBounded, directories, atomicJson, safePath, slugPattern } from "./files.mjs";
+import { UserError, confined, readBounded, readBoundedBytes, directories, atomicJson, safePath, slugPattern } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 
@@ -36,11 +36,12 @@ if (!isMainThread && workerData?.canvasValueProvider) {
 
 async function evaluateProvider(module, hash, workflow, deadline) {
     if (performance.now() >= deadline) throw new UserError(PROVIDER_REFRESH_ERROR);
-    const source = await readBounded(fileURLToPath(new URL(".", import.meta.url)),
+    const bytes = await readBoundedBytes(fileURLToPath(new URL(".", import.meta.url)),
         `providers/${module}.mjs`, 32 * 1024);
-    if (createHash("sha256").update(source).digest("hex") !== hash) {
+    if (createHash("sha256").update(bytes).digest("hex") !== hash) {
         throw new UserError(`Packaged provider ${module} changed; restore the generated canvas files.`);
     }
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const remaining = Math.ceil(deadline - performance.now());
     if (remaining <= 0) throw new UserError(PROVIDER_REFRESH_ERROR);
     return new Promise((resolve, reject) => {
