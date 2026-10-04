@@ -406,6 +406,22 @@ class CanvasDesignPackageTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             validator.validate(setting)
 
+    def test_setting_schema_rejects_whitespace_only_section_title(self):
+        schema = json.loads((PACKAGE / "schemas/designer.setting-definition.schema.json").read_text("utf-8"))
+        validator = Draft202012Validator(schema)
+        setting = {
+            "schemaVersion": 1, "id": "custom-setting", "host": "designer",
+            "slot": "essentials.options", "order": 0,
+            "field": {"id": "custom.text", "label": "Text",
+                      "type": "string", "control": "stock.text"},
+            "generatedBinding": {"presentation": "stock.readonly",
+                                 "section": {"id": "details", "title": "Details"}},
+        }
+        validator.validate(setting)
+        setting["generatedBinding"]["section"]["title"] = " \t "
+        with self.assertRaises(ValidationError):
+            validator.validate(setting)
+
     def test_defaults_require_explicit_boolean_type(self):
         for field_type in (None, "string", "boolean"):
             for default in (True, False):

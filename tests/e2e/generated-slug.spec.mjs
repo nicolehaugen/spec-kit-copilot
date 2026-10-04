@@ -103,6 +103,24 @@ test("pipeline replacement without live phase controls fails at startup", async 
     } finally { await canvas.close(); }
 });
 
+test("pipeline replacement without mobile next-phase hint still navigates", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+    try {
+        const original = pipelineModule.toString("utf8");
+        const hint = '<span id="mobile-next-phase" class="muted"></span>';
+        expect(original).toContain(hint);
+        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript", body: original.replace(hint, ""),
+        }));
+        await page.setViewportSize({ width: 390, height: 780 });
+        await page.goto(canvas.url);
+        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+        await page.locator("#mobile-phase-select").selectOption("1");
+        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
+        await expect(page.locator("#canvas-message")).toBeEmpty();
+    } finally { await canvas.close(); }
+});
+
 for (const [scenario, missing] of [
     ["phase label", 'data-phase-label="${escapeHtml(phase.label)}"'],
     ["artifact action", 'id="view-artifact"'],

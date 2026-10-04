@@ -386,7 +386,8 @@ function renderPhase(focusId) {
     const mobileSelect = $("mobile-phase-select");
     if (mobileSelect) {
         mobileSelect.value = String(current);
-        $("mobile-next-phase").textContent = current + 1 < steps.length
+        const mobileNext = $("mobile-next-phase");
+        if (mobileNext) mobileNext.textContent = current + 1 < steps.length
             ? `Next: ${steps[current + 1].dataset.phaseLabel}` : "Final phase";
     }
     const back = $("previous-phase"), next = $("next-phase");

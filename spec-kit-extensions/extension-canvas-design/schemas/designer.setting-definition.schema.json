@@ -67,6 +67,6 @@
   "$defs": {
     "section": {"type": "object", "additionalProperties": false, "required": ["id", "title"],
       "properties": {"id": {"type": "string", "pattern": "^[a-z][a-z0-9.-]{0,79}$"},
-        "title": {"type": "string", "minLength": 1, "maxLength": 120}}}
+        "title": {"type": "string", "minLength": 1, "maxLength": 120, "pattern": "\\S"}}}
   }
 }
