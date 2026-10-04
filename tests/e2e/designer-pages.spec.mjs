@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test, expect } from "./playwright.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
@@ -291,6 +291,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
     expect(available.status, available.stderr).toBe(0);
     const workspace = await mkdtemp(join(tmpdir(), "risk-preset-e2e-"));
     const project = join(workspace, "project");
+    const presetCopy = join(workspace, "risk-preset");
     const handoff = {
         schemaVersion: 1, handoffId: "risk-test",
         workflow: { selectedPhases: ["specify"],
@@ -316,7 +317,8 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
-        run("preset", "add", "--dev", fileURLToPath(riskRoot));
+        await cp(fileURLToPath(riskRoot), presetCopy, { recursive: true });
+        run("preset", "add", "--dev", presetCopy);
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
         for (const name of ["canvas-control-risk-matrix", "canvas-contributions-risk-designer",
@@ -342,6 +344,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             ["canvas-control-risk-matrix-designer", "designer.adapter"],
             ["canvas-control-risk-matrix-generated", "generated.adapter"],
         ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
+        const adapterRelative = relative(await realpath(workspace), await realpath(templates[2].path));
+        expect(isAbsolute(adapterRelative) || adapterRelative === ".."
+            || adapterRelative.startsWith(`..${sep}`)).toBe(false);
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
