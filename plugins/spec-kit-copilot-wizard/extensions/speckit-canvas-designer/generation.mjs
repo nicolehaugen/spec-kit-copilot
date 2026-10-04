@@ -7,7 +7,7 @@ import { validateValues } from "./settings.mjs";
 const fields = ["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "canvas-settings-setup");
@@ -112,7 +112,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     request.integrity = createHash("sha256").update(payload).digest("hex");
     const serialized = JSON.stringify(request);
     if (Buffer.byteLength(serialized) > REQUEST_LIMIT) {
-        throw new Error("Frozen generation request exceeds 512KB");
+        throw new Error("Frozen generation request exceeds 4 MiB");
     }
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", requestId);

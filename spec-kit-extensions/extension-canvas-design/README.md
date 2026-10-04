@@ -115,8 +115,10 @@ replace-only Specify template exporting `renderPage({ root, canvas, values })`;
 the definition must name that registered renderer. Invalid kinds, references,
 strategies, syntax or Specify template-layer metadata stop Designer opening.
 The frozen definition and module are copied into the generated app, which
-needs no design-time packages to render them. A typed object field can use a
-shared `control.definition` naming separate replace-only `designer.adapter`
+needs no design-time packages to render them. The frozen generation request is
+bounded to 4 MiB to accommodate base64-encoded page assets while retaining
+the 32 KiB limit on each page definition and renderer. A typed object field can
+use a shared `control.definition` naming separate replace-only `designer.adapter`
 and `generated.adapter` templates; each module exports `mount`, `controlId`,
 and `valueContract`. The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
@@ -128,10 +130,10 @@ falling back to a stock control.
 The browser reports incompatible `controlId` or `valueContract` exports,
 non-function `mount` exports, and mount failures beside the affected control.
 For stock read-only fields, an optional `generatedBinding.section` with a
-stable `id` and display `title`
-groups fields under that heading without changing the Designer slot; fields
-without a section keep the **Configured fields** heading. Opening the shell
-does not mean all pages loaded or that Essentials is valid for generation.
+stable `id` and display `title` groups fields under that heading without
+changing the Designer slot; fields without a section keep the **Configured
+fields** heading. Opening the shell does not mean all pages loaded or that
+Essentials is valid for generation.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
 request prepared by the Designer. It writes the **source-owned SDK entry point**
