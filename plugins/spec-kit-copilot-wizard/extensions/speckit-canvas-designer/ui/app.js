@@ -84,8 +84,14 @@ function showError(message) {
 
 function showFieldError(message) {
     showError(message);
-    const id = /\(([A-Za-z][A-Za-z0-9_.-]*)\)/.exec(message)?.[1];
-    const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
+    let id;
+    const page = model.pages.find((entry) => entry.fields?.some((field) => {
+        const labelAndId = `${field.label} (${field.id})`;
+        if (!message.startsWith(labelAndId) && !message.startsWith(`Invalid ${labelAndId}`)
+            && !message.startsWith(`Missing Designer adapter for ${labelAndId}`)) return false;
+        id = field.id;
+        return true;
+    }));
     if (!page) return;
     if (page.page !== currentPage) renderPage(page.page, id);
     else {

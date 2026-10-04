@@ -132,3 +132,18 @@ test("minimal Essentials submit only identity and invalid enabled Billing values
         "billing.costCode": "CC-481",
     });
 });
+
+test("Generate focuses a field whose label contains parentheses", async ({ page }) => {
+    await openDesigner(page, core, { page: "canvas-settings-billing",
+        title: "Billing", order: 20, fields: [{ id: "billing.costCode", label: "Risk (high)" }] });
+    await page.route("**/api/generate?*", (route) => route.fulfill({
+        status: 400, json: { error: "Invalid Risk (high) (billing.costCode)" },
+    }));
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("risk-canvas");
+    await page.getByRole("textbox", { name: /Title/ }).fill("Risk Canvas");
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await expect(page.getByRole("tab", { name: "Billing" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(".settings-field-error")).toBeVisible();
+    await expect(page.locator(".settings-field")).toBeFocused();
+    await expect(page.locator("#page-error")).toHaveText("Invalid Risk (high) (billing.costCode)");
+});
