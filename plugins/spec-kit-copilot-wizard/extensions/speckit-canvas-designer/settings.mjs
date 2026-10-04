@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
+import { validControlValue } from "./control-contract.mjs";
 
 export const SETTINGS_LIMIT = 256 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
@@ -18,6 +19,10 @@ export function validateValues(values, constraints) {
         const value = values[key];
         if (rule.type === "boolean") {
             if (typeof value !== "boolean") throw new Error(`Invalid Designer setting: ${key}`);
+        } else if (rule.type === "object") {
+            if (!validControlValue(value, rule)) {
+                throw new Error(`Invalid Designer setting: ${key}`);
+            }
         } else if (typeof value !== "string" || value.length > rule.maxLength
             || value.length < (rule.minLength ?? 0)
             || (rule.pattern && !new RegExp(rule.pattern).test(value))) {

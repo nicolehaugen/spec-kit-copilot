@@ -37,11 +37,30 @@ Artifacts and Appearance are empty by default. Save persists validated field val
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff restores them when its resolved pages are unchanged.
 Preset-registered stock text and checkbox fields render in their declared
-Designer page slot and are saved alongside built-in values. Custom control
-adapters remain deferred. A separately registered generated-host page definition
+Designer page slot and are saved alongside built-in values. A registered
+`control.definition` for a typed object field must reference both a
+`designer.adapter` and `generated.adapter` replace-only template. Both modules
+export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
+to one control definition; multiple fields may reuse that control. Each object
+field's `requires` must name exactly one resolved `control.definition` matching
+its `control` ID; Designer retains that template name so Generate packages the
+validated definition rather than guessing from a list. The Designer
+mount receives the field, draft value, and change callback; the generated
+mount receives the frozen value and displays it read-only in the declared
+`details.content` slot. Missing, wrong-kind, non-replace, or multiply owned
+control assets stop Designer opening rather than falling back to a stock input.
+A separately registered generated-host page definition
 and replace-only renderer add a page only to the generated app, not Designer's
 tabs. The provider verifies the executable Specify template stack (and rejects
-native script registrations), validates the page/renderer pair, and freezes
+native script registrations), checks module syntax and declared exports without executing
+the bytes in Node, and rechecks Designer adapters before serving captured bytes.
+Changed assets require reopening Designer. The Designer document's CSP allows
+same-origin scripts, API calls, and styles but blocks ordinary cross-origin
+requests from adapters; it does not sandbox approved adapter code.
+The browser reports non-function
+`mount` exports, incompatible `controlId` or `valueContract` exports, and mount
+failures beside the affected control. Callbacks from controls removed during a
+tab change cannot overwrite the current draft. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Save rejects stale revisions and invalid values, and reports failures without
@@ -49,7 +68,7 @@ discarding edits. Generate freezes valid Essentials values and dispatches the
 installed Canvas Design generate command to create a new source-owned
 workflow canvas; the button is unavailable without a complete Wizard handoff,
 a valid Essentials page, or the installed Generate skill in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.5 or the current
+A missing skill shows how to relaunch with Canvas Design v0.1.6 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

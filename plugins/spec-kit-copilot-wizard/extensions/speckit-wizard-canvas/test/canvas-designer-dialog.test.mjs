@@ -369,8 +369,8 @@ test("submit rejects an unsuccessful or malformed queue acknowledgment", async (
     const selections = freshCanvasDesignerSelections();
     await assert.rejects(submitDesignerLaunch(snapshot, selections, async () =>
         ({ ok: false, status: 422,
-            text: async () => '{"error":"The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.5."}' })),
-    { message: "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.5." });
+            text: async () => '{"error":"The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.6."}' })),
+    { message: "The Spec Kit extension `extension-canvas-design` has a version mismatch: the Wizard canvas expects v0.1.3, while Canvas Designer requires v0.1.6." });
     await assert.rejects(submitDesignerLaunch(snapshot, selections, async () =>
         ({ ok: true, json: async () => ({ ready: true }) })), /did not queue/);
     await assert.rejects(submitDesignerLaunch(snapshot, selections, async () => {

@@ -1,8 +1,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
+import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
 import { freezeGeneration } from "./generation.mjs";
 
@@ -33,7 +34,7 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
-const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.5 or the current local source.";
+const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.6 or the current local source.";
 
 async function hasGenerateSkill(project) {
     try {
@@ -53,6 +54,19 @@ export async function startShell(handoff = null, model = null, { project, worksp
         ? new Map(await Promise.all(Object.entries(ASSETS).map(async ([path, [file, type]]) =>
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
+    if (model) {
+        const adapters = Object.values(model.adapters ?? {});
+        if (adapters.length && !project) throw new Error("Designer project is required for adapters");
+        const specify = adapters.length ? join(await realpath(project), ".specify") : null;
+        for (const name of adapters) {
+            const adapter = model.templates.find((item) => item.name === name
+                && item.kind === "designer.adapter");
+            if (!adapter) throw new Error(`${name}: Designer adapter is unavailable`);
+            assets.set(`/adapters/${name}.mjs`, {
+                type: "text/javascript", content: await readFrozenAsset(adapter, specify),
+            });
+        }
+    }
     const token = randomBytes(24).toString("hex");
     const skillAvailable = project ? await hasGenerateSkill(project) : false;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
@@ -80,6 +94,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
         }
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Content-Security-Policy",
+            "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         if (handoff && workspace && req.method === "POST" && url.pathname === "/api/save") {
             const sendError = (status, message) => {
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });

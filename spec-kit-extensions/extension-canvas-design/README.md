@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.5** registers three JSON page templates and the
+Canvas Design **0.1.6** registers three JSON page templates and the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -81,7 +81,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.5/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.6/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -124,22 +124,36 @@ Switching to a generated page hides Workflow-owned content and restores it on
 return; the canvas header and status remain available on either page.
 The frozen definition and module are copied into the generated app, which
 needs no design-time packages to render them. The frozen generation request is
-bounded to 4 MiB, allowing the registered page assets to be packaged after
-base64 encoding while retaining the 32 KiB limit on each definition and renderer.
-Other contributed settings and custom control modules are not included in Generate
-yet. The repository-local
-`copilot-billing-canvas-test` preset exercises this contract; its README shows
-both Billing and Essentials placements. An optional `generatedBinding.section`
-with a stable `id` and display `title` groups read-only fields under that
-heading without changing the Designer slot; fields without a section keep
-the **Configured fields** heading. Opening the
-shell does not mean all pages loaded or that Essentials is valid for generation.
-
-The isolated [test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
-registers an additional Designer page with stock text and checkbox fields. The
-browser integration test covers the checkbox default, rendering, save, and
-reopen. The preset is installed locally, not published in the canonical preset
-catalog. Billing and generated-only pages have separate test fixtures.
+bounded to 4 MiB to accommodate base64-encoded page assets while retaining
+the 32 KiB limit on each page definition and renderer. A typed object field can
+use a shared `control.definition` naming separate replace-only `designer.adapter`
+and `generated.adapter` templates; each module exports `mount`, `controlId`,
+and `valueContract`. Each object-field contribution requires exactly one
+`control.definition` template matching its `field.control`, and Generate uses
+that validated template name. Definition and generated-adapter template names
+cannot be Windows device names because they become packaged control filenames.
+The Designer adapter receives
+`{root, field, value, onChange}`; the generated adapter receives
+`{root, field, value}`. Designer validates and persists changes; Generate
+freezes the validated object and packages the effective generated adapter and
+definition into the app, up to 30 generated controls. The frozen request holds
+one asset pair per control ID; each field registration refers to that pair by
+its control ID, so reused controls do not repeat module bytes. Missing, wrong-kind,
+non-replace, or multiply owned adapters stop Designer opening rather than
+falling back to a stock control.
+The Designer, generator, and standalone generated app apply the same object
+contract and value rules: 1-10 named properties, each with 1-20 distinct,
+nonempty string options of at most 80 characters. The canonical
+`templates/generated-canvas/control-contract.mjs` is copied into generated apps;
+the Wizard provider includes a byte-checked copy, without a runtime dependency
+on the design-time extension.
+The browser reports incompatible `controlId` or `valueContract` exports,
+non-function `mount` exports, and mount failures beside the affected control.
+For stock read-only fields, an optional `generatedBinding.section` with a
+stable `id` and display `title` groups fields under that heading without
+changing the Designer slot; fields without a section keep the **Configured
+fields** heading. Opening the shell does not mean all pages loaded or that
+Essentials is valid for generation.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
 request prepared by the Designer. It writes the **source-owned SDK entry point**
@@ -152,8 +166,6 @@ in place. An existing target stops generation without overwriting it; a failure
 after creation leaves the partial target for inspection. Previously generated
 canvases are not updated.
 
-The [generated-only test fixture](../../spec-kit-presets/copilot-generated-page-test/preset.yml)
-is a distinct repo-local preset outside the canonical catalog.
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.
 Page definitions must follow the [page schema](schemas/page.schema.json).

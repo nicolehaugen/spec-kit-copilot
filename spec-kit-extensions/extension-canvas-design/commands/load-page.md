@@ -28,11 +28,12 @@ The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.field`,
-`generated.page`, or `generated.renderer`) and strategy (`replace`).
+`generated.page`, `generated.renderer`, `control.definition`,
+`designer.adapter`, or `generated.adapter`) and strategy (`replace`).
 Designer pages have kind `designer.page` and strategy `replace` (implicit for
 the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
-themselves. Do not register control adapters yet.
+themselves. Control definitions and host-specific adapters must each be explicitly registered.
 
 ## Steps
 
@@ -49,7 +50,7 @@ themselves. Do not register control adapters yet.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.5)
+         (top layer from: extension:extension-canvas-design v0.1.6)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
@@ -63,7 +64,7 @@ themselves. Do not register control adapters yet.
    appending executable JavaScript is not. For every registered name,
    inspect `specify artifact info template:<name> --json` and confirm that
    `kind` is `template` and every stack layer has `strategy: replace`
-   (extension templates replace implicitly). For generated assets also inspect
+   (extension templates replace implicitly). For executable assets, also inspect
    `specify artifact info script:<name> --json`; an unknown-script error is
    expected, but a native script of the same name is unsupported. Reject
    `append`, `prepend`, or `wrap` asset registrations even if Specify

@@ -7,7 +7,8 @@ import { test, expect } from "./playwright.mjs";
 import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
-async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"], generatedPages, readOnlyFields) {
+async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
+    generatedPages, generatedControls, readOnlyFields) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug,
@@ -24,6 +25,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         phaseArtifacts: {},
         installed: { presets: [], extensions: [], bundles: [] },
         ...(generatedPages ? { generatedPages } : {}),
+        ...(generatedControls ? { generatedControls } : {}),
         ...(readOnlyFields ? { readOnlyFields } : {}),
     };
     let runtime, routes, server;
@@ -66,10 +68,56 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
     }
 }
 
+test("slow control mount leaves other controls and the workflow shell interactive", async ({ page }) => {
+    const control = (id) => ({
+        id, label: id, control: id, adapter: id, slot: "details.content",
+        properties: { choice: ["yes"] }, value: { choice: "yes" },
+    });
+    const canvas = await openGeneratedCanvas(false, ["specify"],
+        [{ id: "extra", title: "Extra", renderer: "extra" }],
+        ["slow", "broken"].map(control));
+    try {
+        await page.route("**/controls/slow.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export const controlId = "slow";'
+                + 'export const valueContract = { type: "object", properties: { choice: ["yes"] } };'
+                + 'export async function mount() { globalThis.slowControlStarted = true;'
+                + 'await new Promise(() => {}); }',
+        }));
+        await page.route("**/controls/broken.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export const controlId = "broken";'
+                + 'export const valueContract = { type: "object", properties: { choice: ["yes"] } };'
+                + 'export function mount() { throw new Error("control unavailable"); }',
+        }));
+        await page.route("**/pages/extra.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export function renderPage({ root }) { root.textContent = "Extra is available"; }',
+        }));
+        await page.goto(canvas.url);
+        await page.waitForFunction(() => globalThis.slowControlStarted);
+        await expect(page.locator('[data-control-id="broken"][role="alert"]'))
+            .toContainText("Generated control could not render: control unavailable");
+        await expect(page.locator("#connection-status")).toHaveText("Live");
+        const priorTheme = await page.locator("html").getAttribute("data-theme");
+        await page.locator("#theme-toggle").click();
+        await expect(page.locator("html")).toHaveAttribute("data-theme",
+            priorTheme === "dark" ? "light" : "dark");
+        await page.locator('[data-canvas-page="extra"]').click();
+        await expect(page.locator("#generated-page")).toHaveText("Extra is available");
+        await expect(page.locator('section[aria-label="slow"]')).toBeHidden();
+        await expect(page.locator('[data-control-id="slow"]')).not.toHaveAttribute("role", "alert");
+        await page.locator('[data-canvas-page="workflow"]').click();
+        await expect(page.locator('section[aria-label="slow"]')).toBeVisible();
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("generated page hides all Workflow content and restores it on return", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["constitution", "specify"],
         [{ id: "overview", title: "Overview", renderer: "overview" }],
-        [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
+        undefined, [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
     try {
         await page.route("**/pages/overview.mjs*", (route) => route.fulfill({
             contentType: "text/javascript",

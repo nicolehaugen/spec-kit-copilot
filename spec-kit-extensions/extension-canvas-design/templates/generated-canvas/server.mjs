@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract } from "./contract.mjs";
+import { validControlValue } from "./control-contract.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
@@ -25,51 +26,77 @@ function readOnlySections(fields) {
             `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}">${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
 }
 
+function validReadOnlyFields(fields) {
+    return fields === undefined || (Array.isArray(fields) && fields.length <= 100
+        && new Set(fields.map((field) => field?.id)).size === fields.length
+        && fields.every((field) => field && typeof field === "object"
+            && !Array.isArray(field)
+            && Object.keys(field).every((key) => ["id", "label", "value", "section"].includes(key))
+            && typeof field.id === "string"
+            && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
+            && typeof field.label === "string" && !!field.label && field.label.length <= 120
+            && typeof field.value === "string" && field.value.length <= 1000
+            && (field.section === undefined || (field.section
+                && typeof field.section === "object" && !Array.isArray(field.section)
+                && Object.keys(field.section).sort().join() === "id,title"
+                && typeof field.section.id === "string"
+                && /^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
+                && typeof field.section.title === "string"
+                && !!field.section.title.trim() && field.section.title.length <= 120))));
+}
+
+function validGeneratedPages(pages) {
+    return pages === undefined || (Array.isArray(pages) && pages.length <= 30
+        && new Set(pages.map((page) => page?.id)).size === pages.length
+        && pages.every((page) => page && typeof page === "object" && !Array.isArray(page)
+            && Object.keys(page).sort().join() === "id,renderer,title"
+            && typeof page.id === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.id)
+            && page.id !== RESERVED_GENERATED_PAGE_ID && !isWindowsDeviceName(page.id)
+            && typeof page.renderer === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            && !isWindowsDeviceName(page.renderer)
+            && typeof page.title === "string" && !!page.title.trim() && page.title.length <= 120));
+}
+
+function validGeneratedControls(controls) {
+    return controls === undefined || (Array.isArray(controls) && controls.length <= 30
+        && new Set(controls.map((item) => item?.id)).size === controls.length
+        && controls.every((item) => item && typeof item === "object" && !Array.isArray(item)
+            && Object.keys(item).sort().join() === "adapter,control,id,label,properties,slot,value"
+            && typeof item.id === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+            && typeof item.adapter === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(item.adapter)
+            && typeof item.control === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+            && typeof item.label === "string" && !!item.label && item.label.length <= 120
+            && item.slot === "details.content"
+            && validControlValue(item.value, { type: "object", properties: item.properties })));
+}
+
+function validRuntimeConfig(config) {
+    return config.phaseOutputs && typeof config.phaseOutputs === "object"
+        && !Array.isArray(config.phaseOutputs)
+        && Object.values(config.phaseOutputs).every((output) => output
+            && typeof output.expectsArtifact === "boolean"
+            && (output.outputPath === null || typeof output.outputPath === "string"))
+        && (config.theme === undefined || ["light", "dark"].includes(config.theme))
+        && config.installed && ["presets", "extensions", "bundles"].every((kind) =>
+            Array.isArray(config.installed[kind]) && config.installed[kind].every((item) =>
+                item && typeof item === "object" && !Array.isArray(item)
+                && typeof item.id === "string" && typeof item.version === "string"));
+}
+
 export function readConfig() {
     const config = JSON.parse(readFileSync(new URL("./canvas-config.json", import.meta.url), "utf8"));
-    if (config.schemaVersion !== 1 || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(config.canvas?.id)
+    if (!config || typeof config !== "object" || Array.isArray(config)
+        || config.schemaVersion !== 1 || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(config.canvas?.id)
         || isWindowsDeviceName(config.canvas.id)
         || ["displayName", "description", "workflowListName"].some((key) =>
             typeof config.canvas[key] !== "string" || !config.canvas[key].trim())
         || !Array.isArray(config.phases) || !config.phases.length
         || config.phases.some((phase) => typeof phase !== "string" || !phase)
         || typeof config.userProvidesSlug !== "boolean"
-        || (config.readOnlyFields !== undefined
-            && (!Array.isArray(config.readOnlyFields) || config.readOnlyFields.length > 100
-                || new Set(config.readOnlyFields.map((field) => field?.id)).size !== config.readOnlyFields.length
-                || config.readOnlyFields.some((field) => !field || typeof field !== "object"
-                    || Array.isArray(field)
-                    || Object.keys(field).some((key) => !["id", "label", "value", "section"].includes(key))
-                    || typeof field.id !== "string"
-                    || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
-                    || typeof field.label !== "string" || !field.label || field.label.length > 120
-                    || typeof field.value !== "string" || field.value.length > 1000
-                    || (field.section !== undefined
-                        && (!field.section || typeof field.section !== "object"
-                            || Array.isArray(field.section)
-                            || Object.keys(field.section).sort().join() !== "id,title"
-                            || typeof field.section.id !== "string"
-                            || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
-                            || typeof field.section.title !== "string"
-                            || !field.section.title.trim() || field.section.title.length > 120)))))
-        || (config.generatedPages !== undefined
-            && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
-                || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
-                || config.generatedPages.some((page) => !page || typeof page !== "object"
-                            || Array.isArray(page) || Object.keys(page).sort().join() !== "id,renderer,title"
-                            || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
-                            || page.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(page.id)
-                            || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
-                            || isWindowsDeviceName(page.renderer)
-                            || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120)))
-        || !config.phaseOutputs || typeof config.phaseOutputs !== "object" || Array.isArray(config.phaseOutputs)
-        || Object.values(config.phaseOutputs).some((output) => !output
-            || typeof output.expectsArtifact !== "boolean"
-            || (output.outputPath !== null && typeof output.outputPath !== "string"))
-        || (config.theme !== undefined && !["light", "dark"].includes(config.theme))
-        || !config.installed || ["presets", "extensions", "bundles"].some((kind) =>
-            !Array.isArray(config.installed[kind]) || config.installed[kind].some((item) =>
-                typeof item.id !== "string" || typeof item.version !== "string"))) {
+        || !validReadOnlyFields(config.readOnlyFields)
+        || !validGeneratedPages(config.generatedPages)
+        || !validGeneratedControls(config.generatedControls)
+        || !validRuntimeConfig(config)) {
         throw new Error("Invalid generated canvas configuration");
     }
     const sections = new Map();
@@ -161,6 +188,14 @@ export function renderHtml(config, token = "") {
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
     ${readOnlySections(config.readOnlyFields)}
+    ${config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
+        `<section class="phase-card" aria-label="${escapeHtml(label)}">
+            <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
+                data-field-label="${escapeHtml(label)}"
+                data-control-type="${escapeHtml(control)}"
+                data-contract="${escapeHtml(JSON.stringify({ type: "object", properties }))}"
+                data-module="/controls/${escapeHtml(adapter)}.mjs"
+                data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("") ?? ""}
     ${hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
         <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
         <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
@@ -219,6 +254,13 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 && config.generatedPages?.some((page) => page.renderer === moduleName)) {
                 const module = readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }).end(module);
+                return;
+            }
+            const controlName = /^\/controls\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
+            if (request.method === "GET" && controlName
+                && config.generatedControls?.some((item) => item.adapter === controlName)) {
+                response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
+                    .end(readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url)));
                 return;
             }
             if (!runtime) throw new UserError("The Copilot session runtime is unavailable. Reopen the canvas.", 503);

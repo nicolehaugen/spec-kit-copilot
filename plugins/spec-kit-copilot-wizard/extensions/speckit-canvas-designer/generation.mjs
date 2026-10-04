@@ -47,23 +47,52 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
+    const controlContributions = (model.contributions ?? [])
+        .filter((item) => item.generatedBinding?.presentation === "control");
+    if (controlContributions.length > 30) {
+        throw new Error("Generated controls exceed the 30-control limit");
+    }
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
     const generatedPages = [];
+    const asset = async (item) => {
+        if (!item || item.strategy !== "replace") throw new Error("Missing validated replace-only generated asset");
+        const bytes = await readFrozenAsset(item, specify);
+        return { name: item.name, kind: item.kind, sourceId: item.sourceId,
+            hash: item.hash, content: bytes.toString("base64") };
+    };
     for (const page of model.generatedPages ?? []) {
         const definition = model.templates.find((item) => item.name === page.name
             && item.kind === "generated.page");
         const renderer = model.templates.find((item) => item.name === page.renderer
             && item.kind === "generated.renderer");
         if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
-        const assets = [];
-        for (const item of [definition, renderer]) {
-            if (item.strategy !== "replace") throw new Error(`${item.name}: generated assets must be replace-only`);
-            const bytes = await readFrozenAsset(item, specify);
-            assets.push({ name: item.name, kind: item.kind, sourceId: item.sourceId,
-                hash: item.hash, content: bytes.toString("base64") });
-        }
+        const assets = await Promise.all([definition, renderer].map(asset));
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
+    }
+    const generatedControls = [];
+    const controlAssets = new Map();
+    for (const contribution of controlContributions) {
+        const control = model.controls.find((entry) => entry.id === contribution.field.control);
+        if (!control) throw new Error(`${contribution.name}: missing shared control`);
+        const definition = model.templates.find((entry) => entry.name === control.template
+            && entry.kind === "control.definition");
+        if (!definition || contribution.requires?.length !== 1
+            || contribution.requires[0] !== definition.name) {
+            throw new Error(`${contribution.name}: missing matching shared control definition`);
+        }
+        const names = [
+            definition,
+            model.templates.find((entry) => entry.name === control.adapters.generated
+                && entry.kind === "generated.adapter"),
+        ];
+        if (!controlAssets.has(control.id)) {
+            controlAssets.set(control.id, { control: control.id,
+                assets: await Promise.all(names.map(asset)) });
+        }
+        generatedControls.push({ id: contribution.field.id, label: contribution.field.label,
+            control: control.id, slot: contribution.generatedBinding.slot,
+            value: values[contribution.field.id] });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -84,9 +113,12 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         workflow: { selectedPhases: handoff.workflow.selectedPhases },
         installed: handoff.workflow.installed,
         values: { ...essentials,
-            ...Object.fromEntries(generatedFields.map(({ id }) => [id, values[id]])) },
+            ...Object.fromEntries(generatedFields.map(({ id }) => [id, values[id]])),
+            ...Object.fromEntries(generatedControls.map(({ id, value }) => [id, value])) },
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
+        ...(generatedControls.length ? { generatedControls } : {}),
+        ...(controlAssets.size ? { controlAssets: [...controlAssets.values()] } : {}),
     };
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");

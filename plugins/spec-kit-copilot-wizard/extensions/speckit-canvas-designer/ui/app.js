@@ -94,14 +94,21 @@ function validateDraft() {
     for (const [id, rules] of Object.entries(model.constraints)) {
         const value = draft[id];
         if (rules.type === "boolean") continue;
-        if (value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
-            || (rules.pattern && !new RegExp(rules.pattern).test(value))) {
+        if (rules.type === "object" ? (!value || typeof value !== "object"
+            || Array.isArray(value)
+            || Object.keys(value).sort().join() !== Object.keys(rules.properties).sort().join()
+            || Object.entries(rules.properties).some(([key, allowed]) => !allowed.includes(value[key])))
+            : (value.length < (rules.minLength ?? 0) || value.length > rules.maxLength
+            || (rules.pattern && !new RegExp(rules.pattern).test(value)))) {
             const page = model.pages.find((entry) => entry.fields?.some((field) => field.id === id));
             if (page) {
                 renderPage(page.page);
                 root.querySelectorAll("input").forEach((input) => {
                     if (input.name === id) { input.focus(); input.reportValidity(); }
                 });
+                if (rules.type === "object") {
+                    root.querySelector(`[data-field-id="${CSS.escape(id)}"] [role="radio"]`)?.focus();
+                }
             }
             const field = page?.fields.find((item) => item.id === id);
             showError(`Enter a valid ${field?.label ?? id} before saving.${id === "canvas.id" && field?.description ? ` ${field.description}` : ""}`);
@@ -168,6 +175,45 @@ function renderPage(pageId) {
     if (!page.fields.length) form.append(element("p", "This template defines no fields.", "settings-note"));
     for (const [index, field] of page.fields.entries()) {
         const rules = model.constraints[field.id];
+        if (rules.type === "object") {
+            const wrapper = element("div", undefined, "settings-field");
+            wrapper.append(element("p", field.label));
+            const mount = element("div");
+            mount.setAttribute("aria-label", field.label);
+            mount.dataset.fieldId = field.id;
+            wrapper.append(mount);
+            form.append(wrapper);
+            const adapter = model.adapters[field.control];
+            if (!adapter) {
+                mount.setAttribute("role", "alert");
+                mount.textContent = `Could not load ${field.label}: missing Designer adapter`;
+                continue;
+            }
+            import(`/adapters/${adapter}.mjs?token=${encodeURIComponent(token)}`)
+                .then(({ mount: render, controlId, valueContract }) => {
+                    if (typeof render !== "function") throw new Error("Missing mount export");
+                    const expected = model.controls.find((item) => item.id === field.control)?.value;
+                    if (controlId !== field.control || valueContract?.type !== expected?.type
+                        || JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
+                            !== JSON.stringify(Object.entries(expected.properties).sort())) {
+                        throw new Error("Incompatible control ID or value contract");
+                    }
+                    if (!mount.isConnected) return;
+                    return render({ root: mount, field, value: draft[field.id], onChange(value) {
+                        if (!mount.isConnected) return;
+                        draft[field.id] = value;
+                        messageBox.hidden = true;
+                        showError("");
+                        updateSave();
+                    } });
+                }).catch((error) => {
+                    if (!mount.isConnected) return;
+                    mount.replaceChildren();
+                    mount.setAttribute("role", "alert");
+                    mount.textContent = `Could not load ${field.label}: ${error.message}`;
+                });
+            continue;
+        }
         const checkbox = rules.type === "boolean";
         const wrapper = element("div", undefined, `settings-field${checkbox ? " settings-checkbox" : ""}`);
         const label = element("label", field.label);
