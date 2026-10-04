@@ -88,6 +88,21 @@ for (const [scenario, module] of [
     });
 }
 
+test("pipeline replacement without live phase controls fails at startup", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+    try {
+        const original = pipelineModule.toString("utf8");
+        expect(original).toContain("? phaseCard(phases[0]) :");
+        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: original.replace("? phaseCard(phases[0]) :", '? "" :'),
+        }));
+        await page.goto(canvas.url);
+        await expect(page.locator("#canvas-message")).toContainText(
+            "Pipeline could not render: Pipeline renderer did not render the required phase controls");
+    } finally { await canvas.close(); }
+});
+
 for (const [scenario, missing] of [
     ["phase label", 'data-phase-label="${escapeHtml(phase.label)}"'],
     ["artifact action", 'id="view-artifact"'],

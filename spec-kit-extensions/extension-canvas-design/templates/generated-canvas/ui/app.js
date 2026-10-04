@@ -678,12 +678,14 @@ try {
     const required = [".phase-notice", "#browse-output-folder code", "#phase-args",
         "#phase-message", "#phase-artifact-status", "#view-artifact",
         "#run-phase", "#previous-phase", "#next-phase"];
+    const card = pipelineRoot.querySelector("#phase-card");
     if (!Array.isArray(steps) || steps.length !== phases.length
         || steps.some((step, index) => !(step instanceof HTMLButtonElement)
             || !pipelineRoot.contains(step) || step.dataset.phaseIndex !== String(index)
             || step.dataset.phaseLabel !== phases[index].label)
-        || !pipelineRoot.querySelector("#phase-navigation")
-        || !pipelineRoot.querySelector("#phase-card")
+            || !pipelineRoot.querySelector("#phase-navigation")
+            || !card
+            || (phases.length > 0 && required.some((selector) => !card.querySelector(selector)))
         || phases.some((_, index) => {
             const template = pipelineRoot.querySelector(`#phase-template-${index}`);
             return !(template instanceof HTMLTemplateElement)
