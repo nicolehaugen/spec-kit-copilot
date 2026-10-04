@@ -339,6 +339,9 @@ export async function collectArtifactEvidence(cwd, snapshot, openFile = open) {
             if (current && candidates.some((candidate) => candidate.source === "manual" && candidate.kind === "file")) {
                 primaryIndex = candidates.findIndex((candidate) => candidate.source === "manual" && candidate.kind === "file");
             }
+            if (primaryIndex === null && declaration?.kind === "file") {
+                primaryIndex = candidates.indexOf(declaration);
+            }
             evidence[id] = { candidates, ...(source ? { fingerprint: source.fingerprint } : {}),
                 ...(current ? { primaryIndex } : {}) };
         } catch (error) {

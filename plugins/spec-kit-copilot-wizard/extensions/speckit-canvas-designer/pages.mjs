@@ -304,6 +304,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     if (!Array.isArray(templates) || templates.length > 100) {
         throw new Error("Invalid Canvas Design template inventory");
     }
+    if (templates.filter((item) => item?.kind === "generated.page").length > 30) {
+        throw new Error("Designer supports at most 30 generated pages");
+    }
     const names = new Set(pageNames);
     const loaded = [];
     const slots = new Map();
