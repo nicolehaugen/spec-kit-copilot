@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { UserError } from "./files.mjs";
+import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract } from "./contract.mjs";
 import { validControlValue } from "./control-contract.mjs";
 
@@ -51,8 +51,9 @@ function validGeneratedPages(pages) {
         && pages.every((page) => page && typeof page === "object" && !Array.isArray(page)
             && Object.keys(page).sort().join() === "id,renderer,title"
             && typeof page.id === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.id)
-            && page.id !== RESERVED_GENERATED_PAGE_ID
+            && page.id !== RESERVED_GENERATED_PAGE_ID && !isWindowsDeviceName(page.id)
             && typeof page.renderer === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            && !isWindowsDeviceName(page.renderer)
             && typeof page.title === "string" && !!page.title.trim() && page.title.length <= 120));
 }
 
@@ -86,6 +87,7 @@ export function readConfig() {
     const config = JSON.parse(readFileSync(new URL("./canvas-config.json", import.meta.url), "utf8"));
     if (!config || typeof config !== "object" || Array.isArray(config)
         || config.schemaVersion !== 1 || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(config.canvas?.id)
+        || isWindowsDeviceName(config.canvas.id)
         || ["displayName", "description", "workflowListName"].some((key) =>
             typeof config.canvas[key] !== "string" || !config.canvas[key].trim())
         || !Array.isArray(config.phases) || !config.phases.length

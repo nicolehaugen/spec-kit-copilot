@@ -1,14 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readFrozenAsset } from "./pages.mjs";
+import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 
 const fields = ["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const REQUEST_LIMIT = 4 * 1024 * 1024;
-const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "canvas-settings-setup");
@@ -33,7 +32,7 @@ export function validateEssentials(model, values) {
         result[id] = rule.type === "string" ? value.trim() : value;
     }
     if (!result["canvas.id"] || !result["canvas.displayName"]
-        || reserved.has(result["canvas.id"]) || windowsDeviceName.test(result["canvas.id"])) {
+        || reserved.has(result["canvas.id"]) || isWindowsDeviceName(result["canvas.id"])) {
         throw new Error("Canvas ID and Title must be valid and non-reserved");
     }
     return result;
