@@ -115,8 +115,11 @@ replace-only Specify template exporting `renderPage({ root, canvas, values })`;
 the definition must name that registered renderer. Invalid kinds, references,
 strategies, syntax or Specify template-layer metadata stop Designer opening.
 The frozen definition and module are copied into the generated app, which
-needs no design-time packages to render them. Other contributed settings and
-custom control modules are not included in Generate yet. The repository-local
+needs no design-time packages to render them. The frozen generation request is
+bounded to 4 MiB, allowing the registered page assets to be packaged after
+base64 encoding while retaining the 32 KiB limit on each definition and renderer.
+Other contributed settings and custom control modules are not included in Generate
+yet. The repository-local
 `copilot-billing-canvas-test` preset exercises this contract; its README shows
 both Billing and Essentials placements. An optional `generatedBinding.section`
 with a stable `id` and display `title` groups read-only fields under that

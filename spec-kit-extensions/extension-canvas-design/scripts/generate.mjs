@@ -13,7 +13,7 @@ const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
 
 function within(root, path) {
     const part = relative(root, path);

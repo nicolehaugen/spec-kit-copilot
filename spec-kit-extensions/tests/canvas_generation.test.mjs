@@ -117,7 +117,7 @@ test("100 bounded generated fields materialize when the frozen request exceeds 1
         "generations", prepared.requestId, "request.json");
     const raw = await readFile(path);
     assert.ok(raw.length > 128 * 1024);
-    assert.ok(raw.length <= 512 * 1024);
+    assert.ok(raw.length <= 4 * 1024 * 1024);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
@@ -129,9 +129,46 @@ test("the generator rejects a frozen request above its shared size limit", async
     const { project, workspace, prepared } = await fixture(t);
     const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", prepared.requestId, "request.json");
-    await writeFile(path, "x".repeat(512 * 1024 + 1));
+    await writeFile(path, "x".repeat(4 * 1024 * 1024 + 1));
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /Generation request is too large/);
+});
+
+test("six maximum-size generated pages fit the frozen request and materialize", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const pages = join(project, ".specify", "pages");
+    await mkdir(pages, { recursive: true });
+    const generatedPages = [], templates = [];
+    const rendererContent = "export function renderPage({ root }) { root.textContent = 'Overview'; }"
+        .padEnd(32 * 1024, " ");
+    for (let index = 0; index < 6; index++) {
+        const id = `canvas-generated-${index}`, renderer = `canvas-renderer-${index}`;
+        const title = `Overview ${index}`;
+        const definition = JSON.stringify({ schemaVersion: 1, id, renderer, title })
+            .padEnd(32 * 1024, " ");
+        generatedPages.push({ name: id, id, title, renderer });
+        for (const [name, kind, content, extension] of [
+            [id, "generated.page", definition, "json"],
+            [renderer, "generated.renderer", rendererContent, "mjs"],
+        ]) {
+            const path = join(pages, `${name}.${extension}`);
+            await writeFile(path, content);
+            templates.push({ name, path, kind, sourceId: "test-preset", strategy: "replace",
+                hash: createHash("sha256").update(content).digest("hex") });
+        }
+    }
+    const prepared = await freezeGeneration({ project, workspace,
+        model: { ...model, generatedPages, templates }, values, handoff });
+    const request = await readFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json"));
+    assert.ok(request.length > 512 * 1024);
+    assert.ok(request.length <= 4 * 1024 * 1024);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    for (const page of generatedPages) {
+        const bytes = await readFile(join(project, ".github", "extensions", values["canvas.id"],
+            "pages", `${page.renderer}.mjs`));
+        assert.equal(bytes.length, 32 * 1024);
+    }
 });
 
 test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
