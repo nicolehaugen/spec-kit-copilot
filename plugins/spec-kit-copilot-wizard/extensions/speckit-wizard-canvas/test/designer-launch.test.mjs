@@ -258,14 +258,19 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
 test("live CLI inventory is read from the Wizard checkout, including priorities", async () => {
     const path = await mkdtemp(join(tmpdir(), "designer-inventory-"));
     try {
-        await mkdir(join(path, ".specify"));
+        const presetPath = join(path, ".specify", "presets", "preset");
+        await mkdir(presetPath, { recursive: true });
+        await writeFile(join(presetPath, "preset.yml"),
+            "preset:\n  id: preset\n  name: Test preset\n  version: 1.0.0\n");
         const calls = [];
         const installed = await readInstalledWorkflowInventory({ workspacePath: path },
             async (binary, args, options) => {
                 calls.push({ binary, args, cwd: options.cwd });
                 const item = args[0] === "bundle"
                     ? [{ bundle_id: "kit", version: "2.0.0" }]
-                    : [{ id: args[0], version: "1.0.0", priority: 1, enabled: true }];
+                    : args[0] === "preset"
+                        ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                            source: { kind: "local" } }] : [];
                 return { stdout: JSON.stringify(item) };
             });
         assert.deepEqual(calls.map(({ args }) => args), [
@@ -273,8 +278,31 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
             ["bundle", "list", "--json"],
         ]);
         assert.ok(calls.every(({ cwd }) => cwd === path));
-        assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0", priority: 1 }]);
+        assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0",
+            priority: 1, source: "local", path: presetPath }]);
         assert.deepEqual(installed.bundles, [{ id: "kit", version: "2.0.0" }]);
+        const catalogInstalled = await readInstalledWorkflowInventory({
+            workspacePath: path, catalog: { presets: [{ id: "preset", version: "1.0.0",
+                source: "community", downloadUrl: "https://example.org/preset.zip" }] },
+        }, async (binary, args) => ({ stdout: JSON.stringify(args[0] === "preset"
+            ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                source: { kind: "catalog", catalog: "community" } }] : []) }));
+        assert.deepEqual(catalogInstalled.presets, [{ id: "preset", version: "1.0.0",
+            priority: 1, source: "community", downloadUrl: "https://example.org/preset.zip" }]);
+        const unavailableCatalog = await readInstalledWorkflowInventory({
+            workspacePath: path, catalog: { presets: [], extensions: [] },
+        }, async (binary, args) => ({ stdout: JSON.stringify(args[0] === "preset"
+            ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                source: { kind: "catalog", catalog: "community" } }] : []) }));
+        assert.deepEqual(unavailableCatalog.presets, [{ id: "preset", version: "1.0.0",
+            priority: 1, source: "community", path: presetPath }]);
+        await assert.rejects(readInstalledWorkflowInventory({
+            workspacePath: path, catalog: { presets: [{ id: "preset", version: "1.0.0",
+                source: "community", downloadUrl: "http://example.org/preset.zip" }] },
+        }, async (binary, args) => ({ stdout: JSON.stringify(args[0] === "preset"
+            ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
+                source: { kind: "catalog", catalog: "community" } }] : []) })),
+        /Invalid installed presets download URL/);
         await assert.rejects(readInstalledWorkflowInventory({ workspacePath: path },
             async () => ({ stdout: "not-json" })), /Invalid installed presets inventory/);
     } finally {
@@ -512,6 +540,20 @@ test("invalid fingerprints, oversized handoffs and unsafe IDs are rejected", asy
         workflow: malformed.workflow, selections: malformed.selections,
     });
     assert.throws(() => validateHandoff(malformed, handoff.handoffId), /Invalid Designer handoff/);
+    for (const invalid of [
+        { source: "local", path: "../outside" },
+        { source: "community", downloadUrl: "http://example.org/preset.zip" },
+        { source: "local", path: LOCAL_PRESET_PATH, downloadUrl: "https://example.org/preset.zip" },
+    ]) {
+        const withLocator = { ...handoff, workflow: { ...handoff.workflow,
+            installed: { ...empty, presets: [{ id: "preset", version: "1.0.0",
+                priority: 1, ...invalid }] } } };
+        withLocator.sourceFingerprint = fingerprint({
+            workflow: withLocator.workflow, selections: withLocator.selections,
+        });
+        assert.throws(() => validateHandoff(withLocator, handoff.handoffId),
+            /Invalid Designer handoff/);
+    }
     await assert.rejects(readHandoff(tmpdir(), "../escape"), /Invalid Designer handoff ID/);
 });
 
@@ -555,10 +597,24 @@ test("buildDesignerLaunchPrompt is purely additive: no local-dev step or wording
     const prompt = buildDesignerLaunchPrompt(handoff);
     assert.doesNotMatch(prompt, /localSelections/);
     assert.doesNotMatch(prompt, /local development sources/i);
-    assert.doesNotMatch(prompt, /specify preset add --dev/);
+    assert.doesNotMatch(prompt, /For each approved entry in localSelections\.presets/);
     assert.doesNotMatch(prompt, /specify extension add <path> --dev/);
     assert.doesNotMatch(prompt, /skip this required-by-ID install/);
     assert.equal(handoff.localSelections, undefined);
+});
+
+test("runtime package locators are carried into the child installation instructions", () => {
+    const installed = { presets: [{ id: "local-runtime", version: "1.0.0", priority: 2,
+        source: "local", path: LOCAL_PRESET_PATH }],
+    extensions: [{ id: "remote-runtime", version: "1.0.0", priority: 3,
+        source: "community", downloadUrl: "https://example.org/extension.zip" }],
+    bundles: [] };
+    const handoff = buildDesignerHandoff(snapshot, empty, undefined, installed, randomUUID());
+    assert.deepEqual(handoff.workflow.installed, installed);
+    const prompt = buildDesignerLaunchPrompt(handoff);
+    assert.match(prompt, /runtime preset.*frozen downloadUrl.*frozen path.*--dev <path>/);
+    assert.match(prompt, /runtime extension.*frozen downloadUrl.*frozen path.*--dev/);
+    assert.match(prompt, /manifest id and version against the frozen entry/);
 });
 
 test("buildDesignerLaunchPrompt documents local-wins precedence, including the extension-canvas-design special case", () => {
