@@ -31,8 +31,9 @@ Workflow header and Allow custom slug are separate ordered stock contributions
 registered by the composed load-page command. With all three registered, the
 same five controls appear in the same order. Without them, generated description,
 heading and custom slug default to `Spec Kit workflow canvas.`, `Workflows` and
-off. Workflow name appears after Phase input in the generated
-canvas's first workflow-creation phase and labels the workflow there. Essentials'
+off. Workflow name appears in the generated canvas's workflow collection,
+before phase navigation, while creating a workflow. It labels the workflow
+there. Essentials'
 default-off Allow custom slug setting controls whether an optional Workflow slug
 field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.

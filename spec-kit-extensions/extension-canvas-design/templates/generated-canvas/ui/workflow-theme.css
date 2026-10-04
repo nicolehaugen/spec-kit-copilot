@@ -499,6 +499,7 @@ code, pre { font-family: var(--font-mono); }
 .artifact-viewer-md th,
 .artifact-viewer-md td { padding: 0.5rem 0.75rem; border: 1px solid var(--border-color-default); text-align: left; vertical-align: top; }
 .artifact-viewer-md pre { padding: 1rem; border-radius: var(--radius-md); background: var(--background-color-secondary); }
+.workflow-content { display: flex; flex-direction: column; gap: 1.25rem; }
 .workflow-surface {
     --workflow-card-bg: var(--background-color-elevated);
     --workflow-card-border: var(--border-color-default);

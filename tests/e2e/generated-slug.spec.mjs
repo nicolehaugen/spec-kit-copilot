@@ -8,7 +8,7 @@ import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas
 import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
-    generatedPages, generatedControls) {
+    generatedPages, readOnlyFields, generatedControls) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug,
@@ -25,6 +25,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         phaseArtifacts: {},
         installed: { presets: [], extensions: [], bundles: [] },
         ...(generatedPages ? { generatedPages } : {}),
+        ...(readOnlyFields ? { readOnlyFields } : {}),
         ...(generatedControls ? { generatedControls } : {}),
     };
     let runtime, routes, server;
@@ -43,6 +44,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         return {
             url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
             root,
+            runtime,
+            broadcast: () => routes.broadcast(),
             close: async () => {
                 routes.close();
                 runtime.close();
@@ -72,7 +75,7 @@ test("slow control mount leaves other controls and the workflow shell interactiv
     });
     const canvas = await openGeneratedCanvas(false, ["specify"],
         [{ id: "extra", title: "Extra", renderer: "extra" }],
-        ["slow", "broken"].map(control));
+        undefined, ["slow", "broken"].map(control));
     try {
         await page.route("**/controls/slow.mjs*", (route) => route.fulfill({
             contentType: "text/javascript",
@@ -103,6 +106,47 @@ test("slow control mount leaves other controls and the workflow shell interactiv
         await page.locator('[data-canvas-page="extra"]').click();
         await expect(page.locator("#generated-page")).toHaveText("Extra is available");
         await expect(page.locator('[data-control-id="slow"]')).not.toHaveAttribute("role", "alert");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("generated page hides all Workflow content and restores it on return", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"],
+        [{ id: "overview", title: "Overview", renderer: "overview" }],
+        [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
+    try {
+        await page.route("**/pages/overview.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export function renderPage({ root }) { root.textContent = "Overview"; }',
+        }));
+        await page.goto(canvas.url);
+        await page.locator("#workflow-name").fill("Draft workflow");
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+
+        await page.locator('[data-canvas-page="overview"]').click();
+        await expect(page.locator("#generated-page")).toHaveText("Overview");
+        await expect(page.locator("#workflow-content")).toBeHidden();
+        for (const selector of ["#instance-collection", '[data-field-id="billing.costCode"]',
+            "#constitution-card", "#phase-navigation", "#phase-card"]) {
+            await expect(page.locator(selector)).toBeHidden();
+        }
+        await expect(page.locator("#refresh-state")).toBeVisible();
+        await expect(page.locator('[data-canvas-page="workflow"]')).toBeVisible();
+
+        await page.locator('[data-canvas-page="workflow"]').click();
+        await expect(page.locator("#generated-page")).toBeHidden();
+        await expect(page.locator("#workflow-content")).toBeVisible();
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+        await expect(page.locator("#workflow-name")).toHaveValue("Draft workflow");
     } finally {
         await canvas.close();
     }
@@ -149,6 +193,36 @@ test("generated page selection ignores stale imports and async renderers", async
     }
 });
 
+test("new workflow run follows its confirmed slug and blocks deletion while active", async () => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        const run = await canvas.runtime.run({ phase: "specify", itemId: "__new__", args: "Feature" }, "slug-test");
+        await mkdir(join(canvas.root, "specs", "new-feature"), { recursive: true });
+        const before = await canvas.runtime.snapshot();
+        await expect(canvas.runtime.deleteWorkflow({
+            itemId: "specs/new-feature", confirmation: "new-feature", revision: before.revision,
+        })).rejects.toThrow(/unfinished phase/);
+        await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
+        await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
+        const after = await canvas.runtime.snapshot();
+        expect(after.selected).toBe("specs/new-feature");
+        expect(after.statuses.specify.status).toBe("Request sent");
+        await expect(canvas.runtime.deleteWorkflow({
+            itemId: "specs/new-feature", confirmation: "new-feature", revision: after.revision,
+        })).rejects.toThrow(/unfinished phase/);
+        await writeFile(join(canvas.root, "specs", "new-feature", "spec.md"), "# Feature\n");
+        await canvas.runtime.report({
+            phaseRunId: run.runId, path: "specs/new-feature/spec.md",
+        }, "slug-test");
+        expect((await canvas.runtime.snapshot()).statuses.specify.status).toBe("Request sent");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("enabled slug previews the View target folder and persists across phases", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true);
     try {
@@ -170,6 +244,76 @@ test("enabled slug previews the View target folder and persists across phases", 
         await page.locator('[data-phase-index="0"]').click();
         await expect(page.locator("#workflow-name")).toHaveValue("Customer dashboard");
         await expect(page.locator("#workflow-slug")).toHaveValue("sample-feature");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("failed autosave retains workflow identity through SSE and Refresh for retry", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(true);
+    let rejectSaves = true;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST" && rejectSaves) {
+                return route.fulfill({ status: 503, contentType: "application/json",
+                    body: JSON.stringify({ error: "Temporary save failure" }) });
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await expect(page.locator("#workflow-empty")).toBeVisible();
+        await page.locator("#workflow-name").fill("Unsaved workflow");
+        await page.locator("#workflow-slug").fill("unsaved-slug");
+        await page.locator("#phase-args").focus();
+        await expect(page.locator("#canvas-message")).toContainText("Your draft is retained");
+        await mkdir(join(canvas.root, "specs", "other-workflow"), { recursive: true });
+        canvas.broadcast();
+        await expect(page.locator("#workflow-count")).toHaveText("(1)");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toContainText("Temporary save failure");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        rejectSaves = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        const saved = await canvas.runtime.snapshot();
+        expect(saved.name).toBe("Unsaved workflow");
+        expect(saved.slug).toBe("unsaved-slug");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("failed New selection replays its selection with identity on Refresh", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(true);
+    const saves = [];
+    let rejectNew = true;
+    try {
+        await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                const patch = JSON.parse(route.request().postData());
+                saves.push(patch);
+                if (rejectNew && patch.selected === "__new__") {
+                    return route.fulfill({ status: 503, contentType: "application/json",
+                        body: JSON.stringify({ error: "Temporary selection failure" }) });
+                }
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await page.getByRole("button", { name: "existing", exact: true }).click();
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("specs/existing");
+        await page.locator("#new-workflow").click();
+        await expect(page.locator("#canvas-message")).toContainText("Temporary selection failure");
+        rejectNew = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect(saves.at(-1)).toMatchObject({ selected: "__new__", name: "", slug: "" });
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("__new__");
+        await expect(page.locator("#workflow-name")).toBeVisible();
     } finally {
         await canvas.close();
     }
@@ -240,6 +384,124 @@ test("sending a phase keeps the navigation free of run states and clears the dis
     }
 });
 
+test("refresh clears resolved phase and Constitution errors", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    let phaseError = true;
+    const withStatus = async (route) => {
+        const response = await route.fetch();
+        const state = await response.json();
+        state.statuses.specify.error = phaseError ? "Phase failed" : null;
+        await route.fulfill({ response, json: state });
+    };
+    try {
+        await page.route("**/api/state", withStatus);
+        await page.route("**/api/refresh", withStatus);
+        await page.goto(canvas.url);
+        await expect(page.locator("#phase-message")).toHaveText("Phase failed");
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-message")).toHaveText("Phase failed");
+        phaseError = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-message")).toBeEmpty();
+
+        await page.route("**/api/run", (route) => route.fulfill({
+            status: 503, contentType: "application/json",
+            body: JSON.stringify({ error: "Constitution could not be sent" }),
+        }));
+        await page.locator("#run-constitution").click();
+        await page.locator("#send-constitution").click();
+        await expect(page.locator("#constitution-message")).toHaveText("Constitution could not be sent");
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await page.locator("#run-constitution").click();
+        await expect(page.locator("#constitution-message")).toBeEmpty();
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("a later successful save does not hide a failed phase draft", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    const saves = [];
+    let failPhase = true;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                const patch = JSON.parse(route.request().postData());
+                saves.push(patch);
+                if (failPhase && patch.draft?.phase === "specify") {
+                    failPhase = false;
+                    return route.fulfill({ status: 503, contentType: "application/json",
+                        body: JSON.stringify({ error: "Phase draft save failed" }) });
+                }
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await expect(page.locator("#workflow-empty")).toBeVisible();
+        await page.locator("#phase-args").fill("Keep this draft");
+        await expect(page.locator("#canvas-message")).toContainText("Phase draft save failed");
+        await page.locator("#run-constitution").click();
+        await page.locator("#constitution-args").fill("Constitution guidance");
+        await expect.poll(() => saves.some((patch) => patch.draft?.phase === "constitution")).toBe(true);
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["__new__", "specify"])]).toBeUndefined();
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["__new__", "specify"])])
+            .toBe("Keep this draft");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("Constitution guidance saves once after typing and flushes before sending", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    const saves = [];
+    let draftBeforeRun;
+    let rejectDraft = false;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                saves.push(JSON.parse(route.request().postData()));
+                if (rejectDraft) return route.fulfill({ status: 503, contentType: "application/json",
+                    body: JSON.stringify({ error: "Temporary draft failure" }) });
+            }
+            return route.continue();
+        });
+        await page.route("**/api/run", async (route) => {
+            draftBeforeRun = (await canvas.runtime.snapshot())
+                .drafts[JSON.stringify(["project", "constitution"])];
+            await route.fulfill({ status: 503, contentType: "application/json",
+                body: JSON.stringify({ error: "Test dispatch stopped" }) });
+        });
+        await page.goto(canvas.url);
+        await page.locator("#run-constitution").click();
+        await page.locator("#constitution-args").pressSequentially("first draft", { delay: 10 });
+        await expect.poll(() => saves.length).toBe(1);
+        expect(saves[0].draft).toEqual({
+            item: "project", phase: "constitution", value: "first draft",
+        });
+        await page.locator("#constitution-args").fill("latest draft");
+        await page.locator("#send-constitution").click();
+        await expect(page.locator("#constitution-message")).toHaveText("Test dispatch stopped");
+        expect(saves).toHaveLength(2);
+        expect(saves[1].draft.value).toBe("latest draft");
+        expect(draftBeforeRun).toBe("latest draft");
+        rejectDraft = true;
+        await page.locator("#constitution-args").fill("retry draft");
+        await expect(page.locator("#canvas-message")).toContainText("Temporary draft failure");
+        rejectDraft = false;
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["project", "constitution"])])
+            .toBe("retry draft");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("one workflow header, compact constitution and legible narrow phase navigation", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true,
         ["constitution", "specify", "clarify", "plan", "tasks", "taskstoissues", "analyze", "checklist", "implement"]);
@@ -291,7 +553,9 @@ test("artifact viewer matches the Wizard full-page layout and returns to the can
     const canvas = await openGeneratedCanvas(false);
     try {
         await mkdir(join(canvas.root, "specs", "sample-feature"), { recursive: true });
-        await writeFile(join(canvas.root, "specs", "sample-feature", "spec.md"), "# Sample feature\n\nDetails.");
+        const artifact = join(canvas.root, "specs", "sample-feature", "spec.md");
+        await writeFile(artifact,
+            "# Sample feature\n\nDetails. <!-- hidden -->\n\n```html\n<!-- important -->\n<div>Example</div>\n```\n");
         await page.goto(canvas.url);
         await page.getByRole("button", { name: "sample-feature", exact: true }).click();
         await expect(page.locator("#view-artifact")).toBeVisible();
@@ -301,6 +565,14 @@ test("artifact viewer matches the Wizard full-page layout and returns to the can
         await expect(viewer.locator("#artifact-title")).toHaveText("Specify");
         await expect(viewer.locator("#artifact-path")).toHaveText("specs/sample-feature/spec.md");
         await expect(viewer.locator("#artifact-content h1")).toHaveText("Sample feature");
+        await expect(viewer.locator("#artifact-content")).not.toContainText("hidden");
+        await expect(viewer.locator("#artifact-content pre code"))
+            .toHaveText("<!-- important -->\n<div>Example</div>");
+        await writeFile(artifact, "");
+        canvas.broadcast();
+        await expect(viewer.locator("#artifact-message"))
+            .toHaveText("Artifact is empty or still being written. Refresh to try again.");
+        await expect(viewer.locator("#artifact-content")).toBeEmpty();
         await expect(viewer.getByRole("button", { name: "Refresh" })).toHaveCount(0);
         expect(await viewer.evaluate((element) => {
             const bounds = element.getBoundingClientRect();

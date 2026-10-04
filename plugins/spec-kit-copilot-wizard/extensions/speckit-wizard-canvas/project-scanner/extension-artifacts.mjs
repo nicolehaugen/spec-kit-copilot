@@ -71,7 +71,7 @@ export async function hydrateExtensionArtifactsFromCache({ cwd, phases, slug, de
         const skill = `.github/skills/${key.slice("commands/".length).replaceAll(".", "-")}/SKILL.md`;
         if (installedCommandKeys && !installedCommandKeys.has(key)
             && !CORE_COMMANDS.includes(key.slice("commands/".length))
-            && !(entry?.outputEvidence && await deps.pathExists(join(cwd, skill)))) {
+            && !await deps.pathExists(join(cwd, skill))) {
             prunedAny = true;
             continue;
         }

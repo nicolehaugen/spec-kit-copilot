@@ -109,7 +109,8 @@ export async function handlePipelineMutation(res, body, { getState, broadcast, g
 //   templates from the opening paragraph →
 //   agent POSTs { entries: {...} } here →
 //   scanner picks up the new cache on the next scan tick.
-export async function handleArtifactTargets(res, body, { broadcast, getInstance }) {
+export async function handleArtifactTargets(res, body, { broadcast, getInstance,
+    writeCache = writeEvidenceCache }) {
     const inst = getInstance();
     if (!inst?.workspacePath) return jsonError(res, 400, "workspace path unavailable");
     const rejectOutput = (key, status, message) => {
@@ -169,6 +170,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
         };
     }
     if (!Object.keys(cleaned).length) {
+        if (inst.outputInference?.status === "updating") failOutputInference(inst);
         return jsonError(res, 400, "no valid entries");
     }
 
@@ -197,12 +199,14 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance 
     };
     const payload = JSON.stringify(merged, null, 2) + "\n";
     if (Buffer.byteLength(payload) > 512 * 1024) {
+        if (inst.outputInference?.status === "updating") failOutputInference(inst);
         return jsonError(res, 400, "Artifact-target cache exceeds its size limit");
     }
 
     try {
-        await writeEvidenceCache(inst.workspacePath, payload);
+        await writeCache(inst.workspacePath, payload);
     } catch (err) {
+        if (inst.outputInference?.status === "updating") failOutputInference(inst);
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }
     for (const [key, entry] of Object.entries(cleaned)) {

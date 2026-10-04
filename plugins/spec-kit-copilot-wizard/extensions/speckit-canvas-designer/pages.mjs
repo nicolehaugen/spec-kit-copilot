@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fingerprint } from "./handoff.mjs";
+import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
 const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
@@ -13,11 +14,14 @@ const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
 // The generated shell uses "workflow" for its built-in page navigation.
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+export const isWindowsDeviceName = (name) =>
+    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
 const RULES = {
-    "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$" },
+    "canvas.id": { type: "string", minLength: 1, maxLength: 100,
+        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
     "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -260,24 +264,25 @@ function validateGeneratedPage(document, name) {
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).sort().join() !== "id,renderer,schemaVersion,title"
         || document.schemaVersion !== 1 || document.id !== name
-        || document.id === RESERVED_GENERATED_PAGE_ID
+        || document.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(document.id)
         || typeof document.title !== "string" || !document.title.trim()
         || document.title.length > 120 || typeof document.renderer !== "string"
-        || !PAGE_PATTERN.test(document.renderer)) {
+        || !PAGE_PATTERN.test(document.renderer) || isWindowsDeviceName(document.renderer)) {
         throw new Error(`${name}: invalid generated page definition`);
     }
 }
 
-function executableRegistration(project, name) {
+async function executableRegistration(project, name) {
+    const options = await specifySpawnOptions(project, { encoding: "utf8", maxBuffer: 128 * 1024 });
     const result = spawnSync("specify", ["artifact", "info", `template:${name}`, "--json"],
-        { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+        options);
     if (result.error || result.status !== 0) {
         throw new Error(`${name}: cannot verify replace-only Specify template registration: ${result.stderr || result.error || result.stdout}`);
     }
     try {
         const info = JSON.parse(result.stdout);
         const script = spawnSync("specify", ["artifact", "info", `script:${name}`, "--json"],
-            { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+            options);
         if (script.error || ![0, 1].includes(script.status)) {
             throw new Error(`${name}: cannot verify native script registration: ${script.stderr || script.error}`);
         }
@@ -303,6 +308,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     registration) {
     if (!Array.isArray(templates) || templates.length > 100) {
         throw new Error("Invalid Canvas Design template inventory");
+    }
+    if (templates.filter((item) => item?.kind === "generated.page").length > 30) {
+        throw new Error("Designer supports at most 30 generated pages");
     }
     const names = new Set(pageNames);
     const loaded = [];
@@ -347,7 +355,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
             ids.add(document.id);
         } else {
-            const info = registration(dirname(specify), item.name);
+            const info = await registration(dirname(specify), item.name);
             const layers = info?.stack;
             const winner = layers?.find((layer) => layer.active);
             const sourceLayer = item.sourceId === "project" ? "project"
@@ -598,8 +606,12 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     }
     model.templates = loaded.map(({ name, path, hash, sourceId, kind, strategy }) =>
         ({ name, path, hash, sourceId, kind, strategy }));
-    return { ...model, revision: fingerprint({
+    const result = { ...model, revision: fingerprint({
         handoffId: handoff.handoffId, sourceFingerprint: handoff.sourceFingerprint, checkout, entries,
         templates: loaded,
     }) };
+    if (Buffer.byteLength(JSON.stringify(result)) > MODEL_LIMIT) {
+        throw new Error("Designer page model exceeds its size limit");
+    }
+    return result;
 }

@@ -165,7 +165,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             self.pages[0]["fields"],
             [
-                {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
+                {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used."},
                 {"id": "canvas.displayName", "label": "Title"},
             ],
         )

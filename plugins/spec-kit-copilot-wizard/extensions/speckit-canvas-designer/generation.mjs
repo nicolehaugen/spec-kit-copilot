@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readFrozenAsset } from "./pages.mjs";
+import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "canvas-settings-setup");
@@ -17,6 +17,10 @@ export function validateEssentials(model, values) {
     const failed = model.pages.find((page) => page.error);
     if (failed) {
         throw new Error(`Cannot generate while ${failed.page} is invalid: ${failed.error.reason}`);
+    }
+    if (typeof values?.["canvas.id"] === "string"
+        && (reserved.has(values["canvas.id"]) || isWindowsDeviceName(values["canvas.id"]))) {
+        throw new Error("Canvas ID must be non-reserved");
     }
     validateValues(values, model.constraints);
     const result = { ...values };
@@ -31,7 +35,10 @@ export function validateEssentials(model, values) {
     for (const id of ["canvas.description", "canvas.workflowListName"]) {
         if (Object.hasOwn(result, id)) result[id] = result[id].trim();
     }
-    if (reserved.has(result["canvas.id"])) throw new Error("Canvas ID must be non-reserved");
+    if (!result["canvas.id"] || !result["canvas.displayName"]
+        || reserved.has(result["canvas.id"]) || isWindowsDeviceName(result["canvas.id"])) {
+        throw new Error("Canvas ID and Title must be valid and non-reserved");
+    }
     return result;
 }
 
@@ -92,7 +99,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const request = {
         schemaVersion: 1, requestId, handoffId: handoff.handoffId,
         project: checkout, target: `.github/extensions/${essentials["canvas.id"]}/`,
-        sourceFingerprint: handoff.sourceFingerprint, settingsRevision: model.revision,
+        sourceFingerprint: handoff.sourceFingerprint, settingsRevision: model.settingsRevision,
         canvas: { id: essentials["canvas.id"], displayName: essentials["canvas.displayName"],
             description: essentials["canvas.description"] || "Spec Kit workflow canvas.",
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
@@ -108,7 +115,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     request.integrity = createHash("sha256").update(payload).digest("hex");
     const serialized = JSON.stringify(request);
     if (Buffer.byteLength(serialized) > REQUEST_LIMIT) {
-        throw new Error("Frozen generation request exceeds 512KB");
+        throw new Error("Frozen generation request exceeds 4 MiB");
     }
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", requestId);

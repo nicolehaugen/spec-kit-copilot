@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "templates", "generated-canvas");
@@ -13,8 +15,10 @@ const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
+const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
+    "canvas.workflowListName", "workflowSlug.userProvided"]);
 
 function validateFrozenValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
@@ -36,7 +40,7 @@ function validateFrozenValues(values, constraints) {
                 || (rule.minLength !== undefined && (!Number.isInteger(rule.minLength)
                     || rule.minLength < 0 || rule.minLength > rule.maxLength))
                 || (id === "canvas.id"
-                    ? rule.pattern !== "^[a-z0-9][a-z0-9-]*$"
+                    ? rule.pattern !== "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$"
                     : rule.pattern !== undefined)
                 || typeof value !== "string" || value.length > rule.maxLength
                 || value.length < (rule.minLength ?? 0)
@@ -78,6 +82,7 @@ function configuration(request) {
         generatedPages, generatedControls } = request;
     validateFrozenValues(values, fieldConstraints);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
+        || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]
@@ -125,6 +130,9 @@ function configuration(request) {
                         || !field.section.title.trim() || field.section.title.length > 120))))) {
         throw new Error("Invalid frozen generated fields");
     }
+    if (generatedFields?.some(({ id }) => essentialFields.has(id))) {
+        throw new Error("Invalid frozen generated values");
+    }
     const sections = new Map();
     for (const { section } of generatedFields ?? []) {
         if (!section) continue;
@@ -143,8 +151,9 @@ function configuration(request) {
         if (!page || typeof page !== "object" || Array.isArray(page)
             || Object.keys(page).sort().join() !== "assets,id,renderer,title"
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
-            || page.id === RESERVED_GENERATED_PAGE_ID
+            || page.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(page.id)
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            || isWindowsDeviceName(page.renderer)
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
             || !Array.isArray(page.assets) || page.assets.length !== 2
             || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.page"
@@ -246,12 +255,56 @@ function configuration(request) {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
             return [phase, { expectsArtifact: !!path, outputPath: path }];
         })), phaseArtifacts: {},
-        installed };
+        installed: {
+            presets: installed.presets.map(({ id, version, priority }) => ({ id, version, priority })),
+            extensions: installed.extensions.map(({ id, version, priority }) => ({ id, version, priority })),
+            bundles: installed.bundles.map(({ id, version }) => ({ id, version })),
+        } };
 }
 
 function checkSyntax(path) {
     const check = spawnSync("node", ["--check", path], { encoding: "utf8" });
     if (check.error || check.status !== 0) throw new Error(`Generated JavaScript failed validation: ${check.stderr || check.error}`);
+}
+
+export async function readBoundedSessionFile(parent, name, limit, label, openFile = open) {
+    const invalid = `${label} must be a bounded regular session file`;
+    const parentStat = await lstat(parent);
+    if (!parentStat.isDirectory() || await realpath(parent) !== parent) {
+        throw new Error(invalid);
+    }
+    const path = join(parent, name);
+    let file;
+    try {
+        file = await openFile(path, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    } catch (error) {
+        if (error.code === "ELOOP") throw new Error(invalid, { cause: error });
+        throw error;
+    }
+    try {
+        const [stat, pathStat, currentParent, currentParentStat] = await Promise.all([
+            file.stat(), lstat(path), realpath(parent), lstat(parent),
+        ]);
+        if (currentParent !== parent || !currentParentStat.isDirectory()
+            || parentStat.dev !== currentParentStat.dev || parentStat.ino !== currentParentStat.ino
+            || !stat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink()
+            || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+            throw new Error(invalid);
+        }
+        if (stat.size > limit) throw new Error(`${label} is too large`);
+        const bytes = Buffer.alloc(limit + 1);
+        let length = 0;
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (bytesRead === 0) break;
+            length += bytesRead;
+        }
+        if (length > limit) throw new Error(`${label} is too large`);
+        return bytes.toString("utf8", 0, length);
+    } finally {
+        await file.close();
+    }
 }
 
 export async function materialize(project, workspace, handoffId, requestId) {
@@ -261,27 +314,17 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (await realpath(generation) !== generation) {
         throw new Error("Generation request escapes its session directory");
     }
-    const requestPath = join(generation, "request.json");
-    if (!(await lstat(requestPath)).isFile() || await realpath(requestPath) !== requestPath) {
-        throw new Error("Frozen generation request must be a regular session file");
-    }
-    const raw = await readFile(requestPath);
-    if (raw.length > REQUEST_LIMIT) throw new Error("Generation request is too large");
-    const request = JSON.parse(raw.toString("utf8"));
+    const request = JSON.parse(await readBoundedSessionFile(
+        generation, "request.json", REQUEST_LIMIT, "Generation request"));
     const { integrity, ...payload } = request;
     const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     if (integrity !== hash || request.handoffId !== handoffId || request.requestId !== requestId) {
         throw new Error("Generation request integrity mismatch");
     }
     if (request.project !== projectRoot) throw new Error("Generation request is bound to another checkout");
-    const handoffPath = join(workspaceRoot, "speckit-canvas-designer",
-        "handoffs", handoffId, "handoff.json");
-    const handoffStat = await lstat(handoffPath);
-    if (!handoffStat.isFile() || handoffStat.size > 64 * 1024
-        || await realpath(handoffPath) !== handoffPath) {
-        throw new Error("Wizard handoff must be a bounded regular session file");
-    }
-    const handoff = JSON.parse(await readFile(handoffPath, "utf8"));
+    const handoffFolder = join(workspaceRoot, "speckit-canvas-designer", "handoffs", handoffId);
+    const handoff = JSON.parse(await readBoundedSessionFile(
+        handoffFolder, "handoff.json", 64 * 1024, "Wizard handoff"));
     if (handoff.handoffId !== handoffId || handoff.sourceFingerprint !== request.sourceFingerprint
         || handoff.sourceFingerprint !== createHash("sha256").update(JSON.stringify({
             workflow: handoff.workflow, selections: handoff.selections,
