@@ -272,7 +272,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     validator.validate(invalid)
 
-    def test_minimal_essentials_test_preset_replaces_only_stock_registration(self):
+    def test_minimal_essentials_test_preset_registers_only_required_controls(self):
         fixture = EXTENSIONS.parent / "spec-kit-presets/copilot-minimal-essentials-test"
         manifest = yaml.safe_load((fixture / "preset.yml").read_text("utf-8"))
         self.assertEqual(manifest["preset"]["id"], "copilot-minimal-essentials-test")
@@ -298,31 +298,21 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.validator.validate(page)
         self.assertEqual({key: value for key, value in page.items() if key != "$schema"},
                          {key: value for key, value in self.pages[0].items() if key != "$schema"})
-        stock_section = (
-            "## Canvas Design templates\n\n"
-            "- `designer-essentials-description` — `designer.setting-definition`, `replace`\n"
-            "- `designer-essentials-workflow-heading` — `designer.setting-definition`, `replace`\n"
-            "- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`\n"
-            "- `designer-essentials-header-logo` — `designer.setting-definition`, `replace`\n"
-            "- `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`\n"
-            "- `generated-workflow` — `generated.workflow-page-definition`, `replace`\n"
-            "- `generated-pipeline` — `generated.pipeline-renderer`, `replace`\n"
-            "- `shared-controls-image` — `shared.control-definition`, `replace`\n"
-            "- `designer-control-adapter-image` — `designer.control-adapter`, `replace`\n"
-            "- `generated-control-adapter-image` — `generated.control-adapter`, `replace`\n"
-            "- `shared-controls-text` — `shared.control-definition`, `replace`\n"
-            "- `designer-control-adapter-text` — `designer.control-adapter`, `replace`\n"
-            "- `generated-control-adapter-text` — `generated.control-adapter`, `replace`\n"
-            "- `shared-controls-checkbox` — `shared.control-definition`, `replace`\n"
-            "- `designer-control-adapter-checkbox` — `designer.control-adapter`, `replace`\n\n"
-        )
-        self.assertEqual(self.command.count(stock_section), 1)
         replaced = (fixture / "commands/load-page.md").read_text("utf-8")
         self.assertIn("designer-essentials", replaced)
         self.assertIn("## Canvas Design templates", replaced)
-        self.assertIn("designer-control-adapter-text", replaced)
         self.assertNotIn("designer-essentials-custom-slug", replaced)
         self.assertNotIn("shared-controls-image", replaced)
+        registrations = re.findall(
+            r"^- `([a-z0-9-]+)` — `([^`]+)`, `([^`]+)`$", replaced, re.MULTILINE,
+        )
+        self.assertEqual(registrations, [
+            ("generated-workflow", "generated.workflow-page-definition", "replace"),
+            ("generated-pipeline", "generated.pipeline-renderer", "replace"),
+            ("shared-controls-text", "shared.control-definition", "replace"),
+            ("designer-control-adapter-text", "designer.control-adapter", "replace"),
+            ("generated-control-adapter-text", "generated.control-adapter", "replace"),
+        ])
         self.assertNotIn(manifest["preset"]["id"],
                          json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
                                     .read_text("utf-8"))["presets"])

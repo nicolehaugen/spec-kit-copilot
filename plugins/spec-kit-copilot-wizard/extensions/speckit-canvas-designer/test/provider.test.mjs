@@ -151,6 +151,34 @@ async function stockImageTemplates(project) {
     }));
 }
 
+test("stock image picker announces its format hint and upload error", async (t) => {
+    const previousDocument = globalThis.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const element = () => ({
+        children: [], attributes: new Map(), classList: { add() {} },
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        getAttribute(name) { return this.attributes.get(name); },
+        removeAttribute(name) { this.attributes.delete(name); },
+        addEventListener() {},
+        append(...children) { this.children.push(...children); },
+        replaceChildren(...children) { this.children = children; },
+    });
+    globalThis.document = { createElement: element };
+    const { mount } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/controls/stock-image/designer.mjs",
+        import.meta.url));
+    const root = element();
+    mount({ root, field: { id: "canvas.logo", label: "Header logo",
+        description: "PNG or JPEG, up to 32 KiB.", validation: { type: "image",
+            maxBytes: 32768, mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] } },
+        value: "", context: { setBusy() {} }, onChange() {} });
+    const input = root.children[2].children[0];
+    const error = root.children[3];
+    const hint = root.children[4];
+    assert.equal(hint.textContent, "PNG or JPEG, up to 32 KiB.");
+    assert.equal(input.getAttribute("aria-describedby"), `${hint.id} ${error.id}`);
+});
+
 function stockImageRegistration(_root, name) {
     const stock = name.startsWith("shared-controls-image")
         || ["designer-control-adapter-image", "generated-control-adapter-image"].includes(name);
@@ -520,8 +548,57 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     const mainLogo = `data:image/gif;base64,${gif.toString("base64")}`;
     assert.deepEqual(decodeImage(logo).bytes, png);
     assert.deepEqual(decodeImage(mainLogo).bytes, gif);
+    const jpeg = Buffer.from([
+        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/",
+        "2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/",
+        "8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/",
+        "8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/",
+        "9oADAMBAAIRAxEAPwD50ooor8MP9Uz/2Q==",
+    ].join(""), "base64");
+    assert.deepEqual(decodeImage(`data:image/jpeg;base64,${jpeg.toString("base64")}`).bytes, jpeg);
+    for (const bytes of [
+        Buffer.from([255, 216, 255, 255, 217]),
+        Buffer.from([255, 216, 255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0, 255, 217]),
+        Buffer.concat([jpeg.subarray(0, 30), jpeg.subarray(-2)]),
+    ]) {
+        assert.throws(() => decodeImage(`data:image/jpeg;base64,${bytes.toString("base64")}`),
+            /image bytes do not match/);
+    }
     const values = { ...model.values, "canvas.id": "with-logo",
         "canvas.displayName": "Logo test", "canvas.logo": logo, "canvas.mainPageLogo": mainLogo };
+    const imageContribution = model.contributions.find((item) => item.field.id === "canvas.logo");
+    const extraImages = Array.from({ length: 9 }, (_, index) => ({
+        ...imageContribution,
+        field: { ...imageContribution.field, id: `extra.image${index}`, label: `Extra ${index}` },
+        generatedBinding: { ...imageContribution.generatedBinding, slot: `header.extra${index}` },
+    }));
+    const manyImages = { ...model,
+        contributions: [...model.contributions, ...extraImages],
+        constraints: { ...model.constraints, ...Object.fromEntries(extraImages.map((item) =>
+            [item.field.id, model.constraints["canvas.logo"]])) } };
+    const emptyImages = { ...model.values, "canvas.id": "image-count",
+        "canvas.displayName": "Image count",
+        ...Object.fromEntries(extraImages.map((item) => [item.field.id, ""])) };
+    const emptyPrepared = await freezeGeneration({
+        model: manyImages, values: emptyImages, handoff, project, workspace,
+    });
+    const frozenRequest = async (requestId) => JSON.parse(await readFile(join(workspace,
+        "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", requestId, "request.json"), "utf8"));
+    assert.equal((await frozenRequest(emptyPrepared.requestId)).generatedAssets, undefined);
+    const tenImages = { ...emptyImages, "canvas.logo": logo, "canvas.mainPageLogo": mainLogo,
+        ...Object.fromEntries(extraImages.slice(0, 8).map((item) => [item.field.id, logo])) };
+    const tenPrepared = await freezeGeneration({
+        model: manyImages, values: tenImages, handoff, project, workspace,
+    });
+    assert.equal((await frozenRequest(tenPrepared.requestId)).generatedAssets.length, 10);
+    await assert.rejects(freezeGeneration({ model: manyImages,
+        values: { ...tenImages, [extraImages[8].field.id]: logo },
+        handoff, project, workspace }), /10-image limit/);
+    await assert.rejects(freezeGeneration({ model: { ...manyImages,
+        contributions: [...model.contributions, { ...extraImages[0],
+            generatedBinding: imageContribution.generatedBinding }] },
+        values: emptyImages, handoff, project, workspace }), /slots must be unique/);
     for (const bad of ["data:image/svg+xml;base64,PHN2Zz4=", "data:image/png;base64,AAAA",
         `data:image/png;base64,${Buffer.alloc(32769).toString("base64")}`, "data:image/png;base64,?"]) {
         if (bad.length <= Math.ceil(32768 / 3) * 4 + 64) {
@@ -990,7 +1067,7 @@ test("settings reads stay bounded when the file grows after its initial stat", a
             return {
                 stat: async () => {
                     const before = await file.stat();
-                    await appendFile(join(folder, "settings.json"), "x".repeat(256 * 1024 + 1));
+                    await appendFile(join(folder, "settings.json"), "x".repeat(SETTINGS_LIMIT + 1));
                     return before;
                 },
                 read: (...args) => file.read(...args),
@@ -1185,7 +1262,7 @@ test("token-gated Save endpoint reports errors without losing the current values
     assert.equal((await (await fetch(stateUrl)).json()).values["canvas.id"], "UPPER");
 });
 
-test("Save reserves space for the stored envelope and rejects larger valid requests", async (t) => {
+test("Save accepts a bounded request and rejects one byte over the limit", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff("a".repeat(128));
     const folder = await saveHandoff(workspace, handoff);
@@ -1208,22 +1285,23 @@ test("Save reserves space for the stored envelope and rejects larger valid reque
         values[id] = "x".repeat(length);
         remaining -= length;
     }
-    assert.equal(remaining, 0);
     const body = JSON.stringify(payload);
-    assert.equal(Buffer.byteLength(body), SAVE_REQUEST_LIMIT);
+    assert.ok(Buffer.byteLength(body) < SAVE_REQUEST_LIMIT);
+    const padded = body + " ".repeat(SAVE_REQUEST_LIMIT - Buffer.byteLength(body));
+    assert.equal(Buffer.byteLength(padded), SAVE_REQUEST_LIMIT);
     const shell = await startShell(handoff, model, { project, workspace });
     t.after(() => shell.close());
     const saveUrl = new URL(shell.url);
     saveUrl.pathname = "/api/save";
     const response = await fetch(saveUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: `${body} ` });
+        body: `${padded} ` });
     assert.equal(response.status, 413);
     assert.match(response.headers.get("content-type"), /application\/json/);
     assert.deepEqual(await response.json(), { error: "Designer save request is too large" });
     await assert.rejects(readFile(join(folder, "settings.json")), { code: "ENOENT" });
     const accepted = await fetch(saveUrl, { method: "POST",
-        headers: { "Content-Type": "application/json" }, body });
+        headers: { "Content-Type": "application/json" }, body: padded });
     assert.equal(accepted.status, 200);
     assert.equal((await accepted.json()).settingsRevision, 1);
     assert.ok((await readFile(join(folder, "settings.json"))).length <= SETTINGS_LIMIT);

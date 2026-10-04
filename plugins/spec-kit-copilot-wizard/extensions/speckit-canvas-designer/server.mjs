@@ -157,7 +157,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 let size = 0;
                 for await (const chunk of req) {
                     size += chunk.length;
-                    if (size > SETTINGS_LIMIT) throw new Error("Generation request exceeds 256KB");
+                    if (size > SETTINGS_LIMIT) throw new Error("Generation request exceeds 1 MiB");
                     chunks.push(chunk);
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));

@@ -176,7 +176,8 @@ test("Main page Logo upload explains rejection beside the picker and clears on r
         const picker = page.locator('input[type="file"]');
         const feedback = page.locator(`[id="${await picker.getAttribute("id")}-error"]`);
         await expect(feedback).toHaveAttribute("role", "alert");
-        await expect(picker).toHaveAttribute("aria-describedby", await feedback.getAttribute("id"));
+        await expect(picker).toHaveAttribute("aria-describedby",
+            `${await picker.getAttribute("id")}-hint ${await feedback.getAttribute("id")}`);
 
         await picker.setInputFiles({ name: "large.png", mimeType: "image/png",
             buffer: Buffer.alloc(326439) });
@@ -250,12 +251,13 @@ test("pending or failed image selection blocks actions until completion or cance
         const good = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64");
         await picker.setInputFiles({ name: "good.png", mimeType: "image/png", buffer: good });
         await page.waitForFunction(() => window.uploadStarted);
-        await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.locator("#page-error")).toContainText("Header logo (canvas.logo) is still processing");
-        await page.getByRole("tab", { name: "Artifacts" }).click();
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await expect(page.getByRole("tab", { name: "Artifacts" })).toBeDisabled();
         await expect(page.getByRole("tab", { name: "Essentials" })).toHaveAttribute("aria-selected", "true");
         await page.evaluate(() => window.releaseUpload());
         await expect(page.getByAltText("Header logo preview")).toBeVisible();
+        await expect(page.getByRole("tab", { name: "Artifacts" })).toBeEnabled();
         await page.getByRole("tab", { name: "Artifacts" }).click();
         await expect(page.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
         await page.getByRole("tab", { name: "Essentials" }).click();

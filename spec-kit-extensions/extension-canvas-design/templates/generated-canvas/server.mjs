@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
 
@@ -8,6 +10,7 @@ const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "utf8");
 const pageAssets = readFileSync(new URL("./ui/page-assets.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
+const packageRoot = realpathSync(new URL(".", import.meta.url));
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
     "pages", "constitution", "message", "pipeline"];
@@ -197,7 +200,7 @@ export function readConfig() {
 }
 
 function readWorkflowPage(page) {
-    const definition = readFileSync(new URL("./pages/workflow.json", import.meta.url));
+    const definition = readPackagedFile(new URL("./pages/workflow.json", import.meta.url));
     if (createHash("sha256").update(definition).digest("hex") !== page.definitionHash) {
         throw new Error("Packaged Workflow page definition does not match its frozen hash");
     }
@@ -207,16 +210,56 @@ function readWorkflowPage(page) {
         || JSON.stringify(parsed.regions) !== JSON.stringify(page.regions)) {
         throw new Error("Packaged Workflow page definition differs from its frozen contract");
     }
-    const bytes = readFileSync(new URL(`./pages/${page.pipeline}.mjs`, import.meta.url));
+    const bytes = readPackagedFile(new URL(`./pages/${page.pipeline}.mjs`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
         || createHash("sha256").update(bytes).digest("hex") !== page.hash) {
         throw new Error("Packaged pipeline renderer does not match its frozen hash");
     }
     return bytes;
 }
+function readPackagedFile(url) {
+    const parent = dirname(fileURLToPath(url));
+    const checkParent = () => {
+        if (realpathSync(new URL(".", import.meta.url)) !== packageRoot
+            || realpathSync(parent) !== join(packageRoot, basename(parent))) {
+            throw new Error("Packaged asset directory escapes the generated canvas");
+        }
+    };
+    checkParent();
+    const before = lstatSync(url);
+    if (!before.isFile() || before.isSymbolicLink() || before.size > 32 * 1024) {
+        throw new Error("Packaged asset must be a regular file under 32 KiB");
+    }
+    const fd = openSync(url, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+        | (constants.O_NONBLOCK ?? 0));
+    try {
+        const opened = fstatSync(fd);
+        if (!opened.isFile() || opened.size > 32 * 1024
+            || opened.dev !== before.dev || opened.ino !== before.ino) {
+            throw new Error("Packaged asset changed or exceeds 32 KiB");
+        }
+        const buffer = Buffer.alloc(32 * 1024 + 1);
+        let size = 0;
+        while (size < buffer.length) {
+            const count = readSync(fd, buffer, size, buffer.length - size, null);
+            if (!count) break;
+            size += count;
+        }
+        const after = fstatSync(fd);
+        const current = lstatSync(url);
+        if (size > 32 * 1024 || size !== opened.size || after.size !== opened.size
+            || after.mtimeMs !== opened.mtimeMs || current.dev !== opened.dev
+            || current.ino !== opened.ino || current.size !== opened.size
+            || current.mtimeMs !== opened.mtimeMs) {
+            throw new Error("Packaged asset changed or exceeds 32 KiB");
+        }
+        checkParent();
+        return buffer.subarray(0, size);
+    } finally { closeSync(fd); }
+}
 
 function readImageAsset(asset) {
-    const bytes = readFileSync(new URL(`./assets/${asset.file}`, import.meta.url));
+    const bytes = readPackagedFile(new URL(`./assets/${asset.file}`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
         || createHash("sha256").update(bytes).digest("hex") !== asset.hash) {
         throw new Error("Packaged image does not match its frozen hash");
@@ -225,12 +268,12 @@ function readImageAsset(asset) {
 }
 
 function readImageControl(control) {
-    const bytes = readFileSync(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
+    const bytes = readPackagedFile(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
         || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
         throw new Error("Packaged stock.image adapter does not match its frozen hash");
     }
-    const definition = readFileSync(new URL(`./controls/${control.definition}.json`, import.meta.url));
+    const definition = readPackagedFile(new URL(`./controls/${control.definition}.json`, import.meta.url));
     const parsed = JSON.parse(definition);
     if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
         || parsed.id !== "stock.image" || parsed.adapters?.generated !== control.adapter
@@ -241,12 +284,12 @@ function readImageControl(control) {
     return bytes;
 }
 function readTextControl(control) {
-    const bytes = readFileSync(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
+    const bytes = readPackagedFile(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
         || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
         throw new Error("Packaged stock.text adapter does not match its frozen hash");
     }
-    const definition = readFileSync(new URL(`./controls/${control.definition}.json`, import.meta.url));
+    const definition = readPackagedFile(new URL(`./controls/${control.definition}.json`, import.meta.url));
     const parsed = JSON.parse(definition);
     if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
         || parsed.id !== "stock.text" || parsed.adapters?.generated !== control.adapter

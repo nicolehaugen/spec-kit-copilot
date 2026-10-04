@@ -4,7 +4,7 @@ import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
 
-export const SETTINGS_LIMIT = 256 * 1024;
+export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
 

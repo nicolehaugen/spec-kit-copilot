@@ -16,7 +16,7 @@ const RESERVED_GENERATED_PAGE_ID = "workflow";
 const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
     "pages", "constitution", "message", "pipeline"];
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 2 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 
 function withoutSchema(document) {

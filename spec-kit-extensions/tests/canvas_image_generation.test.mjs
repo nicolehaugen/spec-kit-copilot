@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { cp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { saveDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { mountPageAssets, createStockImageRenderer } from
@@ -109,6 +110,104 @@ test("stock.image resolves a unique frozen definition by control ID", async (t) 
         /Missing paired stock.image definition or generated adapter/);
 });
 
+test("ten maximum-size images fit Designer Save and the frozen generation request", async (t) => {
+    const { project, workspace, model, values } = await setup(t);
+    const base = Buffer.from(logo.split(",")[1], "base64");
+    const chunk = Buffer.alloc(32768 - base.length);
+    chunk.writeUInt32BE(chunk.length - 12, 0);
+    chunk.write("tEXt", 4);
+    chunk.fill(65, 8, chunk.length - 4);
+    chunk.write("Comment\0", 8);
+    let crc = 0xffffffff;
+    for (const byte of chunk.subarray(4, -4)) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit++) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
+    }
+    chunk.writeUInt32BE((crc ^ 0xffffffff) >>> 0, chunk.length - 4);
+    const maximum = `data:image/png;base64,${Buffer.concat([
+        base.subarray(0, -12), chunk, base.subarray(-12),
+    ]).toString("base64")}`;
+    const fields = { ...values };
+    const constraints = { ...model.constraints };
+    const contributions = [...model.contributions];
+    for (const contribution of contributions) fields[contribution.field.id] = maximum;
+    for (let index = 3; index < 10; index++) {
+        const id = `gallery.logo${index}`;
+        fields[id] = maximum;
+        constraints[id] = model.constraints["canvas.logo"];
+        contributions.push({ name: `extra-${index}`, field: {
+            id, label: `Gallery image ${index}`, type: "image", control: "stock.image",
+        }, generatedBinding: { presentation: "asset", page: "gallery",
+            slot: `gallery.extra${index}` } });
+    }
+    const expanded = { ...model, constraints, contributions };
+    assert.ok(Buffer.byteLength(JSON.stringify({ revision: model.revision, values: fields })) > 256 * 1024);
+    await saveDesignerSettings(workspace, handoff, expanded, {
+        revision: 0, modelRevision: model.revision, values: fields,
+    });
+    const prepared = await freezeGeneration({ model: expanded, values: fields, handoff,
+        project, workspace });
+    const frozen = await readFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json"));
+    assert.ok(frozen.length > 512 * 1024 && frozen.length <= 2 * 1024 * 1024);
+    assert.equal(JSON.parse(frozen).generatedAssets.length, 10);
+});
+
+test("image controls label removal and keep independent uploads busy until each finishes", async () => {
+    const { mount } = await import(new URL("controls/stock-image/designer.mjs", source));
+    const previousDocument = globalThis.document;
+    const previousImage = globalThis.Image;
+    const element = (tag) => ({
+        tag, children: [], attributes: new Map(), classList: { add() {} },
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        removeAttribute(name) { this.attributes.delete(name); },
+        addEventListener(name, handler) { this[name] = handler; },
+        replaceChildren(...children) { this.children = children; },
+        append(...children) { this.children.push(...children); },
+    });
+    globalThis.document = { createElement: element };
+    globalThis.Image = class {
+        set src(_value) { queueMicrotask(() => this.onload()); }
+    };
+    try {
+        const active = new Set();
+        const changes = [];
+        const pending = [];
+        const png = Buffer.from(logo.split(",")[1], "base64");
+        for (const label of ["Header logo", "Main page logo"]) {
+            const root = element("div");
+            root.isConnected = true;
+            let finish;
+            const bytes = new Promise((resolve) => { finish = resolve; });
+            mount({ root, field: { id: label.replaceAll(" ", "-"), label,
+                validation: { type: "image", maxBytes: 32768,
+                    mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] } },
+                value: "", context: {
+                setBusy(busy) { if (busy) active.add(label); else active.delete(label); },
+            }, onChange(value) { changes.push({ label, value }); } });
+            const input = root.children[2].children[0];
+            const remove = root.children[2].children[1];
+            assert.equal(remove.attributes.get("aria-label"), `Remove ${label} image`);
+            input.files = [{ type: "image/png", size: png.length, arrayBuffer: () => bytes }];
+            pending.push({ root, input, remove, finish, operation: input.change() });
+        }
+        assert.equal(active.size, 2);
+        assert.ok(pending.every(({ input, remove }) => input.disabled && remove.disabled));
+        pending[0].finish(png);
+        await pending[0].operation;
+        assert.deepEqual([...active], ["Main page logo"]);
+        assert.equal(changes.length, 1);
+        pending[1].root.isConnected = false;
+        pending[1].finish(png);
+        await pending[1].operation;
+        assert.equal(active.size, 0);
+        assert.equal(changes.length, 1);
+    } finally {
+        globalThis.document = previousDocument;
+        globalThis.Image = previousImage;
+    }
+});
+
 test("one frozen stock.image adapter renders Header, Main and gallery without design-time files", async (t) => {
     const { project, workspace, prepared, sdk, requestPath } = await setup(t);
     const request = JSON.parse(await readFile(requestPath, "utf8"));
@@ -158,9 +257,35 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
     assert.throws(() => readConfig(), /adapter does not match its frozen hash/);
     assert.equal((await fetch(`${url}/controls/generated-control-adapter-image.mjs?token=secret`)).status, 500);
     await writeFile(packaged, await readFile(new URL("controls/stock-image/generated.mjs", source)));
+    await writeFile(join(sdk, "assets", "logo.png"), Buffer.alloc(32 * 1024 + 1));
+    assert.throws(() => readConfig(), /regular file under 32 KiB/);
     await writeFile(join(sdk, "assets", "logo.png"), "tampered");
     assert.throws(() => readConfig(), /image does not match its frozen hash/);
     assert.equal((await fetch(`${url}/assets/logo.png?token=secret`)).status, 500);
+});
+
+test("generated canvas rejects packaged asset directories redirected outside its root", async (t) => {
+    for (const kind of ["assets", "controls"]) {
+        await t.test(kind, async (subtest) => {
+            const { project, workspace, prepared, sdk } = await setup(subtest);
+            await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+            const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+            const directory = join(sdk, kind);
+            const outside = join(workspace, `external-${kind}`);
+            await cp(directory, outside, { recursive: true });
+            await rename(directory, join(sdk, `original-${kind}`));
+            try {
+                await symlink(outside, directory, process.platform === "win32" ? "junction" : "dir");
+            } catch (error) {
+                if (["EPERM", "EACCES", "ENOTSUP"].includes(error.code)) {
+                    subtest.skip("Directory symlinks are unavailable on this host");
+                    return;
+                }
+                throw error;
+            }
+            assert.throws(() => readConfig(), /Packaged asset directory escapes/);
+        });
+    }
 });
 
 test("missing Logo keeps diamond; frozen image and adapter tampering fail before packaging", async (t) => {

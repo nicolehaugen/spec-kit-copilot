@@ -7,7 +7,8 @@
  * field: The Designer supplies canonical id, label, optional description,
  * control, and validation rules; request values cannot redefine these rules.
  * mount: The Designer creates an empty <div> for each control and passes it
- * as root. Render and style only inside that div. onChange(nextValue) updates
+ * as root, with context.setBusy(busy) to block actions during an upload.
+ * Render and style only inside that div. onChange(nextValue) updates
  * the unsaved draft without remounting; return { isReady(): boolean }.
  * The Designer requires isReady() === true before Save, Generate, or tab exit.
  * isReady is false during an upload or after failure until retry or cancellation.
@@ -50,14 +51,15 @@ export function validate(value, field) {
                 .map((character) => character.charCodeAt(0))).buffer).getUint32(0, true) + 8 === bytes.length);
 }
 
-export function mount({ root, field, value, onChange }) {
+export function mount({ root, field, value, onChange, context }) {
     const rules = field?.validation;
+    const setBusy = context?.setBusy;
     if (!root || typeof root.replaceChildren !== "function"
         || !field || typeof field.label !== "string"
         || typeof value !== "string" || rules?.type !== "image"
         || rules.maxBytes !== valueContract.maxBytes
         || JSON.stringify(rules.mimeTypes) !== JSON.stringify(valueContract.mimeTypes)
-        || typeof onChange !== "function") {
+        || typeof onChange !== "function" || typeof setBusy !== "function") {
         throw new Error("Invalid Designer image control or value");
     }
     const element = (tag, text, className) => {
@@ -76,7 +78,9 @@ export function mount({ root, field, value, onChange }) {
     uploadError.id = `${input.id}-error`;
     uploadError.setAttribute("role", "alert");
     uploadError.hidden = true;
-    input.setAttribute("aria-describedby", uploadError.id);
+    const hint = field.description ? element("p", field.description, "settings-hint") : null;
+    if (hint) hint.id = `${input.id}-hint`;
+    input.setAttribute("aria-describedby", [hint?.id, uploadError.id].filter(Boolean).join(" "));
     const setUploadError = (message) => {
         uploadError.textContent = message;
         uploadError.hidden = !message;
@@ -125,6 +129,7 @@ export function mount({ root, field, value, onChange }) {
         input.disabled = true;
         remove.disabled = true;
         cancel.hidden = true;
+        setBusy(true);
         setUploadError("");
         try {
             const bytes = new Uint8Array(await file.arrayBuffer());
@@ -151,6 +156,7 @@ export function mount({ root, field, value, onChange }) {
                 input.value = "";
                 input.disabled = false;
                 remove.disabled = false;
+                setBusy(false);
             }
         }
     });
@@ -169,7 +175,7 @@ export function mount({ root, field, value, onChange }) {
     controls.append(input, remove, cancel);
     root.classList.add("settings-image-content");
     root.replaceChildren(label, preview, controls, uploadError);
-    if (field.description) root.append(element("p", field.description, "settings-hint"));
+    if (hint) root.append(hint);
     refresh();
     return { isReady: () => !pending && !failed };
 }

@@ -9,7 +9,7 @@ import { decodeImage } from "./image.mjs";
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 2 * 1024 * 1024;
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "designer-essentials");
@@ -86,11 +86,10 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const imageContributions = (model.contributions ?? [])
         .filter((item) => item.field.type === "image"
             && item.generatedBinding?.presentation === "asset");
-    if (imageContributions.length > 10
-        || new Set(imageContributions.map((item) =>
+    if (new Set(imageContributions.map((item) =>
             `${item.generatedBinding.page ?? "workflow"}:${item.generatedBinding.slot}`)).size
             !== imageContributions.length) {
-        throw new Error("Generated asset slots must be unique and at most ten");
+        throw new Error("Generated asset slots must be unique");
     }
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
@@ -138,6 +137,9 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             mime: image.mime, hash: createHash("sha256").update(image.bytes).digest("hex"),
             content: image.bytes.toString("base64") }] : [];
     });
+    if (generatedAssets.length > 10) {
+        throw new Error("Generated images exceed the 10-image limit");
+    }
     const controlContributions = (model.contributions ?? [])
         .filter((item) => item.generatedBinding?.presentation === "control");
     if (controlContributions.length > 30) {
@@ -245,7 +247,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     request.integrity = createHash("sha256").update(payload).digest("hex");
     const serialized = JSON.stringify(request);
     if (Buffer.byteLength(serialized) > REQUEST_LIMIT) {
-        throw new Error("Frozen generation request exceeds 512KB");
+        throw new Error("Frozen generation request exceeds 2 MiB");
     }
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", requestId);
