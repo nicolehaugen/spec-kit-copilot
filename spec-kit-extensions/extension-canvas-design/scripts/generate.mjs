@@ -27,6 +27,10 @@ function configuration(request) {
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]
+        || typeof values?.["canvas.description"] !== "string"
+        || typeof values?.["canvas.workflowListName"] !== "string"
+        || canvas.description !== (values["canvas.description"] || "Spec Kit workflow canvas.")
+        || canvas.workflowListName !== (values["canvas.workflowListName"] || "Workflows")
         || typeof values?.["workflowSlug.userProvided"] !== "boolean"
         || !workflow || !Array.isArray(workflow.selectedPhases) || !workflow.selectedPhases.length
         || workflow.selectedPhases.length > 30 || new Set(workflow.selectedPhases).size !== workflow.selectedPhases.length

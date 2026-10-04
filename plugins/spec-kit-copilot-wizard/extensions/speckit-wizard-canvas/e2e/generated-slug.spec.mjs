@@ -389,7 +389,8 @@ test("artifact viewer matches the Wizard full-page layout and returns to the can
     const canvas = await openGeneratedCanvas(false);
     try {
         await mkdir(join(canvas.root, "specs", "sample-feature"), { recursive: true });
-        await writeFile(join(canvas.root, "specs", "sample-feature", "spec.md"),
+        const artifact = join(canvas.root, "specs", "sample-feature", "spec.md");
+        await writeFile(artifact,
             "# Sample feature\n\nDetails. <!-- hidden -->\n\n```html\n<!-- important -->\n<div>Example</div>\n```\n");
         await page.goto(canvas.url);
         await page.getByRole("button", { name: "sample-feature", exact: true }).click();
@@ -403,6 +404,11 @@ test("artifact viewer matches the Wizard full-page layout and returns to the can
         await expect(viewer.locator("#artifact-content")).not.toContainText("hidden");
         await expect(viewer.locator("#artifact-content pre code"))
             .toHaveText("<!-- important -->\n<div>Example</div>");
+        await writeFile(artifact, "");
+        canvas.broadcast();
+        await expect(viewer.locator("#artifact-message"))
+            .toHaveText("Artifact is empty or still being written. Refresh to try again.");
+        await expect(viewer.locator("#artifact-content")).toBeEmpty();
         await expect(viewer.getByRole("button", { name: "Refresh" })).toHaveCount(0);
         expect(await viewer.evaluate((element) => {
             const bounds = element.getBoundingClientRect();

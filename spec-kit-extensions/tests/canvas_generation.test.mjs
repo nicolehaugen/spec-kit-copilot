@@ -96,6 +96,39 @@ test("materialization rejects a re-signed request with a Windows device Canvas I
     await assert.rejects(readdir(join(project, ".github", "extensions")), { code: "ENOENT" });
 });
 
+test("materialization rejects re-signed requests that diverge from frozen Essentials", async (t) => {
+    for (const [field, canvasField, original] of [
+        ["canvas.description", "description", values["canvas.description"]],
+        ["canvas.workflowListName", "workflowListName", values["canvas.workflowListName"]],
+        ["canvas.description", "description", ""],
+        ["canvas.workflowListName", "workflowListName", ""],
+    ]) {
+        await t.test(`${field} ${original ? "explicit" : "default"}`, async (child) => {
+            const selectedValues = { ...values, [field]: original };
+            const { project, workspace, prepared, sdk } = await fixture(child, handoff, selectedValues);
+            const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                "generations", prepared.requestId, "request.json");
+            const request = JSON.parse(await readFile(path, "utf8"));
+            request.canvas[canvasField] = "A different value";
+            const { integrity, ...payload } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+            await writeFile(path, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /Invalid frozen canvas identity/);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
+});
+
+test("materialization accepts frozen default description and workflow header", async (t) => {
+    const selectedValues = { ...values, "canvas.description": "", "canvas.workflowListName": "" };
+    const { project, workspace, prepared, sdk } = await fixture(t, handoff, selectedValues);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.equal(config.canvas.description, "Spec Kit workflow canvas.");
+    assert.equal(config.canvas.workflowListName, "Workflows");
+});
+
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     const result = await materialize(project, workspace, handoff.handoffId, prepared.requestId);

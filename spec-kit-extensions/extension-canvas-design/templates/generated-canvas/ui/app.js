@@ -396,7 +396,7 @@ async function refreshArtifact() {
         const result = await api(`/api/artifact?${query}`);
         if (viewer !== context) return;
         $("artifact-path").textContent = result.path;
-        if (result.content.trim() || !context.loaded) $("artifact-content").innerHTML = renderMarkdown(result.content);
+        $("artifact-content").innerHTML = renderMarkdown(result.content);
         context.loaded = true;
         message(result.message ?? "", "artifact-message");
     } catch (error) {
