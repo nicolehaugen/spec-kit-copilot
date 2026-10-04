@@ -16,7 +16,8 @@ export function phaseResponse(events, messageId) {
         const data = event.data ?? {};
         if (event.agentId || data.parentToolCallId) continue;
         if (event.type === "user.message" && data.messageId === messageId) {
-            if (!data.interactionId) return { response: null, error: "The phase response could not be associated with its dispatched message." };
+            if (!data.interactionId) return { response: null,
+                error: "The phase response could not be associated with its dispatched message.", success: false };
             interaction = data.interactionId;
         }
         if (event.type === "assistant.turn_start") {

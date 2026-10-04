@@ -10,10 +10,11 @@ import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     checkDesignerProvider, DESIGNER_EXTENSION_ID, enableDesignerProvider,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
-    readInstalledWorkflowInventory, validateDesignerSelections,
+    readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
+import { buildAugmentedPath } from "../env/resolve-path.mjs";
 
 // Real, valid manifests in this repo (same fixtures e2e/canvas-designer.spec.mjs
 // uses), so local-dev validation and precedence are exercised against actual
@@ -229,7 +230,9 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         bundles: [{ bundle_id: "workflow-kit", version: "2.0.0" }],
     });
     const runtime = fixture({ getInstalledWorkflow: async () => installed });
-    runtime.setSnapshot({ ...snapshot, composition: {
+    runtime.setSnapshot({ ...snapshot, catalog: { ...catalog,
+        bundles: [{ id: "workflow-kit", version: "2.0.0", source: "default" }] },
+    composition: {
         presets: [{ id: "copilot-sub-agents", priority: 10 }],
         extensions: [{ id: "extension-writer", priority: 10 }],
         bundles: [{ id: "workflow-kit", version: "2.0.0" }],
@@ -238,7 +241,8 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         extensions: [], bundles: [] };
     assert.equal((await runtime.post(request(selection))).statusCode, 202);
     const handoff = JSON.parse(runtime.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
-    assert.deepEqual(handoff.workflow.installed, installed);
+    assert.deepEqual(handoff.workflow.installed, { ...installed,
+        bundles: [{ id: "workflow-kit", version: "2.0.0", source: "default", downloadUrl: null }] });
     assert.match(runtime.sent[0].prompt, /--priority.*set-priority/);
     assert.match(runtime.sent[0].prompt, /including entries not tagged canvas-design/);
     assert.deepEqual(handoff.selections.presets.map((item) => item.id), ["theme"]);
@@ -255,6 +259,38 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
     }, handoff.handoffId), /fingerprint mismatch/);
 });
 
+test("runtime bundles reuse Wizard catalog locators and reject missing or ambiguous sources before dispatch", async () => {
+    const bundles = [{ id: "community-kit", version: "1.0.0" }];
+    const entry = { id: "community-kit", version: "1.0.0", source: "community",
+        downloadUrl: "https://example.org/community-kit.zip" };
+    assert.deepEqual(resolveInstalledBundleSources(bundles, [entry]),
+        [{ ...bundles[0], source: "community", downloadUrl: entry.downloadUrl }]);
+    assert.deepEqual(resolveInstalledBundleSources([{ id: "built-in", version: "2.0.0" }],
+        [{ id: "catalog-alias", installedId: "built-in", version: "2.0.0", source: "default" }]),
+    [{ id: "built-in", version: "2.0.0", source: "default",
+        downloadUrl: null, catalogId: "catalog-alias" }]);
+    const runtime = fixture({ getInstalledWorkflow: async () => ({
+        ...empty, bundles,
+    }) });
+    runtime.setSnapshot({ ...snapshot, catalog: { ...catalog, bundles: [entry] } });
+    assert.equal((await runtime.post(request())).statusCode, 202);
+    const handoff = JSON.parse(runtime.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
+    assert.deepEqual(handoff.workflow.installed.bundles,
+        [{ ...bundles[0], source: "community", downloadUrl: entry.downloadUrl }]);
+    assert.match(runtime.sent[0].prompt, /Bundles with a downloadUrl require downloading a temporary ZIP/);
+    for (const entries of [
+        [], [entry, { ...entry, source: "default" }],
+        [{ ...entry, downloadUrl: null }],
+        [{ ...entry, downloadUrl: "http://example.org/unsafe.zip" }],
+    ]) {
+        const blocked = fixture({ getInstalledWorkflow: async () => ({ ...empty, bundles }) });
+        blocked.setSnapshot({ ...snapshot, catalog: { ...catalog, bundles: entries } });
+        const response = await blocked.post(request());
+        assert.equal(response.statusCode, 422);
+        assert.equal(blocked.sent.length, 0);
+    }
+});
+
 test("live CLI inventory is read from the Wizard checkout, including priorities", async () => {
     const path = await mkdtemp(join(tmpdir(), "designer-inventory-"));
     try {
@@ -265,7 +301,7 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
         const calls = [];
         const installed = await readInstalledWorkflowInventory({ workspacePath: path },
             async (binary, args, options) => {
-                calls.push({ binary, args, cwd: options.cwd });
+                calls.push({ binary, args, cwd: options.cwd, env: options.env });
                 const item = args[0] === "bundle"
                     ? [{ bundle_id: "kit", version: "2.0.0" }]
                     : args[0] === "preset"
@@ -278,6 +314,8 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
             ["bundle", "list", "--json"],
         ]);
         assert.ok(calls.every(({ cwd }) => cwd === path));
+        const augmentedPath = await buildAugmentedPath();
+        assert.ok(calls.every(({ env }) => env?.PATH === augmentedPath));
         assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0",
             priority: 1, source: "local", path: presetPath }]);
         assert.deepEqual(installed.bundles, [{ id: "kit", version: "2.0.0" }]);

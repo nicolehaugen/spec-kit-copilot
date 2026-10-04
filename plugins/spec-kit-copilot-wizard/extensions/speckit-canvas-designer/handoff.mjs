@@ -78,19 +78,24 @@ export function validateHandoff(handoff, id) {
                     || handoff.workflow.installed[kind].length > 40
                     || handoff.workflow.installed[kind].some((item) => !record(item)
                         || Object.keys(item).some((key) =>
-                            !["id", "version", "source", "priority", "path", "downloadUrl"].includes(key))
+                            !["id", "version", "source", "priority", "path", "downloadUrl", "catalogId"].includes(key))
                         || typeof item.id !== "string" || !PACKAGE.test(item.id)
                         || (kind !== "bundles"
                             && !Number.isSafeInteger(item.priority))
                         || (kind === "bundles" && item.priority !== undefined)
+                        || (item.catalogId !== undefined
+                            && (kind !== "bundles" || item.source !== "default"
+                                || typeof item.catalogId !== "string" || !PACKAGE.test(item.catalogId)))
                         || (item.source !== undefined
                             && (typeof item.source !== "string" || !PACKAGE.test(item.source)))
                         || (item.path !== undefined
-                            && (item.source === undefined || !LOCAL_PATH.test(item.path)
+                            && (kind === "bundles" || item.source === undefined || !LOCAL_PATH.test(item.path)
                                 || item.downloadUrl !== undefined))
                         || (item.downloadUrl !== undefined
                             && (item.source === "local" || item.path !== undefined
-                                || typeof item.downloadUrl !== "string" || !safeUrl(item.downloadUrl)))
+                                || (item.downloadUrl === null
+                                    ? kind !== "bundles" || item.source !== "default"
+                                    : typeof item.downloadUrl !== "string" || !safeUrl(item.downloadUrl))))
                         || typeof item.version !== "string" || !item.version || item.version.length > 64))))
         || !record(handoff.selections)
         || Object.keys(handoff.selections).some((kind) => !KINDS.includes(kind))
