@@ -1343,8 +1343,10 @@ test("paired control validates both adapters, typed values and portable generate
     assert.deepEqual(model.values["risk.rating"], null);
     assert.equal(model.generatedPages.length, 0);
     assert.equal(model.adapters["risk-matrix"], "canvas-control-risk-matrix-designer");
+    assert.equal(model.controls[0].template, templates[0].name);
     const controlDocument = JSON.parse(await readFile(templates[0].path, "utf8"));
-    const contributionDocument = JSON.parse(await readFile(templates[1].path, "utf8"));
+    const contributionSource = await readFile(templates[1].path, "utf8");
+    const contributionDocument = JSON.parse(contributionSource);
     const secondField = { ...contributionDocument, id: "risk-second-field",
         field: { ...contributionDocument.field, id: "risk.second", label: "Second risk" } };
     const secondFieldTemplate = { ...templates[1], name: "canvas-contributions-risk-second",
@@ -1372,6 +1374,21 @@ test("paired control validates both adapters, typed values and portable generate
     }));
     await assert.rejects(load([...templates, secondControlTemplate, secondFieldTemplate,
         secondDesignerAdapter]), /generated adapter belongs to both risk-matrix and risk-other/);
+    const secondGeneratedAdapter = { ...templates[3], name: "canvas-control-risk-other-generated",
+        path: join(directory, "risk-other-generated.mjs") };
+    await copyFile(templates[3].path, secondGeneratedAdapter.path);
+    await writeFile(secondControlTemplate.path, JSON.stringify({
+        ...controlDocument, id: "risk-other",
+        adapters: { designer: secondDesignerAdapter.name, generated: secondGeneratedAdapter.name },
+    }));
+    const bothControls = [...templates, secondControlTemplate, secondFieldTemplate,
+        secondDesignerAdapter, secondGeneratedAdapter];
+    assert.equal((await load(bothControls)).controls.length, 2);
+    await writeFile(templates[1].path, JSON.stringify({
+        ...contributionDocument, requires: [secondControlTemplate.name, templates[0].name],
+    }));
+    await assert.rejects(load(bothControls), /object field requires exactly one control definition template/);
+    await writeFile(templates[1].path, contributionSource);
     const designerAdapter = templates[2];
     const designerModule = await readFile(designerAdapter.path, "utf8");
     await writeFile(designerAdapter.path, `${designerModule}\nprocess.exit(57);`);
@@ -1455,6 +1472,8 @@ test("paired control validates both adapters, typed values and portable generate
     const atLimitRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", atLimit.requestId, "request.json")));
     assert.equal(atLimitRequest.generatedControls.length, 30);
+    assert.ok(atLimitRequest.generatedControls.every((item) =>
+        item.assets[0].name === templates[0].name));
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { modelRevision: model.revision, revision: 0, values });
     const reopened = await loadDesignerSettings(workspace, handoff, await load());
@@ -1472,6 +1491,17 @@ test("paired control validates both adapters, typed values and portable generate
     await assert.rejects(load(templates, () => ({ kind: "script", stack: [] })),
         /replace-only Specify template/);
     const definition = templates[0];
+    for (const requires of [
+        null, undefined, [], [templates[2].name],
+        [templates[2].name, definition.name], [definition.name, definition.name],
+    ]) {
+        const invalid = { ...contributionDocument };
+        if (requires === undefined) delete invalid.requires;
+        else invalid.requires = requires;
+        await writeFile(templates[1].path, JSON.stringify(invalid));
+        await assert.rejects(load(), /object field requires exactly one control definition template|missing or incompatible shared control definition/);
+    }
+    await writeFile(templates[1].path, contributionSource);
     const original = await readFile(definition.path, "utf8");
     await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
     await assert.rejects(load(), /invalid shared control value contract|incompatible shared control/);

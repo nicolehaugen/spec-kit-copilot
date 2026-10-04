@@ -75,10 +75,14 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     for (const contribution of controlContributions) {
         const control = model.controls.find((entry) => entry.id === contribution.field.control);
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
+        const definition = model.templates.find((entry) => entry.name === control.template
+            && entry.kind === "control.definition");
+        if (!definition || contribution.requires?.length !== 1
+            || contribution.requires[0] !== definition.name) {
+            throw new Error(`${contribution.name}: missing matching shared control definition`);
+        }
         const names = [
-            model.templates.find((entry) => entry.kind === "control.definition"
-                && entry.name === contribution.requires.find((name) =>
-                    model.templates.some((item) => item.name === name && item.kind === "control.definition"))),
+            definition,
             model.templates.find((entry) => entry.name === control.adapters.generated
                 && entry.kind === "generated.adapter"),
         ];

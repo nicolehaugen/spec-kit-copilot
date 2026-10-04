@@ -300,7 +300,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
     handoff.sourceFingerprint = fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
     });
-    let shell, reopened, broken, incompatible, brokenContext, server;
+    let shell, reopened, stale, broken, incompatible, brokenContext, server;
     try {
         await mkdir(project);
         const run = (...args) => {
@@ -390,6 +390,32 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         await page.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
         await expect(page.getByRole("table", { name: /impact medium, likelihood medium/ })).toBeVisible();
         await expect(page.locator('[data-control-id="risk.rating"] [aria-current="true"]')).toHaveText("Selected");
+        const contract = JSON.parse(await readFile(templates[0].path, "utf8")).value;
+        const adapterPattern = `**/adapters/${templates[2].name}.mjs*`;
+        await page.route(adapterPattern, (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: `export const controlId = "risk-matrix";
+                export const valueContract = ${JSON.stringify(contract)};
+                export function mount({ root, onChange }) {
+                    (globalThis.controlCallbacks ??= []).push(onChange);
+                    root.textContent = "Adapter mounted";
+                }`,
+        }));
+        stale = await startShell(handoff, await load(), { project, workspace });
+        await page.goto(stale.url);
+        await page.waitForFunction(() => globalThis.controlCallbacks?.length === 1);
+        await page.getByRole("tab", { name: "Artifacts" }).click();
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await page.waitForFunction(() => globalThis.controlCallbacks?.length === 2);
+        await page.evaluate(() => {
+            globalThis.controlCallbacks[1]({ impact: "low", likelihood: "low" });
+            globalThis.controlCallbacks[0]({ impact: "high", likelihood: "high" });
+        });
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+        expect((await loadDesignerSettings(workspace, handoff, await load())).values["risk.rating"])
+            .toEqual({ impact: "low", likelihood: "low" });
+        await page.unroute(adapterPattern);
         const designerAdapter = await readFile(templates[2].path, "utf8");
         await writeFile(templates[2].path, "export const mount = null;");
         broken = await startShell(handoff,
@@ -417,6 +443,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         if (server) await new Promise((resolve) => server.close(resolve));
         await incompatible?.close();
         await broken?.close();
+        await stale?.close();
         await reopened?.close();
         await shell?.close();
         await rm(workspace, { recursive: true, force: true });

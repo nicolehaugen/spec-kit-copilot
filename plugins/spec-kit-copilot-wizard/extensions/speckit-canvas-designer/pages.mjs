@@ -212,6 +212,10 @@ function validateContribution(document, name, slots, fieldOrigins) {
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
     }
+    if (field.type === "object"
+        && (document.requires?.length !== 1 || typeof document.requires[0] !== "string")) {
+        throw new Error(`${name}: object field requires exactly one control definition template`);
+    }
     const binding = document.generatedBinding;
     if (binding !== undefined
         && (!binding
@@ -446,8 +450,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     for (const entry of loaded.filter((item) => item.kind === "designer.field"
         && item.document.field.type === "object")) {
-        if (!controls.some((control) => control.document.id === entry.document.field.control
-            && entry.document.requires.includes(control.name))) {
+        const control = controls.find((item) => item.name === entry.document.requires[0]);
+        if (!control || control.document.id !== entry.document.field.control) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
         }
     }
@@ -573,7 +577,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         ({ name, sourceId, ...document }));
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.page")
         .map(({ name, document }) => ({ name, ...document }));
-    model.controls = controls.map(({ document }) => document);
+    model.controls = controls.map(({ name, document }) => ({ ...document, template: name }));
     model.adapters = Object.fromEntries(controls.map(({ document }) =>
         [document.id, document.adapters.designer]));
     for (const page of model.pages) {

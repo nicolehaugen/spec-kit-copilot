@@ -41,7 +41,10 @@ Designer page slot and are saved alongside built-in values. A registered
 `control.definition` for a typed object field must reference both a
 `designer.adapter` and `generated.adapter` replace-only template. Both modules
 export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
-to one control definition; multiple fields may reuse that control. The Designer
+to one control definition; multiple fields may reuse that control. Each object
+field's `requires` must name exactly one resolved `control.definition` matching
+its `control` ID; Designer retains that template name so Generate packages the
+validated definition rather than guessing from a list. The Designer
 mount receives the field, draft value, and change callback; the generated
 mount receives the frozen value and displays it read-only in the declared
 `details.content` slot. Missing, wrong-kind, non-replace, or multiply owned
@@ -53,7 +56,8 @@ native script registrations), checks module syntax and declared exports without 
 the bytes in Node, and rechecks Designer adapters before serving captured bytes.
 Changed assets require reopening Designer. The browser reports non-function
 `mount` exports, incompatible `controlId` or `valueContract` exports, and mount
-failures beside the affected control. It validates the page/renderer pair and freezes
+failures beside the affected control. Callbacks from controls removed during a
+tab change cannot overwrite the current draft. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Save rejects stale revisions and invalid values, and reports failures without

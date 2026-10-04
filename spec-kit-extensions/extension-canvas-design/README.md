@@ -126,7 +126,9 @@ bounded to 4 MiB to accommodate base64-encoded page assets while retaining
 the 32 KiB limit on each page definition and renderer. A typed object field can
 use a shared `control.definition` naming separate replace-only `designer.adapter`
 and `generated.adapter` templates; each module exports `mount`, `controlId`,
-and `valueContract`. The Designer adapter receives
+and `valueContract`. Each object-field contribution requires exactly one
+`control.definition` template matching its `field.control`, and Generate uses
+that validated template name. The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
 `{root, field, value}`. Designer validates and persists changes; Generate
 freezes the validated object and packages the effective generated adapter and
