@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -12,8 +13,11 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
+const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
+    "canvas.workflowListName", "workflowSlug.userProvided"]);
 
 function within(root, path) {
     const part = relative(root, path);
@@ -23,9 +27,14 @@ function within(root, path) {
 function configuration(request) {
     const { canvas, workflow, values, installed, generatedFields, generatedPages, generatedControls } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
+        || windowsDeviceName.test(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]
+        || typeof values?.["canvas.description"] !== "string"
+        || typeof values?.["canvas.workflowListName"] !== "string"
+        || canvas.description !== (values["canvas.description"] || "Spec Kit workflow canvas.")
+        || canvas.workflowListName !== (values["canvas.workflowListName"] || "Workflows")
         || typeof values?.["workflowSlug.userProvided"] !== "boolean"
         || !workflow || !Array.isArray(workflow.selectedPhases) || !workflow.selectedPhases.length
         || workflow.selectedPhases.length > 30 || new Set(workflow.selectedPhases).size !== workflow.selectedPhases.length
@@ -57,6 +66,25 @@ function configuration(request) {
                         || typeof field.section.title !== "string"
                         || !field.section.title.trim() || field.section.title.length > 120))))) {
         throw new Error("Invalid frozen generated fields");
+    }
+    if (generatedControls !== undefined
+        && (!Array.isArray(generatedControls) || generatedControls.length > 30
+            || generatedControls.some((item) => !item || typeof item !== "object" || Array.isArray(item))
+            || new Set(generatedControls.map(({ id }) => id)).size !== generatedControls.length)) {
+        throw new Error("Invalid frozen generated controls");
+    }
+    const generatedIds = [
+        ...(generatedFields ?? []).map(({ id }) => id),
+        ...(generatedControls ?? []).map(({ id }) => id),
+    ];
+    const expectedValues = new Set([...essentialFields, ...generatedIds]);
+    if (generatedFields?.some(({ id }) => essentialFields.has(id))
+        || generatedIds.length !== new Set(generatedIds).size
+        || generatedIds.some((id) => essentialFields.has(id))
+        || !values || typeof values !== "object" || Array.isArray(values)
+        || Object.keys(values).length !== expectedValues.size
+        || Object.keys(values).some((id) => !expectedValues.has(id))) {
+        throw new Error("Invalid frozen generated values");
     }
     const sections = new Map();
     for (const { section } of generatedFields ?? []) {
@@ -101,12 +129,6 @@ function configuration(request) {
             || definition.renderer !== page.renderer || definition.title !== page.title) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
         }
-    }
-    if (generatedControls !== undefined
-        && (!Array.isArray(generatedControls) || generatedControls.length > 30
-            || new Set(generatedControls.map((item) => item?.id)).size !== generatedControls.length
-            || generatedControls.some((item) => generatedFields?.some((field) => field.id === item.id)))) {
-        throw new Error("Invalid frozen generated controls");
     }
     for (const item of generatedControls ?? []) {
         if (!item || Object.keys(item).sort().join() !== "assets,control,id,label,slot,value"
@@ -179,12 +201,56 @@ function configuration(request) {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
             return [phase, { expectsArtifact: !!path, outputPath: path }];
         })), phaseArtifacts: {},
-        installed };
+        installed: {
+            presets: installed.presets.map(({ id, version, priority }) => ({ id, version, priority })),
+            extensions: installed.extensions.map(({ id, version, priority }) => ({ id, version, priority })),
+            bundles: installed.bundles.map(({ id, version }) => ({ id, version })),
+        } };
 }
 
 function checkSyntax(path) {
     const check = spawnSync("node", ["--check", path], { encoding: "utf8" });
     if (check.error || check.status !== 0) throw new Error(`Generated JavaScript failed validation: ${check.stderr || check.error}`);
+}
+
+export async function readBoundedSessionFile(parent, name, limit, label, openFile = open) {
+    const invalid = `${label} must be a bounded regular session file`;
+    const parentStat = await lstat(parent);
+    if (!parentStat.isDirectory() || await realpath(parent) !== parent) {
+        throw new Error(invalid);
+    }
+    const path = join(parent, name);
+    let file;
+    try {
+        file = await openFile(path, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    } catch (error) {
+        if (error.code === "ELOOP") throw new Error(invalid, { cause: error });
+        throw error;
+    }
+    try {
+        const [stat, pathStat, currentParent, currentParentStat] = await Promise.all([
+            file.stat(), lstat(path), realpath(parent), lstat(parent),
+        ]);
+        if (currentParent !== parent || !currentParentStat.isDirectory()
+            || parentStat.dev !== currentParentStat.dev || parentStat.ino !== currentParentStat.ino
+            || !stat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink()
+            || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+            throw new Error(invalid);
+        }
+        if (stat.size > limit) throw new Error(`${label} is too large`);
+        const bytes = Buffer.alloc(limit + 1);
+        let length = 0;
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (bytesRead === 0) break;
+            length += bytesRead;
+        }
+        if (length > limit) throw new Error(`${label} is too large`);
+        return bytes.toString("utf8", 0, length);
+    } finally {
+        await file.close();
+    }
 }
 
 export async function materialize(project, workspace, handoffId, requestId) {
@@ -194,27 +260,17 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (await realpath(generation) !== generation) {
         throw new Error("Generation request escapes its session directory");
     }
-    const requestPath = join(generation, "request.json");
-    if (!(await lstat(requestPath)).isFile() || await realpath(requestPath) !== requestPath) {
-        throw new Error("Frozen generation request must be a regular session file");
-    }
-    const raw = await readFile(requestPath);
-    if (raw.length > REQUEST_LIMIT) throw new Error("Generation request is too large");
-    const request = JSON.parse(raw.toString("utf8"));
+    const request = JSON.parse(await readBoundedSessionFile(
+        generation, "request.json", REQUEST_LIMIT, "Generation request"));
     const { integrity, ...payload } = request;
     const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     if (integrity !== hash || request.handoffId !== handoffId || request.requestId !== requestId) {
         throw new Error("Generation request integrity mismatch");
     }
     if (request.project !== projectRoot) throw new Error("Generation request is bound to another checkout");
-    const handoffPath = join(workspaceRoot, "speckit-canvas-designer",
-        "handoffs", handoffId, "handoff.json");
-    const handoffStat = await lstat(handoffPath);
-    if (!handoffStat.isFile() || handoffStat.size > 64 * 1024
-        || await realpath(handoffPath) !== handoffPath) {
-        throw new Error("Wizard handoff must be a bounded regular session file");
-    }
-    const handoff = JSON.parse(await readFile(handoffPath, "utf8"));
+    const handoffFolder = join(workspaceRoot, "speckit-canvas-designer", "handoffs", handoffId);
+    const handoff = JSON.parse(await readBoundedSessionFile(
+        handoffFolder, "handoff.json", 64 * 1024, "Wizard handoff"));
     if (handoff.handoffId !== handoffId || handoff.sourceFingerprint !== request.sourceFingerprint
         || handoff.sourceFingerprint !== createHash("sha256").update(JSON.stringify({
             workflow: handoff.workflow, selections: handoff.selections,

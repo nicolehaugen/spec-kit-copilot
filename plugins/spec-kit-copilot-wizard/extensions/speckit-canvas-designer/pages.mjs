@@ -18,7 +18,8 @@ const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
 const RULES = {
-    "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$" },
+    "canvas.id": { type: "string", minLength: 1, maxLength: 100,
+        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
     "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -603,8 +604,12 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     }
     model.templates = loaded.map(({ name, path, hash, sourceId, kind, strategy }) =>
         ({ name, path, hash, sourceId, kind, strategy }));
-    return { ...model, revision: fingerprint({
+    const result = { ...model, revision: fingerprint({
         handoffId: handoff.handoffId, sourceFingerprint: handoff.sourceFingerprint, checkout, entries,
         templates: loaded,
     }) };
+    if (Buffer.byteLength(JSON.stringify(result)) > MODEL_LIMIT) {
+        throw new Error("Designer page model exceeds its size limit");
+    }
+    return result;
 }

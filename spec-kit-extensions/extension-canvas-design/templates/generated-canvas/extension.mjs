@@ -8,6 +8,12 @@ const servers = new Map();
 const config = readConfig();
 let runtime;
 let initializing;
+let lifecycle = Promise.resolve();
+function withLifecycle(action) {
+    const result = lifecycle.then(action);
+    lifecycle = result.catch(() => {});
+    return result;
+}
 
 async function getRuntime() {
     if (runtime) return runtime;
@@ -67,15 +73,15 @@ const session = await joinSession({
                         properties: { phaseRunId: { type: "string" }, path: { type: "string" } } },
                     handler: (ctx) => opened(ctx, (value) => value.report(ctx.input, ctx.instanceId)) },
             ],
-            open: async (ctx) => {
+            open: (ctx) => withLifecycle(async () => {
                 let entry = servers.get(ctx.instanceId);
                 if (!entry) {
                     entry = await startServer(ctx.instanceId);
                     servers.set(ctx.instanceId, entry);
                 }
                 return { title: config.canvas.displayName, url: entry.url };
-            },
-            onClose: async (ctx) => {
+            }),
+            onClose: (ctx) => withLifecycle(async () => {
                 const entry = servers.get(ctx.instanceId);
                 if (entry) {
                     servers.delete(ctx.instanceId);
@@ -86,7 +92,7 @@ const session = await joinSession({
                     });
                     if (!servers.size && runtime) { runtime.close(); runtime = null; }
                 }
-            },
+            }),
         }),
     ],
 });

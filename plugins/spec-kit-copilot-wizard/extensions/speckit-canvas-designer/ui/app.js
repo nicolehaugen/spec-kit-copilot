@@ -48,7 +48,8 @@ generate.addEventListener("click", async () => {
         const values = draft;
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ revision: model.revision, values }),
+            body: JSON.stringify({ modelRevision: model.revision,
+                settingsRevision: model.settingsRevision, values }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);
