@@ -104,6 +104,42 @@ test("a null inferred primary retains an explicit file declaration", async () =>
     });
 });
 
+for (const [source, kind, path] of [
+    ["declaration", "file", "specs/<slug>/plan.md"],
+    ["declaration", "folder", "specs/<slug>/outputs/"],
+    ["manual", "file", "specs/<slug>/plan.md"],
+    ["manual", "folder", "specs/<slug>/outputs/"],
+]) {
+    test(`${source} ${kind} output discards contradictory inferred no-file evidence`, async () => {
+        await fixture(async ({ root, write }) => {
+            if (source === "declaration") {
+                await write(".github/skills/speckit-plan/SKILL.md",
+                    `---\nname: speckit-plan\nartifact: ${path}\n---\nWrite the plan.`);
+            }
+            const fingerprint = (await effectiveSource(root, "plan")).fingerprint;
+            await write(".speckit-wizard/artifact-targets.json", JSON.stringify({
+                entries: { "commands/speckit.plan": {
+                    ...(source === "manual" ? { source, writesTo: path } : {}),
+                    outputEvidence: { fingerprint, primaryIndex: null,
+                        candidates: [
+                            { kind: "none", source: "inference", effect: "unknown",
+                                evidence: "No file output was inferred" },
+                            { kind: "unknown", source: "inference", effect: "unknown",
+                                evidence: "Another output remains uncertain" },
+                        ] },
+                } },
+            }));
+            const outputs = await collectArtifactEvidence(root,
+                { pipeline: [{ id: "plan" }], commands: [], composition: { artifacts: [] } });
+            assert.deepEqual(outputs.evidence.plan.candidates.map(({ kind: outputKind }) => outputKind),
+                [kind, "unknown"]);
+            assert.equal(outputs.evidence.plan.candidates[0].source, source);
+            assert.equal(outputs.evidence.plan.candidates[0].path, path);
+            assert.equal(outputs.evidence.plan.primaryIndex, kind === "file" ? 0 : null);
+        });
+    });
+}
+
 test("a failed command source read marks output collection and refresh incomplete", async () => {
     await fixture(async ({ root, write }) => {
         await write(".github/skills/speckit-specify/SKILL.md", "Writes specs/<slug>/spec.md");
