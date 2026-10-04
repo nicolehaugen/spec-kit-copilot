@@ -617,6 +617,9 @@ $("workflow-search").addEventListener("input", (event) => {
     workflowQuery = event.target.value;
     if (model) filterWorkflowList();
 });
+function requireModel() {
+    if (!model) throw new Error("The canvas is connecting. Use Refresh to try again.");
+}
 document.addEventListener("click", (event) => {
     const button = event.target.closest("button");
     if (!button) return;
@@ -634,7 +637,7 @@ document.addEventListener("click", (event) => {
             message("Canvas refreshed.");
             return;
         }
-        if (!model) throw new Error("The canvas is connecting. Use Refresh to try again.");
+        requireModel();
         if (button.dataset.deleteWorkflowId) { await deleteFeature(button.dataset.deleteWorkflowId); return; }
         if (button.dataset.workflowId) { await selectFeature(button.dataset.workflowId); return; }
         if (button.id === "new-workflow" || button.id === "create-first-workflow") {
@@ -658,10 +661,11 @@ try {
     const phases = JSON.parse(pipelineRoot.dataset.phases);
     ({ steps } = mount({ root: pipelineRoot, phases,
         actions: {
-            select: (index, focusId) => selectPhase(index, focusId),
-            run: (value) => send(phase(), value),
-            view: () => openArtifact(phase()),
+            select: (index, focusId) => { requireModel(); return selectPhase(index, focusId); },
+            run: (value) => { requireModel(); return send(phase(), value); },
+            view: () => { requireModel(); return openArtifact(phase()); },
             reveal: async () => {
+                requireModel();
                 await flush();
                 const result = await api("/api/reveal", { phase: phase().id, itemId: model.selected });
                 message(result.message, "phase-message");

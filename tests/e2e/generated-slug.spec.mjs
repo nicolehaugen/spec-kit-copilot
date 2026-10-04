@@ -15,6 +15,29 @@ const workflowPage = { pipeline: "generated-pipeline",
     regions: JSON.parse(workflowDefinition).regions,
     definitionHash: digest(workflowDefinition), hash: digest(pipelineModule) };
 
+test("pipeline actions report connecting before the first state refresh", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    let releaseState;
+    const waiting = new Promise((resolve) => { releaseState = resolve; });
+    try {
+        await page.route("**/api/state", async (route) => {
+            if (route.request().method() === "GET") await waiting;
+            await route.continue();
+        });
+        await page.goto(canvas.url, { waitUntil: "commit" });
+        await expect(page.locator("#run-phase")).toBeVisible();
+        for (const selector of ["#run-phase", "#browse-output-folder", '[data-phase-index="1"]']) {
+            await page.locator(selector).click();
+            await expect(page.locator("#canvas-message")).toHaveText(
+                "The canvas is connecting. Use Refresh to try again.");
+        }
+        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+    } finally {
+        releaseState();
+        await canvas.close();
+    }
+});
+
 test("vertical pipeline replacement keeps phase navigation and host run actions", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
     try {
