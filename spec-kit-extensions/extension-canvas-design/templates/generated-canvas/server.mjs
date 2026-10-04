@@ -168,8 +168,7 @@ export function renderHtml(config, token = "") {
         ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
     </nav>
     <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
-        data-canvas-title="${escapeHtml(canvas.displayName)}"
-        data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>
+        data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>
     <p id="canvas-message" role="status"></p>
     <div id="workflow-content" class="workflow-content">` : ""}
     <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">

@@ -730,9 +730,15 @@ test("read-only preflight pins handoff bytes and checks local installation ident
     const path = join(handoffDir, "handoff.json");
     await writeFile(path, bytes);
     const hash = createHash("sha256").update(bytes).digest("hex");
-    const run = async (_binary, args) => ({ stdout: args[0] === "--version"
-        ? "specify 1.0.7" : JSON.stringify([{ id: "extension-canvas-design",
-            version: "0.1.11", source: { kind: "local" } }]) });
+    const augmentedPath = await buildAugmentedPath();
+    const run = async (_binary, args, options) => {
+        assert.equal(options.cwd, project);
+        assert.equal(options.env.PATH, augmentedPath);
+        assert.equal(options.shell, process.platform === "win32");
+        return { stdout: args[0] === "--version"
+            ? "specify 1.0.7" : JSON.stringify([{ id: "extension-canvas-design",
+                version: "0.1.12", source: { kind: "local" } }]) };
+    };
     const checked = await preflight(project, root, handoff.handoffId, hash, run);
     assert.equal(checked.initialized, true);
     assert.deepEqual(checked.locals, [{ kind: "extensions", id: "extension-canvas-design", path: source }]);

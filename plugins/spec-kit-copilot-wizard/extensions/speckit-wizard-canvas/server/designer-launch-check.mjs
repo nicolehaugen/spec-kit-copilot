@@ -4,6 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
+import { specifySpawnOptions } from "../env/specify-invocation.mjs";
 import { validateLocalSource } from "./designer-local-sources.mjs";
 
 const exec = promisify(execFile);
@@ -23,7 +24,7 @@ export async function preflight(project, sessionRoot, handoffId, expectedHash, r
     const handoff = await readHandoff(root, handoffId, undefined, expectedHash);
     const path = join(root, "speckit-canvas-designer", "handoffs", handoffId, "handoff.json");
     const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
-        ["--version"], { cwd: child, timeout: 10000, maxBuffer: 4096 });
+        ["--version"], await specifySpawnOptions(child, { timeout: 10000, maxBuffer: 4096 }));
     const version = stdout.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
     if (!version || Number(version[1]) < 1
         || (Number(version[1]) === 1 && Number(version[2]) === 0 && Number(version[3]) < 7)) {
@@ -67,7 +68,7 @@ export async function verifyLocalInstall(project, handoff, kind, id, run = exec)
     }
     const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
         [kind === "presets" ? "preset" : "extension", "list", "--json"],
-        { cwd: child, timeout: 10000, maxBuffer: 128 * 1024 });
+        await specifySpawnOptions(child, { timeout: 10000, maxBuffer: 128 * 1024 }));
     const inventory = JSON.parse(stdout);
     const actual = inventory.find((item) => item.id === id);
     if (!actual || actual.source?.kind !== "local") {

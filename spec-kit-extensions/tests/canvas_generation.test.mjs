@@ -233,6 +233,13 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
     const html = renderHtml(config);
     assert.match(html, /data-field-id="billing.costCode">&lt;script&gt;&quot;CC&quot;&lt;\/script&gt;/);
     assert.doesNotMatch(html, /<script>"CC"<\/script>|<input[^>]+billing\.costCode/);
+    const pagesHtml = renderHtml({ ...config, generatedPages: [
+        { id: "undeclared", title: "Undeclared", renderer: "undeclared", values: [] },
+        { id: "declared", title: "Declared", renderer: "declared", values: ["billing.costCode"] },
+    ] });
+    assert.doesNotMatch(pagesHtml, /<section id="generated-page"[^>]*data-values=/);
+    assert.match(pagesHtml, /data-generated-renderer="undeclared"[\s\S]*?data-values="\{\}"/);
+    assert.match(pagesHtml, /data-generated-renderer="declared"[\s\S]*?data-values="\{&quot;billing\.costCode&quot;:&quot;&lt;script&gt;\\&quot;CC\\&quot;&lt;\/script&gt;&quot;\}"/);
     const grouped = renderHtml({ ...defaultConfig, readOnlyFields: [
         { id: "billing.costCode", label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } },
