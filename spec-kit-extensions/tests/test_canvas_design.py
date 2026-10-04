@@ -371,6 +371,31 @@ class CanvasDesignPackageTests(unittest.TestCase):
         del page["enabled"]
         self.validator.validate(page)
 
+    def test_setting_schema_allows_required_text_fields_only(self):
+        schema = json.loads((PACKAGE / "schemas/designer.setting-definition.schema.json").read_text("utf-8"))
+        validator = Draft202012Validator(schema)
+        setting = {
+            "schemaVersion": 1, "id": "custom-setting", "host": "designer",
+            "slot": "essentials.options", "order": 0,
+            "field": {"id": "custom.text", "label": "Text",
+                      "type": "string", "control": "stock.text", "required": True},
+        }
+        validator.validate(setting)
+        for field, binding in (
+            ({"id": "custom.flag", "label": "Flag", "type": "boolean",
+              "control": "stock.checkbox", "required": True}, None),
+            ({"id": "custom.object", "label": "Object", "type": "object",
+              "control": "risk-matrix", "required": True},
+             {"presentation": "control", "slot": "details.content"}),
+            ({**setting["field"], "required": False}, None),
+        ):
+            with self.subTest(field=field):
+                invalid = {**setting, "field": field}
+                if binding is not None:
+                    invalid["generatedBinding"] = binding
+                with self.assertRaises(ValidationError):
+                    validator.validate(invalid)
+
     def test_defaults_require_explicit_boolean_type(self):
         for field_type in (None, "string", "boolean"):
             for default in (True, False):

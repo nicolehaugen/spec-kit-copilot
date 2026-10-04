@@ -21,6 +21,7 @@
         "type": {"enum": ["string", "boolean", "object", "image"]},
         "control": {"type": "string"},
         "maxLength": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "required": {"const": true},
         "default": {"type": "boolean"}
       },
       "allOf": [
@@ -29,7 +30,8 @@
         {"if": {"properties": {"type": {"const": "image"}}}, "then": {"properties": {"control": {"const": "stock.image"}}}},
         {"if": {"properties": {"type": {"const": "object"}}}, "then": {"properties": {"control": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"}}}},
         {"if": {"required": ["default"]}, "then": {"properties": {"type": {"const": "boolean"}}}},
-        {"if": {"required": ["maxLength"]}, "then": {"properties": {"type": {"const": "string"}}}}
+        {"if": {"required": ["maxLength"]}, "then": {"properties": {"type": {"const": "string"}}}},
+        {"if": {"required": ["required"]}, "then": {"properties": {"type": {"const": "string"}}}}
       ]
     },
     "generatedBinding": {
