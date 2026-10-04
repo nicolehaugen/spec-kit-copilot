@@ -32,7 +32,9 @@ export function mount({ root, field, value, context, onChange }) {
     uploadError.id = `${input.id}-error`;
     uploadError.setAttribute("role", "alert");
     uploadError.hidden = true;
-    input.setAttribute("aria-describedby", uploadError.id);
+    const hint = field.description ? element("p", field.description, "settings-hint") : null;
+    if (hint) hint.id = `${input.id}-hint`;
+    input.setAttribute("aria-describedby", [hint?.id, uploadError.id].filter(Boolean).join(" "));
     const setUploadError = (message) => {
         uploadError.textContent = message;
         uploadError.hidden = !message;
@@ -107,6 +109,6 @@ export function mount({ root, field, value, context, onChange }) {
     controls.append(input, remove);
     root.classList.add("settings-image-content");
     root.replaceChildren(label, preview, controls, uploadError);
-    if (field.description) root.append(element("p", field.description, "settings-hint"));
+    if (hint) root.append(hint);
     refresh();
 }

@@ -262,8 +262,11 @@ addition to) the hosted registry entry:
   the Wizard checkout, not from an ID/version-matched catalog entry. Bundle
   membership does not prove a component's installed source; each runtime
   preset/extension is replayed from its own locator even if a bundle lists
-  the same ID. A bundle without verifiable install provenance blocks launch.
-  Missing or ambiguous provenance, version mismatches, and sources that
+  the same ID. Since the CLI bundle inventory does not report provenance,
+  installed bundles use a matching catalog ID/name and version; an explicitly
+  selected bundle disambiguates matching catalog sources. A missing or
+  ambiguous match blocks launch rather than guessing a source.
+  Missing or ambiguous sources, version mismatches, and sources that
   change before dispatch block launch instead of guessing. It installs
   remaining standalone extensions (including local overrides), then
   standalone presets (including local overrides).

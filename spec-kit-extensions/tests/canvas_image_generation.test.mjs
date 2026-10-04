@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { cp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -250,6 +250,30 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
     await writeFile(join(sdk, "assets", "logo.png"), "tampered");
     assert.throws(() => readConfig(), /image does not match its frozen hash/);
     assert.equal((await fetch(`${url}/assets/logo.png?token=secret`)).status, 500);
+});
+
+test("generated canvas rejects packaged asset directories redirected outside its root", async (t) => {
+    for (const kind of ["assets", "controls"]) {
+        await t.test(kind, async (subtest) => {
+            const { project, workspace, prepared, sdk } = await setup(subtest);
+            await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+            const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+            const directory = join(sdk, kind);
+            const outside = join(workspace, `external-${kind}`);
+            await cp(directory, outside, { recursive: true });
+            await rename(directory, join(sdk, `original-${kind}`));
+            try {
+                await symlink(outside, directory, process.platform === "win32" ? "junction" : "dir");
+            } catch (error) {
+                if (["EPERM", "EACCES", "ENOTSUP"].includes(error.code)) {
+                    subtest.skip("Directory symlinks are unavailable on this host");
+                    return;
+                }
+                throw error;
+            }
+            assert.throws(() => readConfig(), /Packaged asset directory escapes/);
+        });
+    }
 });
 
 test("missing Logo keeps diamond; frozen image and adapter tampering fail before packaging", async (t) => {

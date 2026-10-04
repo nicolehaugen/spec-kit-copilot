@@ -2,7 +2,8 @@ import { join } from "node:path";
 
 const KINDS = ["presets", "extensions", "bundles"];
 
-export function resolveRuntimeInstallLocators(installed, catalog, localSelections, workspacePath) {
+export function resolveRuntimeInstallLocators(installed, catalog, localSelections, workspacePath,
+    selectedBundles = []) {
     const locators = { presets: [], extensions: [], bundles: [] };
     for (const kind of KINDS) {
         for (const item of installed[kind]) {
@@ -19,17 +20,22 @@ export function resolveRuntimeInstallLocators(installed, catalog, localSelection
                     path: join(workspacePath, ".specify", kind, item.id) });
                 continue;
             }
-            if (!item.source || item.source === "local") {
+            if ((!item.source && kind !== "bundles") || item.source === "local") {
                 throw new Error(`Cannot verify the installed source for ${kind} ${item.id}; ${kind === "bundles"
-                    ? "Specify's bundle inventory does not include install provenance"
+                    ? "local bundles cannot be reproduced from the catalog"
                     : "select an approved local development path in the Wizard before launching Designer"}`);
             }
-            const candidates = (catalog?.[kind] ?? []).filter((entry) =>
+            let candidates = (catalog?.[kind] ?? []).filter((entry) =>
                 entry?.installedId === item.id && entry.version === item.version
-                && entry.source === item.source
+                && ((kind === "bundles" && !item.source) || entry.source === item.source)
                 && typeof entry.id === "string" && typeof entry.source === "string");
+            if (kind === "bundles") {
+                const selected = candidates.filter((entry) => selectedBundles.some((choice) =>
+                    choice.id === entry.id && choice.source === entry.source));
+                if (selected.length) candidates = selected;
+            }
             if (candidates.length !== 1) {
-                throw new Error(`Cannot identify a unique approved install source for installed ${kind} ${item.id} v${item.version}; resolve it in the Wizard before launching Designer`);
+                throw new Error(`Cannot identify a unique ${kind === "bundles" ? "catalog" : "approved install"} source for installed ${kind} ${item.id} v${item.version}; resolve it in the Wizard before launching Designer`);
             }
             const entry = candidates[0];
             if (entry.downloadUrl == null && entry.source !== "default"

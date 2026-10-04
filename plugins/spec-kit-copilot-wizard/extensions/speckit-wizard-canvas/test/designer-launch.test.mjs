@@ -339,17 +339,50 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         process.cwd()).presets, [{ installedId: "member", source: "local",
             path: join(process.cwd(), ".specify", "presets", "member") }]);
         assert.equal(locators.bundles[0].catalogId, "kit");
-        assert.throws(() => resolveRuntimeInstallLocators({
+        assert.deepEqual(resolveRuntimeInstallLocators({
             ...installed, bundles: [{ id: "kit", version: "2.0.0" }],
         }, {
             presets: [{ id: "member", installedId: "member", source: "community",
                 version: "1.0.0", downloadUrl: "https://example.org/member.zip" }],
             extensions: [], bundles: [{ id: "kit", installedId: "kit",
                 source: "community", version: "2.0.0", downloadUrl: "https://example.org/kit.zip" }],
-        }), /Cannot verify the installed source for bundles kit/);
+        }).bundles, [{ installedId: "kit", source: "community",
+            catalogId: "kit", downloadUrl: "https://example.org/kit.zip" }]);
     });
 
-    test("runtime source drift during readiness prevents Designer dispatch", async () => {
+    await test("installed bundles use unique catalog matches or an explicit selection", async () => {
+        const installed = { presets: [], extensions: [], bundles: [{ id: "kit", version: "2.0.0" }] };
+        const community = { id: "kit", installedId: "kit", source: "community",
+            version: "2.0.0", tags: ["canvas-design"],
+            downloadUrl: "https://example.org/kit.zip" };
+        const alternate = { ...community, source: "default", downloadUrl: null };
+        const sources = { presets: [], extensions: [], bundles: [community] };
+        const { post, sent } = fixture({
+            getState: async () => ({ ...snapshot, catalog: { ...catalog, ...sources,
+                designerFingerprint: "catalog-v1" } }),
+            getInstalledWorkflow: async () => installed,
+        });
+        assert.equal((await post(request())).statusCode, 202);
+        const handoff = JSON.parse(sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
+        assert.deepEqual(handoff.workflow.installLocators.bundles, [
+            { installedId: "kit", source: "community", catalogId: "kit",
+                downloadUrl: "https://example.org/kit.zip" },
+        ]);
+        const ambiguous = { ...sources, bundles: [community, alternate] };
+        assert.throws(() => resolveRuntimeInstallLocators(installed, ambiguous),
+            /unique catalog source/);
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, ambiguous, undefined,
+            undefined, [{ id: "kit", source: "community" }]).bundles,
+        handoff.workflow.installLocators.bundles);
+        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+            ...sources, bundles: [{ ...community, version: "2.0.1" }],
+        }), /unique catalog source/);
+        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+            ...sources, bundles: [{ ...community, downloadUrl: null }],
+        }), /no approved download URL/);
+    });
+
+    await test("runtime source drift during readiness prevents Designer dispatch", async () => {
         const source = { id: "pirate", installedId: "pirate-full-preset",
             source: "community", version: "1.0.0",
             downloadUrl: "https://example.org/pirate.zip" };

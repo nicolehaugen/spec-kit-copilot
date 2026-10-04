@@ -52,11 +52,10 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const imageContributions = (model.contributions ?? [])
         .filter((item) => item.field.type === "image"
             && item.generatedBinding?.presentation === "asset");
-    if (imageContributions.length > 10
-        || new Set(imageContributions.map((item) =>
+    if (new Set(imageContributions.map((item) =>
             `${item.generatedBinding.page ?? "workflow"}:${item.generatedBinding.slot}`)).size
             !== imageContributions.length) {
-        throw new Error("Generated asset slots must be unique and at most ten");
+        throw new Error("Generated asset slots must be unique");
     }
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
@@ -104,6 +103,9 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             mime: image.mime, hash: createHash("sha256").update(image.bytes).digest("hex"),
             content: image.bytes.toString("base64") }] : [];
     });
+    if (generatedAssets.length > 10) {
+        throw new Error("Generated images exceed the 10-image limit");
+    }
     const controlContributions = (model.contributions ?? [])
         .filter((item) => item.generatedBinding?.presentation === "control");
     if (controlContributions.length > 30) {

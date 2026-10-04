@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
 
@@ -8,6 +10,7 @@ const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "utf8");
 const pageAssets = readFileSync(new URL("./ui/page-assets.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
+const packageRoot = realpathSync(new URL(".", import.meta.url));
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const imageValueContract = { type: "image", maxBytes: 32768,
     mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
@@ -187,6 +190,14 @@ export function readConfig() {
 }
 
 function readPackagedFile(url) {
+    const parent = dirname(fileURLToPath(url));
+    const checkParent = () => {
+        if (realpathSync(new URL(".", import.meta.url)) !== packageRoot
+            || realpathSync(parent) !== join(packageRoot, basename(parent))) {
+            throw new Error("Packaged asset directory escapes the generated canvas");
+        }
+    };
+    checkParent();
     const before = lstatSync(url);
     if (!before.isFile() || before.isSymbolicLink() || before.size > 32 * 1024) {
         throw new Error("Packaged asset must be a regular file under 32 KiB");
@@ -214,6 +225,7 @@ function readPackagedFile(url) {
             || current.mtimeMs !== opened.mtimeMs) {
             throw new Error("Packaged asset changed or exceeds 32 KiB");
         }
+        checkParent();
         return buffer.subarray(0, size);
     } finally { closeSync(fd); }
 }

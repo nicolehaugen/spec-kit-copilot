@@ -141,6 +141,35 @@ async function stockImageTemplates(project) {
     }));
 }
 
+test("stock image picker announces its format hint and upload error", async (t) => {
+    const previousDocument = globalThis.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const element = () => ({
+        children: [], attributes: new Map(), classList: { add() {} },
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        getAttribute(name) { return this.attributes.get(name); },
+        removeAttribute(name) { this.attributes.delete(name); },
+        addEventListener() {},
+        append(...children) { this.children.push(...children); },
+        replaceChildren(...children) { this.children = children; },
+    });
+    globalThis.document = { createElement: element };
+    const { mount } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/controls/stock-image/designer.mjs",
+        import.meta.url));
+    const root = element();
+    mount({ root, field: { label: "Header logo", description: "PNG or JPEG, up to 32 KiB." },
+        value: "", context: { inputId: "header-logo",
+            constraints: { maxBytes: 32768,
+                mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] },
+            validateImage: () => true, setBusy() {} }, onChange() {} });
+    const input = root.children[2].children[0];
+    const error = root.children[3];
+    const hint = root.children[4];
+    assert.equal(hint.textContent, "PNG or JPEG, up to 32 KiB.");
+    assert.equal(input.getAttribute("aria-describedby"), `${hint.id} ${error.id}`);
+});
+
 function stockImageRegistration(_root, name) {
     const stock = name.startsWith("canvas-stock-image");
     return { kind: "template", stack: [{ active: true,
@@ -468,6 +497,39 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     }
     const values = { ...model.values, "canvas.id": "with-logo",
         "canvas.displayName": "Logo test", "canvas.logo": logo, "canvas.mainPageLogo": mainLogo };
+    const imageContribution = model.contributions.find((item) => item.field.id === "canvas.logo");
+    const extraImages = Array.from({ length: 9 }, (_, index) => ({
+        ...imageContribution,
+        field: { ...imageContribution.field, id: `extra.image${index}`, label: `Extra ${index}` },
+        generatedBinding: { ...imageContribution.generatedBinding, slot: `header.extra${index}` },
+    }));
+    const manyImages = { ...model,
+        contributions: [...model.contributions, ...extraImages],
+        constraints: { ...model.constraints, ...Object.fromEntries(extraImages.map((item) =>
+            [item.field.id, model.constraints["canvas.logo"]])) } };
+    const emptyImages = { ...model.values, "canvas.id": "image-count",
+        "canvas.displayName": "Image count",
+        ...Object.fromEntries(extraImages.map((item) => [item.field.id, ""])) };
+    const emptyPrepared = await freezeGeneration({
+        model: manyImages, values: emptyImages, handoff, project, workspace,
+    });
+    const frozenRequest = async (requestId) => JSON.parse(await readFile(join(workspace,
+        "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", requestId, "request.json"), "utf8"));
+    assert.equal((await frozenRequest(emptyPrepared.requestId)).generatedAssets, undefined);
+    const tenImages = { ...emptyImages, "canvas.logo": logo, "canvas.mainPageLogo": mainLogo,
+        ...Object.fromEntries(extraImages.slice(0, 8).map((item) => [item.field.id, logo])) };
+    const tenPrepared = await freezeGeneration({
+        model: manyImages, values: tenImages, handoff, project, workspace,
+    });
+    assert.equal((await frozenRequest(tenPrepared.requestId)).generatedAssets.length, 10);
+    await assert.rejects(freezeGeneration({ model: manyImages,
+        values: { ...tenImages, [extraImages[8].field.id]: logo },
+        handoff, project, workspace }), /10-image limit/);
+    await assert.rejects(freezeGeneration({ model: { ...manyImages,
+        contributions: [...model.contributions, { ...extraImages[0],
+            generatedBinding: imageContribution.generatedBinding }] },
+        values: emptyImages, handoff, project, workspace }), /slots must be unique/);
     for (const bad of ["data:image/svg+xml;base64,PHN2Zz4=", "data:image/png;base64,AAAA",
         `data:image/png;base64,${Buffer.alloc(32769).toString("base64")}`, "data:image/png;base64,?"]) {
         await assert.rejects(saveDesignerSettings(workspace, handoff, model,
