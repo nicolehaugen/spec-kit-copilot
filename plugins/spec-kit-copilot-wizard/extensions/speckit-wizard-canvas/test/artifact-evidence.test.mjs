@@ -401,6 +401,25 @@ test("oversized and unwritable artifact caches fail an active inference immediat
     });
 });
 
+test("an empty filtered inference response fails refresh immediately", async () => {
+    await fixture(async ({ root }) => {
+        const events = [];
+        const inst = { workspacePath: root, url: "http://127.0.0.1:1234", token: "test",
+            broadcast: (event) => events.push(event) };
+        startRefresh(inst);
+        beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }]);
+        const res = response();
+        await handleArtifactTargets(res, { entries: {
+            "commands/speckit.plan": {},
+        } }, { getInstance: () => inst, broadcast: (event) => events.push(event) });
+        assert.equal(res.status, 400);
+        assert.match(res.body.error, /no valid entries/);
+        assert.equal(inst.outputInference.status, "incomplete");
+        assert.equal(inst.refreshStatus.status, "incomplete");
+        assert.ok(events.some(({ reason }) => reason === "output inference failed"));
+    });
+});
+
 test("endpoint rejects stale evidence and merges current candidates without erasing manual hints", async () => {
     await fixture(async ({ root, write }) => {
         await write(".speckit-wizard/artifact-targets.json", JSON.stringify({

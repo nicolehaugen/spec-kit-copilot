@@ -170,6 +170,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
         };
     }
     if (!Object.keys(cleaned).length) {
+        if (inst.outputInference?.status === "updating") failOutputInference(inst);
         return jsonError(res, 400, "no valid entries");
     }
 

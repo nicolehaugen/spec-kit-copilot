@@ -1534,6 +1534,10 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     await mkdir(shared, { recursive: true });
     await copyFile(join(source, "..", "speckit-wizard-canvas", "env", "workspace.mjs"),
         join(shared, "workspace.mjs"));
+    for (const file of ["resolve-path.mjs", "specify-invocation.mjs"]) {
+        await copyFile(join(source, "..", "speckit-wizard-canvas", "env", file),
+            join(shared, file));
+    }
     await mkdir(join(extension, "ui"));
     for (const file of ["index.html", "app.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
