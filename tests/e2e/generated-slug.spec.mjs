@@ -7,7 +7,7 @@ import { test, expect } from "./playwright.mjs";
 import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
-async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"], generatedPages) {
+async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"], generatedPages, readOnlyFields) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug,
@@ -24,6 +24,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         phaseArtifacts: {},
         installed: { presets: [], extensions: [], bundles: [] },
         ...(generatedPages ? { generatedPages } : {}),
+        ...(readOnlyFields ? { readOnlyFields } : {}),
     };
     let runtime, routes, server;
     try {
@@ -64,6 +65,47 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         throw error;
     }
 }
+
+test("generated page hides all Workflow content and restores it on return", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"],
+        [{ id: "overview", title: "Overview", renderer: "overview" }],
+        [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
+    try {
+        await page.route("**/pages/overview.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export function renderPage({ root }) { root.textContent = "Overview"; }',
+        }));
+        await page.goto(canvas.url);
+        await page.locator("#workflow-name").fill("Draft workflow");
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+
+        await page.locator('[data-canvas-page="overview"]').click();
+        await expect(page.locator("#generated-page")).toHaveText("Overview");
+        await expect(page.locator("#workflow-content")).toBeHidden();
+        for (const selector of ["#instance-collection", '[data-field-id="billing.costCode"]',
+            "#constitution-card", "#phase-navigation", "#phase-card"]) {
+            await expect(page.locator(selector)).toBeHidden();
+        }
+        await expect(page.locator("#refresh-state")).toBeVisible();
+        await expect(page.locator('[data-canvas-page="workflow"]')).toBeVisible();
+
+        await page.locator('[data-canvas-page="workflow"]').click();
+        await expect(page.locator("#generated-page")).toBeHidden();
+        await expect(page.locator("#workflow-content")).toBeVisible();
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+        await expect(page.locator("#workflow-name")).toHaveValue("Draft workflow");
+    } finally {
+        await canvas.close();
+    }
+});
 
 test("generated page selection ignores stale imports and async renderers", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify"], [

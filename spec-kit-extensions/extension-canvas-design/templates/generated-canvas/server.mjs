@@ -129,6 +129,15 @@ export function renderHtml(config, token = "") {
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
 <main class="app-body workflow-surface">
+    ${config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
+        <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">Workflow</button>
+        ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
+    </nav>
+    <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
+        data-canvas-title="${escapeHtml(canvas.displayName)}"
+        data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>
+    <p id="canvas-message" role="status"></p>
+    <div id="workflow-content" class="workflow-content">` : ""}
     <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
         <div class="instance-collection-head">
             <div><h2 id="workflow-heading">${escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted">${escapeHtml(canvas.description)}</p></div>
@@ -150,19 +159,12 @@ export function renderHtml(config, token = "") {
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
     ${readOnlySections(config.readOnlyFields)}
-    ${config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
-        <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">Workflow</button>
-        ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
-    </nav>
-    <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
-        data-canvas-title="${escapeHtml(canvas.displayName)}"
-        data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>` : ""}
     ${hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
         <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
         <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
         <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create / update</button></div></div>
     </details>` : ""}
-    <p id="canvas-message" role="status"></p>
+    ${config.generatedPages?.length ? "" : '<p id="canvas-message" role="status"></p>'}
     <nav id="phase-navigation" class="phase-navigation" aria-label="Workflow phases">
         ${phases.length ? `<div class="phase-mobile-nav"><label class="visually-hidden" for="mobile-phase-select">Jump to phase</label><select id="mobile-phase-select" class="phase-input-control">${phases.map((phase, index) =>
             `<option value="${index}">Phase ${index + 1} of ${phases.length}: ${escapeHtml(phaseLabel(phase))}</option>`).join("")}</select><span id="mobile-next-phase" class="muted"></span></div>` : ""}
@@ -174,6 +176,7 @@ export function renderHtml(config, token = "") {
             </button></li>`).join("")}</ol>` : ""}
     </nav>
     <section id="phase-card" class="phase-card" aria-label="Selected phase">${phases.length ? renderPhase(config, phases, 0) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>
+    ${config.generatedPages?.length ? "</div>" : ""}
     ${config.generatedPages?.map(({ id, renderer }) =>
         `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"></span>`).join("") ?? ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}

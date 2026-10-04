@@ -118,6 +118,8 @@ generated-only page without a Designer tab. The renderer is a complete
 replace-only Specify template exporting `renderPage({ root, canvas, values })`;
 the definition must name that registered renderer. Invalid kinds, references,
 strategies, syntax or Specify template-layer metadata stop Designer opening.
+Switching to a generated page hides Workflow-owned content and restores it on
+return; the canvas header and status remain available on either page.
 The frozen definition and module are copied into the generated app, which
 needs no design-time packages to render them. The frozen generation request is
 bounded to 4 MiB, allowing the registered page assets to be packaged after
