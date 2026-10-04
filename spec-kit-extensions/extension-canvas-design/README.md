@@ -37,6 +37,10 @@ the list's place and starts a new workflow without leaving a detached status
 message.
 Each row offers a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
+Deletion verifies the directory and its parent, moves it to a temporary
+location, and checks the moved directory's identity before removing it. If
+the parent changes during deletion, the moved directory is retained for manual
+recovery at the path shown in the error.
 An optional **Workflow name**
 appears just below it while creating a workflow; it labels the workflow in
 the canvas (falling back to the actual directory name when blank) and does not
@@ -128,8 +132,9 @@ the **Configured fields** heading. Opening the
 shell does not mean all pages loaded or that Essentials is valid for generation.
 
 The isolated [test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
-registers an additional Designer page and a stock text field. It is installed
-locally by the browser integration test, not published in the canonical preset
+registers an additional Designer page with stock text and checkbox fields. The
+browser integration test covers the checkbox default, rendering, save, and
+reopen. The preset is installed locally, not published in the canonical preset
 catalog. Billing and generated-only pages have separate test fixtures.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked

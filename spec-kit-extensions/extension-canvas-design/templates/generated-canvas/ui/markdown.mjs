@@ -15,9 +15,36 @@ const clarificationPrefix = String.raw`\[\s*(?:${clarificationLabel}\s*:|${empha
 export function renderMarkdown(source, { clarifications } = {}) {
     const lines = String(source ?? "")
         .replace(/\r\n?/g, "\n")
-        // Separate fragments so hiding comments cannot recreate markup; esc still handles HTML safety.
-        .replace(/<!--[\s\S]*?-->/g, " ")
         .split("\n");
+    const fenceStart = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+    const closingFor = (fence) => new RegExp(`^\\s{0,3}${fence[0]}{${fence.length},}\\s*$`);
+    let commentOpen = false, fenceEnd = null;
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const line = lines[lineIndex];
+        if (fenceEnd) {
+            if (fenceEnd.test(line)) fenceEnd = null;
+            continue;
+        }
+        const opening = !commentOpen && fenceStart.exec(line);
+        if (opening) {
+            fenceEnd = closingFor(opening[1]);
+            continue;
+        }
+        let visible = "", cursor = 0;
+        while (cursor < line.length) {
+            const marker = line.indexOf(commentOpen ? "-->" : "<!--", cursor);
+            if (marker < 0) {
+                visible += commentOpen ? " " : line.slice(cursor);
+                break;
+            }
+            visible += commentOpen ? " " : `${line.slice(cursor, marker)} `;
+            cursor = marker + (commentOpen ? 3 : 4);
+            commentOpen = !commentOpen;
+        }
+        lines[lineIndex] = visible;
+        const uncovered = !commentOpen && fenceStart.exec(visible);
+        if (uncovered) fenceEnd = closingFor(uncovered[1]);
+    }
     const html = [];
     let index = 0;
 
@@ -64,10 +91,10 @@ export function renderMarkdown(source, { clarifications } = {}) {
 
     while (index < lines.length) {
         const line = lines[index];
-        const fence = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        const fence = fenceStart.exec(line);
         if (fence) {
             const language = fence[2].trim();
-            const closing = new RegExp(`^\\s{0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
+            const closing = closingFor(fence[1]);
             const body = [];
             index += 1;
             while (index < lines.length && !closing.test(lines[index])) body.push(lines[index++]);

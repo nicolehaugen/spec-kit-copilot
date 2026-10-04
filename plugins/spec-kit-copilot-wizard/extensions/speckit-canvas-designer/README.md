@@ -27,8 +27,9 @@ Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
 Essentials displays Canvas ID, Title, Description and Workflow header from the
-resolved template. Workflow name appears after Phase input in the generated
-canvas's first workflow-creation phase and labels the workflow there. Essentials'
+resolved template. Workflow name appears in the generated canvas's workflow
+collection, before phase navigation, while creating a workflow. It labels the
+workflow there. Essentials'
 default-off Allow custom slug setting controls whether an optional Workflow slug
 field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
