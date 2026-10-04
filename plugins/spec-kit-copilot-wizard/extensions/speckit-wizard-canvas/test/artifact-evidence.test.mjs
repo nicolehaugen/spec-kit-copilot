@@ -81,6 +81,29 @@ test("output declaration uses the skill read for its fingerprint, without reopen
     });
 });
 
+test("a null inferred primary retains an explicit file declaration", async () => {
+    await fixture(async ({ root, write }) => {
+        await write(".github/skills/speckit-plan/SKILL.md",
+            "---\nname: speckit-plan\nartifact: specs/<slug>/plan.md\n---\nWrite the plan.");
+        const fingerprint = (await effectiveSource(root, "plan")).fingerprint;
+        await write(".speckit-wizard/artifact-targets.json", JSON.stringify({
+            entries: { "commands/speckit.plan": { outputEvidence: {
+                fingerprint, primaryIndex: null,
+                candidates: [{ kind: "unknown", source: "inference", effect: "unknown",
+                    evidence: "No primary output identified" }],
+            } } },
+        }));
+        const snap = { pipeline: [{ id: "plan" }], commands: [],
+            composition: { artifacts: [] }, phases: { plan: { status: "empty" } },
+            specsDir: "specs/current", warnings: [] };
+        const outputs = await collectArtifactEvidence(root, snap);
+        assert.equal(outputs.evidence.plan.primaryIndex, 0);
+        assert.equal(outputs.evidence.plan.candidates[0].source, "declaration");
+        await attachOutputEvidence({ workspacePath: root }, { reportedPhasePaths: {} }, snap, outputs);
+        assert.equal(snap.phases.plan.artifactPath, "specs/current/plan.md");
+    });
+});
+
 test("a failed command source read marks output collection and refresh incomplete", async () => {
     await fixture(async ({ root, write }) => {
         await write(".github/skills/speckit-specify/SKILL.md", "Writes specs/<slug>/spec.md");
@@ -349,6 +372,32 @@ test("unreadable cache immediately marks active output inference incomplete", as
         assert.equal(inst.outputInference.status, "incomplete");
         assert.equal(inst.refreshStatus.status, "incomplete");
         assert.ok(events.some(({ reason }) => reason === "output inference failed"));
+    });
+});
+
+test("oversized and unwritable artifact caches fail an active inference immediately", async () => {
+    await fixture(async ({ root }) => {
+        for (const [entry, options, status, message] of [
+            [{ writesTo: "specs/<slug>/plan.md", description: "x".repeat(512 * 1024) },
+                {}, 400, /exceeds its size limit/],
+            [{ writesTo: "specs/<slug>/plan.md" },
+                { writeCache: async () => { throw new Error("disk unavailable"); } },
+                500, /write failed: disk unavailable/],
+        ]) {
+            const events = [];
+            const inst = { workspacePath: root, url: "http://127.0.0.1:1234", token: "test",
+                broadcast: (event) => events.push(event) };
+            startRefresh(inst);
+            beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }]);
+            const res = response();
+            await handleArtifactTargets(res, { entries: { "commands/speckit.plan": entry } },
+                { getInstance: () => inst, broadcast: (event) => events.push(event), ...options });
+            assert.equal(res.status, status);
+            assert.match(res.body.error, message);
+            assert.equal(inst.outputInference.status, "incomplete");
+            assert.equal(inst.refreshStatus.status, "incomplete");
+            assert.ok(events.some(({ reason }) => reason === "output inference failed"));
+        }
     });
 });
 

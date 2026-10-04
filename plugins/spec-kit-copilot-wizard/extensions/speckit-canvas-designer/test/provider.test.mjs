@@ -1105,6 +1105,10 @@ test("generated-only page validates typed assets, freezes winners and packages w
     const load = (assets) => loadResolvedDesignerPages(handoff, project, entries, assets, registration);
     const defaults = await loadResolvedDesignerPages(handoff, project, entries);
     assert.deepEqual(defaults.generatedPages, []);
+    const tooManyPages = Array.from({ length: 31 }, (_, index) => ({
+        ...pages[0], name: `generated-page-${index}`,
+    }));
+    await assert.rejects(load(tooManyPages), /at most 30 generated pages/);
     let loaded;
     const executable = process.execPath;
     try {
