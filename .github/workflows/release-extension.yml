@@ -123,8 +123,8 @@ jobs:
       - name: Test package contracts
         run: python -m unittest discover -s spec-kit-extensions/tests -v
 
-      - name: Test scaffold-derived canvas generation
-        run: node --test spec-kit-extensions/tests/canvas_generation.test.mjs
+      - name: Test generated canvas Node regressions
+        run: node --test spec-kit-extensions/tests/*.test.mjs
 
       - name: Create extension ZIP
         env:

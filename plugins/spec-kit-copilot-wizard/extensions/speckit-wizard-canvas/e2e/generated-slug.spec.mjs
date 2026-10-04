@@ -40,6 +40,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         return {
             url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
             root,
+            runtime,
+            broadcast: () => routes.broadcast(),
             close: async () => {
                 routes.close();
                 runtime.close();
@@ -62,6 +64,36 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
     }
 }
 
+test("new workflow run follows its confirmed slug and blocks deletion while active", async () => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        const run = await canvas.runtime.run({ phase: "specify", itemId: "__new__", args: "Feature" }, "slug-test");
+        await mkdir(join(canvas.root, "specs", "new-feature"), { recursive: true });
+        const before = await canvas.runtime.snapshot();
+        await expect(canvas.runtime.deleteWorkflow({
+            itemId: "specs/new-feature", confirmation: "new-feature", revision: before.revision,
+        })).rejects.toThrow(/unfinished phase/);
+        await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
+        await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
+        const after = await canvas.runtime.snapshot();
+        expect(after.selected).toBe("specs/new-feature");
+        expect(after.statuses.specify.status).toBe("Request sent");
+        await expect(canvas.runtime.deleteWorkflow({
+            itemId: "specs/new-feature", confirmation: "new-feature", revision: after.revision,
+        })).rejects.toThrow(/unfinished phase/);
+        await writeFile(join(canvas.root, "specs", "new-feature", "spec.md"), "# Feature\n");
+        await canvas.runtime.report({
+            phaseRunId: run.runId, path: "specs/new-feature/spec.md",
+        }, "slug-test");
+        expect((await canvas.runtime.snapshot()).statuses.specify.status).toBe("Request sent");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("enabled slug previews the View target folder and persists across phases", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true);
     try {
@@ -83,6 +115,42 @@ test("enabled slug previews the View target folder and persists across phases", 
         await page.locator('[data-phase-index="0"]').click();
         await expect(page.locator("#workflow-name")).toHaveValue("Customer dashboard");
         await expect(page.locator("#workflow-slug")).toHaveValue("sample-feature");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("failed autosave retains workflow identity through SSE and Refresh for retry", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(true);
+    let rejectSaves = true;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST" && rejectSaves) {
+                return route.fulfill({ status: 503, contentType: "application/json",
+                    body: JSON.stringify({ error: "Temporary save failure" }) });
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await page.locator("#workflow-name").fill("Unsaved workflow");
+        await page.locator("#workflow-slug").fill("unsaved-slug");
+        await page.locator("#phase-args").focus();
+        await expect(page.locator("#canvas-message")).toContainText("Your draft is retained");
+        await mkdir(join(canvas.root, "specs", "other-workflow"), { recursive: true });
+        canvas.broadcast();
+        await expect(page.locator("#workflow-count")).toHaveText("(1)");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toContainText("Temporary save failure");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        rejectSaves = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        const saved = await canvas.runtime.snapshot();
+        expect(saved.name).toBe("Unsaved workflow");
+        expect(saved.slug).toBe("unsaved-slug");
     } finally {
         await canvas.close();
     }

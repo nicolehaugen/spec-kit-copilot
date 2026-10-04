@@ -274,7 +274,7 @@ async function refresh(reconcile = false) {
     model = next;
     if (!previous) current = Math.max(0, workflowPhases().findIndex((step) => step.id === model.phase));
     // Do not replace live input text during events or background refresh.
-    if (previous && timer) {
+    if (previous && (timer || saveFailure)) {
         model.slug = previous.slug;
         model.name = previous.name;
     }

@@ -6,6 +6,7 @@ export function phaseResponse(events, messageId) {
     let turn = null;
     let text = "";
     let hasTools = false;
+    let endedInteraction = null;
     let latest = null;
     const complete = (response) => Buffer.byteLength(response, "utf8") > RESPONSE_LIMIT
         ? { response: null, error: "The phase response exceeds the 64 KiB capture limit.", success: true }
@@ -20,11 +21,13 @@ export function phaseResponse(events, messageId) {
         }
         if (event.type === "assistant.turn_start") {
             active = data.interactionId;
+            endedInteraction = null;
             turn = data.turnId;
             text = "";
             hasTools = false;
         }
-        if (!interaction || active !== interaction) continue;
+        if (!interaction || (active !== interaction
+            && !(event.type === "session.task_complete" && endedInteraction === interaction))) continue;
         if (event.type === "assistant.message" && data.interactionId === interaction && data.turnId === turn) {
             if (data.toolRequests?.length) hasTools = true;
             if (!data.toolRequests?.length && !["analysis", "commentary", "thinking"].includes(data.phase)
@@ -38,6 +41,7 @@ export function phaseResponse(events, messageId) {
         }
         if (event.type === "assistant.turn_end" && data.turnId === turn) {
             if (text && !hasTools) latest = complete(text);
+            endedInteraction = active;
             active = null;
         }
     }
