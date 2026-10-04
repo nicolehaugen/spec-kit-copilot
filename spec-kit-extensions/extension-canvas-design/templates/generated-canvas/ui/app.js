@@ -169,6 +169,7 @@ function renderValues() {
                     const select = document.createElement("select");
                     select.className = "phase-input-control";
                     select.dataset.property = key;
+                    select.setAttribute("aria-label", `${field.label}: ${key}`);
                     for (const option of options) {
                         const item = document.createElement("option");
                         item.value = option;

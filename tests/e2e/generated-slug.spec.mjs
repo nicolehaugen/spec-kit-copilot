@@ -120,6 +120,22 @@ test("generated value editors render typed controls without exposing processing-
     }
 });
 
+test("object value properties have distinct accessible names across values", async ({ page }) => {
+    const sources = sampleValueSources();
+    sources.push({ id: "demo.priority", label: "Priority",
+        schema: { type: "object", properties: { level: ["one", "two"] } },
+        source: { kind: "constant", value: { level: "two" } },
+        presentation: "stock.editable" });
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sources);
+    try {
+        await page.goto(canvas.url);
+        await expect(page.getByRole("combobox", { name: "Choice: level" })).toHaveValue("one");
+        await expect(page.getByRole("combobox", { name: "Priority: level" })).toHaveValue("two");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("generated value editors save typed changes canvas-wide and retain failed edits", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sampleValueSources());
     let otherPanel;

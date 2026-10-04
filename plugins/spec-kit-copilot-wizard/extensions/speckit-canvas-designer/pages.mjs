@@ -301,7 +301,7 @@ function validateValueSource(document, name, fieldOrigins) {
         || !source || typeof source !== "object" || Array.isArray(source)
         || !(source.kind === "constant" && Object.keys(source).sort().join() === "kind,value"
             || source.kind === "provider" && Object.keys(source).sort().join() === "kind,module"
-                && PAGE_PATTERN.test(source.module))
+                && PAGE_PATTERN.test(source.module) && !isWindowsDeviceName(source.module))
         || !["stock.readonly", "stock.editable", "processing-only"].includes(document.presentation)
         || (source.kind === "provider" && document.presentation === "stock.editable")
         || (section !== undefined && (!section || typeof section !== "object"

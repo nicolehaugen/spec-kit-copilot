@@ -182,7 +182,8 @@ function configuration(request) {
             || !(item.source.kind === "constant" && Object.keys(item.source).sort().join() === "kind,value"
                 || item.source.kind === "provider" && Object.keys(item.source).sort().join() === "kind,module"
                     && typeof item.source.module === "string"
-                    && /^[a-z][a-z0-9-]{0,79}$/.test(item.source.module))
+                    && /^[a-z][a-z0-9-]{0,79}$/.test(item.source.module)
+                    && !isWindowsDeviceName(item.source.module))
             || (item.section !== undefined && (!item.section || typeof item.section !== "object"
                 || Object.keys(item.section).sort().join() !== "id,title"
                 || typeof item.section.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(item.section.id)

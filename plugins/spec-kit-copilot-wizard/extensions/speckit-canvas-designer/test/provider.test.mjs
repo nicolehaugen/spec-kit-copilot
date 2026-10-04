@@ -1525,6 +1525,12 @@ test("named value sources freeze typed values and run from a portable canvas wit
         }));
         await assert.rejects(load(), /invalid Canvas Design value source|invalid typed constant value/);
     }
+    for (const module of ["con", "com1", "lpt9"]) {
+        await writeFile(definition.path, JSON.stringify({
+            ...JSON.parse(originalDefinition), source: { kind: "provider", module },
+        }));
+        await assert.rejects(load(), /invalid Canvas Design value source/);
+    }
     await writeFile(definition.path, originalDefinition);
     await writeFile(definition.path, JSON.stringify({
         ...JSON.parse(originalDefinition), section: { id: "demo", title: "Conflicting" },

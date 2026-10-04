@@ -9,6 +9,8 @@ import { materialize, readBoundedSessionFile } from "../extension-canvas-design/
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
 import { freezeGeneration, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { isWindowsDeviceName as designerDeviceName } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
+import { isWindowsDeviceName as runtimeDeviceName } from "../extension-canvas-design/templates/generated-canvas/files.mjs";
 
 const entryTemplate = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/extension.mjs",
     import.meta.url), "utf8");
@@ -485,6 +487,20 @@ test("frozen named values reject tampered modules and package independently of t
         await writeFile(requestPath, JSON.stringify({ ...payload,
             integrity: createHash("sha256").update(JSON.stringify(payload)).digest("hex") }));
     };
+    for (const name of ["con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"]) {
+        assert.equal(designerDeviceName(name), true);
+        assert.equal(runtimeDeviceName(name), true);
+        const invalid = structuredClone(request);
+        invalid.valueSources.find((entry) => entry.id === "demo.workflow").source.module = name;
+        await persist(invalid);
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen value source registration/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
+    for (const name of ["com0", "com10", "lpt0", "lpt10", "con-1"]) {
+        assert.equal(designerDeviceName(name), false);
+        assert.equal(runtimeDeviceName(name), false);
+    }
     const tampered = structuredClone(request);
     tampered.valueSources.find((entry) => entry.id === "demo.workflow").assets[1].hash = "0".repeat(64);
     await persist(tampered);
@@ -519,6 +535,13 @@ test("frozen named values reject tampered modules and package independently of t
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     const config = readConfig();
+    for (const name of ["con", "com1", "lpt9"]) {
+        const invalid = structuredClone(config);
+        invalid.valueSources.find((entry) => entry.id === "demo.workflow").source.module = name;
+        await writeFile(join(sdk, "canvas-config.json"), JSON.stringify(invalid));
+        assert.throws(readConfig, /Invalid value provider/);
+    }
+    await writeFile(join(sdk, "canvas-config.json"), JSON.stringify(config));
     assert.equal(config.valueSources.length, definitions.length);
     assert.deepEqual(config.generatedPages[0].values, ["demo.processing"]);
     assert.equal(config.valueSources.find((entry) => entry.id === "demo.note").presentation, "stock.editable");
