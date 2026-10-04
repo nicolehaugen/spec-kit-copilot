@@ -105,7 +105,10 @@ test("slow control mount leaves other controls and the workflow shell interactiv
             priorTheme === "dark" ? "light" : "dark");
         await page.locator('[data-canvas-page="extra"]').click();
         await expect(page.locator("#generated-page")).toHaveText("Extra is available");
+        await expect(page.locator('section[aria-label="slow"]')).toBeHidden();
         await expect(page.locator('[data-control-id="slow"]')).not.toHaveAttribute("role", "alert");
+        await page.locator('[data-canvas-page="workflow"]').click();
+        await expect(page.locator('section[aria-label="slow"]')).toBeVisible();
     } finally {
         await canvas.close();
     }

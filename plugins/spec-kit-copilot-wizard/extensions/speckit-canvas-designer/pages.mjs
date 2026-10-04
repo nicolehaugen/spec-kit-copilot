@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fingerprint } from "./handoff.mjs";
+import { validControlContract } from "./control-contract.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
@@ -213,6 +214,10 @@ function validateContribution(document, name, slots, fieldOrigins) {
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
     }
+    if (field.type === "object"
+        && (document.requires?.length !== 1 || typeof document.requires[0] !== "string")) {
+        throw new Error(`${name}: object field requires exactly one control definition template`);
+    }
     const binding = document.generatedBinding;
     if (binding !== undefined
         && (!binding
@@ -240,19 +245,10 @@ function validateContribution(document, name, slots, fieldOrigins) {
 }
 
 function validateControl(document, name) {
-    const properties = document?.value?.properties;
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).sort().join() !== "adapters,id,schemaVersion,value"
         || document.schemaVersion !== 1 || !PAGE_PATTERN.test(document.id)
-        || !document.value || Object.keys(document.value).sort().join() !== "properties,type"
-        || document.value.type !== "object"
-        || !properties || typeof properties !== "object" || Array.isArray(properties)
-        || !Object.keys(properties).length || Object.keys(properties).length > 10
-        || Object.entries(properties).some(([key, allowed]) =>
-            !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
-            || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
-            || new Set(allowed).size !== allowed.length
-            || allowed.some((value) => typeof value !== "string" || !value || value.length > 80))
+        || !validControlContract(document.value)
         || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
         || !PAGE_PATTERN.test(document.adapters.designer)
         || !PAGE_PATTERN.test(document.adapters.generated)) {
@@ -456,8 +452,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     for (const entry of loaded.filter((item) => item.kind === "designer.field"
         && item.document.field.type === "object")) {
-        if (!controls.some((control) => control.document.id === entry.document.field.control
-            && entry.document.requires.includes(control.name))) {
+        const control = controls.find((item) => item.name === entry.document.requires[0]);
+        if (!control || control.document.id !== entry.document.field.control) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
         }
     }
@@ -583,7 +579,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         ({ name, sourceId, ...document }));
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.page")
         .map(({ name, document }) => ({ name, ...document }));
-    model.controls = controls.map(({ document }) => document);
+    model.controls = controls.map(({ name, document }) => ({ ...document, template: name }));
     model.adapters = Object.fromEntries(controls.map(({ document }) =>
         [document.id, document.adapters.designer]));
     for (const page of model.pages) {

@@ -4,11 +4,12 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { validControlContract, validControlValue } from "../templates/generated-canvas/control-contract.mjs";
 import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "templates", "generated-canvas");
-const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
+const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
     "phase-response.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
@@ -130,7 +131,19 @@ function configuration(request) {
                         || !field.section.title.trim() || field.section.title.length > 120))))) {
         throw new Error("Invalid frozen generated fields");
     }
-    if (generatedFields?.some(({ id }) => essentialFields.has(id))) {
+    if (generatedControls !== undefined
+        && (!Array.isArray(generatedControls) || generatedControls.length > 30
+            || generatedControls.some((item) => !item || typeof item !== "object" || Array.isArray(item))
+            || new Set(generatedControls.map(({ id }) => id)).size !== generatedControls.length)) {
+        throw new Error("Invalid frozen generated controls");
+    }
+    const generatedIds = [
+        ...(generatedFields ?? []).map(({ id }) => id),
+        ...(generatedControls ?? []).map(({ id }) => id),
+    ];
+    if (generatedFields?.some(({ id }) => essentialFields.has(id))
+        || generatedIds.length !== new Set(generatedIds).size
+        || generatedIds.some((id) => essentialFields.has(id))) {
         throw new Error("Invalid frozen generated values");
     }
     const sections = new Map();
@@ -178,12 +191,6 @@ function configuration(request) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
         }
     }
-    if (generatedControls !== undefined
-        && (!Array.isArray(generatedControls) || generatedControls.length > 30
-            || new Set(generatedControls.map((item) => item?.id)).size !== generatedControls.length
-            || generatedControls.some((item) => generatedFields?.some((field) => field.id === item.id)))) {
-        throw new Error("Invalid frozen generated controls");
-    }
     for (const item of generatedControls ?? []) {
         if (!item || Object.keys(item).sort().join() !== "assets,control,id,label,slot,value"
             || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
@@ -215,21 +222,8 @@ function configuration(request) {
             || definition.adapters?.generated !== item.assets[1].name
             || !definition.adapters?.designer
             || item.assets[0].name === item.assets[1].name
-            || definition.value?.type !== "object"
-            || !definition.value.properties
-            || typeof definition.value.properties !== "object"
-            || Array.isArray(definition.value.properties)
-            || !Object.keys(definition.value.properties).length
-            || Object.keys(definition.value.properties).length > 10
-            || Object.entries(definition.value.properties).some(([key, allowed]) =>
-                !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
-                || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
-                || new Set(allowed).size !== allowed.length
-                || allowed.some((value) => typeof value !== "string" || !value || value.length > 80))
-            || !item.value || typeof item.value !== "object" || Array.isArray(item.value)
-            || Object.keys(item.value).sort().join() !== Object.keys(definition.value.properties).sort().join()
-            || Object.entries(definition.value.properties).some(([key, allowed]) =>
-                !allowed.includes(item.value[key]))
+            || !validControlContract(definition.value)
+            || !validControlValue(item.value, definition.value)
             || JSON.stringify(values[item.id]) !== JSON.stringify(item.value)) {
             throw new Error(`${item.id}: incompatible frozen control value or adapters`);
         }

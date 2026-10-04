@@ -125,6 +125,12 @@ At Generate:
 5. Verify that the app uses **its packaged files**, not paths into the Designer child’s `.specify` directory.
 
 Generated configuration remains derived from the frozen request; there is no competing preset-replaceable generated-config template. Changes to a source preset do not alter an app that was already generated.
+The control contract and typed-value checks are authored once in
+`templates/generated-canvas/control-contract.mjs`. The generator imports that module,
+the Wizard Designer ships a byte-identical copy checked by package tests, and
+generated apps receive the same module with their source-owned shell. Validation
+of each host's envelope (template provenance, frozen bytes, or saved app config)
+remains at that host's boundary.
 
 **Design-time dependency acceptance test:** Package the Generated Workflow Canvas app as its own Copilot plugin and open it in a project **without** `extension-canvas-design` or the originating `canvas-design`-tagged presets. Its packaged pages, controls, providers, assets, and presentation still work. The app does not run `specify preset resolve` for design contributions at launch. It can still use the **Specify CLI for workflow project setup**.
 

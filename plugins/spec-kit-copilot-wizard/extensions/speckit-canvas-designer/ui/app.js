@@ -212,6 +212,7 @@ function renderPage(pageId) {
                     }
                     if (!mount.isConnected) return;
                     return render({ root: mount, field, value: draft[field.id], onChange(value) {
+                        if (!mount.isConnected) return;
                         draft[field.id] = value;
                         messageBox.hidden = true;
                         showError("");

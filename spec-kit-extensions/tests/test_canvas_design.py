@@ -32,7 +32,7 @@ FILES = {
         "description", "workflow-heading", "custom-slug",
     )),
     *(f"templates/generated-canvas/{name}" for name in (
-        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
+        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
     )),

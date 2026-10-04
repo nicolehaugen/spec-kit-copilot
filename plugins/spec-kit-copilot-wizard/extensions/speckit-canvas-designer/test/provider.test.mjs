@@ -21,6 +21,13 @@ import { freezeGeneration } from "../generation.mjs";
 
 const ID = "designer_1";
 
+test("Designer packages the same control validator as the generated app", async () => {
+    assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
+        await readFile(new URL(
+            "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            import.meta.url)));
+});
+
 function validHandoff(id = ID) {
     const workflow = { selectedPhases: ["specify", "plan"] };
     const selections = {
@@ -1466,8 +1473,10 @@ test("paired control validates both adapters, typed values and portable generate
     assert.deepEqual(model.values["risk.rating"], null);
     assert.equal(model.generatedPages.length, 0);
     assert.equal(model.adapters["risk-matrix"], "canvas-control-risk-matrix-designer");
+    assert.equal(model.controls[0].template, templates[0].name);
     const controlDocument = JSON.parse(await readFile(templates[0].path, "utf8"));
-    const contributionDocument = JSON.parse(await readFile(templates[1].path, "utf8"));
+    const contributionSource = await readFile(templates[1].path, "utf8");
+    const contributionDocument = JSON.parse(contributionSource);
     const secondField = { ...contributionDocument, id: "risk-second-field",
         field: { ...contributionDocument.field, id: "risk.second", label: "Second risk" } };
     const secondFieldTemplate = { ...templates[1], name: "canvas-contributions-risk-second",
@@ -1495,6 +1504,21 @@ test("paired control validates both adapters, typed values and portable generate
     }));
     await assert.rejects(load([...templates, secondControlTemplate, secondFieldTemplate,
         secondDesignerAdapter]), /generated adapter belongs to both risk-matrix and risk-other/);
+    const secondGeneratedAdapter = { ...templates[3], name: "canvas-control-risk-other-generated",
+        path: join(directory, "risk-other-generated.mjs") };
+    await copyFile(templates[3].path, secondGeneratedAdapter.path);
+    await writeFile(secondControlTemplate.path, JSON.stringify({
+        ...controlDocument, id: "risk-other",
+        adapters: { designer: secondDesignerAdapter.name, generated: secondGeneratedAdapter.name },
+    }));
+    const bothControls = [...templates, secondControlTemplate, secondFieldTemplate,
+        secondDesignerAdapter, secondGeneratedAdapter];
+    assert.equal((await load(bothControls)).controls.length, 2);
+    await writeFile(templates[1].path, JSON.stringify({
+        ...contributionDocument, requires: [secondControlTemplate.name, templates[0].name],
+    }));
+    await assert.rejects(load(bothControls), /object field requires exactly one control definition template/);
+    await writeFile(templates[1].path, contributionSource);
     const designerAdapter = templates[2];
     const designerModule = await readFile(designerAdapter.path, "utf8");
     await writeFile(designerAdapter.path, `${designerModule}\nprocess.exit(57);`);
@@ -1578,6 +1602,8 @@ test("paired control validates both adapters, typed values and portable generate
     const atLimitRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", atLimit.requestId, "request.json")));
     assert.equal(atLimitRequest.generatedControls.length, 30);
+    assert.ok(atLimitRequest.generatedControls.every((item) =>
+        item.assets[0].name === templates[0].name));
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { modelRevision: model.revision, revision: 0, values });
     const reopened = await loadDesignerSettings(workspace, handoff, await load());
@@ -1595,9 +1621,32 @@ test("paired control validates both adapters, typed values and portable generate
     await assert.rejects(load(templates, () => ({ kind: "script", stack: [] })),
         /replace-only Specify template/);
     const definition = templates[0];
+    for (const requires of [
+        null, undefined, [], [templates[2].name],
+        [templates[2].name, definition.name], [definition.name, definition.name],
+    ]) {
+        const invalid = { ...contributionDocument };
+        if (requires === undefined) delete invalid.requires;
+        else invalid.requires = requires;
+        await writeFile(templates[1].path, JSON.stringify(invalid));
+        await assert.rejects(load(), /object field requires exactly one control definition template|missing or incompatible shared control definition/);
+    }
+    await writeFile(templates[1].path, contributionSource);
     const original = await readFile(definition.path, "utf8");
     await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
     await assert.rejects(load(), /invalid shared control value contract|incompatible shared control/);
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const invalidDefinition = JSON.parse(original);
+        invalidDefinition.value.properties = invalidProperties;
+        await writeFile(definition.path, JSON.stringify(invalidDefinition));
+        await assert.rejects(load(), /invalid shared control value contract/);
+    }
     await writeFile(definition.path, original);
     await writeFile(designerAdapter.path, designerModule.replace(
         'export const controlId = "risk-matrix"', 'export const controlId = "other-control"'));
@@ -1619,6 +1668,40 @@ test("paired control validates both adapters, typed values and portable generate
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const originalRequest = await readFile(requestPath, "utf8");
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const request = JSON.parse(originalRequest);
+        const asset = request.generatedControls[0].assets[0];
+        const definition = JSON.parse(Buffer.from(asset.content, "base64").toString("utf8"));
+        definition.value.properties = invalidProperties;
+        const bytes = Buffer.from(JSON.stringify(definition));
+        asset.content = bytes.toString("base64");
+        asset.hash = createHash("sha256").update(bytes).digest("hex");
+        const { integrity: _hash, ...unsigned } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /incompatible frozen control value or adapters/);
+    }
+    for (const [change, error] of [
+        [(request) => { request.values["designer.unbound"] = "not generated"; },
+            /Invalid frozen Designer fields/],
+        [(request) => { request.generatedControls[0].id = "canvas.description"; },
+            /Invalid frozen generated values/],
+    ]) {
+        const request = JSON.parse(originalRequest);
+        change(request);
+        const { integrity: _hash, ...unsigned } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            error);
+    }
     const invalidRequest = JSON.parse(originalRequest);
     invalidRequest.generatedControls[0].value.likelihood = "impossible";
     const { integrity: _integrity, ...payload } = invalidRequest;
@@ -1645,6 +1728,23 @@ test("paired control validates both adapters, typed values and portable generate
         pathToFileURL(join(portable, "server.mjs")).href);
     const config = readConfig();
     assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
+    assert.deepEqual(await readFile(join(portable, "control-contract.mjs")),
+        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            import.meta.url)));
+    const configPath = join(portable, "canvas-config.json");
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const invalid = structuredClone(config);
+        invalid.generatedControls[0].properties = invalidProperties;
+        await writeFile(configPath, JSON.stringify(invalid));
+        assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    }
+    await writeFile(configPath, JSON.stringify(config));
     assert.match(renderHtml(config), /data-control-id="risk.rating"/);
     assert.equal((await import(pathToFileURL(join(portable, "controls",
         `${generated.name}.mjs`)).href)).mount.name, "mount");
@@ -1708,7 +1808,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs",
+    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
         "settings.mjs", "generation.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
