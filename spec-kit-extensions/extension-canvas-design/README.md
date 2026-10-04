@@ -37,6 +37,10 @@ the list's place and starts a new workflow without leaving a detached status
 message.
 Each row offers a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
+Deletion verifies the directory and its parent, moves it to a temporary
+location, and checks the moved directory's identity before removing it. If
+the parent changes during deletion, the moved directory is retained for manual
+recovery at the path shown in the error.
 An optional **Workflow name**
 appears just below it while creating a workflow; it labels the workflow in
 the canvas (falling back to the actual directory name when blank) and does not

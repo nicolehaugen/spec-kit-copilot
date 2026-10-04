@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir, realpath, lstat, rm } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { posix } from "node:path";
 import { spawn } from "node:child_process";
-import { UserError, confined, readBounded, directories, atomicJson, safePath, slugPattern } from "./files.mjs";
+import { UserError, confined, readBounded, directories, atomicJson, safePath, slugPattern,
+    deleteConfinedDirectory } from "./files.mjs";
 import { phaseContract } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 
@@ -430,23 +431,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 && !["Completed", "Failed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
-            const target = await confined(cwd, item.id);
-            if (!(await lstat(target)).isDirectory()) throw new UserError("Workflow directory is unavailable.", 404);
-            let entries = 0;
-            async function inspect(path, depth) {
-                if (depth > 16) throw new UserError("Workflow directory is too deep to delete safely.");
-                for (const entry of await readdir(await confined(cwd, path), { withFileTypes: true })) {
-                    if (++entries > 20000) throw new UserError("Workflow directory is too large to delete safely.");
-                    const child = `${path}/${entry.name}`;
-                    if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
-                        throw new UserError("Workflow directory contains a link or unsupported file. Remove it manually before deleting.");
-                    }
-                    await confined(cwd, child);
-                    if (entry.isDirectory()) await inspect(child, depth + 1);
-                }
-            }
-            await inspect(item.id, 0);
-            await rm(target, { recursive: true });
+            await deleteConfinedDirectory(cwd, item.id);
             removed = true;
             await update((next) => {
                 next.runs = next.runs.filter((run) => run.item !== item.id
