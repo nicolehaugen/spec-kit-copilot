@@ -15,6 +15,8 @@ const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-
 const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 512 * 1024;
+const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
+    "canvas.workflowListName", "workflowSlug.userProvided"]);
 
 function within(root, path) {
     const part = relative(root, path);
@@ -63,6 +65,13 @@ function configuration(request) {
                         || typeof field.section.title !== "string"
                         || !field.section.title.trim() || field.section.title.length > 120))))) {
         throw new Error("Invalid frozen generated fields");
+    }
+    const expectedValues = new Set([...essentialFields, ...(generatedFields ?? []).map(({ id }) => id)]);
+    if (generatedFields?.some(({ id }) => essentialFields.has(id))
+        || !values || typeof values !== "object" || Array.isArray(values)
+        || Object.keys(values).length !== expectedValues.size
+        || Object.keys(values).some((id) => !expectedValues.has(id))) {
+        throw new Error("Invalid frozen generated values");
     }
     const sections = new Map();
     for (const { section } of generatedFields ?? []) {
