@@ -1455,14 +1455,14 @@ test("named value sources freeze typed values and run from a portable canvas wit
     const originalProvider = await readFile(provider.path, "utf8");
     await writeFile(provider.path, "export const provideValue = ;");
     await assert.rejects(load(), /invalid value.provider/);
-    for (const invalid of [
+    for (const runtimeInvalid of [
         "export const provideValue = 42;",
         "export const provideValue = async () => 'ok';",
         "export async function provideValue() { return 'ok'; }",
-        "export const provideValue = function* () { yield 'ok'; };",
     ]) {
-        await writeFile(provider.path, invalid);
-        await assert.rejects(load(), /provideValue must be a synchronous function or arrow function/);
+        await writeFile(provider.path, runtimeInvalid);
+        assert.equal((await load()).valueSources.find((value) => value.id === "demo.workflow").id,
+            "demo.workflow");
     }
     for (const valid of [
         "export const provideValue = function () { return 'ok'; };",
@@ -1611,6 +1611,25 @@ test("named value sources freeze typed values and run from a portable canvas wit
     assert.equal(second.valueFields.find((field) => field.id === "demo.workflow").value,
         "002-second (002-second)");
     assert.equal(second.valueFields.find((field) => field.id === "demo.note").value, "Changed globally");
+    for (const [source, reason] of [
+        ["export const provideValue = 42;", /provideValue must be a function/],
+        ["export async function provideValue() { return 'ok'; }", /Async providers are not supported/],
+        ["export const provideValue = async () => 'ok';", /Async providers are not supported/],
+    ]) {
+        await writeFile(packagedProvider, source);
+        const invalidConfig = structuredClone(config);
+        invalidConfig.valueSources.find((field) => field.id === "demo.workflow").source.hash =
+            createHash("sha256").update(source).digest("hex");
+        const diagnostics = [];
+        const invalidRuntime = await createRuntime({ config: invalidConfig, cwd: project, workspace,
+            session: { ...session, log: async (message) => { diagnostics.push(message); } } });
+        t.after(() => invalidRuntime.close());
+        const invalid = await invalidRuntime.snapshot();
+        assert.equal(invalid.valueFields.some((field) => field.id === "demo.workflow"), false);
+        assert.match(invalid.valueErrors["demo.workflow"], reason);
+        assert.match(diagnostics.join("\n"), reason);
+    }
+    await writeFile(packagedProvider, originalProvider);
     await writeFile(packagedProvider, "export function provideValue() { return 'changed'; }");
     let reachedDiagnostic, releaseDiagnostic;
     const reached = new Promise((resolve) => { reachedDiagnostic = resolve; });

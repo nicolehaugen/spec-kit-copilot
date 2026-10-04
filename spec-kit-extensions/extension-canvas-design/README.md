@@ -155,8 +155,20 @@ collisions with Designer fields. A constant uses
 `"source":{"kind":"provider","module":"<registered-template-name>"}` and a
 separate `value.provider` replace-only `.mjs` template exporting
 `provideValue({workflow})` with a direct `export function` or `export const`
-declaration (synchronous and without imports). Named re-exports are unsupported.
-Designer checks that the transformed script parses, but **does not run it**.
+declaration (without imports). Named re-exports are unsupported. For example:
+
+```js
+export function provideValue({ workflow }) {
+    return `${workflow.label} (${workflow.slug})`;
+}
+```
+
+`workflow` is a read-only object with `id`, `slug`, and `label` for the selected
+existing workflow. Return a synchronous, JSON-serializable value matching the
+value definition's typed schema; do not use `async` or return a Promise.
+Designer checks the direct export and transformed script syntax, but **does not
+run the provider**. A non-function export, Promise, invalid typed result, or
+provider error is reported on generated-canvas refresh, not silently replaced.
 Generate requires explicit confirmation of every resolved provider's name,
 source (including project overrides), and SHA-256 hash; changed bytes require
 reopening Designer and confirming again. `stock.readonly` displays a value

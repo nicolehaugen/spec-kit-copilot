@@ -22,7 +22,7 @@ if (!isMainThread && workerData?.canvasValueProvider) {
             + "const provide = (() => {\n"
             + `${body}\n`
             + "return provideValue;\n})();\n"
-            + "if (typeof provide !== 'function') throw new Error('Missing provideValue export');\n"
+            + "if (typeof provide !== 'function') throw new Error('provideValue must be a function');\n"
             + "const result = provide({ workflow });\n"
             + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
             + "JSON.stringify(result);",
@@ -250,7 +250,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 } else value = field.source.value;
                 value = validateValue(field.schema, value, field.id);
             } catch (error) {
-                valueErrors[field.id] = error instanceof UserError
+                const contractError = field.source.kind === "provider"
+                    && (error.message === "provideValue must be a function"
+                        || error.message === "Async providers are not supported");
+                valueErrors[field.id] = error instanceof UserError || contractError
                     ? error.message : `Value ${field.label} could not be evaluated or failed validation.`;
                 if (error.message !== PROVIDER_REFRESH_ERROR || !reportedDeadline) {
                     await diagnostic(`Generated canvas value ${field.id} failed: ${error.message}`);

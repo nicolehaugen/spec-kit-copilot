@@ -64,10 +64,12 @@ registry and declare a typed constant or a workflow-scoped provider, plus
 read-only, runtime-editable, or processing-only presentation. A provider must
 have its own replace-only `value.provider` `.mjs` registration with a direct
 `export function provideValue` or `export const provideValue` declaration
-with a synchronous function or arrow initializer (named re-exports and async
-functions are unsupported). Designer validates the actual declaration
-and checks that the transformed script parses,
-but does not execute providers; Generate confirms each resolved provider's
+(`export { provideValue }` and imports are unsupported). The function receives
+`{ workflow: { id, slug, label } }` for the selected workflow and must return
+a synchronous, JSON-serializable value matching the definition's typed schema.
+Async functions and non-function exports fail visibly during generated-canvas
+refresh; Designer checks syntax but does not execute providers. Generate
+confirms each resolved provider's
 name, source and hash before freezing its bytes for packaging. Changes since
 Designer opened require reopening and reconfirming. Generated pages may declare
 the IDs they consume in `values`. The packaged app rejects changed provider
