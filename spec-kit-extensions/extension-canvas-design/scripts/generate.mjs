@@ -26,7 +26,8 @@ function within(root, path) {
 }
 
 function configuration(request) {
-    const { canvas, workflow, values, installed, generatedFields, generatedPages, generatedControls } = request;
+    const { canvas, workflow, values, installed, generatedFields, generatedPages,
+        generatedControls, controlAssets } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -132,18 +133,26 @@ function configuration(request) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
         }
     }
-    for (const item of generatedControls ?? []) {
-        if (!item || Object.keys(item).sort().join() !== "assets,control,id,label,slot,value"
-            || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
-            || !/^[a-z][a-z0-9-]{0,79}$/.test(item.control)
-            || !item.label || typeof item.label !== "string" || item.label.length > 120
-            || item.slot !== "details.content" || !Array.isArray(item.assets)
-            || item.assets.length !== 2
-            || item.assets[0]?.kind !== "control.definition"
-            || item.assets[1]?.kind !== "generated.adapter") {
-            throw new Error("Invalid frozen generated control registration");
+    if (controlAssets !== undefined
+        && (!Array.isArray(controlAssets) || !generatedControls?.length
+            || !controlAssets.length || controlAssets.length > 30
+            || new Set(controlAssets.map((item) => item?.control)).size !== controlAssets.length)) {
+        throw new Error("Invalid frozen generated control assets");
+    }
+    if (generatedControls?.length && !controlAssets) {
+        throw new Error("Missing frozen generated control assets");
+    }
+    const assetsByControl = new Map();
+    for (const entry of controlAssets ?? []) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)
+            || Object.keys(entry).sort().join() !== "assets,control"
+            || typeof entry.control !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(entry.control)
+            || !Array.isArray(entry.assets) || entry.assets.length !== 2
+            || entry.assets[0]?.kind !== "control.definition"
+            || entry.assets[1]?.kind !== "generated.adapter") {
+            throw new Error("Invalid frozen generated control assets");
         }
-        for (const asset of item.assets) {
+        for (const asset of entry.assets) {
             if (!asset || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
                 || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
                 || isWindowsDeviceName(asset.name)
@@ -158,17 +167,34 @@ function configuration(request) {
             }
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
-        catch { throw new Error(`${item.id}: invalid control definition`); }
-        if (definition?.schemaVersion !== 1 || definition.id !== item.control
-            || definition.adapters?.generated !== item.assets[1].name
+        try { definition = JSON.parse(Buffer.from(entry.assets[0].content, "base64").toString("utf8")); }
+        catch { throw new Error(`${entry.control}: invalid control definition`); }
+        if (definition?.schemaVersion !== 1 || definition.id !== entry.control
+            || definition.adapters?.generated !== entry.assets[1].name
             || !definition.adapters?.designer
-            || item.assets[0].name === item.assets[1].name
-            || !validControlContract(definition.value)
-            || !validControlValue(item.value, definition.value)
+            || entry.assets[0].name === entry.assets[1].name
+            || !validControlContract(definition.value)) {
+            throw new Error(`${entry.control}: incompatible frozen control assets`);
+        }
+        assetsByControl.set(entry.control, { assets: entry.assets, properties: definition.value.properties,
+            contract: definition.value });
+    }
+    for (const item of generatedControls ?? []) {
+        if (!item || Object.keys(item).sort().join() !== "control,id,label,slot,value"
+            || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+            || !item.label || typeof item.label !== "string" || item.label.length > 120
+            || item.slot !== "details.content" || !assetsByControl.has(item.control)) {
+            throw new Error("Invalid frozen generated control registration");
+        }
+        const { contract } = assetsByControl.get(item.control);
+        if (!validControlValue(item.value, contract)
             || JSON.stringify(values[item.id]) !== JSON.stringify(item.value)) {
             throw new Error(`${item.id}: incompatible frozen control value or adapters`);
         }
+    }
+    if (assetsByControl.size !== new Set((generatedControls ?? []).map((item) => item.control)).size) {
+        throw new Error("Unused frozen generated control assets");
     }
     const outputs = {
         constitution: ".specify/memory/constitution.md", specify: "specs/<slug>/spec.md",
@@ -182,10 +208,10 @@ function configuration(request) {
         ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>
             ({ id, label, value: values[id], ...(section ? { section } : {}) })) } : {}),
         ...(generatedControls?.length ? { generatedControls: generatedControls.map(
-            ({ id, label, control, slot, value, assets }) =>
-                ({ id, label, control, slot, value, adapter: assets[1].name,
-                    properties: JSON.parse(Buffer.from(assets[0].content, "base64").toString("utf8"))
-                        .value.properties })) } : {}),
+            ({ id, label, control, slot, value }) => {
+                const { assets, properties } = assetsByControl.get(control);
+                return { id, label, control, slot, value, adapter: assets[1].name, properties };
+            }) } : {}),
         phases: workflow.selectedPhases,
         phaseOutputs: Object.fromEntries(workflow.selectedPhases.map((phase) => {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
@@ -275,9 +301,9 @@ export async function materialize(project, workspace, handoffId, requestId) {
         { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
         { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },
     ]);
-    const controlFiles = (request.generatedControls ?? []).flatMap((item) => [
-        { filename: `${item.assets[0].name}.json`, bytes: Buffer.from(item.assets[0].content, "base64") },
-        { filename: `${item.assets[1].name}.mjs`, bytes: Buffer.from(item.assets[1].content, "base64") },
+    const controlFiles = (request.controlAssets ?? []).flatMap(({ assets }) => [
+        { filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") },
+        { filename: `${assets[1].name}.mjs`, bytes: Buffer.from(assets[1].content, "base64") },
     ]);
     const distinctControlFiles = new Map();
     for (const file of controlFiles) {
