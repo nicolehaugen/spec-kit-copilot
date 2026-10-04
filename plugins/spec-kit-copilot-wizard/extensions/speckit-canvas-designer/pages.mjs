@@ -325,6 +325,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (!item || typeof item !== "object" || Array.isArray(item)
             || Object.keys(item).some((key) => !["name", "path", "sourceId", "kind", "strategy"].includes(key))
             || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
+            || (["control.definition", "generated.adapter"].includes(item.kind)
+                && isWindowsDeviceName(item.name))
             || names.has(item.name) || typeof item.path !== "string"
             || !item.path || item.path.length > 4096 || /[\x00-\x1f\x7f]/.test(item.path)
             || typeof item.sourceId !== "string"

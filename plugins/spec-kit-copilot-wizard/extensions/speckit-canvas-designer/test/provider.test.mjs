@@ -1496,6 +1496,13 @@ test("paired control validates both adapters, typed values and portable generate
         [templates.map((item) => item.kind === "designer.adapter"
             ? { ...item, strategy: "append" } : item), /Invalid or duplicate/],
     ]) await assert.rejects(load(assets), message);
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        for (const kind of ["control.definition", "generated.adapter"]) {
+            await assert.rejects(load(templates.map((item) =>
+                item.kind === kind ? { ...item, name } : item)),
+            /Invalid or duplicate Canvas Design template/);
+        }
+    }
     await assert.rejects(load(templates, () => ({ kind: "script", stack: [] })),
         /replace-only Specify template/);
     const definition = templates[0];
@@ -1546,6 +1553,27 @@ test("paired control validates both adapters, typed values and portable generate
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const originalRequest = await readFile(requestPath, "utf8");
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        for (const kind of ["control.definition", "generated.adapter"]) {
+            const request = JSON.parse(originalRequest);
+            const asset = request.generatedControls[0].assets.find((entry) => entry.kind === kind);
+            asset.name = name;
+            if (kind === "generated.adapter") {
+                const definitionAsset = request.generatedControls[0].assets[0];
+                const definition = JSON.parse(Buffer.from(definitionAsset.content, "base64").toString("utf8"));
+                definition.adapters.generated = name;
+                const bytes = Buffer.from(JSON.stringify(definition));
+                definitionAsset.content = bytes.toString("base64");
+                definitionAsset.hash = createHash("sha256").update(bytes).digest("hex");
+            }
+            const { integrity: _hash, ...unsigned } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+            await writeFile(requestPath, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /Invalid frozen generated control asset/);
+            await assert.rejects(readdir(join(project, prepared.target)), { code: "ENOENT" });
+        }
+    }
     for (const invalidProperties of [
         Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
         { impact: ["low", "low"] },
