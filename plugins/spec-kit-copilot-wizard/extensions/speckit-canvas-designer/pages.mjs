@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fingerprint } from "./handoff.mjs";
+import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
 const REQUIRED_PAGES = ["canvas-settings-setup", "canvas-settings-artifacts",
@@ -241,16 +242,17 @@ function validateGeneratedPage(document, name) {
     }
 }
 
-function executableRegistration(project, name) {
+async function executableRegistration(project, name) {
+    const options = await specifySpawnOptions(project, { encoding: "utf8", maxBuffer: 128 * 1024 });
     const result = spawnSync("specify", ["artifact", "info", `template:${name}`, "--json"],
-        { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+        options);
     if (result.error || result.status !== 0) {
         throw new Error(`${name}: cannot verify replace-only Specify template registration: ${result.stderr || result.error || result.stdout}`);
     }
     try {
         const info = JSON.parse(result.stdout);
         const script = spawnSync("specify", ["artifact", "info", `script:${name}`, "--json"],
-            { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+            options);
         if (script.error || ![0, 1].includes(script.status)) {
             throw new Error(`${name}: cannot verify native script registration: ${script.stderr || script.error}`);
         }
@@ -321,7 +323,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
             ids.add(document.id);
         } else {
-            const info = registration(dirname(specify), item.name);
+            const info = await registration(dirname(specify), item.name);
             const layers = info?.stack;
             const winner = layers?.find((layer) => layer.active);
             const sourceLayer = item.sourceId === "project" ? "project"
