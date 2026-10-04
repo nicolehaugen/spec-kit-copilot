@@ -133,6 +133,12 @@ freezes the validated object and packages the effective generated adapter and
 definition into the app, up to 30 generated controls. Missing, wrong-kind,
 non-replace, or multiply owned adapters stop Designer opening rather than
 falling back to a stock control.
+The Designer, generator, and standalone generated app apply the same object
+contract and value rules: 1-10 named properties, each with 1-20 distinct,
+nonempty string options of at most 80 characters. The canonical
+`templates/generated-canvas/control-contract.mjs` is copied into generated apps;
+the Wizard provider includes a byte-checked copy, without a runtime dependency
+on the design-time extension.
 The browser reports incompatible `controlId` or `valueContract` exports,
 non-function `mount` exports, and mount failures beside the affected control.
 For stock read-only fields, an optional `generatedBinding.section` with a

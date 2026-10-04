@@ -21,6 +21,13 @@ import { freezeGeneration } from "../generation.mjs";
 
 const ID = "designer_1";
 
+test("Designer packages the same control validator as the generated app", async () => {
+    assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
+        await readFile(new URL(
+            "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            import.meta.url)));
+});
+
 function validHandoff(id = ID) {
     const workflow = { selectedPhases: ["specify", "plan"] };
     const selections = {
@@ -1468,6 +1475,18 @@ test("paired control validates both adapters, typed values and portable generate
     const original = await readFile(definition.path, "utf8");
     await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
     await assert.rejects(load(), /invalid shared control value contract|incompatible shared control/);
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const invalidDefinition = JSON.parse(original);
+        invalidDefinition.value.properties = invalidProperties;
+        await writeFile(definition.path, JSON.stringify(invalidDefinition));
+        await assert.rejects(load(), /invalid shared control value contract/);
+    }
     await writeFile(definition.path, original);
     await writeFile(designerAdapter.path, designerModule.replace(
         'export const controlId = "risk-matrix"', 'export const controlId = "other-control"'));
@@ -1489,6 +1508,26 @@ test("paired control validates both adapters, typed values and portable generate
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const originalRequest = await readFile(requestPath, "utf8");
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const request = JSON.parse(originalRequest);
+        const asset = request.generatedControls[0].assets[0];
+        const definition = JSON.parse(Buffer.from(asset.content, "base64").toString("utf8"));
+        definition.value.properties = invalidProperties;
+        const bytes = Buffer.from(JSON.stringify(definition));
+        asset.content = bytes.toString("base64");
+        asset.hash = createHash("sha256").update(bytes).digest("hex");
+        const { integrity: _hash, ...unsigned } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /incompatible frozen control value or adapters/);
+    }
     for (const change of [
         (request) => { request.values["designer.unbound"] = "not generated"; },
         (request) => { request.generatedControls[0].id = "canvas.description"; },
@@ -1527,6 +1566,23 @@ test("paired control validates both adapters, typed values and portable generate
         pathToFileURL(join(portable, "server.mjs")).href);
     const config = readConfig();
     assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
+    assert.deepEqual(await readFile(join(portable, "control-contract.mjs")),
+        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            import.meta.url)));
+    const configPath = join(portable, "canvas-config.json");
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const invalid = structuredClone(config);
+        invalid.generatedControls[0].properties = invalidProperties;
+        await writeFile(configPath, JSON.stringify(invalid));
+        assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    }
+    await writeFile(configPath, JSON.stringify(config));
     assert.match(renderHtml(config), /data-control-id="risk.rating"/);
     assert.equal((await import(pathToFileURL(join(portable, "controls",
         `${generated.name}.mjs`)).href)).mount.name, "mount");
@@ -1590,7 +1646,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs",
+    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
         "settings.mjs", "generation.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }

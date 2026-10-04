@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fingerprint } from "./handoff.mjs";
+import { validControlContract } from "./control-contract.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
@@ -238,19 +239,10 @@ function validateContribution(document, name, slots, fieldOrigins) {
 }
 
 function validateControl(document, name) {
-    const properties = document?.value?.properties;
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).sort().join() !== "adapters,id,schemaVersion,value"
         || document.schemaVersion !== 1 || !PAGE_PATTERN.test(document.id)
-        || !document.value || Object.keys(document.value).sort().join() !== "properties,type"
-        || document.value.type !== "object"
-        || !properties || typeof properties !== "object" || Array.isArray(properties)
-        || !Object.keys(properties).length || Object.keys(properties).length > 10
-        || Object.entries(properties).some(([key, allowed]) =>
-            !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
-            || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
-            || new Set(allowed).size !== allowed.length
-            || allowed.some((value) => typeof value !== "string" || !value || value.length > 80))
+        || !validControlContract(document.value)
         || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
         || !PAGE_PATTERN.test(document.adapters.designer)
         || !PAGE_PATTERN.test(document.adapters.generated)) {
