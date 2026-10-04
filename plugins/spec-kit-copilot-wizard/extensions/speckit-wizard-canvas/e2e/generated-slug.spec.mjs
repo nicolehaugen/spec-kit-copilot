@@ -132,6 +132,7 @@ test("failed autosave retains workflow identity through SSE and Refresh for retr
             return route.continue();
         });
         await page.goto(canvas.url);
+        await expect(page.locator("#workflow-empty")).toBeVisible();
         await page.locator("#workflow-name").fill("Unsaved workflow");
         await page.locator("#workflow-slug").fill("unsaved-slug");
         await page.locator("#phase-args").focus();
@@ -308,6 +309,7 @@ test("a later successful save does not hide a failed phase draft", async ({ page
             return route.continue();
         });
         await page.goto(canvas.url);
+        await expect(page.locator("#workflow-empty")).toBeVisible();
         await page.locator("#phase-args").fill("Keep this draft");
         await expect(page.locator("#canvas-message")).toContainText("Phase draft save failed");
         await page.locator("#run-constitution").click();
