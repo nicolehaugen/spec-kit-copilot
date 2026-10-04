@@ -37,6 +37,34 @@ test("vertical pipeline replacement keeps phase navigation and host run actions"
     } finally { await canvas.close(); }
 });
 
+for (const [scenario, module] of [
+    ["missing phase card", `export function mount({root, phases}) {
+        const nav = document.createElement("nav");
+        nav.id = "phase-navigation";
+        const steps = phases.map((_, index) => {
+            const button = document.createElement("button");
+            button.dataset.phaseIndex = String(index);
+            nav.append(button);
+            return button;
+        });
+        root.replaceChildren(nav);
+        return { steps };
+    }`],
+    ["non-element steps", `export function mount() { return { steps: [null, null] }; }`],
+]) {
+    test(`invalid pipeline replacement reports ${scenario}`, async ({ page }) => {
+        const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+        try {
+            await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+                contentType: "text/javascript", body: module,
+            }));
+            await page.goto(canvas.url);
+            await expect(page.locator("#canvas-message")).toContainText(
+                "Pipeline could not render: Pipeline renderer did not render the required phase controls");
+        } finally { await canvas.close(); }
+    });
+}
+
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
     generatedPages, generatedControls) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));

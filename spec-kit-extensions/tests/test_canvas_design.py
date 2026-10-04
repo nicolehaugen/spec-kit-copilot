@@ -396,6 +396,16 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     validator.validate(invalid)
 
+    def test_object_setting_requires_generated_binding(self):
+        schema = json.loads((PACKAGE / "schemas/designer.setting-definition.schema.json").read_text("utf-8"))
+        validator = Draft202012Validator(schema)
+        setting = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-risk-matrix-test"
+                              / "designer/settings/risk-rating.json").read_text("utf-8"))
+        validator.validate(setting)
+        del setting["generatedBinding"]
+        with self.assertRaises(ValidationError):
+            validator.validate(setting)
+
     def test_defaults_require_explicit_boolean_type(self):
         for field_type in (None, "string", "boolean"):
             for default in (True, False):

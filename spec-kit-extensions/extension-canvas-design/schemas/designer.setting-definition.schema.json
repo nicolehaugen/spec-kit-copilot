@@ -56,7 +56,8 @@
     {"if": {"properties": {"field": {"properties": {"type": {"const": "image"}}}}},
       "then": {"required": ["generatedBinding"], "properties": {"generatedBinding": {"properties": {"presentation": {"const": "asset"}}}}}},
     {"if": {"properties": {"field": {"properties": {"type": {"const": "object"}}}}},
-      "then": {"properties": {"generatedBinding": {"properties": {"presentation": {"const": "control"}}}}}},
+      "then": {"required": ["generatedBinding"],
+        "properties": {"generatedBinding": {"properties": {"presentation": {"const": "control"}}}}}},
     {"if": {"properties": {"field": {"properties": {"type": {"const": "string"}}}}},
       "then": {"properties": {"generatedBinding": {"properties": {"presentation":
         {"enum": ["stock.readonly", "text"]}}}}}},

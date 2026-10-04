@@ -655,7 +655,8 @@ const pipelineRoot = $("workflow-pipeline");
 try {
     const { mount } = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
     if (typeof mount !== "function") throw new Error("Missing pipeline mount export");
-    ({ steps } = mount({ root: pipelineRoot, phases: JSON.parse(pipelineRoot.dataset.phases),
+    const phases = JSON.parse(pipelineRoot.dataset.phases);
+    ({ steps } = mount({ root: pipelineRoot, phases,
         actions: {
             select: (index, focusId) => selectPhase(index, focusId),
             run: (value) => send(phase(), value),
@@ -670,8 +671,19 @@ try {
             },
             error: (error) => message(error.message, "canvas-message", true),
         } }));
-    if (!Array.isArray(steps) || steps.length !== JSON.parse(pipelineRoot.dataset.phases).length) {
-        throw new Error("Pipeline renderer did not return the declared phases");
+    const required = [".phase-notice", "#browse-output-folder code", "#phase-args",
+        "#run-phase", "#previous-phase", "#next-phase"];
+    if (!Array.isArray(steps) || steps.length !== phases.length
+        || steps.some((step, index) => !(step instanceof HTMLButtonElement)
+            || !pipelineRoot.contains(step) || step.dataset.phaseIndex !== String(index))
+        || !pipelineRoot.querySelector("#phase-navigation")
+        || !pipelineRoot.querySelector("#phase-card")
+        || phases.some((_, index) => {
+            const template = pipelineRoot.querySelector(`#phase-template-${index}`);
+            return !(template instanceof HTMLTemplateElement)
+                || required.some((selector) => !template.content.querySelector(selector));
+        })) {
+        throw new Error("Pipeline renderer did not render the required phase controls");
     }
 } catch (error) {
     message(`Pipeline could not render: ${error.message}`, "canvas-message", true);
