@@ -396,10 +396,6 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         (page) => { page.title = "Changed"; },
         (page) => { page.renderer = "../escape"; },
         (page) => { page.id = "workflow"; },
-        ...["con", "prn", "aux", "nul", "com1", "lpt9"].flatMap((name) => [
-            (page) => { page.id = name; },
-            (page) => { page.renderer = name; },
-        ]),
         (page) => { page.assets[1] = asset(page.renderer, "generated.renderer",
             module.padEnd(32 * 1024 + 1, " ")); },
     ]) {
@@ -410,6 +406,21 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         await writeFile(path, JSON.stringify(trial));
         await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
             /Invalid frozen generated page assets|frozen generated page definition|Invalid frozen generated pages/);
+        await assert.rejects(readdir(sdk), { code: "ENOENT" });
+    }
+    for (const [field, name] of [["id", "con"], ["renderer", "nul"]]) {
+        const trial = structuredClone(request);
+        const page = trial.generatedPages[0];
+        page[field] = name;
+        page.assets[0] = asset(page.id, "generated.page", JSON.stringify({
+            schemaVersion: 1, id: page.id, renderer: page.renderer, title: page.title,
+        }));
+        page.assets[1] = asset(page.renderer, "generated.renderer", module);
+        const { integrity: _old, ...payload } = trial;
+        trial.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(trial));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen generated page assets/);
         await assert.rejects(readdir(sdk), { code: "ENOENT" });
     }
     const boundary = structuredClone(request);
