@@ -41,6 +41,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
             url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
             root,
             runtime,
+            broadcast: () => routes.broadcast(),
             close: async () => {
                 routes.close();
                 runtime.close();
@@ -114,6 +115,42 @@ test("enabled slug previews the View target folder and persists across phases", 
         await page.locator('[data-phase-index="0"]').click();
         await expect(page.locator("#workflow-name")).toHaveValue("Customer dashboard");
         await expect(page.locator("#workflow-slug")).toHaveValue("sample-feature");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("failed autosave retains workflow identity through SSE and Refresh for retry", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(true);
+    let rejectSaves = true;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST" && rejectSaves) {
+                return route.fulfill({ status: 503, contentType: "application/json",
+                    body: JSON.stringify({ error: "Temporary save failure" }) });
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await page.locator("#workflow-name").fill("Unsaved workflow");
+        await page.locator("#workflow-slug").fill("unsaved-slug");
+        await page.locator("#phase-args").focus();
+        await expect(page.locator("#canvas-message")).toContainText("Your draft is retained");
+        await mkdir(join(canvas.root, "specs", "other-workflow"), { recursive: true });
+        canvas.broadcast();
+        await expect(page.locator("#workflow-count")).toHaveText("(1)");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toContainText("Temporary save failure");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        rejectSaves = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        const saved = await canvas.runtime.snapshot();
+        expect(saved.name).toBe("Unsaved workflow");
+        expect(saved.slug).toBe("unsaved-slug");
     } finally {
         await canvas.close();
     }
