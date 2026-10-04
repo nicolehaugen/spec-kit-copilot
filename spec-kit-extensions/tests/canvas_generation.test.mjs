@@ -107,6 +107,35 @@ test("Designer-only values are validated but excluded from frozen and generated 
     assert.equal(Object.hasOwn(setup.values, "designer.note"), false);
 });
 
+test("re-signed requests reject unbound, missing, and colliding generated values", async (t) => {
+    for (const [name, change, error] of [
+        ["unbound value", (request) => { request.values["designer.note"] = "not generated"; },
+            /Invalid frozen generated values/],
+        ["missing Essential", (request) => { delete request.values["canvas.description"]; },
+            /Invalid frozen canvas identity/],
+        ["missing bound value", (request) => {
+            request.generatedFields = [{ id: "billing.costCode", label: "Cost code", maxLength: 64 }];
+        }, /Invalid frozen generated fields/],
+        ["bound ID collides with Essential", (request) => {
+            request.generatedFields = [{ id: "canvas.displayName", label: "Title", maxLength: 120 }];
+        }, /Invalid frozen generated values/],
+    ]) {
+        await t.test(name, async (child) => {
+            const { project, workspace, prepared, sdk } = await fixture(child);
+            const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                "generations", prepared.requestId, "request.json");
+            const request = JSON.parse(await readFile(path, "utf8"));
+            change(request);
+            const { integrity: _integrity, ...payload } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+            await writeFile(path, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                error);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
+});
+
 test("100 bounded generated fields materialize when the frozen request exceeds 128KB", async (t) => {
     const { project, workspace } = await fixture(t);
     const constraints = { ...model.constraints };
