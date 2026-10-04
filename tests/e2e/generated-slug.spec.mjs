@@ -3,11 +3,11 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test, expect } from "@playwright/test";
-import { createWorkflowRoutes } from "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
-import { createRuntime } from "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
+import { test, expect } from "./playwright.mjs";
+import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
+import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
-async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"]) {
+async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"], generatedPages, readOnlyFields) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug,
@@ -23,6 +23,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         },
         phaseArtifacts: {},
         installed: { presets: [], extensions: [], bundles: [] },
+        ...(generatedPages ? { generatedPages } : {}),
+        ...(readOnlyFields ? { readOnlyFields } : {}),
     };
     let runtime, routes, server;
     try {
@@ -63,6 +65,88 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         throw error;
     }
 }
+
+test("generated page hides all Workflow content and restores it on return", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"],
+        [{ id: "overview", title: "Overview", renderer: "overview" }],
+        [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
+    try {
+        await page.route("**/pages/overview.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export function renderPage({ root }) { root.textContent = "Overview"; }',
+        }));
+        await page.goto(canvas.url);
+        await page.locator("#workflow-name").fill("Draft workflow");
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+
+        await page.locator('[data-canvas-page="overview"]').click();
+        await expect(page.locator("#generated-page")).toHaveText("Overview");
+        await expect(page.locator("#workflow-content")).toBeHidden();
+        for (const selector of ["#instance-collection", '[data-field-id="billing.costCode"]',
+            "#constitution-card", "#phase-navigation", "#phase-card"]) {
+            await expect(page.locator(selector)).toBeHidden();
+        }
+        await expect(page.locator("#refresh-state")).toBeVisible();
+        await expect(page.locator('[data-canvas-page="workflow"]')).toBeVisible();
+
+        await page.locator('[data-canvas-page="workflow"]').click();
+        await expect(page.locator("#generated-page")).toBeHidden();
+        await expect(page.locator("#workflow-content")).toBeVisible();
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+        await expect(page.locator("#workflow-name")).toHaveValue("Draft workflow");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("generated page selection ignores stale imports and async renderers", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], [
+        { id: "slow", title: "Slow", renderer: "slow" },
+        { id: "fast", title: "Fast", renderer: "fast" },
+    ]);
+    try {
+        await page.route("**/pages/slow.mjs*", async (route) => {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            await route.fulfill({ contentType: "text/javascript", body: `
+                globalThis.slowModuleLoaded = true;
+                export async function renderPage({ root }) {
+                    globalThis.slowRenderStarted = true;
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                    root.textContent = "Slow";
+                    globalThis.slowRenderDone = true;
+                }
+            ` });
+        });
+        await page.route("**/pages/fast.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export function renderPage({ root }) { root.textContent = "Fast"; }',
+        }));
+        await page.goto(canvas.url);
+        const root = page.locator("#generated-page");
+        await page.locator('[data-canvas-page="slow"]').click();
+        await page.locator('[data-canvas-page="fast"]').click();
+        await expect(root).toHaveText("Fast");
+        await page.waitForFunction(() => globalThis.slowModuleLoaded);
+        await expect(root).toHaveText("Fast");
+        await page.locator('[data-canvas-page="slow"]').click();
+        await page.waitForFunction(() => globalThis.slowRenderStarted);
+        await page.locator('[data-canvas-page="fast"]').click();
+        await expect(root).toHaveText("Fast");
+        await page.waitForFunction(() => globalThis.slowRenderDone);
+        await expect(root).toHaveText("Fast");
+        await expect(page.locator('[data-canvas-page="fast"]')).toHaveAttribute("aria-current", "page");
+    } finally {
+        await canvas.close();
+    }
+});
 
 test("new workflow run follows its confirmed slug and blocks deletion while active", async () => {
     const canvas = await openGeneratedCanvas(false);

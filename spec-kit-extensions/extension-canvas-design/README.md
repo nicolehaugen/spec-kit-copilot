@@ -103,7 +103,7 @@ names and additional page or Canvas Design template names explicitly registered
 in the composed command by presets. It uses `specify preset resolve <name>`
 to find each project's effective named file; package tags alone do not register
 files. Only after all paths resolve does it open the official Designer provider
-once with the complete set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
+once with the complete typed, replace-only set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
 handoffs, and an unavailable provider stop the operation before an open URL is
 returned. A resolved page whose file is missing or invalid shows an error tab
 with a path and reason; healthy pages stay usable. Invalid registered field
@@ -112,8 +112,20 @@ registered stock text/checkbox fields render on their declared Designer page
 and can be saved. A registered bounded string contribution with
 `generatedBinding: {"presentation": "stock.readonly"}` also freezes its
 validated value into a built-in read-only generated display, regardless of
-which declared Designer slot holds the field. Other contributed settings and
-custom control modules are not included in Generate yet. The repository-local
+which declared Designer slot holds the field. A separately registered
+`generated.page` definition and `generated.renderer` `.mjs` template add a
+generated-only page without a Designer tab. The renderer is a complete
+replace-only Specify template exporting `renderPage({ root, canvas, values })`;
+the definition must name that registered renderer. Invalid kinds, references,
+strategies, syntax or Specify template-layer metadata stop Designer opening.
+Switching to a generated page hides Workflow-owned content and restores it on
+return; the canvas header and status remain available on either page.
+The frozen definition and module are copied into the generated app, which
+needs no design-time packages to render them. The frozen generation request is
+bounded to 4 MiB, allowing the registered page assets to be packaged after
+base64 encoding while retaining the 32 KiB limit on each definition and renderer.
+Other contributed settings and custom control modules are not included in Generate
+yet. The repository-local
 `copilot-billing-canvas-test` preset exercises this contract; its README shows
 both Billing and Essentials placements. An optional `generatedBinding.section`
 with a stable `id` and display `title` groups read-only fields under that
@@ -125,7 +137,7 @@ The isolated [test-only preset](../../spec-kit-presets/copilot-canvas-design-tes
 registers an additional Designer page with stock text and checkbox fields. The
 browser integration test covers the checkbox default, rendering, save, and
 reopen. The preset is installed locally, not published in the canonical preset
-catalog; generated-only pages remain future work.
+catalog. Billing and generated-only pages have separate test fixtures.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
 request prepared by the Designer. It writes the **source-owned SDK entry point**
@@ -138,6 +150,8 @@ in place. An existing target stops generation without overwriting it; a failure
 after creation leaves the partial target for inspection. Previously generated
 canvases are not updated.
 
+The [generated-only test fixture](../../spec-kit-presets/copilot-generated-page-test/preset.yml)
+is a distinct repo-local preset outside the canonical catalog.
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.
 Page definitions must follow the [page schema](schemas/page.schema.json).

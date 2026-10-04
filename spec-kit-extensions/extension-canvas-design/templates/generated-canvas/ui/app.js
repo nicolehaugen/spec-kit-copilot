@@ -8,6 +8,44 @@ let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequ
 let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
+function wireGeneratedPages() {
+    const root = $("generated-page");
+    if (!root) return;
+    const buttons = [...document.querySelectorAll("[data-canvas-page]")];
+    let selection = 0;
+    for (const button of buttons) button.addEventListener("click", async () => {
+        const currentSelection = ++selection;
+        const id = button.dataset.canvasPage;
+        const workflow = id === "workflow";
+        root.hidden = workflow;
+        root.replaceChildren();
+        root.classList.remove("workflow-error");
+        $("workflow-content").hidden = !workflow;
+        for (const candidate of buttons) {
+            if (candidate === button) candidate.setAttribute("aria-current", "page");
+            else candidate.removeAttribute("aria-current");
+        }
+        if (workflow) return;
+        const registration = [...document.querySelectorAll("[data-generated-renderer]")]
+            .find((item) => item.dataset.generatedRenderer === id);
+        try {
+            if (!registration) throw new Error(`Missing generated page ${id}`);
+            const { renderPage } = await import(`${registration.dataset.module}?token=${encodeURIComponent(token)}`);
+            if (currentSelection !== selection) return;
+            if (typeof renderPage !== "function") throw new Error(`Invalid renderer for ${id}`);
+            const content = document.createElement("div");
+            await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
+                displayName: root.dataset.canvasTitle }, values: JSON.parse(root.dataset.values) });
+            if (currentSelection !== selection) return;
+            root.replaceChildren(content);
+        } catch (error) {
+            if (currentSelection !== selection) return;
+            root.textContent = `Generated page could not render: ${error.message}`;
+            root.classList.add("workflow-error");
+        }
+    });
+}
+
 function currentTheme() {
     const explicit = document.documentElement.getAttribute("data-theme");
     if (explicit === "dark" || explicit === "light") return explicit;
@@ -498,6 +536,7 @@ document.addEventListener("click", (event) => {
 });
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 wireThemeToggle();
+wireGeneratedPages();
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {

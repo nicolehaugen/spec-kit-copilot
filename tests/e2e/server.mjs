@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { createHandler } from "../server.mjs";
+import { createHandler } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server.mjs";
 
-const repoPath = fileURLToPath(new URL("../../../../../", import.meta.url));
+const repoPath = fileURLToPath(new URL("../../", import.meta.url));
 const snapshot = {
     workspacePath: process.cwd(),
     featureFlags: { generateCanvas: true },

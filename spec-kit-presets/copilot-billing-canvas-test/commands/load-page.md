@@ -5,7 +5,7 @@
 
 ## Additional Canvas Design templates
 
-- `canvas-contributions-billing`
+- `canvas-contributions-billing` — `designer.field`, `replace`
 
 ## Billing resolution requirements
 

@@ -7,6 +7,7 @@ const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url),
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
+const RESERVED_GENERATED_PAGE_ID = "workflow";
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -50,6 +51,15 @@ export function readConfig() {
                             || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
                             || typeof field.section.title !== "string"
                             || !field.section.title.trim() || field.section.title.length > 120)))))
+        || (config.generatedPages !== undefined
+            && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
+                || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
+                || config.generatedPages.some((page) => !page || typeof page !== "object"
+                            || Array.isArray(page) || Object.keys(page).sort().join() !== "id,renderer,title"
+                            || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
+                            || page.id === RESERVED_GENERATED_PAGE_ID
+                            || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+                            || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120)))
         || !config.phaseOutputs || typeof config.phaseOutputs !== "object" || Array.isArray(config.phaseOutputs)
         || Object.values(config.phaseOutputs).some((output) => !output
             || typeof output.expectsArtifact !== "boolean"
@@ -119,6 +129,15 @@ export function renderHtml(config, token = "") {
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
 <main class="app-body workflow-surface">
+    ${config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
+        <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">Workflow</button>
+        ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
+    </nav>
+    <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
+        data-canvas-title="${escapeHtml(canvas.displayName)}"
+        data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>
+    <p id="canvas-message" role="status"></p>
+    <div id="workflow-content" class="workflow-content">` : ""}
     <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
         <div class="instance-collection-head">
             <div><h2 id="workflow-heading">${escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted">${escapeHtml(canvas.description)}</p></div>
@@ -145,7 +164,7 @@ export function renderHtml(config, token = "") {
         <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
         <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create / update</button></div></div>
     </details>` : ""}
-    <p id="canvas-message" role="status"></p>
+    ${config.generatedPages?.length ? "" : '<p id="canvas-message" role="status"></p>'}
     <nav id="phase-navigation" class="phase-navigation" aria-label="Workflow phases">
         ${phases.length ? `<div class="phase-mobile-nav"><label class="visually-hidden" for="mobile-phase-select">Jump to phase</label><select id="mobile-phase-select" class="phase-input-control">${phases.map((phase, index) =>
             `<option value="${index}">Phase ${index + 1} of ${phases.length}: ${escapeHtml(phaseLabel(phase))}</option>`).join("")}</select><span id="mobile-next-phase" class="muted"></span></div>` : ""}
@@ -157,6 +176,9 @@ export function renderHtml(config, token = "") {
             </button></li>`).join("")}</ol>` : ""}
     </nav>
     <section id="phase-card" class="phase-card" aria-label="Selected phase">${phases.length ? renderPhase(config, phases, 0) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>
+    ${config.generatedPages?.length ? "</div>" : ""}
+    ${config.generatedPages?.map(({ id, renderer }) =>
+        `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"></span>`).join("") ?? ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
@@ -188,6 +210,13 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && ["/", "/ui/app.js", "/ui/markdown.mjs"].includes(url.pathname)) {
                 const body = url.pathname === "/" ? html : url.pathname === "/ui/app.js" ? script : markdown;
                 response.writeHead(200, { "Content-Type": `${url.pathname === "/" ? "text/html" : "text/javascript"}; charset=utf-8` }).end(body);
+                return;
+            }
+            const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
+            if (request.method === "GET" && moduleName
+                && config.generatedPages?.some((page) => page.renderer === moduleName)) {
+                const module = readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
+                response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }).end(module);
                 return;
             }
             if (!runtime) throw new UserError("The Copilot session runtime is unavailable. Reopen the canvas.", 503);

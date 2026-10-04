@@ -155,7 +155,7 @@ test("100 bounded generated fields materialize when the frozen request exceeds 1
         "generations", prepared.requestId, "request.json");
     const raw = await readFile(path);
     assert.ok(raw.length > 128 * 1024);
-    assert.ok(raw.length <= 512 * 1024);
+    assert.ok(raw.length <= 4 * 1024 * 1024);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
@@ -167,9 +167,46 @@ test("the generator rejects a frozen request above its shared size limit", async
     const { project, workspace, prepared } = await fixture(t);
     const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", prepared.requestId, "request.json");
-    await writeFile(path, "x".repeat(512 * 1024 + 1));
+    await writeFile(path, "x".repeat(4 * 1024 * 1024 + 1));
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /Generation request is too large/);
+});
+
+test("six maximum-size generated pages fit the frozen request and materialize", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const pages = join(project, ".specify", "pages");
+    await mkdir(pages, { recursive: true });
+    const generatedPages = [], templates = [];
+    const rendererContent = "export function renderPage({ root }) { root.textContent = 'Overview'; }"
+        .padEnd(32 * 1024, " ");
+    for (let index = 0; index < 6; index++) {
+        const id = `canvas-generated-${index}`, renderer = `canvas-renderer-${index}`;
+        const title = `Overview ${index}`;
+        const definition = JSON.stringify({ schemaVersion: 1, id, renderer, title })
+            .padEnd(32 * 1024, " ");
+        generatedPages.push({ name: id, id, title, renderer });
+        for (const [name, kind, content, extension] of [
+            [id, "generated.page", definition, "json"],
+            [renderer, "generated.renderer", rendererContent, "mjs"],
+        ]) {
+            const path = join(pages, `${name}.${extension}`);
+            await writeFile(path, content);
+            templates.push({ name, path, kind, sourceId: "test-preset", strategy: "replace",
+                hash: createHash("sha256").update(content).digest("hex") });
+        }
+    }
+    const prepared = await freezeGeneration({ project, workspace,
+        model: { ...model, generatedPages, templates }, values, handoff });
+    const request = await readFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json"));
+    assert.ok(request.length > 512 * 1024);
+    assert.ok(request.length <= 4 * 1024 * 1024);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    for (const page of generatedPages) {
+        const bytes = await readFile(join(project, ".github", "extensions", values["canvas.id"],
+            "pages", `${page.renderer}.mjs`));
+        assert.equal(bytes.length, 32 * 1024);
+    }
 });
 
 test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
@@ -213,6 +250,11 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
             JSON.stringify({ ...defaultConfig, readOnlyFields: invalid }));
         assert.throws(() => readConfig(), /Invalid generated canvas configuration|Conflicting generated canvas section/);
     }
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ ...defaultConfig, generatedPages: [{
+            id: "workflow", title: "Workflow", renderer: "workflow-renderer",
+        }] }));
+    assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
 });
 
 test("materialization rejects a re-signed request with a Windows device Canvas ID", async (t) => {
@@ -318,6 +360,51 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.deepEqual(state.phases.map((phase) => phase.id), handoff.workflow.selectedPhases);
     await canvas.onClose({ instanceId: "generated-test" });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId));
+});
+
+test("generation rejects malformed or mismatched frozen page assets before creating a target", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(path, "utf8"));
+    const definition = JSON.stringify({ schemaVersion: 1, id: "canvas-generated-overview",
+        renderer: "canvas-generated-overview-renderer", title: "Overview" });
+    const module = "export function renderPage({ root }) { root.textContent = 'Overview'; }";
+    const asset = (name, kind, content) => ({ name, kind, sourceId: "copilot-generated-page-test",
+        hash: createHash("sha256").update(content).digest("hex"),
+        content: Buffer.from(content).toString("base64") });
+    request.generatedPages = [{ id: "canvas-generated-overview", title: "Overview",
+        renderer: "canvas-generated-overview-renderer", assets: [
+            asset("canvas-generated-overview", "generated.page", definition),
+            asset("canvas-generated-overview-renderer", "generated.renderer", module),
+        ] }];
+    for (const change of [
+        (page) => { page.assets[0].hash = "0".repeat(64); },
+        (page) => { page.assets[1].kind = "script"; },
+        (page) => { page.title = "Changed"; },
+        (page) => { page.renderer = "../escape"; },
+        (page) => { page.id = "workflow"; },
+        (page) => { page.assets[1] = asset(page.renderer, "generated.renderer",
+            module.padEnd(32 * 1024 + 1, " ")); },
+    ]) {
+        const trial = structuredClone(request);
+        change(trial.generatedPages[0]);
+        const { integrity: _old, ...payload } = trial;
+        trial.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(trial));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen generated page assets|frozen generated page definition|Invalid frozen generated pages/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
+    const boundary = structuredClone(request);
+    boundary.generatedPages[0].assets[1] = asset("canvas-generated-overview-renderer",
+        "generated.renderer", module.padEnd(32 * 1024, " "));
+    const { integrity: _old, ...payload } = boundary;
+    boundary.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(path, JSON.stringify(boundary));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    assert.equal((await readFile(join(project, ".github", "extensions", "my-workflow",
+        "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
 });
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
@@ -545,7 +632,7 @@ test("existing canvases are preserved and tampered requests fail before creation
 });
 
 test("generation request and Wizard handoff reject symlinks and oversized files", async (t) => {
-    for (const [name, limit] of [["request.json", 512 * 1024], ["handoff.json", 64 * 1024]]) {
+    for (const [name, limit] of [["request.json", 4 * 1024 * 1024], ["handoff.json", 64 * 1024]]) {
         await t.test(name, async (child) => {
             const { project, workspace, prepared, sdk } = await fixture(child);
             const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
@@ -576,7 +663,7 @@ test("generation request and Wizard handoff reject symlinks and oversized files"
 
 test("pinned generation reads reject leaf and parent swaps during open", async (t) => {
     for (const [name, limit, label] of [
-        ["request.json", 512 * 1024, "Generation request"],
+        ["request.json", 4 * 1024 * 1024, "Generation request"],
         ["handoff.json", 64 * 1024, "Wizard handoff"],
     ]) {
         for (const swap of ["leaf", "parent"]) {

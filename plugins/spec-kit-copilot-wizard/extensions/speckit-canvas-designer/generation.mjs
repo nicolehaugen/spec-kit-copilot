@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 
 const fields = ["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
 const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
 export function validateEssentials(model, values) {
@@ -47,8 +48,25 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         .map((item) => ({ id: item.field.id, label: item.field.label,
             maxLength: model.constraints[item.field.id].maxLength,
             ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
-    if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const checkout = await realpath(project);
+    const specify = join(checkout, ".specify");
+    const generatedPages = [];
+    for (const page of model.generatedPages ?? []) {
+        const definition = model.templates.find((item) => item.name === page.name
+            && item.kind === "generated.page");
+        const renderer = model.templates.find((item) => item.name === page.renderer
+            && item.kind === "generated.renderer");
+        if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
+        const assets = [];
+        for (const item of [definition, renderer]) {
+            if (item.strategy !== "replace") throw new Error(`${item.name}: generated assets must be replace-only`);
+            const bytes = await readFrozenAsset(item, specify);
+            assets.push({ name: item.name, kind: item.kind, sourceId: item.sourceId,
+                hash: item.hash, content: bytes.toString("base64") });
+        }
+        generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer, assets });
+    }
+    if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
     try {
         await stat(target);
@@ -69,12 +87,13 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         values: { ...essentials,
             ...Object.fromEntries(generatedFields.map(({ id }) => [id, values[id]])) },
         ...(generatedFields.length ? { generatedFields } : {}),
+        ...(generatedPages.length ? { generatedPages } : {}),
     };
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");
     const serialized = JSON.stringify(request);
     if (Buffer.byteLength(serialized) > REQUEST_LIMIT) {
-        throw new Error("Frozen generation request exceeds 512KB");
+        throw new Error("Frozen generation request exceeds 4 MiB");
     }
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", requestId);

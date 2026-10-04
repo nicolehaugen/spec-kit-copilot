@@ -24,24 +24,23 @@ Presets may add pages in sections titled **Additional Designer pages** anywhere
 in this command, including after the Steps. These additions extend the default
 set; they do not run a second load operation.
 
-For this milestone, the extension may list stock-field contribution JSON under
-**Canvas Design templates**. Presets may list stock-field contribution JSON
-under **Additional Canvas Design templates** anywhere in this composed command.
-These sections explicitly register field contributions; the `canvas-design`
-tag and files in a package do not register themselves. A name must also be
-declared as a template in a Specify manifest. Do not register control
-definitions, generated-page assets, or executable `.mjs` assets yet: the
-current provider does not validate or activate them as those kinds. Later
-milestones add declared asset kinds and strategies with per-kind validation;
-executable assets will be complete, replace-only templates, not native
-Specify script artifacts.
+The extension may list stock-field contribution JSON under **Canvas Design
+templates**. Presets may list these and generated-host pages and modules under
+**Additional Canvas Design templates** anywhere in this composed command.
+Each registration declares its Canvas Design kind (`designer.field`,
+`generated.page`, or `generated.renderer`) and strategy (`replace`).
+Designer pages have kind `designer.page` and strategy `replace` (implicit for
+the extension's default page templates). A name must be a Specify template
+in the manifest. The `canvas-design` tag and files on disk do not register
+themselves. Do not register control adapters yet.
 
 ## Steps
 
 1. Read this entire composed command first. Collect the defaults and every name
    in every **Additional Designer pages**, **Canvas Design templates**, and
    **Additional Canvas Design templates** section, removing duplicates.
-   Names must start with a lowercase letter and contain only lowercase letters,
+   Record each declaration's kind and strategy. Conflicting kinds/strategies
+   for a name are an error. Names must start with a lowercase letter and contain only lowercase letters,
    digits and hyphens (at most 80 characters). Keep pages separate from
    non-page templates; a name in both groups is an error.
 2. Follow the `speckit-preset` skill to run `specify preset resolve <name>` for
@@ -61,14 +60,21 @@ Specify script artifacts.
    for any name. Never choose a file by scanning `.specify`, reconstruct
    precedence, or substitute an extension default. Appended instructions in
    this command are allowed; composing multiple complete JSON documents or
-   appending executable JavaScript is not.
+   appending executable JavaScript is not. For every registered name,
+   inspect `specify artifact info template:<name> --json` and confirm that
+   `kind` is `template` and every stack layer has `strategy: replace`
+   (extension templates replace implicitly). For generated assets also inspect
+   `specify artifact info script:<name> --json`; an unknown-script error is
+   expected, but a native script of the same name is unsupported. Reject
+   `append`, `prepend`, or `wrap` asset registrations even if Specify
+   resolved a path. Do not use metadata to choose or reconstruct the winner.
 4. Only after every name resolves, open the official installed Copilot provider
    exactly once with the complete collected set:
    `open_canvas({canvasId:"speckit-canvas-designer",
    extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer",
    instanceId:"designer-<handoffId>",input:{handoffId:"<handoffId>",
-   pages:[{"name":"<page-name>","path":"<resolved-path>"},...],
-   templates:[{"name":"<asset-name>","path":"<resolved-path>","sourceId":"<Specify-reported-source-ID>"},...]}})`.
+   pages:[{"name":"<page-name>","path":"<resolved-path>","kind":"designer.page","strategy":"replace"},...],
+   templates:[{"name":"<asset-name>","path":"<resolved-path>","sourceId":"<Specify-reported-source-ID>","kind":"<declared-kind>","strategy":"replace"},...]}})`.
    Obtain each `sourceId` from that name's `top layer from:` metadata:
    map the exact versionless `project override` marker to `project`; for a
    preset or extension source, strip only its trailing ` v<version>` (for
@@ -80,7 +86,8 @@ Specify script artifacts.
    validates the handoff and complete inventory before returning a URL. A
    resolved page with invalid or missing file contents appears as an error tab
    with its path and reason; other pages remain available. Invalid or missing
-   non-page contributions stop the open with an actionable error. Do not
+   non-page contributions stop the open with an actionable error. Generated
+   pages require a matching registered renderer and do not create Designer tabs. Do not
    substitute another provider or open if resolution failed.
    Confirm the `open_canvas` result matches the requested canvas ID, plugin
    extension ID, instance ID and `input.handoffId`; report a mismatch as a failure.
