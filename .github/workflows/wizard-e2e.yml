@@ -23,7 +23,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           files=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
-          if grep -q '^plugins/spec-kit-copilot-wizard/' <<< "$files"; then
+          if grep -Eq '^(plugins/spec-kit-copilot-wizard/|spec-kit-presets/)' <<< "$files"; then
             echo "wizard=true" >> "$GITHUB_OUTPUT"
           else
             echo "wizard=false" >> "$GITHUB_OUTPUT"
