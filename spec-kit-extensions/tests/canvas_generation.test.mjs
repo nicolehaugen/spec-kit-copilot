@@ -66,10 +66,34 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.deepEqual(request.installed.presets, handoff.workflow.installed.presets);
     assert.deepEqual(request.values, values);
     assert.throws(() => validateEssentials(model, { ...values, "canvas.id": "../bad" }), /canvas.id/);
+    for (const id of ["con", "prn", "aux", "nul",
+        ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+        ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`)]) {
+        assert.throws(() => validateEssentials(model, { ...values, "canvas.id": id }), /non-reserved/);
+    }
+    for (const id of ["com0", "com10", "lpt0", "lpt10", "con-1"]) {
+        assert.equal(validateEssentials(model, { ...values, "canvas.id": id })["canvas.id"], id);
+    }
     assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /Title/);
     assert.throws(() => validateEssentials(model, { ...values, "workflowSlug.userProvided": "true" }), /workflowSlug.userProvided/);
     const { ["workflowSlug.userProvided"]: omitted, ...missingToggle } = values;
     assert.throws(() => validateEssentials(model, missingToggle), /workflowSlug.userProvided/);
+});
+
+test("materialization rejects a re-signed request with a Windows device Canvas ID", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(path, "utf8"));
+    request.canvas.id = "con";
+    request.values["canvas.id"] = "con";
+    request.target = ".github/extensions/con/";
+    const { integrity, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(path, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen canvas identity/);
+    await assert.rejects(readdir(join(project, ".github", "extensions")), { code: "ENOENT" });
 });
 
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {

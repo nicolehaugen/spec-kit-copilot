@@ -12,6 +12,7 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
+const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 function within(root, path) {
@@ -22,6 +23,7 @@ function within(root, path) {
 function configuration(request) {
     const { canvas, workflow, values, installed } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
+        || windowsDeviceName.test(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]

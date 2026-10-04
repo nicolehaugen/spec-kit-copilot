@@ -460,6 +460,13 @@ test("Save persists values beside the handoff and rejects stale or invalid chang
     await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
         ...request, values: { ...values, "canvas.id": "../escape" },
     }), /Invalid Designer setting: canvas.id/);
+    for (const id of ["con", "prn", "aux", "nul",
+        ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+        ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`)]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+            ...request, values: { ...values, "canvas.id": id },
+        }), /Invalid Designer setting: canvas.id/);
+    }
     await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
         ...request, values: { ...values, unexpected: "extra" },
     }), /unexpected or missing fields/);
@@ -844,6 +851,43 @@ test("registered contributions validate slots, sources, references and determini
     ]), /inside \.specify/);
 });
 
+test("resolved contributions cannot enlarge the assembled Designer model past its limit", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const handoff = validHandoff();
+    const directory = join(project, ".specify", "presets");
+    await mkdir(directory);
+    const pages = [...entries];
+    for (let pageIndex = 0; pageIndex < 17; pageIndex++) {
+        const name = `canvas-settings-extra-${pageIndex}`;
+        const path = join(directory, `${name}.json`);
+        await writeFile(path, JSON.stringify({
+            schemaVersion: 1, id: name, title: name, order: 100 + pageIndex,
+            fields: Array.from({ length: 100 }, (_, fieldIndex) => ({
+                id: `extra.${pageIndex}.${fieldIndex}`, label: "Field",
+                description: "x".repeat(1000),
+            })),
+        }));
+        pages.push({ name, path });
+    }
+    const baseline = await loadResolvedDesignerPages(handoff, project, pages);
+    assert.ok(Buffer.byteLength(JSON.stringify(baseline)) <= 2 * 1024 * 1024);
+    const contributions = [];
+    for (let index = 0; index < 95; index++) {
+        const name = `canvas-contribution-extra-${index}`;
+        const path = join(directory, `${name}.json`);
+        await writeFile(path, JSON.stringify({
+            schemaVersion: 1, id: `extra-${index}`, host: "designer",
+            slot: "essentials.options", order: index,
+            field: { id: `added.${index}`, label: "Field", description: "y".repeat(1000),
+                type: "string", control: "stock.text" },
+        }));
+        contributions.push({ name, path, sourceId: "test" });
+    }
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, pages, contributions),
+        /Designer page model exceeds its size limit/);
+});
+
 test("page errors retain healthy fields and never accept unsafe or incomplete input", async (t) => {
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
@@ -1056,19 +1100,26 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             "../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url));
         const testPage = join(project, ".specify", "pr1-test-page.json");
         const testField = join(project, ".specify", "pr1-test-field.json");
+        const testToggle = join(project, ".specify", "pr1-test-toggle.json");
         await copyFile(join(preset, "pages", "pr1-test.json"), testPage);
         await copyFile(join(preset, "contributions", "pr1-test.json"), testField);
+        await copyFile(join(preset, "contributions", "pr1-toggle.json"), testToggle);
         const withPreset = await canvas.open({ instanceId: "same", input: {
             handoffId: ID,
             pages: [...entries, { name: "canvas-settings-pr1-test", path: testPage }],
             templates: [{ name: "canvas-contribution-pr1-test", path: testField,
+                sourceId: "copilot-canvas-design-test" },
+            { name: "canvas-contribution-pr1-toggle", path: testToggle,
                 sourceId: "copilot-canvas-design-test" }],
         } });
         const presetStateUrl = new URL(withPreset.url);
         presetStateUrl.pathname = "/api/state";
         const presetState = await (await fetch(presetStateUrl)).json();
         assert.equal(presetState.pages.at(-1).title, "Test settings");
-        assert.deepEqual(presetState.pages.at(-1).fields.map((field) => field.id), ["pr1Test.label"]);
+        assert.deepEqual(presetState.pages.at(-1).fields.map((field) => field.id),
+            ["pr1Test.label", "pr1Test.enabled"]);
+        assert.deepEqual(presetState.constraints["pr1Test.enabled"], { type: "boolean" });
+        assert.equal(presetState.values["pr1Test.enabled"], true);
         assert.equal(presetState.contributions[0].sourceId, "copilot-canvas-design-test");
         const changed = JSON.parse(await readFile(entries[0].path, "utf8"));
         changed.title = "Updated Essentials";
