@@ -143,6 +143,7 @@ function configuration(request) {
         throw new Error("Missing frozen generated control assets");
     }
     const assetsByControl = new Map();
+    const adapterOwners = new Map();
     for (const entry of controlAssets ?? []) {
         if (!entry || typeof entry !== "object" || Array.isArray(entry)
             || Object.keys(entry).sort().join() !== "assets,control"
@@ -176,6 +177,11 @@ function configuration(request) {
             || !validControlContract(definition.value)) {
             throw new Error(`${entry.control}: incompatible frozen control assets`);
         }
+        const adapter = entry.assets[1].name;
+        if (adapterOwners.has(adapter)) {
+            throw new Error(`${adapter}: generated adapter belongs to both ${adapterOwners.get(adapter)} and ${entry.control}`);
+        }
+        adapterOwners.set(adapter, entry.control);
         assetsByControl.set(entry.control, { assets: entry.assets, properties: definition.value.properties,
             contract: definition.value });
     }

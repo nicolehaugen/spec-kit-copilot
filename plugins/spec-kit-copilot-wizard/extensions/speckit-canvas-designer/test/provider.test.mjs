@@ -1628,13 +1628,29 @@ test("paired control validates both adapters, typed values and portable generate
         [(request) => {
             const extra = structuredClone(request.controlAssets[0]);
             extra.control = "unused";
+            extra.assets[1].name = "unused-generated";
             const definition = JSON.parse(Buffer.from(extra.assets[0].content, "base64").toString("utf8"));
             definition.id = "unused";
+            definition.adapters.generated = extra.assets[1].name;
             const bytes = Buffer.from(JSON.stringify(definition));
             extra.assets[0].content = bytes.toString("base64");
             extra.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
             request.controlAssets.push(extra);
         }, /Unused frozen generated control assets/],
+        [(request) => {
+            const extra = structuredClone(request.controlAssets[0]);
+            extra.control = "risk-other";
+            extra.assets[0].name = "canvas-control-risk-other";
+            const definition = JSON.parse(Buffer.from(extra.assets[0].content, "base64").toString("utf8"));
+            definition.id = "risk-other";
+            const bytes = Buffer.from(JSON.stringify(definition));
+            extra.assets[0].content = bytes.toString("base64");
+            extra.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+            request.controlAssets.push(extra);
+            request.generatedControls.push({ ...request.generatedControls[0],
+                id: "risk.other", control: "risk-other" });
+            request.values["risk.other"] = request.generatedControls[1].value;
+        }, /generated adapter belongs to both risk-matrix and risk-other/],
     ]) {
         const request = JSON.parse(originalRequest);
         change(request);
