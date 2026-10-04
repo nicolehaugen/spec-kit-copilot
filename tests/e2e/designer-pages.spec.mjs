@@ -85,6 +85,38 @@ async function openDesigner(page) {
     return shell;
 }
 
+test("Designer CSP allows its own UI but blocks cross-origin adapter requests", async ({ page }) => {
+    let requests = 0;
+    const external = createServer((_request, response) => {
+        requests++;
+        response.writeHead(204).end();
+    });
+    await new Promise((resolve) => external.listen(0, "127.0.0.1", resolve));
+    let shell;
+    try {
+        shell = await openDesigner(page);
+        await expect(page.getByRole("tab", { name: "Essentials" })).toBeVisible();
+        await expect(page.locator(".app-header")).toHaveCSS("display", "grid");
+        const document = await page.request.get(shell.url);
+        expect(document.headers()["content-security-policy"]).toBe(
+            "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+        const target = `http://127.0.0.1:${external.address().port}/receive`;
+        const result = await page.evaluate(async (url) => {
+            try {
+                await fetch(url, { mode: "no-cors" });
+                return "sent";
+            } catch (error) {
+                return error.name;
+            }
+        }, target);
+        expect(result).toBe("TypeError");
+        expect(requests).toBe(0);
+    } finally {
+        await shell?.close();
+        await new Promise((resolve) => external.close(resolve));
+    }
+});
+
 test("isolated test preset resolves through Specify and saves contributed stock fields", async ({ page }) => {
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {

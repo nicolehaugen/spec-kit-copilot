@@ -440,9 +440,14 @@ test("shell serves validated pages behind its token", async (t) => {
     assert.match(good.headers.get("content-type"), /text\/html/);
     assert.equal(good.headers.get("cache-control"), "no-store");
     assert.equal(good.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(good.headers.get("content-security-policy"),
+        "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
     assert.match(await good.text(), /Spec Kit Canvas Designer/);
     const stateUrl = new URL(`/api/state?token=${url.searchParams.get("token")}`, url);
-    const state = await (await fetch(stateUrl)).json();
+    const stateResponse = await fetch(stateUrl);
+    assert.equal(stateResponse.headers.get("content-security-policy"),
+        good.headers.get("content-security-policy"));
+    const state = await stateResponse.json();
     assert.equal(state.pages[0].title, "Essentials");
     assert.equal(state.handoffId, handoff.handoffId);
     assert.equal((await fetch(new URL(`/events?token=${url.searchParams.get("token")}`, url))).status, 404);
@@ -1424,7 +1429,9 @@ test("paired control validates both adapters, typed values and portable generate
     await writeFile(designerAdapter.path, "export function mount() { throw new Error('unvalidated'); }");
     const adapterUrl = new URL(shell.url);
     adapterUrl.pathname = `/adapters/${designerAdapter.name}.mjs`;
-    assert.equal(await (await fetch(adapterUrl)).text(), designerModule);
+    const adapterResponse = await fetch(adapterUrl);
+    assert.match(adapterResponse.headers.get("content-security-policy"), /connect-src 'self'/);
+    assert.equal(await adapterResponse.text(), designerModule);
     await writeFile(designerAdapter.path, designerModule);
     const moved = `${directory}-original`;
     const outside = join(workspace, "untrusted-presets");
