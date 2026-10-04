@@ -51,7 +51,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const request = {
         schemaVersion: 1, requestId, handoffId: handoff.handoffId,
         project: checkout, target: `.github/extensions/${essentials["canvas.id"]}/`,
-        sourceFingerprint: handoff.sourceFingerprint, settingsRevision: model.revision,
+        sourceFingerprint: handoff.sourceFingerprint, settingsRevision: model.settingsRevision,
         canvas: { id: essentials["canvas.id"], displayName: essentials["canvas.displayName"],
             description: essentials["canvas.description"] || "Spec Kit workflow canvas.",
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },

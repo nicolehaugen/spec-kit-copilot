@@ -14,6 +14,7 @@ const entryTemplate = await readFile(new URL("../extension-canvas-design/templat
     import.meta.url), "utf8");
 const model = {
     revision: "test-revision",
+    settingsRevision: 0,
     pages: [{ page: "canvas-settings-setup", fields: [
         { id: "canvas.id" }, { id: "canvas.displayName" }, { id: "canvas.description" },
         { id: "canvas.workflowListName" }, { id: "workflowSlug.userProvided" },

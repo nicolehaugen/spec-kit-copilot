@@ -588,7 +588,8 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries));
     const prompts = [];
     const shell = await startShell(handoff, model, { project, workspace,
         session: { send: async (value) => prompts.push(value.prompt) } });
@@ -602,22 +603,35 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         method: "POST", headers: { "Content-Type": "application/json", Origin: url.origin },
         body: JSON.stringify(body),
     });
-    assert.equal((await post({ revision: "stale", values })).status, 422);
-    assert.equal((await post({ revision: model.revision, values: {
+    const generationRequest = (settingsRevision, draft) => ({
+        modelRevision: model.revision, settingsRevision, values: draft,
+    });
+    assert.equal((await post(generationRequest("stale", values))).status, 422);
+    assert.equal((await post(generationRequest(0, {
         ...values, "canvas.id": "../outside",
-    } })).status, 422);
-    assert.equal((await post({ revision: model.revision, values },
+    }))).status, 422);
+    assert.equal((await post(generationRequest(0, values),
         new URL("/api/generate?token=wrong", url))).status, 404);
     assert.equal(prompts.length, 0);
     await rm(generateSkill);
-    const unavailable = await post({ revision: model.revision, values });
+    const unavailable = await post(generationRequest(0, values));
     assert.equal(unavailable.status, 409);
     assert.match((await unavailable.json()).error, /Launch a new Designer session using extension-canvas-design v0\.1\.5/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const response = await post({ revision: model.revision, values });
+    const newerValues = { ...values, "canvas.description": "Newer settings" };
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { revision: 0, modelRevision: model.revision, values: newerValues });
+    assert.equal(saved.settingsRevision, 1);
+    const stale = await post(generationRequest(0, values));
+    assert.equal(stale.status, 409);
+    assert.match((await stale.json()).error, /settings changed elsewhere/);
+    assert.equal(prompts.length, 0);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
+    const response = await post(generationRequest(saved.settingsRevision, newerValues));
     assert.equal(response.status, 202);
     const generated = await response.json();
     assert.equal(generated.target, ".github/extensions/my-canvas/");
@@ -625,7 +639,8 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", generated.requestId, "request.json")));
     assert.equal(frozen.canvas.id, "my-canvas");
-    assert.equal(frozen.canvas.description, "Spec Kit workflow canvas.");
+    assert.equal(frozen.canvas.description, "Newer settings");
+    assert.equal(frozen.settingsRevision, 1);
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
 });
 
@@ -650,7 +665,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ revision: model.revision, values: { ...model.values,
+        body: JSON.stringify({ modelRevision: model.revision, settingsRevision: 0, values: { ...model.values,
             "canvas.id": "my-canvas", "canvas.displayName": "My Canvas" } }) });
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, state.generationError);
