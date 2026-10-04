@@ -156,6 +156,39 @@ test("failed autosave retains workflow identity through SSE and Refresh for retr
     }
 });
 
+test("failed New selection replays its selection with identity on Refresh", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(true);
+    const saves = [];
+    let rejectNew = true;
+    try {
+        await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                const patch = JSON.parse(route.request().postData());
+                saves.push(patch);
+                if (rejectNew && patch.selected === "__new__") {
+                    return route.fulfill({ status: 503, contentType: "application/json",
+                        body: JSON.stringify({ error: "Temporary selection failure" }) });
+                }
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await page.getByRole("button", { name: "existing", exact: true }).click();
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("specs/existing");
+        await page.locator("#new-workflow").click();
+        await expect(page.locator("#canvas-message")).toContainText("Temporary selection failure");
+        rejectNew = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect(saves.at(-1)).toMatchObject({ selected: "__new__", name: "", slug: "" });
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("__new__");
+        await expect(page.locator("#workflow-name")).toBeVisible();
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("disabled slug option omits the field and leaves View target unresolved until creation", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {

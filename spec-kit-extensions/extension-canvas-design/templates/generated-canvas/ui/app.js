@@ -64,8 +64,9 @@ function remember(step, value) {
 }
 function persist(patch) {
     const parts = [];
-    if (Object.hasOwn(patch, "name") || Object.hasOwn(patch, "slug")) {
-        parts.push([`identity:${model.selected}`, {
+    if (Object.hasOwn(patch, "selected") || Object.hasOwn(patch, "name") || Object.hasOwn(patch, "slug")) {
+        parts.push([`identity:${patch.selected ?? model.selected}`, {
+            ...(Object.hasOwn(patch, "selected") ? { selected: patch.selected } : {}),
             ...(Object.hasOwn(patch, "name") ? { name: patch.name } : {}),
             ...(Object.hasOwn(patch, "slug") ? { slug: patch.slug } : {}),
         }]);
@@ -456,10 +457,13 @@ document.addEventListener("click", (event) => {
             await refresh(true);
             if (saveFailure) {
                 if (failedPatches.size) {
+                    let selectionRetried = false;
                     for (const patch of [...failedPatches.values()]) {
                         await persist(patch);
+                        if (Object.hasOwn(patch, "selected")) selectionRetried = true;
                         if (patch.draft === constitutionDraft) constitutionDraft = null;
                     }
+                    if (selectionRetried) await refresh();
                 } else if (constitutionDraft) await saveConstitutionDraft();
                 else await saveInputs();
             }
