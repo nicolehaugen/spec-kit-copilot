@@ -26,6 +26,9 @@ import { sessionAdapter } from "./instances.mjs";
 import { PHASE_BY_ID } from "./wizard-phases.mjs";
 import { activeArtifactsForCommand } from "../pipeline/active-artifacts.mjs";
 import { runFastComposition } from "./composition-apply.mjs";
+import { snapshot } from "./snapshot.mjs";
+import { beginOutputInference, failOutputInference } from "./output-inference.mjs";
+import { startRefresh, setRefreshWork, failRefresh } from "./refresh-status.mjs";
 import {
     buildPrompt,
     buildWorkflowSlashCommand,
@@ -104,14 +107,33 @@ export async function dispatchKindPrompt(inst, kind, payload) {
     // the LLM Stage 2 prompt when the assembler reports Stage 2 is needed
     // (novel commands, wraps/prepends/appends directives, etc.).
     if (kind === "composition.refresh") {
-        const fast = await runFastComposition(inst, { reason: "refresh-button" });
-        if (fast?.ok && !fast.stage2Needed) {
-            return { kind, fastComposition: true };
+        startRefresh(inst);
+        try {
+            const fast = await runFastComposition(inst, { reason: "refresh-button" });
+            if (!fast?.ok) throw new Error(`Composition refresh failed: ${fast?.reason ?? "unknown error"}`);
+            const requests = (await snapshot(inst)).artifactInferenceRequests ?? [];
+            const endpoint = beginOutputInference(inst, requests);
+            setRefreshWork(inst, { pipeline: fast.stage2Needed, outputs: !!endpoint });
+            if (!fast.stage2Needed && !endpoint) return { kind, fastComposition: true };
+            const counts = await probeInstalledCounts(workspacePath);
+            const context = { workspacePath, preset: inst?.state?.preset,
+                composition: inst?.state?.composition, ...counts };
+            const prompts = [];
+            if (fast.stage2Needed) prompts.push(buildPrompt(kind, payload, context));
+            if (endpoint) prompts.push(buildPrompt("extension.inferArtifactTargets", {
+                commands: requests, origin: endpoint.origin, token: inst.token,
+            }, context));
+            const prompt = prompts.join("\n\n---\n\n");
+            await dispatchPromptToSession({ prompt, onError: () => {
+                failOutputInference(inst);
+                failRefresh(inst);
+            } });
+            return { prompt, kind };
+        } catch (error) {
+            failOutputInference(inst);
+            failRefresh(inst);
+            throw error;
         }
-        // Stage 2 needed — fall through and dispatch the LLM prompt below.
-        // The fast path still broadcast the presets/extensions/artifacts
-        // slice, so the button already cleared; the LLM turn will restamp
-        // `inferredPipeline` when it responds.
     }
 
     const { installedPresetCount, installedExtensionCount } = await probeInstalledCounts(workspacePath);

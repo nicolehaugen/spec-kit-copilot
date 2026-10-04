@@ -6,3 +6,4 @@
 ## Additional Canvas Design templates
 
 - `canvas-contribution-pr1-test`
+- `canvas-contribution-pr1-toggle`

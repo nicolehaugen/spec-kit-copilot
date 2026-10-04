@@ -45,7 +45,7 @@ async function model(revision = "first") {
         pages, revision,
         constraints: {
             "canvas.id": { type: "string", minLength: 1, maxLength: 100,
-                pattern: "^[a-z0-9][a-z0-9-]*$" },
+                pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
             "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
             "canvas.description": { type: "string", maxLength: 240 },
             "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -83,7 +83,7 @@ async function openDesigner(page) {
     return shell;
 }
 
-test("isolated test preset resolves through Specify and renders its contributed stock field", async ({ page }) => {
+test("isolated test preset resolves through Specify and saves contributed stock fields", async ({ page }) => {
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -118,7 +118,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
         expect(command).toContain("## Additional Designer pages\n\n- `canvas-settings-pr1-test`");
-        expect(command).toContain("## Additional Canvas Design templates\n\n- `canvas-contribution-pr1-test`");
+        expect(command).toContain("## Additional Canvas Design templates\n\n- `canvas-contribution-pr1-test`\n- `canvas-contribution-pr1-toggle`");
         const resolve = (name) => {
             const output = run("preset", "resolve", name);
             const line = output.split(/\r?\n/).map((item) => item.trim())
@@ -132,7 +132,8 @@ test("isolated test preset resolves through Specify and renders its contributed 
         const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
             "canvas-settings-appearance", "canvas-settings-pr1-test"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name); return entry; });
-        const templates = [resolve("canvas-contribution-pr1-test")];
+        const templates = ["canvas-contribution-pr1-test", "canvas-contribution-pr1-toggle"]
+            .map(resolve);
         expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -140,8 +141,10 @@ test("isolated test preset resolves through Specify and renders its contributed 
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
             ["Essentials", "Artifacts", "Appearance", "Test settings"]);
-        expect(resolved.pages[3].fields.map((item) => item.id)).toEqual(["pr1Test.label"]);
+        expect(resolved.pages[3].fields.map((item) => item.id)).toEqual(
+            ["pr1Test.label", "pr1Test.enabled"]);
         expect(resolved.values["pr1Test.label"]).toBe("");
+        expect(resolved.values["pr1Test.enabled"]).toBe(true);
         shell = await startShell(handoff,
             await loadDesignerSettings(workspace, handoff, resolved), { project, workspace });
         await page.goto(shell.url);
@@ -149,6 +152,9 @@ test("isolated test preset resolves through Specify and renders its contributed 
         const field = page.getByRole("textbox", { name: "Test label" });
         await expect(field).toBeVisible();
         await field.fill("Visible from preset");
+        const checkbox = page.getByRole("checkbox", { name: "Test enabled" });
+        await expect(checkbox).toBeChecked();
+        await checkbox.uncheck();
         await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("pr1-test");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("PR1 test");
@@ -157,10 +163,12 @@ test("isolated test preset resolves through Specify and renders its contributed 
         const saved = await loadDesignerSettings(workspace, handoff,
             await loadResolvedDesignerPages(handoff, project, pages, templates));
         expect(saved.values["pr1Test.label"]).toBe("Visible from preset");
+        expect(saved.values["pr1Test.enabled"]).toBe(false);
         reopened = await startShell(handoff, saved, { project, workspace });
         await page.goto(reopened.url);
         await page.getByRole("tab", { name: "Test settings" }).click();
         await expect(page.getByRole("textbox", { name: "Test label" })).toHaveValue("Visible from preset");
+        await expect(page.getByRole("checkbox", { name: "Test enabled" })).not.toBeChecked();
     } finally {
         await reopened?.close();
         await shell?.close();
@@ -296,9 +304,10 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
         await expect(customSlug).not.toBeChecked();
         await expect(customSlug).toHaveAttribute("aria-description",
             "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.");
-        await expect(id).toHaveAttribute("pattern", "^[a-z0-9][a-z0-9-]*$");
+        await expect(id).toHaveAttribute("pattern",
+            "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$");
         await expect(page.locator(`[id="${await id.getAttribute("aria-describedby")}"]`))
-            .toHaveText("Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used.");
+            .toHaveText("Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used.");
         await expect(title).toHaveAttribute("maxlength", "120");
         await expect(page.getByRole("textbox", { name: "Description" })).toHaveAttribute("maxlength", "240");
         await expect(page.getByRole("textbox", { name: "Workflow header" })).toHaveAttribute("maxlength", "80");

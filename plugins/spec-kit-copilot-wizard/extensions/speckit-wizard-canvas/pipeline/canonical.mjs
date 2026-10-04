@@ -442,6 +442,12 @@ export const CORE_TEMPLATES = Object.freeze([
     "agent-file-template",
 ]);
 
+export const CORE_OUTPUTS = Object.freeze({
+    specify: Object.freeze(["specs/<slug>/spec.md", "specs/<slug>/checklists/requirements.md"]),
+    plan: Object.freeze(["specs/<slug>/plan.md", "specs/<slug>/research.md",
+        "specs/<slug>/data-model.md", "specs/<slug>/contracts/", "specs/<slug>/quickstart.md"]),
+});
+
 export const CORE_SCRIPTS = Object.freeze([
     "check-prerequisites",
     "common",
