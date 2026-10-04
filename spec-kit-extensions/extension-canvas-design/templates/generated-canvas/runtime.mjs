@@ -311,15 +311,17 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     }
     async function reportSlug(input, instanceId) {
         const run = reportingRun(input, instanceId);
-        if (phaseFor(run.phase).project || run.item !== "__new__") throw new UserError("Only a new workflow can report a directory slug.");
+        if (phaseFor(run.phase).project || (run.item !== "__new__" && !run.confirmedSlug)) throw new UserError("Only a new workflow can report a directory slug.");
         if (!validSlug(input.slug)) throw new UserError("Use a workflow slug with lowercase letters, numbers, and single hyphens, not a reserved filename.");
         if (run.confirmedSlug && run.slug !== input.slug) throw new UserError("This run already reported a different workflow directory.");
         if (run.before.some((item) => item.split("/").at(-1) === input.slug)) throw new UserError("That workflow already exists. Select it instead of creating a new workflow.");
-        const created = (await items()).find((item) => item.slug === input.slug && !run.before.includes(item.id));
+        const created = (await items()).find((item) => item.slug === input.slug
+            && !run.before.includes(item.id) && (run.item === "__new__" || run.item === item.id));
         if (!created) throw new UserError("The reported workflow directory does not exist yet. Create it before reporting its name.");
         await update((next) => {
             Object.assign(next.runs.find((entry) => entry.runId === run.runId),
-                { slug: input.slug, confirmedSlug: true });
+                { item: created.id, slug: input.slug, confirmedSlug: true });
+            next.drafts[JSON.stringify([created.id, run.phase])] = run.args;
             if (run.name) (next.names ??= {})[created.id] = run.name;
             if (next.selected === "__new__") {
                 next.selected = created.id;
@@ -424,7 +426,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
             if (state.runs.some((run) => (run.item === item.id
-                || (run.item === "__new__" && run.slug === item.slug && run.confirmedSlug))
+                || (run.item === "__new__" && !run.before.includes(item.id)))
                 && !["Completed", "Failed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }

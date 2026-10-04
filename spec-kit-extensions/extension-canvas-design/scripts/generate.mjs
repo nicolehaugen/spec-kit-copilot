@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -54,6 +55,46 @@ function checkSyntax(path) {
     if (check.error || check.status !== 0) throw new Error(`Generated JavaScript failed validation: ${check.stderr || check.error}`);
 }
 
+export async function readBoundedSessionFile(parent, name, limit, label, openFile = open) {
+    const invalid = `${label} must be a bounded regular session file`;
+    const parentStat = await lstat(parent);
+    if (!parentStat.isDirectory() || await realpath(parent) !== parent) {
+        throw new Error(invalid);
+    }
+    const path = join(parent, name);
+    let file;
+    try {
+        file = await openFile(path, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    } catch (error) {
+        if (error.code === "ELOOP") throw new Error(invalid, { cause: error });
+        throw error;
+    }
+    try {
+        const [stat, pathStat, currentParent, currentParentStat] = await Promise.all([
+            file.stat(), lstat(path), realpath(parent), lstat(parent),
+        ]);
+        if (currentParent !== parent || !currentParentStat.isDirectory()
+            || parentStat.dev !== currentParentStat.dev || parentStat.ino !== currentParentStat.ino
+            || !stat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink()
+            || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+            throw new Error(invalid);
+        }
+        if (stat.size > limit) throw new Error(`${label} is too large`);
+        const bytes = Buffer.alloc(limit + 1);
+        let length = 0;
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (bytesRead === 0) break;
+            length += bytesRead;
+        }
+        if (length > limit) throw new Error(`${label} is too large`);
+        return bytes.toString("utf8", 0, length);
+    } finally {
+        await file.close();
+    }
+}
+
 export async function materialize(project, workspace, handoffId, requestId) {
     if (!requestPattern.test(handoffId) || !requestPattern.test(requestId)) throw new Error("Invalid generation identifiers");
     const projectRoot = await realpath(project), workspaceRoot = await realpath(workspace);
@@ -61,27 +102,17 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (await realpath(generation) !== generation) {
         throw new Error("Generation request escapes its session directory");
     }
-    const requestPath = join(generation, "request.json");
-    if (!(await lstat(requestPath)).isFile() || await realpath(requestPath) !== requestPath) {
-        throw new Error("Frozen generation request must be a regular session file");
-    }
-    const raw = await readFile(requestPath);
-    if (raw.length > 128 * 1024) throw new Error("Generation request is too large");
-    const request = JSON.parse(raw.toString("utf8"));
+    const request = JSON.parse(await readBoundedSessionFile(
+        generation, "request.json", 128 * 1024, "Generation request"));
     const { integrity, ...payload } = request;
     const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     if (integrity !== hash || request.handoffId !== handoffId || request.requestId !== requestId) {
         throw new Error("Generation request integrity mismatch");
     }
     if (request.project !== projectRoot) throw new Error("Generation request is bound to another checkout");
-    const handoffPath = join(workspaceRoot, "speckit-canvas-designer",
-        "handoffs", handoffId, "handoff.json");
-    const handoffStat = await lstat(handoffPath);
-    if (!handoffStat.isFile() || handoffStat.size > 64 * 1024
-        || await realpath(handoffPath) !== handoffPath) {
-        throw new Error("Wizard handoff must be a bounded regular session file");
-    }
-    const handoff = JSON.parse(await readFile(handoffPath, "utf8"));
+    const handoffFolder = join(workspaceRoot, "speckit-canvas-designer", "handoffs", handoffId);
+    const handoff = JSON.parse(await readBoundedSessionFile(
+        handoffFolder, "handoff.json", 64 * 1024, "Wizard handoff"));
     if (handoff.handoffId !== handoffId || handoff.sourceFingerprint !== request.sourceFingerprint
         || handoff.sourceFingerprint !== createHash("sha256").update(JSON.stringify({
             workflow: handoff.workflow, selections: handoff.selections,

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
 import { freezeGeneration, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
@@ -84,7 +84,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.match(entry, /createCanvas\(\{/);
     assert.match(entry, /createServer\(\(req, res\)/);
     assert.match(entry, /server\.listen\(0, "127\.0\.0\.1"/);
-    assert.match(entry, /onClose: async \(ctx\)/);
+    assert.match(entry, /onClose: \(ctx\) => withLifecycle\(async \(\) =>/);
     assert.match(entry, /entry\.server\.close/);
     assert.doesNotMatch(entry, /Example agent-callable action/);
     assert.equal((await readFile(join(target, "ui", "workflow-theme.css"), "utf8"))
@@ -323,4 +323,64 @@ test("existing canvases are preserved and tampered requests fail before creation
     await writeFile(path, JSON.stringify(request));
     await assert.rejects(materialize(two.project, two.workspace, handoff.handoffId, two.prepared.requestId),
         /integrity mismatch/);
+});
+
+test("generation request and Wizard handoff reject symlinks and oversized files", async (t) => {
+    for (const [name, limit] of [["request.json", 128 * 1024], ["handoff.json", 64 * 1024]]) {
+        await t.test(name, async (child) => {
+            const { project, workspace, prepared, sdk } = await fixture(child);
+            const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
+            const path = name === "request.json"
+                ? join(folder, "generations", prepared.requestId, name) : join(folder, name);
+            const saved = `${path}.saved`;
+            await rename(path, saved);
+            let linked = false;
+            try {
+                await symlink(saved, path, "file");
+                linked = true;
+            } catch (error) {
+                if (!["EPERM", "EACCES", "ENOTSUP"].includes(error.code)) throw error;
+                child.diagnostic(`File symlink unavailable: ${error.code}`);
+            }
+            if (linked) {
+                await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                    /bounded regular session file|ELOOP|EINVAL/);
+                await rm(path);
+            }
+            await writeFile(path, Buffer.alloc(limit + 1, 32));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /too large/);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
+});
+
+test("pinned generation reads reject leaf and parent swaps during open", async (t) => {
+    for (const [name, limit, label] of [
+        ["request.json", 128 * 1024, "Generation request"],
+        ["handoff.json", 64 * 1024, "Wizard handoff"],
+    ]) {
+        for (const swap of ["leaf", "parent"]) {
+            await t.test(`${name} ${swap}`, async (child) => {
+                const { workspace, prepared } = await fixture(child);
+                const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
+                const parent = name === "request.json"
+                    ? join(folder, "generations", prepared.requestId) : folder;
+                const path = join(parent, name);
+                await assert.rejects(readBoundedSessionFile(parent, name, limit, label, async (filePath, flags) => {
+                    if (swap === "parent") {
+                        await rename(parent, `${parent}.old`);
+                        await mkdir(parent);
+                        await writeFile(path, "replacement");
+                    }
+                    const file = await open(filePath, flags);
+                    if (swap === "leaf") {
+                        await rename(path, `${path}.old`);
+                        await writeFile(path, "replacement");
+                    }
+                    return file;
+                }), /bounded regular session file/);
+            });
+        }
+    }
 });
