@@ -110,8 +110,9 @@ included in Generate yet. Opening the
 shell does not mean all pages loaded or that Essentials is valid for generation.
 
 The isolated [test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
-registers an additional Designer page and a stock text field. It is installed
-locally by the browser integration test, not published in the canonical preset
+registers an additional Designer page with stock text and checkbox fields. The
+browser integration test covers the checkbox default, rendering, save, and
+reopen. The preset is installed locally, not published in the canonical preset
 catalog; Billing generation and generated-only pages remain future work.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
