@@ -257,6 +257,53 @@ test("refresh clears resolved phase and Constitution errors", async ({ page }) =
     }
 });
 
+test("Constitution guidance saves once after typing and flushes before sending", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    const saves = [];
+    let draftBeforeRun;
+    let rejectDraft = false;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                saves.push(JSON.parse(route.request().postData()));
+                if (rejectDraft) return route.fulfill({ status: 503, contentType: "application/json",
+                    body: JSON.stringify({ error: "Temporary draft failure" }) });
+            }
+            return route.continue();
+        });
+        await page.route("**/api/run", async (route) => {
+            draftBeforeRun = (await canvas.runtime.snapshot())
+                .drafts[JSON.stringify(["project", "constitution"])];
+            await route.fulfill({ status: 503, contentType: "application/json",
+                body: JSON.stringify({ error: "Test dispatch stopped" }) });
+        });
+        await page.goto(canvas.url);
+        await page.locator("#run-constitution").click();
+        await page.locator("#constitution-args").pressSequentially("first draft", { delay: 10 });
+        await expect.poll(() => saves.length).toBe(1);
+        expect(saves[0].draft).toEqual({
+            item: "project", phase: "constitution", value: "first draft",
+        });
+        await page.locator("#constitution-args").fill("latest draft");
+        await page.locator("#send-constitution").click();
+        await expect(page.locator("#constitution-message")).toHaveText("Test dispatch stopped");
+        expect(saves).toHaveLength(2);
+        expect(saves[1].draft.value).toBe("latest draft");
+        expect(draftBeforeRun).toBe("latest draft");
+        rejectDraft = true;
+        await page.locator("#constitution-args").fill("retry draft");
+        await expect(page.locator("#canvas-message")).toContainText("Temporary draft failure");
+        rejectDraft = false;
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["project", "constitution"])])
+            .toBe("retry draft");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("one workflow header, compact constitution and legible narrow phase navigation", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true,
         ["constitution", "specify", "clarify", "plan", "tasks", "taskstoissues", "analyze", "checklist", "implement"]);

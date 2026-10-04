@@ -4,7 +4,7 @@ const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
-let viewer = null, timer, saveFailure = null, workflowQuery = "";
+let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
 function currentTheme() {
@@ -87,8 +87,23 @@ function saveInputs() {
     if (selected) patch.draft = { item: model.selected, phase: selected.id, value: drafts.get(draftKey(selected)) ?? $("phase-args")?.value ?? "" };
     return persist(patch);
 }
+function saveConstitutionDraft() {
+    const draft = constitutionDraft;
+    if (draft) {
+        const pending = persist({ draft });
+        pending.then(() => {
+            if (constitutionDraft === draft) constitutionDraft = null;
+        }, () => {});
+        return pending;
+    }
+}
 async function flush() {
     if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
+    if (constitutionTimer) {
+        clearTimeout(constitutionTimer);
+        constitutionTimer = null;
+        saveConstitutionDraft();
+    }
     await saving;
     if (saveFailure) throw saveFailure;
 }
@@ -397,7 +412,11 @@ document.addEventListener("input", (event) => {
         queueInput();
     }
     if (event.target.id === "workflow-slug") { model.slug = event.target.value; queueInput(); renderStatus(); }
-    if (event.target.id === "constitution-args") persist({ draft: remember(constitution(), event.target.value) });
+    if (event.target.id === "constitution-args") {
+        constitutionDraft = remember(constitution(), event.target.value);
+        clearTimeout(constitutionTimer);
+        constitutionTimer = setTimeout(() => { constitutionTimer = null; saveConstitutionDraft(); }, 400);
+    }
 });
 $("workflow-search").addEventListener("input", (event) => {
     workflowQuery = event.target.value;
@@ -423,7 +442,10 @@ document.addEventListener("click", (event) => {
             // Fetch the current revision first; retry locally retained drafts explicitly.
             await saving.catch(() => {});
             await refresh(true);
-            if (saveFailure) await saveInputs();
+            if (saveFailure) {
+                if (constitutionDraft) await saveConstitutionDraft();
+                else await saveInputs();
+            }
             message("Canvas refreshed.");
             return;
         }
@@ -457,12 +479,13 @@ wireThemeToggle();
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {
-    if (!timer) saving.catch(() => {}).then(() => refresh()).catch((error) => message(error.message, "canvas-message", true));
+    if (!timer && !constitutionTimer) saving.catch(() => {}).then(() => refresh())
+        .catch((error) => message(error.message, "canvas-message", true));
     if (viewer) refreshArtifact();
 };
 events.onerror = () => { setConnectionStatus("lost"); message("Connection interrupted. Drafts are retained; use Refresh if reconnection fails."); };
 window.addEventListener("beforeunload", (event) => {
-    if (timer || saveFailure) { event.preventDefault(); event.returnValue = ""; }
+    if (timer || constitutionTimer || saveFailure) { event.preventDefault(); event.returnValue = ""; }
 });
 window.addEventListener("pagehide", () => events.close());
 await refresh().catch((error) => message(error.message, "canvas-message", true));
