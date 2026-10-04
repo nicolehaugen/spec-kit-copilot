@@ -101,8 +101,9 @@ failures beside the affected control. It validates the page/renderer pair and fr
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Registered `generated.value-definition` JSON templates join the same field-ID collision
-registry and declare a typed constant or a workflow-scoped provider, plus
-read-only, runtime-editable, or processing-only presentation. A provider must
+registry and declare a typed constant or a workflow-scoped computed value.
+Constants may be read-only, runtime-editable, or processing-only; computed values
+may be read-only or processing-only, never runtime-editable. A computed value must
 have its own replace-only `generated.computed-value-provider` `.mjs` registration with a direct
 `export function provideValue` or `export const provideValue` declaration
 (named re-exports are unsupported). Designer validates the actual declaration
@@ -147,7 +148,8 @@ node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/t
 ```
 
 Canvas Design's [taxonomy, six kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
-define the registration and authoring surface. The added-tab schema references
-the default-tab schema's shared document shape. Preset fixture JSON omits `$schema` because its
+define the registration and authoring surface. Required and added Designer tabs
+share the `designer.tab-definition` kind and schema; the required tabs are identified
+by their registered names. Preset fixture JSON omits `$schema` because its
 installed package cannot reliably resolve a relative path into a separately
 installed extension; see the mapping in the extension README.

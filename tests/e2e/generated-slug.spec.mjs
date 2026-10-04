@@ -65,6 +65,27 @@ for (const [scenario, module] of [
     });
 }
 
+for (const [scenario, missing] of [
+    ["phase label", 'data-phase-label="${escapeHtml(phase.label)}"'],
+    ["artifact action", 'id="view-artifact"'],
+    ["artifact status", 'id="phase-artifact-status"'],
+    ["phase message", 'id="phase-message"'],
+]) {
+    test(`pipeline replacement missing ${scenario} fails at startup`, async ({ page }) => {
+        const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+        try {
+            const original = pipelineModule.toString("utf8");
+            expect(original).toContain(missing);
+            await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+                contentType: "text/javascript", body: original.replace(missing, ""),
+            }));
+            await page.goto(canvas.url);
+            await expect(page.locator("#canvas-message")).toContainText(
+                "Pipeline could not render: Pipeline renderer did not render the required phase controls");
+        } finally { await canvas.close(); }
+    });
+}
+
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
     generatedPages, generatedControls) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));

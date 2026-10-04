@@ -672,10 +672,12 @@ try {
             error: (error) => message(error.message, "canvas-message", true),
         } }));
     const required = [".phase-notice", "#browse-output-folder code", "#phase-args",
+        "#phase-message", "#phase-artifact-status", "#view-artifact",
         "#run-phase", "#previous-phase", "#next-phase"];
     if (!Array.isArray(steps) || steps.length !== phases.length
         || steps.some((step, index) => !(step instanceof HTMLButtonElement)
-            || !pipelineRoot.contains(step) || step.dataset.phaseIndex !== String(index))
+            || !pipelineRoot.contains(step) || step.dataset.phaseIndex !== String(index)
+            || step.dataset.phaseLabel !== phases[index].label)
         || !pipelineRoot.querySelector("#phase-navigation")
         || !pipelineRoot.querySelector("#phase-card")
         || phases.some((_, index) => {
