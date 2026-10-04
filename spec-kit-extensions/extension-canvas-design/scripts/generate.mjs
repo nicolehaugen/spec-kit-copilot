@@ -205,6 +205,7 @@ function configuration(request) {
         for (const asset of item.assets) {
             if (!asset || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
                 || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
+                || isWindowsDeviceName(asset.name)
                 || typeof asset.sourceId !== "string"
                 || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
                 || typeof asset.content !== "string"

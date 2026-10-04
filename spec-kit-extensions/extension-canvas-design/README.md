@@ -138,7 +138,9 @@ shared `control.definition` naming separate replace-only `designer.adapter`
 and `generated.adapter` templates; each module exports `mount`, `controlId`,
 and `valueContract`. Each object-field contribution requires exactly one
 `control.definition` template matching its `field.control`, and Generate uses
-that validated template name. The Designer adapter receives
+that validated template name. Definition and generated-adapter template names
+cannot be Windows device names because they become packaged control filenames.
+The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
 `{root, field, value}`. Designer validates and persists changes; Generate
 freezes the validated object and packages the effective generated adapter and
