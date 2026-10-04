@@ -15,6 +15,7 @@ import { assertPageCommand, loadResolvedDesignerPages } from "../pages.mjs";
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
 } from "../settings.mjs";
+import { freezeGeneration } from "../generation.mjs";
 
 const ID = "designer_1";
 
@@ -603,6 +604,10 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         method: "POST", headers: { "Content-Type": "application/json", Origin: url.origin },
         body: JSON.stringify(body),
     });
+    const wrongType = await fetch(endpoint, { method: "POST",
+        headers: { "Content-Type": "text/plain", Origin: url.origin }, body: "{}" });
+    assert.equal(wrongType.status, 422);
+    assert.equal((await wrongType.json()).error, "Expected JSON Designer settings");
     const generationRequest = (settingsRevision, draft) => ({
         modelRevision: model.revision, settingsRevision, values: draft,
     });
@@ -642,6 +647,49 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(frozen.canvas.description, "Newer settings");
     assert.equal(frozen.settingsRevision, 1);
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
+});
+
+test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const page = JSON.parse(await readFile(entries[1].path, "utf8"));
+    for (let index = 0; index < 20; index++) {
+        page.fields.push({ id: `custom.${index}`, label: `Custom ${index}` });
+    }
+    await writeFile(entries[1].path, JSON.stringify(page));
+    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    const values = { ...model.values, "canvas.id": "large-canvas",
+        "canvas.displayName": "Large Canvas" };
+    for (let index = 0; index < 20; index++) values[`custom.${index}`] = "x".repeat(1000);
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { modelRevision: model.revision, revision: 0, values });
+    const body = JSON.stringify({ modelRevision: model.revision,
+        settingsRevision: saved.settingsRevision, values });
+    assert.ok(Buffer.byteLength(body) > 16 * 1024);
+    assert.ok(Buffer.byteLength(body) < SETTINGS_LIMIT);
+    const skill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-generate", "SKILL.md");
+    await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
+    await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    const prompts = [];
+    const shell = await startShell(handoff, saved, { project, workspace,
+        session: { send: async (value) => prompts.push(value.prompt) } });
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    url.pathname = "/api/generate";
+    const response = await fetch(url, { method: "POST",
+        headers: { "Content-Type": "application/json" }, body });
+    assert.equal(response.status, 202);
+    assert.equal(prompts.length, 1);
+    const { requestId } = await response.json();
+    const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", requestId, "request.json")));
+    assert.equal(frozen.canvas.id, "large-canvas");
+    assert.equal(Object.hasOwn(frozen.values, "custom.0"), false);
 });
 
 test("missing Generate skill disables the button and reports a repair path without preparing a request", async (t) => {
@@ -784,6 +832,115 @@ test("registered contributions validate slots, sources, references and determini
         document: { schemaVersion: 1, id, host: "designer", slot: "essentials.options",
             order: 30, field: { id: fieldId, label: id, type: "string", control: "stock.text" },
             ...overrides },
+    });
+
+    await t.test("Billing fixture resolves only registered pages, and both slots save and freeze the same field", async (t) => {
+        const workspace = await fixture(t);
+        const { project, entries } = await projectFixture(t, workspace);
+        const handoff = validHandoff();
+        handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+        handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+        await saveHandoff(workspace, handoff);
+        const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-billing-canvas-test/",
+            import.meta.url));
+        const directory = join(project, ".specify", "presets");
+        await mkdir(directory);
+        const pagePath = join(directory, "billing-page.json");
+        const contributionPath = join(directory, "billing-contribution.json");
+        await copyFile(join(preset, "pages", "billing.json"), pagePath);
+        const pageEntry = { name: "canvas-settings-billing", path: pagePath };
+        const contribution = JSON.parse(await readFile(join(preset, "contributions", "billing.json")));
+        const templates = [{ name: "canvas-contributions-billing", path: contributionPath,
+            sourceId: "copilot-billing-canvas-test" }];
+        const { materialize } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs",
+            import.meta.url));
+        for (const slot of ["billing.options", "essentials.options"]) {
+            await t.test(slot, async () => {
+                await writeFile(contributionPath, JSON.stringify({ ...contribution, slot }));
+                const unregistered = await loadResolvedDesignerPages(handoff, project, entries);
+                assert.equal(unregistered.pages.length, 3);
+                assert.equal(unregistered.values["billing.costCode"], undefined);
+                const model = await loadResolvedDesignerPages(handoff, project,
+                    [...entries, pageEntry], templates);
+                assert.deepEqual(model.pages.map((page) => page.title),
+                    ["Essentials", "Artifacts", "Appearance", "Billing"]);
+                assert.equal(model.pages.find((page) => page.fields.some((field) =>
+                    field.id === "billing.costCode")).page,
+                slot === "essentials.options" ? "canvas-settings-setup" : "canvas-settings-billing");
+                assert.equal(model.constraints["billing.costCode"].maxLength, 64);
+                const values = { ...model.values, "canvas.id": `cost-${slot.split(".")[0]}`,
+                    "canvas.displayName": "Cost code test", "billing.costCode": "CC-481" };
+                const request = { modelRevision: model.revision, revision: 0, values };
+                await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+                    ...request, values: { ...values, "billing.costCode": "x".repeat(65) },
+                }), /Invalid Designer setting: billing.costCode/);
+                await assert.rejects(freezeGeneration({ model, values: {
+                    ...values, "billing.costCode": "x".repeat(65) },
+                handoff, project, workspace }), /Invalid Designer setting: billing.costCode/);
+                await assert.rejects(freezeGeneration({ model, values: {
+                    ...values, "canvas.displayName": "" },
+                handoff, project, workspace }), /canvas.displayName|Canvas ID and Title/);
+                const saved = await saveDesignerSettings(workspace, handoff, model, request);
+                assert.equal((await loadDesignerSettings(workspace, handoff, model))
+                    .values["billing.costCode"], "CC-481");
+                const prepared = await freezeGeneration({ model: saved, values: saved.values,
+                    handoff, project, workspace });
+                const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+                    "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json")));
+                assert.equal(frozen.values["billing.costCode"], "CC-481");
+                assert.deepEqual(frozen.generatedFields, [{ id: "billing.costCode",
+                    label: "Cost code", maxLength: 64,
+                    section: { id: "billing", title: "Billing" } }]);
+                await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+                const config = JSON.parse(await readFile(join(project, prepared.target,
+                    "canvas-config.json"), "utf8"));
+                assert.deepEqual(config.readOnlyFields, [{ id: "billing.costCode",
+                    label: "Cost code", value: "CC-481",
+                    section: { id: "billing", title: "Billing" } }]);
+            });
+            if (slot === "billing.options") {
+                const model = await loadResolvedDesignerPages(handoff, project, [...entries, pageEntry], templates);
+                await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
+                    /unknown or incompatible Designer slot billing.options/);
+                assert.equal(model.pages.length, 4);
+                await rm(join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                    "settings.json"));
+            }
+        }
+        for (const patch of [
+            { field: { ...contribution.field, maxLength: 1001 } },
+            { field: { ...contribution.field, maxLength: 0 } },
+            { generatedBinding: { presentation: "unknown" } },
+            { generatedBinding: { presentation: "stock.readonly", adapter: "foreign" } },
+            { generatedBinding: { presentation: "stock.readonly",
+                section: { id: "", title: "Billing" } } },
+            { generatedBinding: { presentation: "stock.readonly",
+                section: { id: "billing", title: " " } } },
+            { generatedBinding: { presentation: "stock.readonly",
+                section: { id: "billing", title: "Billing", extra: true } } },
+        ]) {
+            await writeFile(contributionPath, JSON.stringify({ ...contribution, ...patch }));
+            await assert.rejects(loadResolvedDesignerPages(handoff, project,
+                [...entries, pageEntry], templates), /incompatible/);
+        }
+        await writeFile(contributionPath, JSON.stringify(contribution));
+        const secondPath = join(directory, "second.json");
+        const second = { ...contribution, id: "billing-second",
+            field: { ...contribution.field, id: "billing.second" },
+            generatedBinding: { presentation: "stock.readonly",
+                section: { id: "other-billing", title: "Billing" } } };
+        await writeFile(secondPath, JSON.stringify(second));
+        const secondEntry = { name: "canvas-contributions-second", path: secondPath,
+            sourceId: "copilot-billing-canvas-test" };
+        const sameTitle = await loadResolvedDesignerPages(handoff, project,
+            [...entries, pageEntry], [...templates, secondEntry]);
+        assert.deepEqual(sameTitle.contributions.map((item) => item.generatedBinding.section.title),
+            ["Billing", "Billing"]);
+        await writeFile(secondPath, JSON.stringify({ ...second, generatedBinding: {
+            presentation: "stock.readonly", section: { id: "billing", title: "Other title" },
+        } }));
+        await assert.rejects(loadResolvedDesignerPages(handoff, project,
+            [...entries, pageEntry], [...templates, secondEntry]), /conflicting generated section billing/);
     });
     const beta = make("beta", "zzz", "billing.beta");
     const alpha = make("alpha", "aaa", "billing.alpha");

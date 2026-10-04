@@ -81,6 +81,140 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.throws(() => validateEssentials(model, missingToggle), /workflowSlug.userProvided/);
 });
 
+test("Designer-only values are validated but excluded from frozen and generated files", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const contributedModel = { ...model,
+        constraints: { ...model.constraints,
+            "billing.costCode": { type: "string", maxLength: 64 },
+            "designer.note": { type: "string", maxLength: 80 } },
+        contributions: [{ field: { id: "billing.costCode", label: "Cost code" },
+            generatedBinding: { presentation: "stock.readonly",
+                section: { id: "billing", title: "Billing" } } }] };
+    const supplied = { ...values, "billing.costCode": "CC-481", "designer.note": "Designer only" };
+    await assert.rejects(freezeGeneration({ model: contributedModel,
+        values: { ...supplied, "designer.note": "x".repeat(81) },
+        handoff, project, workspace }), /Invalid Designer setting: designer.note/);
+    const prepared = await freezeGeneration({ model: contributedModel, values: supplied,
+        handoff, project, workspace });
+    const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.equal(frozen.values["billing.costCode"], "CC-481");
+    assert.equal(Object.hasOwn(frozen.values, "designer.note"), false);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const setup = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-setup.json"), "utf8"));
+    assert.equal(setup.values["billing.costCode"], "CC-481");
+    assert.equal(Object.hasOwn(setup.values, "designer.note"), false);
+});
+
+test("re-signed requests reject unbound, missing, and colliding generated values", async (t) => {
+    for (const [name, change, error] of [
+        ["unbound value", (request) => { request.values["designer.note"] = "not generated"; },
+            /Invalid frozen generated values/],
+        ["missing Essential", (request) => { delete request.values["canvas.description"]; },
+            /Invalid frozen canvas identity/],
+        ["missing bound value", (request) => {
+            request.generatedFields = [{ id: "billing.costCode", label: "Cost code", maxLength: 64 }];
+        }, /Invalid frozen generated fields/],
+        ["bound ID collides with Essential", (request) => {
+            request.generatedFields = [{ id: "canvas.displayName", label: "Title", maxLength: 120 }];
+        }, /Invalid frozen generated values/],
+    ]) {
+        await t.test(name, async (child) => {
+            const { project, workspace, prepared, sdk } = await fixture(child);
+            const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                "generations", prepared.requestId, "request.json");
+            const request = JSON.parse(await readFile(path, "utf8"));
+            change(request);
+            const { integrity: _integrity, ...payload } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+            await writeFile(path, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                error);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
+});
+
+test("100 bounded generated fields materialize when the frozen request exceeds 128KB", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const constraints = { ...model.constraints };
+    const contributions = [];
+    const supplied = { ...values };
+    for (let index = 0; index < 100; index++) {
+        const id = `billing.code${index}`;
+        constraints[id] = { type: "string", maxLength: 1000 };
+        supplied[id] = "x".repeat(1000);
+        contributions.push({ field: { id, label: "L".repeat(120) },
+            generatedBinding: { presentation: "stock.readonly",
+                section: { id: `billing-${index}`, title: "S".repeat(120) } } });
+    }
+    const prepared = await freezeGeneration({ model: { ...model, constraints, contributions },
+        values: supplied, handoff, project, workspace });
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const raw = await readFile(path);
+    assert.ok(raw.length > 128 * 1024);
+    assert.ok(raw.length <= 512 * 1024);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-config.json"), "utf8"));
+    assert.equal(config.readOnlyFields.length, 100);
+    assert.equal(config.readOnlyFields[99].value, "x".repeat(1000));
+});
+
+test("the generator rejects a frozen request above its shared size limit", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    await writeFile(path, "x".repeat(512 * 1024 + 1));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Generation request is too large/);
+});
+
+test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, ".github", "extensions", "my-workflow");
+    const { readConfig } = await import(pathToFileURL(join(target, "server.mjs")).href);
+    const defaultConfig = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
+    assert.equal(defaultConfig.readOnlyFields, undefined);
+    assert.doesNotMatch(renderHtml(defaultConfig), /Configured fields|data-field-id/);
+    const config = { ...defaultConfig,
+        readOnlyFields: [{ id: "billing.costCode", label: "Cost code", value: '<script>"CC"</script>' }] };
+    const html = renderHtml(config);
+    assert.match(html, /data-field-id="billing.costCode">&lt;script&gt;&quot;CC&quot;&lt;\/script&gt;/);
+    assert.doesNotMatch(html, /<script>"CC"<\/script>|<input[^>]+billing\.costCode/);
+    const grouped = renderHtml({ ...defaultConfig, readOnlyFields: [
+        { id: "billing.costCode", label: "Cost code", value: "CC-481",
+            section: { id: "billing", title: "Billing" } },
+        { id: "billing.other", label: "Other code", value: "CC-482",
+            section: { id: "billing", title: "Billing" } },
+        { id: "finance.code", label: "Finance code", value: "CC-483",
+            section: { id: "finance", title: "Billing" } },
+        { id: "note", label: "Note", value: "Untitled" },
+    ] });
+    assert.equal((grouped.match(/<h2>Billing<\/h2>/g) ?? []).length, 2);
+    assert.equal((grouped.match(/<h2>Configured fields<\/h2>/g) ?? []).length, 1);
+    assert.match(grouped, /<h2>Billing<\/h2><dl[^>]*>[\s\S]*?billing\.costCode[\s\S]*?billing\.other[\s\S]*?<\/dl>/);
+    for (const invalid of [
+        [{ id: "billing.costCode", label: "Cost code", value: 123 }],
+        [{ id: "billing.costCode", label: "Cost code", value: "x".repeat(1001) }],
+        [{ id: "billing.costCode", label: "Cost code", value: "one" },
+            { id: "billing.costCode", label: "Duplicate", value: "two" }],
+        [{ id: "billing.costCode", label: "Cost code", value: "one",
+            section: { id: "billing", title: "" } }],
+        [{ id: "billing.costCode", label: "Cost code", value: "one",
+            section: { id: "billing", title: "Billing" } },
+        { id: "billing.other", label: "Other code", value: "two",
+            section: { id: "billing", title: "Finance" } }],
+    ]) {
+        await writeFile(join(target, "canvas-config.json"),
+            JSON.stringify({ ...defaultConfig, readOnlyFields: invalid }));
+        assert.throws(() => readConfig(), /Invalid generated canvas configuration|Conflicting generated canvas section/);
+    }
+});
+
 test("materialization rejects a re-signed request with a Windows device Canvas ID", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
@@ -411,7 +545,7 @@ test("existing canvases are preserved and tampered requests fail before creation
 });
 
 test("generation request and Wizard handoff reject symlinks and oversized files", async (t) => {
-    for (const [name, limit] of [["request.json", 128 * 1024], ["handoff.json", 64 * 1024]]) {
+    for (const [name, limit] of [["request.json", 512 * 1024], ["handoff.json", 64 * 1024]]) {
         await t.test(name, async (child) => {
             const { project, workspace, prepared, sdk } = await fixture(child);
             const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
@@ -442,7 +576,7 @@ test("generation request and Wizard handoff reject symlinks and oversized files"
 
 test("pinned generation reads reject leaf and parent swaps during open", async (t) => {
     for (const [name, limit, label] of [
-        ["request.json", 128 * 1024, "Generation request"],
+        ["request.json", 512 * 1024, "Generation request"],
         ["handoff.json", 64 * 1024, "Wizard handoff"],
     ]) {
         for (const swap of ["leaf", "parent"]) {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,10 +8,13 @@ import { startShell } from "../../speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../speckit-canvas-designer/handoff.mjs";
 import { loadResolvedDesignerPages } from "../../speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../speckit-canvas-designer/settings.mjs";
+import { materialize } from "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
+import { renderHtml } from "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 
 const templateRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/pages/", import.meta.url);
 const extensionRoot = new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 const presetRoot = new URL("../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
+const billingRoot = new URL("../../../../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
 
 function supportsSpecifyVersion(output) {
     const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
@@ -102,6 +105,7 @@ test("isolated test preset resolves through Specify and saves contributed stock 
                 cwd: project, encoding: "utf8", timeout: 120000,
                 env: { ...process.env, COLUMNS: "500" },
             });
+
             expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
             expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
             return result.stdout;
@@ -165,6 +169,104 @@ test("isolated test preset resolves through Specify and saves contributed stock 
         await page.getByRole("tab", { name: "Test settings" }).click();
         await expect(page.getByRole("textbox", { name: "Test label" })).toHaveValue("Visible from preset");
         await expect(page.getByRole("checkbox", { name: "Test enabled" })).not.toBeChecked();
+    } finally {
+        await reopened?.close();
+        await shell?.close();
+        await rm(workspace, { recursive: true, force: true });
+    }
+});
+
+test("Billing preset resolves, saves and reopens Cost code, then generates its read-only value", async ({ page }) => {
+    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
+    if (available.error?.code === "ENOENT") {
+        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
+        return;
+    }
+    expect(available.status, available.stderr).toBe(0);
+    const workspace = await mkdtemp(join(tmpdir(), "billing-preset-e2e-"));
+    const project = join(workspace, "project");
+    const workflow = { selectedPhases: ["specify"],
+        installed: { presets: [], extensions: [], bundles: [] } };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "billing-test", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    let shell, reopened;
+    try {
+        await mkdir(project);
+        const run = (...args) => {
+            const result = spawnSync("specify", args, { cwd: project, encoding: "utf8",
+                timeout: 120000, env: { ...process.env, COLUMNS: "500" } });
+            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
+            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
+            return result.stdout;
+        };
+        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
+            "--integration", "copilot", "--integration-options=--skills",
+            "--script", process.platform === "win32" ? "ps" : "sh");
+        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        run("preset", "add", "--dev", fileURLToPath(billingRoot));
+        const command = await readFile(join(project, ".github", "skills",
+            "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
+        expect(command).toContain("- `canvas-settings-billing`");
+        expect(command).toContain("- `canvas-contributions-billing`");
+        const resolve = (name) => {
+            const output = run("preset", "resolve", name);
+            const line = output.split(/\r?\n/).map((item) => item.trim())
+                .find((item) => item.startsWith(`${name}: `));
+            expect(line, output).toBeDefined();
+            expect(output).not.toMatch(/not found|composition warning/i);
+            const source = output.match(/\(top layer from: (\S+) v[\d.]+\)/);
+            expect(source, output).not.toBeNull();
+            return { name, path: line.slice(name.length + 2), sourceId: source[1] };
+        };
+        const pages = ["canvas-settings-setup", "canvas-settings-artifacts",
+            "canvas-settings-appearance", "canvas-settings-billing"]
+            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name); return entry; });
+        const templates = [resolve("canvas-contributions-billing")];
+        expect(templates[0].sourceId).toBe("copilot-billing-canvas-test");
+        const folder = handoffDirectory(workspace, handoff.handoffId);
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
+        expect(resolved.pages.map((item) => item.title)).toEqual(
+            ["Essentials", "Artifacts", "Appearance", "Billing"]);
+        const costPage = resolved.pages.find((entry) =>
+            entry.fields.some((field) => field.id === "billing.costCode"));
+        shell = await startShell(handoff,
+            await loadDesignerSettings(workspace, handoff, resolved), { project, workspace,
+                session: { send: async () => {} } });
+        await page.goto(shell.url);
+        await page.getByRole("tab", { name: costPage.title }).click();
+        const code = page.getByRole("textbox", { name: "Cost code" });
+        await expect(code).toHaveAttribute("maxlength", "64");
+        await code.fill("CC-481");
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-canvas");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Canvas");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+        const saved = await loadDesignerSettings(workspace, handoff,
+            await loadResolvedDesignerPages(handoff, project, pages, templates));
+        expect(saved.values["billing.costCode"]).toBe("CC-481");
+        reopened = await startShell(handoff, saved, { project, workspace,
+            session: { send: async () => {} } });
+        await page.goto(reopened.url);
+        await page.getByRole("tab", { name: costPage.title }).click();
+        await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveValue("CC-481");
+        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+        const [requestId] = await readdir(join(folder, "generations"));
+        await materialize(project, workspace, handoff.handoffId, requestId);
+        const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+            "billing-canvas", "canvas-config.json"), "utf8"));
+        expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
+            label: "Cost code", value: "CC-481",
+            section: { id: "billing", title: "Billing" } }]);
+        await page.setContent(renderHtml(config));
+        await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");
+        await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveCount(0);
     } finally {
         await reopened?.close();
         await shell?.close();

@@ -14,6 +14,9 @@ const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const REQUEST_LIMIT = 512 * 1024;
+const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
+    "canvas.workflowListName", "workflowSlug.userProvided"]);
 
 function within(root, path) {
     const part = relative(root, path);
@@ -21,7 +24,7 @@ function within(root, path) {
 }
 
 function configuration(request) {
-    const { canvas, workflow, values, installed } = request;
+    const { canvas, workflow, values, installed, generatedFields } = request;
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || windowsDeviceName.test(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -41,6 +44,43 @@ function configuration(request) {
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
         throw new Error("Invalid frozen canvas identity, workflow or runtime inventory");
     }
+    if (generatedFields !== undefined
+        && (!Array.isArray(generatedFields) || generatedFields.length > 100
+            || new Set(generatedFields.map((field) => field?.id)).size !== generatedFields.length
+            || generatedFields.some((field) => !field || typeof field !== "object"
+                || Array.isArray(field)
+                || Object.keys(field).some((key) => !["id", "label", "maxLength", "section"].includes(key))
+                || typeof field.id !== "string"
+                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
+                || typeof field.label !== "string" || !field.label || field.label.length > 120
+                || !Number.isInteger(field.maxLength) || field.maxLength < 1
+                || field.maxLength > 1000 || typeof values[field.id] !== "string"
+                || values[field.id].length > field.maxLength
+                || (field.section !== undefined
+                    && (!field.section || typeof field.section !== "object"
+                        || Array.isArray(field.section)
+                        || Object.keys(field.section).sort().join() !== "id,title"
+                        || typeof field.section.id !== "string"
+                        || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
+                        || typeof field.section.title !== "string"
+                        || !field.section.title.trim() || field.section.title.length > 120))))) {
+        throw new Error("Invalid frozen generated fields");
+    }
+    const expectedValues = new Set([...essentialFields, ...(generatedFields ?? []).map(({ id }) => id)]);
+    if (generatedFields?.some(({ id }) => essentialFields.has(id))
+        || !values || typeof values !== "object" || Array.isArray(values)
+        || Object.keys(values).length !== expectedValues.size
+        || Object.keys(values).some((id) => !expectedValues.has(id))) {
+        throw new Error("Invalid frozen generated values");
+    }
+    const sections = new Map();
+    for (const { section } of generatedFields ?? []) {
+        if (!section) continue;
+        if (sections.has(section.id) && sections.get(section.id) !== section.title) {
+            throw new Error(`Conflicting frozen generated section: ${section.id}`);
+        }
+        sections.set(section.id, section.title);
+    }
     const outputs = {
         constitution: ".specify/memory/constitution.md", specify: "specs/<slug>/spec.md",
         clarify: "specs/<slug>/spec.md", plan: "specs/<slug>/plan.md",
@@ -48,6 +88,8 @@ function configuration(request) {
         checklist: "specs/<slug>/checklists/<name>.md",
     };
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"],
+        ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>
+            ({ id, label, value: values[id], ...(section ? { section } : {}) })) } : {}),
         phases: workflow.selectedPhases,
         phaseOutputs: Object.fromEntries(workflow.selectedPhases.map((phase) => {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
@@ -113,7 +155,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
         throw new Error("Generation request escapes its session directory");
     }
     const request = JSON.parse(await readBoundedSessionFile(
-        generation, "request.json", 128 * 1024, "Generation request"));
+        generation, "request.json", REQUEST_LIMIT, "Generation request"));
     const { integrity, ...payload } = request;
     const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     if (integrity !== hash || request.handoffId !== handoffId || request.requestId !== requestId) {

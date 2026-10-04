@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { validateValues } from "./settings.mjs";
 
 const fields = ["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
+const REQUEST_LIMIT = 512 * 1024;
 const windowsDeviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
 export function validateEssentials(model, values) {
@@ -37,7 +39,14 @@ export function validateEssentials(model, values) {
 }
 
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
-    const essentials = validateEssentials(model, values);
+    validateValues(values, model.constraints);
+    const essentials = validateEssentials(model,
+        Object.fromEntries(fields.map((id) => [id, values[id]])));
+    const generatedFields = (model.contributions ?? [])
+        .filter((item) => item.generatedBinding?.presentation === "stock.readonly")
+        .map((item) => ({ id: item.field.id, label: item.field.label,
+            maxLength: model.constraints[item.field.id].maxLength,
+            ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const checkout = await realpath(project);
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -57,12 +66,19 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
         workflow: { selectedPhases: handoff.workflow.selectedPhases },
         installed: handoff.workflow.installed,
-        values: essentials,
+        values: { ...essentials,
+            ...Object.fromEntries(generatedFields.map(({ id }) => [id, values[id]])) },
+        ...(generatedFields.length ? { generatedFields } : {}),
     };
-    request.integrity = createHash("sha256").update(JSON.stringify(request)).digest("hex");
+    const payload = JSON.stringify(request);
+    request.integrity = createHash("sha256").update(payload).digest("hex");
+    const serialized = JSON.stringify(request);
+    if (Buffer.byteLength(serialized) > REQUEST_LIMIT) {
+        throw new Error("Frozen generation request exceeds 512KB");
+    }
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", requestId);
     await mkdir(folder, { recursive: true });
-    await writeFile(join(folder, "request.json"), JSON.stringify(request), { flag: "wx" });
+    await writeFile(join(folder, "request.json"), serialized, { flag: "wx" });
     return { requestId, target: request.target };
 }
