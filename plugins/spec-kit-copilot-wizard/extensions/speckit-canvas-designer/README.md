@@ -74,6 +74,9 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
+Pages explicitly marked `enabled: false` are omitted even if their other fields
+are malformed; unreadable pages still show errors because their enabled state
+cannot be determined.
 A missing skill shows how to relaunch with Canvas Design v0.1.7 or the current
 local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials

@@ -17,7 +17,7 @@ import { assertPageCommand, loadResolvedDesignerPages, readFrozenAsset } from ".
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
 } from "../settings.mjs";
-import { freezeGeneration } from "../generation.mjs";
+import { freezeGeneration, validateEssentials } from "../generation.mjs";
 
 const ID = "designer_1";
 
@@ -934,6 +934,16 @@ test("reads the complete effective page set from the child checkout without a sn
     assert.equal((await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.page", strategy: "replace" }])).pages.length, 3);
+    await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
+        enabled: false, order: "invalid", fields: "invalid" }));
+    const disabled = await loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra,
+            kind: "designer.page", strategy: "replace" }]);
+    assert.equal(disabled.pages.length, 3);
+    assert.equal(disabled.pages.some((page) => page.error), false);
+    const disabledValues = { ...disabled.values, "canvas.id": "disabled-page",
+        "canvas.displayName": "Disabled page" };
+    assert.deepEqual(validateEssentials(disabled, disabledValues), disabledValues);
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.page", strategy: "replace" }],

@@ -135,6 +135,7 @@ function buildModel(entries, schema) {
                 error: { name, path, reason: reason.slice(0, ERROR_LIMIT) } });
         };
         if (error) { fail(error); continue; }
+        if (document?.enabled === false) continue;
         try {
             checkSchema(document, schema, name);
             if (document.id !== name) throw new Error(`${name}: page id does not match template name`);
@@ -146,7 +147,7 @@ function buildModel(entries, schema) {
                     throw new Error(`${name}: duplicate or invalid field ${field.id}`);
                 }
                 ids.add(field.id);
-                if (document.enabled !== false && fieldOrigins.has(field.id)) {
+                if (fieldOrigins.has(field.id)) {
                     throw new ContributionCollisionError(`${name}: duplicate enabled field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
                 }
             }
@@ -163,7 +164,6 @@ function buildModel(entries, schema) {
             fail(cause.message);
             continue;
         }
-        if (document.enabled === false) continue;
         for (const field of document.fields) {
             const type = field.type ?? "string";
             constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
