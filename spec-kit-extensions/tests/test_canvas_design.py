@@ -33,7 +33,7 @@ FILES = {
         "description", "workflow-heading", "custom-slug",
     )),
     *(f"templates/generated-canvas/{name}" for name in (
-        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
+        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
     )),
@@ -166,7 +166,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             self.pages[0]["fields"],
             [
-                {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
+                {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used."},
                 {"id": "canvas.displayName", "label": "Title"},
             ],
         )

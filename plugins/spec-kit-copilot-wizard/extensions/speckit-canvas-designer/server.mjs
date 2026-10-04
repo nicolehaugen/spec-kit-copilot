@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { readFrozenAsset } from "./pages.mjs";
-import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, saveDesignerSettings } from "./settings.mjs";
+import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
 import { freezeGeneration } from "./generation.mjs";
 
 export function shellHtml() {
@@ -94,6 +94,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
         }
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Content-Security-Policy",
+            "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         if (handoff && workspace && req.method === "POST" && url.pathname === "/api/save") {
             const sendError = (status, message) => {
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -162,17 +164,27 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
                 if (!input || typeof input !== "object" || Array.isArray(input)
-                    || Object.keys(input).some((key) => !["revision", "values", "approvedProviders"].includes(key))
-                    || input.revision !== model.revision) throw new Error("Designer settings changed; reload and retry");
+                    || Object.keys(input).sort().join() !== (model.templates?.some(
+                        (item) => item.kind === "value.provider")
+                        ? "approvedProviders,modelRevision,settingsRevision,values"
+                        : "modelRevision,settingsRevision,values")
+                    || input.modelRevision !== model.revision
+                    || !Number.isSafeInteger(input.settingsRevision) || input.settingsRevision < 0) {
+                    throw new Error("Invalid Designer generation request");
+                }
+                const current = await loadDesignerSettings(workspace, handoff, model);
+                if (input.settingsRevision !== current.settingsRevision) {
+                    throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");
+                }
                 const providers = (model.templates ?? []).filter((item) => item.kind === "value.provider")
                     .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
-                if (providers.length || input.approvedProviders !== undefined) {
+                if (providers.length) {
                     if (!Array.isArray(input.approvedProviders)
                         || JSON.stringify(input.approvedProviders) !== JSON.stringify(providers)) {
                         throw new Error("Provider approval does not match the resolved names, sources and hashes; review and confirm again");
                     }
                     const specify = join(await realpath(project), ".specify");
-                    for (const item of (model.templates ?? []).filter((entry) => entry.kind === "value.provider")) {
+                    for (const item of model.templates.filter((entry) => entry.kind === "value.provider")) {
                         await readFrozenAsset(item, specify);
                     }
                 }
@@ -181,7 +193,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                         .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));
                     return;
                 }
-                const result = await freezeGeneration({ model, values: input.values, handoff, project, workspace });
+                const result = await freezeGeneration({ model: current, values: input.values, handoff, project, workspace });
                 try {
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });
                 } catch (cause) {
@@ -191,7 +203,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify(result));
             } catch (error) {
-                const status = error.code ? 500 : error.message.startsWith("Generation dispatch failed:") ? 503 : 422;
+                const status = error.code ? 500 : error.message.startsWith("Generation dispatch failed:") ? 503
+                    : error.message.startsWith("Designer settings changed elsewhere.") ? 409 : 422;
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify({ error: error.message }));
             } finally {

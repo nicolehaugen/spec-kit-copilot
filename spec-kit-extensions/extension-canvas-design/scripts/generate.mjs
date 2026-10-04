@@ -1,21 +1,26 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { validControlContract, validControlValue } from "../templates/generated-canvas/control-contract.mjs";
+import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "templates", "generated-canvas");
-const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
+const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
     "phase-response.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const REQUEST_LIMIT = 512 * 1024;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
+const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
+    "canvas.workflowListName", "workflowSlug.userProvided"]);
 
 function validateFrozenValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
@@ -36,11 +41,12 @@ function validateFrozenValues(values, constraints) {
                 || rule.maxLength > 1000
                 || (rule.minLength !== undefined && (!Number.isInteger(rule.minLength)
                     || rule.minLength < 0 || rule.minLength > rule.maxLength))
-                || (rule.pattern !== undefined && (typeof rule.pattern !== "string"
-                    || rule.pattern.length > 120))
+                || (id === "canvas.id"
+                    ? rule.pattern !== "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$"
+                    : rule.pattern !== undefined)
                 || typeof value !== "string" || value.length > rule.maxLength
                 || value.length < (rule.minLength ?? 0)
-                || (rule.pattern && !new RegExp(rule.pattern).test(value))) {
+                || (id === "canvas.id" && !idPattern.test(value))) {
                 throw new Error(`Invalid frozen Designer field: ${id}`);
             }
         } else if (rule.type === "boolean") {
@@ -75,9 +81,10 @@ function within(root, path) {
 
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
-        generatedPages, generatedControls, valueSources } = request;
+        generatedPages, generatedControls, controlAssets, valueSources } = request;
     validateFrozenValues(values, fieldConstraints);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
+        || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
         .every((key) => typeof canvas[key] === "string" && canvas[key].trim())
         || canvas.id !== values?.["canvas.id"] || canvas.displayName !== values?.["canvas.displayName"]
@@ -113,7 +120,10 @@ function configuration(request) {
                 || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
                 || typeof field.label !== "string" || !field.label || field.label.length > 120
                 || !Number.isInteger(field.maxLength) || field.maxLength < 1
-                || field.maxLength > 1000 || typeof values[field.id] !== "string"
+                || field.maxLength > 1000
+                || fieldConstraints[field.id]?.type !== "string"
+                || fieldConstraints[field.id].maxLength !== field.maxLength
+                || typeof values[field.id] !== "string"
                 || values[field.id].length > field.maxLength
                 || (field.section !== undefined
                     && (!field.section || typeof field.section !== "object"
@@ -124,6 +134,21 @@ function configuration(request) {
                         || typeof field.section.title !== "string"
                         || !field.section.title.trim() || field.section.title.length > 120))))) {
         throw new Error("Invalid frozen generated fields");
+    }
+    if (generatedControls !== undefined
+        && (!Array.isArray(generatedControls) || generatedControls.length > 30
+            || generatedControls.some((item) => !item || typeof item !== "object" || Array.isArray(item))
+            || new Set(generatedControls.map(({ id }) => id)).size !== generatedControls.length)) {
+        throw new Error("Invalid frozen generated controls");
+    }
+    const generatedFieldControlIds = [
+        ...(generatedFields ?? []).map(({ id }) => id),
+        ...(generatedControls ?? []).map(({ id }) => id),
+    ];
+    if (generatedFields?.some(({ id }) => essentialFields.has(id))
+        || generatedFieldControlIds.length !== new Set(generatedFieldControlIds).size
+        || generatedFieldControlIds.some((id) => essentialFields.has(id))) {
+        throw new Error("Invalid frozen generated values");
     }
     const sections = new Map();
     for (const { section } of generatedFields ?? []) {
@@ -220,8 +245,9 @@ function configuration(request) {
         if (!page || typeof page !== "object" || Array.isArray(page)
             || Object.keys(page).some((key) => !["assets", "id", "renderer", "title", "values"].includes(key))
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
-            || page.id === RESERVED_GENERATED_PAGE_ID
+            || page.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(page.id)
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            || isWindowsDeviceName(page.renderer)
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
             || (page.values !== undefined && (!Array.isArray(page.values)
                 || page.values.length > 100 || new Set(page.values).size !== page.values.length
@@ -251,26 +277,30 @@ function configuration(request) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
         }
     }
-    if (generatedControls !== undefined
-        && (!Array.isArray(generatedControls) || generatedControls.length > 30
-            || new Set(generatedControls.map((item) => item?.id)).size !== generatedControls.length
-            || generatedControls.some((item) => generatedFields?.some((field) => field.id === item.id)))) {
-        throw new Error("Invalid frozen generated controls");
+    if (controlAssets !== undefined
+        && (!Array.isArray(controlAssets) || !generatedControls?.length
+            || !controlAssets.length || controlAssets.length > 30
+            || new Set(controlAssets.map((item) => item?.control)).size !== controlAssets.length)) {
+        throw new Error("Invalid frozen generated control assets");
     }
-    for (const item of generatedControls ?? []) {
-        if (!item || Object.keys(item).sort().join() !== "assets,control,id,label,slot,value"
-            || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
-            || !/^[a-z][a-z0-9-]{0,79}$/.test(item.control)
-            || !item.label || typeof item.label !== "string" || item.label.length > 120
-            || item.slot !== "details.content" || !Array.isArray(item.assets)
-            || item.assets.length !== 2
-            || item.assets[0]?.kind !== "control.definition"
-            || item.assets[1]?.kind !== "generated.adapter") {
-            throw new Error("Invalid frozen generated control registration");
+    if (generatedControls?.length && !controlAssets) {
+        throw new Error("Missing frozen generated control assets");
+    }
+    const assetsByControl = new Map();
+    const adapterOwners = new Map();
+    for (const entry of controlAssets ?? []) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)
+            || Object.keys(entry).sort().join() !== "assets,control"
+            || typeof entry.control !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(entry.control)
+            || !Array.isArray(entry.assets) || entry.assets.length !== 2
+            || entry.assets[0]?.kind !== "control.definition"
+            || entry.assets[1]?.kind !== "generated.adapter") {
+            throw new Error("Invalid frozen generated control assets");
         }
-        for (const asset of item.assets) {
+        for (const asset of entry.assets) {
             if (!asset || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
                 || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
+                || isWindowsDeviceName(asset.name)
                 || typeof asset.sourceId !== "string"
                 || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
                 || typeof asset.content !== "string"
@@ -282,30 +312,41 @@ function configuration(request) {
             }
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
-        catch { throw new Error(`${item.id}: invalid control definition`); }
-        if (definition?.schemaVersion !== 1 || definition.id !== item.control
-            || definition.adapters?.generated !== item.assets[1].name
+        try { definition = JSON.parse(Buffer.from(entry.assets[0].content, "base64").toString("utf8")); }
+        catch { throw new Error(`${entry.control}: invalid control definition`); }
+        if (definition?.schemaVersion !== 1 || definition.id !== entry.control
+            || definition.adapters?.generated !== entry.assets[1].name
             || !definition.adapters?.designer
-            || item.assets[0].name === item.assets[1].name
-            || definition.value?.type !== "object"
-            || !definition.value.properties
-            || typeof definition.value.properties !== "object"
-            || Array.isArray(definition.value.properties)
-            || !Object.keys(definition.value.properties).length
-            || Object.keys(definition.value.properties).length > 10
-            || Object.entries(definition.value.properties).some(([key, allowed]) =>
-                !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
-                || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
-                || new Set(allowed).size !== allowed.length
-                || allowed.some((value) => typeof value !== "string" || !value || value.length > 80))
-            || !item.value || typeof item.value !== "object" || Array.isArray(item.value)
-            || Object.keys(item.value).sort().join() !== Object.keys(definition.value.properties).sort().join()
-            || Object.entries(definition.value.properties).some(([key, allowed]) =>
-                !allowed.includes(item.value[key]))
+            || entry.assets[0].name === entry.assets[1].name
+            || !validControlContract(definition.value)) {
+            throw new Error(`${entry.control}: incompatible frozen control assets`);
+        }
+        const adapter = entry.assets[1].name;
+        if (adapterOwners.has(adapter)) {
+            throw new Error(`${adapter}: generated adapter belongs to both ${adapterOwners.get(adapter)} and ${entry.control}`);
+        }
+        adapterOwners.set(adapter, entry.control);
+        assetsByControl.set(entry.control, { assets: entry.assets, properties: definition.value.properties,
+            contract: definition.value });
+    }
+    for (const item of generatedControls ?? []) {
+        if (!item || Object.keys(item).sort().join() !== "control,id,label,slot,value"
+            || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+            || !item.label || typeof item.label !== "string" || item.label.length > 120
+            || item.slot !== "details.content" || !assetsByControl.has(item.control)) {
+            throw new Error("Invalid frozen generated control registration");
+        }
+        const { contract } = assetsByControl.get(item.control);
+        if (fieldConstraints[item.id]?.type !== "object"
+            || JSON.stringify(fieldConstraints[item.id].properties) !== JSON.stringify(contract.properties)
+            || !validControlValue(item.value, contract)
             || JSON.stringify(values[item.id]) !== JSON.stringify(item.value)) {
             throw new Error(`${item.id}: incompatible frozen control value or adapters`);
         }
+    }
+    if (assetsByControl.size !== new Set((generatedControls ?? []).map((item) => item.control)).size) {
+        throw new Error("Unused frozen generated control assets");
     }
     const outputs = {
         constitution: ".specify/memory/constitution.md", specify: "specs/<slug>/spec.md",
@@ -326,21 +367,65 @@ function configuration(request) {
         ...(generatedFields?.length ? { readOnlyFields: generatedFields.map(({ id, label, section }) =>
             ({ id, label, value: values[id], ...(section ? { section } : {}) })) } : {}),
         ...(generatedControls?.length ? { generatedControls: generatedControls.map(
-            ({ id, label, control, slot, value, assets }) =>
-                ({ id, label, control, slot, value, adapter: assets[1].name,
-                    properties: JSON.parse(Buffer.from(assets[0].content, "base64").toString("utf8"))
-                        .value.properties })) } : {}),
+            ({ id, label, control, slot, value }) => {
+                const { assets, properties } = assetsByControl.get(control);
+                return { id, label, control, slot, value, adapter: assets[1].name, properties };
+            }) } : {}),
         phases: workflow.selectedPhases,
         phaseOutputs: Object.fromEntries(workflow.selectedPhases.map((phase) => {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
             return [phase, { expectsArtifact: !!path, outputPath: path }];
         })), phaseArtifacts: {},
-        installed };
+        installed: {
+            presets: installed.presets.map(({ id, version, priority }) => ({ id, version, priority })),
+            extensions: installed.extensions.map(({ id, version, priority }) => ({ id, version, priority })),
+            bundles: installed.bundles.map(({ id, version }) => ({ id, version })),
+        } };
 }
 
 function checkSyntax(path) {
     const check = spawnSync("node", ["--check", path], { encoding: "utf8" });
     if (check.error || check.status !== 0) throw new Error(`Generated JavaScript failed validation: ${check.stderr || check.error}`);
+}
+
+export async function readBoundedSessionFile(parent, name, limit, label, openFile = open) {
+    const invalid = `${label} must be a bounded regular session file`;
+    const parentStat = await lstat(parent);
+    if (!parentStat.isDirectory() || await realpath(parent) !== parent) {
+        throw new Error(invalid);
+    }
+    const path = join(parent, name);
+    let file;
+    try {
+        file = await openFile(path, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    } catch (error) {
+        if (error.code === "ELOOP") throw new Error(invalid, { cause: error });
+        throw error;
+    }
+    try {
+        const [stat, pathStat, currentParent, currentParentStat] = await Promise.all([
+            file.stat(), lstat(path), realpath(parent), lstat(parent),
+        ]);
+        if (currentParent !== parent || !currentParentStat.isDirectory()
+            || parentStat.dev !== currentParentStat.dev || parentStat.ino !== currentParentStat.ino
+            || !stat.isFile() || !pathStat.isFile() || pathStat.isSymbolicLink()
+            || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino) {
+            throw new Error(invalid);
+        }
+        if (stat.size > limit) throw new Error(`${label} is too large`);
+        const bytes = Buffer.alloc(limit + 1);
+        let length = 0;
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (bytesRead === 0) break;
+            length += bytesRead;
+        }
+        if (length > limit) throw new Error(`${label} is too large`);
+        return bytes.toString("utf8", 0, length);
+    } finally {
+        await file.close();
+    }
 }
 
 export async function materialize(project, workspace, handoffId, requestId) {
@@ -350,27 +435,17 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (await realpath(generation) !== generation) {
         throw new Error("Generation request escapes its session directory");
     }
-    const requestPath = join(generation, "request.json");
-    if (!(await lstat(requestPath)).isFile() || await realpath(requestPath) !== requestPath) {
-        throw new Error("Frozen generation request must be a regular session file");
-    }
-    const raw = await readFile(requestPath);
-    if (raw.length > REQUEST_LIMIT) throw new Error("Generation request is too large");
-    const request = JSON.parse(raw.toString("utf8"));
+    const request = JSON.parse(await readBoundedSessionFile(
+        generation, "request.json", REQUEST_LIMIT, "Generation request"));
     const { integrity, ...payload } = request;
     const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     if (integrity !== hash || request.handoffId !== handoffId || request.requestId !== requestId) {
         throw new Error("Generation request integrity mismatch");
     }
     if (request.project !== projectRoot) throw new Error("Generation request is bound to another checkout");
-    const handoffPath = join(workspaceRoot, "speckit-canvas-designer",
-        "handoffs", handoffId, "handoff.json");
-    const handoffStat = await lstat(handoffPath);
-    if (!handoffStat.isFile() || handoffStat.size > 64 * 1024
-        || await realpath(handoffPath) !== handoffPath) {
-        throw new Error("Wizard handoff must be a bounded regular session file");
-    }
-    const handoff = JSON.parse(await readFile(handoffPath, "utf8"));
+    const handoffFolder = join(workspaceRoot, "speckit-canvas-designer", "handoffs", handoffId);
+    const handoff = JSON.parse(await readBoundedSessionFile(
+        handoffFolder, "handoff.json", 64 * 1024, "Wizard handoff"));
     if (handoff.handoffId !== handoffId || handoff.sourceFingerprint !== request.sourceFingerprint
         || handoff.sourceFingerprint !== createHash("sha256").update(JSON.stringify({
             workflow: handoff.workflow, selections: handoff.selections,
@@ -385,9 +460,9 @@ export async function materialize(project, workspace, handoffId, requestId) {
         { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
         { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },
     ]);
-    const controlFiles = (request.generatedControls ?? []).flatMap((item) => [
-        { filename: `${item.assets[0].name}.json`, bytes: Buffer.from(item.assets[0].content, "base64") },
-        { filename: `${item.assets[1].name}.mjs`, bytes: Buffer.from(item.assets[1].content, "base64") },
+    const controlFiles = (request.controlAssets ?? []).flatMap(({ assets }) => [
+        { filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") },
+        { filename: `${assets[1].name}.mjs`, bytes: Buffer.from(assets[1].content, "base64") },
     ]);
     const providerFiles = [...new Map((request.valueSources ?? []).filter(
         (item) => item.source.kind === "provider").map((item) => [

@@ -31,8 +31,9 @@ Workflow header and Allow custom slug are separate ordered stock contributions
 registered by the composed load-page command. With all three registered, the
 same five controls appear in the same order. Without them, generated description,
 heading and custom slug default to `Spec Kit workflow canvas.`, `Workflows` and
-off. Workflow name appears after Phase input in the generated
-canvas's first workflow-creation phase and labels the workflow there. Essentials'
+off. Workflow name appears in the generated canvas's workflow collection,
+before phase navigation, while creating a workflow. It labels the workflow
+there. Essentials'
 default-off Allow custom slug setting controls whether an optional Workflow slug
 field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
@@ -44,7 +45,10 @@ Designer page slot and are saved alongside built-in values. A registered
 `control.definition` for a typed object field must reference both a
 `designer.adapter` and `generated.adapter` replace-only template. Both modules
 export `mount`, `controlId`, and a matching `valueContract`. Each adapter belongs
-to one control definition; multiple fields may reuse that control. The Designer
+to one control definition; multiple fields may reuse that control. Each object
+field's `requires` must name exactly one resolved `control.definition` matching
+its `control` ID; Designer retains that template name so Generate packages the
+validated definition rather than guessing from a list. The Designer
 mount receives the field, draft value, and change callback; the generated
 mount receives the frozen value and displays it read-only in the declared
 `details.content` slot. Missing, wrong-kind, non-replace, or multiply owned
@@ -54,9 +58,13 @@ and replace-only renderer add a page only to the generated app, not Designer's
 tabs. The provider verifies the executable Specify template stack (and rejects
 native script registrations), checks module syntax and declared exports without executing
 the bytes in Node, and rechecks Designer adapters before serving captured bytes.
-Changed assets require reopening Designer. The browser reports non-function
+Changed assets require reopening Designer. The Designer document's CSP allows
+same-origin scripts, API calls, and styles but blocks ordinary cross-origin
+requests from adapters; it does not sandbox approved adapter code.
+The browser reports non-function
 `mount` exports, incompatible `controlId` or `valueContract` exports, and mount
-failures beside the affected control. It validates the page/renderer pair and freezes
+failures beside the affected control. Callbacks from controls removed during a
+tab change cannot overwrite the current draft. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Registered `value.definition` JSON templates join the same field-ID collision
@@ -83,6 +91,9 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
+Pages explicitly marked `enabled: false` are omitted even if their other fields
+are malformed; unreadable pages still show errors because their enabled state
+cannot be determined.
 A missing skill directs users to launch a new Designer session with a compatible
 Canvas Design extension or the current local source, before any generation
 request is prepared. Healthy pages remain

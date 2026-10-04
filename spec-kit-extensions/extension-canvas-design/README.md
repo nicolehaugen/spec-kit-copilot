@@ -47,6 +47,10 @@ the list's place and starts a new workflow without leaving a detached status
 message.
 Each row offers a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
+Deletion verifies the directory and its parent, moves it to a temporary
+location, and checks the moved directory's identity before removing it. If
+the parent changes during deletion, the moved directory is retained for manual
+recovery at the path shown in the error.
 An optional **Workflow name**
 appears just below it while creating a workflow; it labels the workflow in
 the canvas (falling back to the actual directory name when blank) and does not
@@ -134,15 +138,25 @@ generated-only page without a Designer tab. The renderer is a complete
 replace-only Specify template exporting `renderPage({ root, canvas, values })`;
 the definition must name that registered renderer. Invalid kinds, references,
 strategies, syntax or Specify template-layer metadata stop Designer opening.
+Page IDs and renderer names must also be portable filenames: Windows device
+names such as `con`, `nul`, and `com1` are rejected before generation.
+Switching to a generated page hides Workflow-owned content and restores it on
+return; the canvas header and status remain available on either page.
 The frozen definition and module are copied into the generated app, which
 needs no design-time packages to render them. A typed object field can use a
 shared `control.definition` naming separate replace-only `designer.adapter`
 and `generated.adapter` templates; each module exports `mount`, `controlId`,
-and `valueContract`. The Designer adapter receives
+and `valueContract`. Each object-field contribution requires exactly one
+`control.definition` template matching its `field.control`, and Generate uses
+that validated template name. Definition and generated-adapter template names
+cannot be Windows device names because they become packaged control filenames.
+The Designer adapter receives
 `{root, field, value, onChange}`; the generated adapter receives
 `{root, field, value}`. Designer validates and persists changes; Generate
 freezes the validated object and packages the effective generated adapter and
-definition into the app, up to 30 generated controls. Missing, wrong-kind,
+definition into the app, up to 30 generated controls. The frozen request holds
+one asset pair per control ID; each field registration refers to that pair by
+its control ID, so reused controls do not repeat module bytes. Missing, wrong-kind,
 non-replace, or multiply owned adapters stop Designer opening rather than
 falling back to a stock control.
 
@@ -189,13 +203,37 @@ originating preset at runtime. The bounded worker/VM limits accidental hangs;
 trusted with the local user's privileges, including filesystem and network
 access. Hash checks prevent unnoticed substitutions, not malicious approved
 code.
+The Designer, generator, and standalone generated app apply the same object
+contract and value rules: 1-10 named properties, each with 1-20 distinct,
+nonempty string options of at most 80 characters. The canonical
+`templates/generated-canvas/control-contract.mjs` is copied into generated apps;
+the Wizard provider includes a byte-checked copy, without a runtime dependency
+on the design-time extension.
 The browser reports incompatible `controlId` or `valueContract` exports,
 non-function `mount` exports, and mount failures beside the affected control.
+The frozen generation request is bounded to 4 MiB, allowing registered assets
+to be packaged after base64 encoding while retaining the 32 KiB limit on each
+definition and renderer.
+Designer derives generated field and control registrations only from resolved
+`generatedBinding` contributions when freezing. All validated Designer values
+remain in the request, including Designer-only values, but only bound values
+become generated displays. The generator checks registrations against frozen
+value constraints and control definitions, as well as file and asset limits.
+The request's SHA-256 integrity value catches accidental edits; it is not an
+authentication mechanism for a locally rewritten and re-signed request.
 For stock read-only fields, an optional `generatedBinding.section` with a
-stable `id` and display `title`
-groups fields under that heading without changing the Designer slot; fields
-without a section keep the **Configured fields** heading. Opening the shell
-does not mean all pages loaded or that Essentials is valid for generation.
+stable `id` and display `title` groups fields under that heading without
+changing the Designer slot; fields without a section keep the **Configured
+fields** heading. Opening the shell does not mean all pages loaded or that
+Essentials is valid for generation.
+
+The repository-local `copilot-billing-canvas-test` preset exercises stock
+read-only placement on Billing and Essentials. The isolated
+[test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
+registers an additional Designer page with stock text and checkbox fields. The
+browser integration test covers the checkbox default, rendering, save, and
+reopen. The preset is installed locally, not published in the canonical preset
+catalog. Billing and generated-only pages have separate test fixtures.
 
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
 request prepared by the Designer. It writes the **source-owned SDK entry point**

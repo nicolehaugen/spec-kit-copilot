@@ -19,7 +19,7 @@ async function openDesigner(page, fields, extraPage) {
         "workflowSlug.userProvided": false, "billing.costCode": "" };
     const ids = [...fields, ...(extraPage?.fields ?? [])].map((field) => field.id);
     const state = { handoffId: "test", revision: "test", generationAvailable: true,
-        settingsRevision: 0, persisted: false, adapters: {},
+        settingsRevision: 0, persisted: false, adapters: {}, templates: [],
         pages: [{ page: "canvas-settings-setup", title: "Essentials", order: 10,
             description: "Configure your canvas.", fields },
         ...(extraPage ? [extraPage] : [])],

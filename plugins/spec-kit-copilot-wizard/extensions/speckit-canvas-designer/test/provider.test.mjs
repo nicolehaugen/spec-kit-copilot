@@ -17,9 +17,16 @@ import { assertPageCommand, loadResolvedDesignerPages, readFrozenAsset } from ".
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
 } from "../settings.mjs";
-import { freezeGeneration } from "../generation.mjs";
+import { freezeGeneration, validateEssentials } from "../generation.mjs";
 
 const ID = "designer_1";
+
+test("Designer packages the same control validator as the generated app", async () => {
+    assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
+        await readFile(new URL(
+            "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            import.meta.url)));
+});
 
 function validHandoff(id = ID) {
     const workflow = { selectedPhases: ["specify", "plan"] };
@@ -555,9 +562,14 @@ test("shell serves validated pages behind its token", async (t) => {
     assert.match(good.headers.get("content-type"), /text\/html/);
     assert.equal(good.headers.get("cache-control"), "no-store");
     assert.equal(good.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(good.headers.get("content-security-policy"),
+        "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
     assert.match(await good.text(), /Spec Kit Canvas Designer/);
     const stateUrl = new URL(`/api/state?token=${url.searchParams.get("token")}`, url);
-    const state = await (await fetch(stateUrl)).json();
+    const stateResponse = await fetch(stateUrl);
+    assert.equal(stateResponse.headers.get("content-security-policy"),
+        good.headers.get("content-security-policy"));
+    const state = await stateResponse.json();
     assert.equal(state.pages[0].title, "Essentials");
     assert.equal(state.handoffId, handoff.handoffId);
     assert.equal((await fetch(new URL(`/events?token=${url.searchParams.get("token")}`, url))).status, 404);
@@ -586,6 +598,13 @@ test("Save persists values beside the handoff and rejects stale or invalid chang
     await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
         ...request, values: { ...values, "canvas.id": "../escape" },
     }), /Invalid Designer setting: canvas.id/);
+    for (const id of ["con", "prn", "aux", "nul",
+        ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+        ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`)]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+            ...request, values: { ...values, "canvas.id": id },
+        }), /Invalid Designer setting: canvas.id/);
+    }
     await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
         ...request, values: { ...values, unexpected: "extra" },
     }), /unexpected or missing fields/);
@@ -703,19 +722,21 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
+    const templates = await stockTemplates(project);
     const generateSkill = join(project, ".github", "skills",
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const model = await loadResolvedDesignerPages(handoff, project, entries);
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries, templates));
     const prompts = [];
     const shell = await startShell(handoff, model, { project, workspace,
         session: { send: async (value) => prompts.push(value.prompt) } });
     t.after(() => shell.close());
     const url = new URL(shell.url);
     const endpoint = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
-    const values = { "canvas.id": "my-canvas", "canvas.displayName": "My Canvas",
-    };
+    const values = { ...model.values, "canvas.id": "my-canvas",
+        "canvas.displayName": "My Canvas" };
     const post = (body, address = endpoint) => fetch(address, {
         method: "POST", headers: { "Content-Type": "application/json", Origin: url.origin },
         body: JSON.stringify(body),
@@ -724,22 +745,35 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         headers: { "Content-Type": "text/plain", Origin: url.origin }, body: "{}" });
     assert.equal(wrongType.status, 422);
     assert.equal((await wrongType.json()).error, "Expected JSON Designer settings");
-    assert.equal((await post({ revision: "stale", values })).status, 422);
-    assert.equal((await post({ revision: model.revision, values: {
+    const generationRequest = (settingsRevision, draft) => ({
+        modelRevision: model.revision, settingsRevision, values: draft,
+    });
+    assert.equal((await post(generationRequest("stale", values))).status, 422);
+    assert.equal((await post(generationRequest(0, {
         ...values, "canvas.id": "../outside",
-    } })).status, 422);
-    assert.equal((await post({ revision: model.revision, values },
+    }))).status, 422);
+    assert.equal((await post(generationRequest(0, values),
         new URL("/api/generate?token=wrong", url))).status, 404);
     assert.equal(prompts.length, 0);
     await rm(generateSkill);
-    const unavailable = await post({ revision: model.revision, values });
+    const unavailable = await post(generationRequest(0, values));
     assert.equal(unavailable.status, 409);
     assert.match((await unavailable.json()).error, /Launch a new Designer session with a compatible Canvas Design extension/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const response = await post({ revision: model.revision, values });
+    const newerValues = { ...values, "canvas.description": "Newer settings" };
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { revision: 0, modelRevision: model.revision, values: newerValues });
+    assert.equal(saved.settingsRevision, 1);
+    const stale = await post(generationRequest(0, values));
+    assert.equal(stale.status, 409);
+    assert.match((await stale.json()).error, /settings changed elsewhere/);
+    assert.equal(prompts.length, 0);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
+    const response = await post(generationRequest(saved.settingsRevision, newerValues));
     assert.equal(response.status, 202);
     const generated = await response.json();
     assert.equal(generated.target, ".github/extensions/my-canvas/");
@@ -747,7 +781,8 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", generated.requestId, "request.json")));
     assert.equal(frozen.canvas.id, "my-canvas");
-    assert.equal(frozen.canvas.description, "Spec Kit workflow canvas.");
+    assert.equal(frozen.canvas.description, "Newer settings");
+    assert.equal(frozen.settingsRevision, 1);
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
 });
 
@@ -769,7 +804,8 @@ test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
     for (let index = 0; index < 20; index++) values[`custom.${index}`] = "x".repeat(1000);
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { modelRevision: model.revision, revision: 0, values });
-    const body = JSON.stringify({ revision: model.revision, values });
+    const body = JSON.stringify({ modelRevision: model.revision,
+        settingsRevision: saved.settingsRevision, values });
     assert.ok(Buffer.byteLength(body) > 16 * 1024);
     assert.ok(Buffer.byteLength(body) < SETTINGS_LIMIT);
     const skill = join(project, ".github", "skills",
@@ -814,7 +850,7 @@ test("missing Generate skill disables the button and reports a repair path witho
     const generateUrl = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
     const response = await fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ revision: model.revision, values: { ...model.values,
+        body: JSON.stringify({ modelRevision: model.revision, settingsRevision: 0, values: { ...model.values,
             "canvas.id": "my-canvas", "canvas.displayName": "My Canvas" } }) });
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, state.generationError);
@@ -898,6 +934,16 @@ test("reads the complete effective page set from the child checkout without a sn
     assert.equal((await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.page", strategy: "replace" }])).pages.length, 3);
+    await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
+        enabled: false, order: "invalid", fields: "invalid" }));
+    const disabled = await loadResolvedDesignerPages(handoff, project,
+        [...effective, { name: "extra-settings", path: extra,
+            kind: "designer.page", strategy: "replace" }]);
+    assert.equal(disabled.pages.length, 3);
+    assert.equal(disabled.pages.some((page) => page.error), false);
+    const disabledValues = { ...disabled.values, "canvas.id": "disabled-page",
+        "canvas.displayName": "Disabled page" };
+    assert.deepEqual(validateEssentials(disabled, disabledValues), disabledValues);
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.page", strategy: "replace" }],
@@ -1141,6 +1187,44 @@ test("registered contributions validate slots, sources, references and determini
     ]), /inside \.specify/);
 });
 
+test("resolved contributions cannot enlarge the assembled Designer model past its limit", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const handoff = validHandoff();
+    const directory = join(project, ".specify", "presets");
+    await mkdir(directory);
+    const pages = [...entries];
+    for (let pageIndex = 0; pageIndex < 17; pageIndex++) {
+        const name = `canvas-settings-extra-${pageIndex}`;
+        const path = join(directory, `${name}.json`);
+        await writeFile(path, JSON.stringify({
+            schemaVersion: 1, id: name, title: name, order: 100 + pageIndex,
+            fields: Array.from({ length: 100 }, (_, fieldIndex) => ({
+                id: `extra.${pageIndex}.${fieldIndex}`, label: "Field",
+                description: "x".repeat(1000),
+            })),
+        }));
+        pages.push({ name, path, kind: "designer.page", strategy: "replace" });
+    }
+    const baseline = await loadResolvedDesignerPages(handoff, project, pages);
+    assert.ok(Buffer.byteLength(JSON.stringify(baseline)) <= 2 * 1024 * 1024);
+    const contributions = [];
+    for (let index = 0; index < 95; index++) {
+        const name = `canvas-contribution-extra-${index}`;
+        const path = join(directory, `${name}.json`);
+        await writeFile(path, JSON.stringify({
+            schemaVersion: 1, id: `extra-${index}`, host: "designer",
+            slot: "essentials.options", order: index,
+            field: { id: `added.${index}`, label: "Field", description: "y".repeat(1000),
+                type: "string", control: "stock.text" },
+        }));
+        contributions.push({ name, path, sourceId: "test",
+            kind: "designer.field", strategy: "replace" });
+    }
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, pages, contributions),
+        /Designer page model exceeds its size limit/);
+});
+
 test("page errors retain healthy fields and never accept unsafe or incomplete input", async (t) => {
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
@@ -1228,6 +1312,10 @@ test("generated-only page validates typed assets, freezes winners and packages w
     const load = (assets) => loadResolvedDesignerPages(handoff, project, entries, assets, registration);
     const defaults = await loadResolvedDesignerPages(handoff, project, entries);
     assert.deepEqual(defaults.generatedPages, []);
+    const tooManyPages = Array.from({ length: 31 }, (_, index) => ({
+        ...pages[0], name: `generated-page-${index}`,
+    }));
+    await assert.rejects(load(tooManyPages), /at most 30 generated pages/);
     let loaded;
     const executable = process.execPath;
     try {
@@ -1283,6 +1371,14 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await writeFile(definitionPath, JSON.stringify({ ...definition, id: "workflow" }));
     await assert.rejects(load([{ ...pages[0], name: "workflow" }, pages[1]]),
         /invalid generated page definition/);
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        await writeFile(definitionPath, JSON.stringify({ ...definition, id: name }));
+        await assert.rejects(load([{ ...pages[0], name }, pages[1]]),
+            /invalid generated page definition/);
+        await writeFile(definitionPath, JSON.stringify({ ...definition, renderer: name }));
+        await assert.rejects(load([pages[0], { ...pages[1], name }]),
+            /invalid generated page definition/);
+    }
     await writeFile(definitionPath, JSON.stringify(definition));
     await writeFile(rendererPath, "export function renderPage( {");
     await assert.rejects(load(pages), /invalid generated renderer/);
@@ -1516,7 +1612,8 @@ test("named value sources freeze typed values and run from a portable canvas wit
     const post = (approvedProviders) => fetch(endpoint, {
         method: "POST", headers: { "Content-Type": "application/json",
             Origin: endpoint.origin },
-        body: JSON.stringify({ revision: overridden.revision, values: selected,
+        body: JSON.stringify({ modelRevision: overridden.revision,
+            settingsRevision: 0, values: selected,
             ...(approvedProviders === undefined ? {} : { approvedProviders }) }),
     });
     const approval = overridden.templates.filter((item) => item.kind === "value.provider")
@@ -1775,8 +1872,10 @@ test("paired control validates both adapters, typed values and portable generate
     assert.deepEqual(model.values["risk.rating"], null);
     assert.equal(model.generatedPages.length, 0);
     assert.equal(model.adapters["risk-matrix"], "canvas-control-risk-matrix-designer");
+    assert.equal(model.controls[0].template, templates[0].name);
     const controlDocument = JSON.parse(await readFile(templates[0].path, "utf8"));
-    const contributionDocument = JSON.parse(await readFile(templates[1].path, "utf8"));
+    const contributionSource = await readFile(templates[1].path, "utf8");
+    const contributionDocument = JSON.parse(contributionSource);
     const secondField = { ...contributionDocument, id: "risk-second-field",
         field: { ...contributionDocument.field, id: "risk.second", label: "Second risk" } };
     const secondFieldTemplate = { ...templates[1], name: "canvas-contributions-risk-second",
@@ -1804,6 +1903,21 @@ test("paired control validates both adapters, typed values and portable generate
     }));
     await assert.rejects(load([...templates, secondControlTemplate, secondFieldTemplate,
         secondDesignerAdapter]), /generated adapter belongs to both risk-matrix and risk-other/);
+    const secondGeneratedAdapter = { ...templates[3], name: "canvas-control-risk-other-generated",
+        path: join(directory, "risk-other-generated.mjs") };
+    await copyFile(templates[3].path, secondGeneratedAdapter.path);
+    await writeFile(secondControlTemplate.path, JSON.stringify({
+        ...controlDocument, id: "risk-other",
+        adapters: { designer: secondDesignerAdapter.name, generated: secondGeneratedAdapter.name },
+    }));
+    const bothControls = [...templates, secondControlTemplate, secondFieldTemplate,
+        secondDesignerAdapter, secondGeneratedAdapter];
+    assert.equal((await load(bothControls)).controls.length, 2);
+    await writeFile(templates[1].path, JSON.stringify({
+        ...contributionDocument, requires: [secondControlTemplate.name, templates[0].name],
+    }));
+    await assert.rejects(load(bothControls), /object field requires exactly one control definition template/);
+    await writeFile(templates[1].path, contributionSource);
     const designerAdapter = templates[2];
     const designerModule = await readFile(designerAdapter.path, "utf8");
     await writeFile(designerAdapter.path, `${designerModule}\nprocess.exit(57);`);
@@ -1831,7 +1945,9 @@ test("paired control validates both adapters, typed values and portable generate
     await writeFile(designerAdapter.path, "export function mount() { throw new Error('unvalidated'); }");
     const adapterUrl = new URL(shell.url);
     adapterUrl.pathname = `/adapters/${designerAdapter.name}.mjs`;
-    assert.equal(await (await fetch(adapterUrl)).text(), designerModule);
+    const adapterResponse = await fetch(adapterUrl);
+    assert.match(adapterResponse.headers.get("content-security-policy"), /connect-src 'self'/);
+    assert.equal(await adapterResponse.text(), designerModule);
     await writeFile(designerAdapter.path, designerModule);
     const moved = `${directory}-original`;
     const outside = join(workspace, "untrusted-presets");
@@ -1887,6 +2003,74 @@ test("paired control validates both adapters, typed values and portable generate
     const atLimitRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", atLimit.requestId, "request.json")));
     assert.equal(atLimitRequest.generatedControls.length, 30);
+    assert.equal(atLimitRequest.controlAssets.length, 1);
+    assert.ok(atLimitRequest.generatedControls.every((item) =>
+        item.control === "risk-matrix" && !Object.hasOwn(item, "assets")));
+    assert.equal(atLimitRequest.controlAssets[0].assets[0].name, templates[0].name);
+    atLimitRequest.canvas.id = "risk-many";
+    atLimitRequest.values["canvas.id"] = "risk-many";
+    atLimitRequest.target = ".github/extensions/risk-many/";
+    const { integrity: _atLimitHash, ...atLimitPayload } = atLimitRequest;
+    atLimitRequest.integrity = createHash("sha256").update(JSON.stringify(atLimitPayload)).digest("hex");
+    await writeFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", atLimit.requestId, "request.json"),
+    JSON.stringify(atLimitRequest));
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    await materialize(project, workspace, handoff.handoffId, atLimit.requestId);
+    assert.deepEqual((await readdir(join(project, ".github", "extensions", "risk-many", "controls"))).sort(),
+        [`${templates[0].name}.json`, `${templates[3].name}.mjs`].sort());
+    assert.equal(JSON.parse(await readFile(join(project, ".github", "extensions", "risk-many",
+        "canvas-config.json"))).generatedControls.length, 30);
+    const originalDefinition = await readFile(templates[0].path, "utf8");
+    const originalGeneratedAdapter = await readFile(templates[3].path, "utf8");
+    const fillAsset = (content) => content + " ".repeat(32 * 1024 - Buffer.byteLength(content));
+    try {
+        await writeFile(templates[0].path, fillAsset(originalDefinition));
+        await writeFile(templates[3].path, fillAsset(originalGeneratedAdapter));
+        const sizedModel = await load();
+        const pageTemplates = [];
+        const largePages = [];
+        for (let index = 0; index < 19; index++) {
+            const id = `canvas-generated-risk-${index}`;
+            const renderer = `${id}-renderer`;
+            const definition = fillAsset(JSON.stringify({
+                schemaVersion: 1, id, renderer, title: `Page ${index}`,
+            }));
+            const module = fillAsset("export function renderPage() { return ''; }");
+            for (const [name, kind, extension, content] of [
+                [id, "generated.page", ".json", definition],
+                [renderer, "generated.renderer", ".mjs", module],
+            ]) {
+                const path = join(directory, `${name}${extension}`);
+                await writeFile(path, content);
+                pageTemplates.push({ name, kind, path, sourceId: "copilot-risk-matrix-test",
+                    strategy: "replace", hash: createHash("sha256").update(content).digest("hex") });
+            }
+            largePages.push({ name: id, id, title: `Page ${index}`, renderer });
+        }
+        const large = await freezeGeneration({
+            model: { ...sizedModel, constraints: controlConstraints,
+                contributions: controls.slice(0, 30), generatedPages: largePages,
+                templates: [...sizedModel.templates, ...pageTemplates] },
+            values: { ...controlValues, "canvas.id": "risk-full" },
+            handoff, project, workspace,
+        });
+        const largeRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+            "handoffs", handoff.handoffId, "generations", large.requestId, "request.json")));
+        assert.equal(largeRequest.controlAssets.length, 1);
+        assert.ok(Buffer.byteLength(JSON.stringify(largeRequest)) < 4 * 1024 * 1024);
+        assert.ok(Buffer.byteLength(JSON.stringify(largeRequest))
+            + 29 * Buffer.byteLength(JSON.stringify(largeRequest.controlAssets[0].assets)) > 4 * 1024 * 1024);
+        await materialize(project, workspace, handoff.handoffId, large.requestId);
+        const largeConfig = JSON.parse(await readFile(join(project, ".github", "extensions",
+            "risk-full", "canvas-config.json")));
+        assert.equal(largeConfig.generatedControls.length, 30);
+        assert.equal(largeConfig.generatedPages.length, 19);
+    } finally {
+        await writeFile(templates[0].path, originalDefinition);
+        await writeFile(templates[3].path, originalGeneratedAdapter);
+    }
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { modelRevision: model.revision, revision: 0, values });
     const reopened = await loadDesignerSettings(workspace, handoff, await load());
@@ -1901,12 +2085,42 @@ test("paired control validates both adapters, typed values and portable generate
         [templates.map((item) => item.kind === "designer.adapter"
             ? { ...item, strategy: "append" } : item), /Invalid or duplicate/],
     ]) await assert.rejects(load(assets), message);
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        for (const kind of ["control.definition", "generated.adapter"]) {
+            await assert.rejects(load(templates.map((item) =>
+                item.kind === kind ? { ...item, name } : item)),
+            /Invalid or duplicate Canvas Design template/);
+        }
+    }
     await assert.rejects(load(templates, () => ({ kind: "script", stack: [] })),
         /replace-only Specify template/);
     const definition = templates[0];
+    for (const requires of [
+        null, undefined, [], [templates[2].name],
+        [templates[2].name, definition.name], [definition.name, definition.name],
+    ]) {
+        const invalid = { ...contributionDocument };
+        if (requires === undefined) delete invalid.requires;
+        else invalid.requires = requires;
+        await writeFile(templates[1].path, JSON.stringify(invalid));
+        await assert.rejects(load(), /object field requires exactly one control definition template|missing or incompatible shared control definition/);
+    }
+    await writeFile(templates[1].path, contributionSource);
     const original = await readFile(definition.path, "utf8");
     await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
     await assert.rejects(load(), /invalid shared control value contract|incompatible shared control/);
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const invalidDefinition = JSON.parse(original);
+        invalidDefinition.value.properties = invalidProperties;
+        await writeFile(definition.path, JSON.stringify(invalidDefinition));
+        await assert.rejects(load(), /invalid shared control value contract/);
+    }
     await writeFile(definition.path, original);
     await writeFile(designerAdapter.path, designerModule.replace(
         'export const controlId = "risk-matrix"', 'export const controlId = "other-control"'));
@@ -1923,11 +2137,112 @@ test("paired control validates both adapters, typed values and portable generate
     await assert.rejects(load(), /invalid generated.adapter/);
     await writeFile(generated.path, module);
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
-    const { materialize } = await import(new URL(
-        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const originalRequest = await readFile(requestPath, "utf8");
+    for (const [change, message] of [
+        [(request) => { delete request.controlAssets; }, /Missing frozen generated control assets/],
+        [(request) => { request.controlAssets.push(structuredClone(request.controlAssets[0])); },
+            /Invalid frozen generated control assets/],
+        [(request) => { request.generatedControls[0].control = "missing"; },
+            /Invalid frozen generated control registration/],
+        [(request) => {
+            request.fieldConstraints["risk.rating"].properties.impact.push("critical");
+        }, /incompatible frozen control value or adapters/],
+        [(request) => { request.generatedControls[0].assets = request.controlAssets[0].assets; },
+            /Invalid frozen generated control registration/],
+        [(request) => {
+            const extra = structuredClone(request.controlAssets[0]);
+            extra.control = "unused";
+            extra.assets[1].name = "unused-generated";
+            const definition = JSON.parse(Buffer.from(extra.assets[0].content, "base64").toString("utf8"));
+            definition.id = "unused";
+            definition.adapters.generated = extra.assets[1].name;
+            const bytes = Buffer.from(JSON.stringify(definition));
+            extra.assets[0].content = bytes.toString("base64");
+            extra.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+            request.controlAssets.push(extra);
+        }, /Unused frozen generated control assets/],
+        [(request) => {
+            const extra = structuredClone(request.controlAssets[0]);
+            extra.control = "risk-other";
+            extra.assets[0].name = "canvas-control-risk-other";
+            const definition = JSON.parse(Buffer.from(extra.assets[0].content, "base64").toString("utf8"));
+            definition.id = "risk-other";
+            const bytes = Buffer.from(JSON.stringify(definition));
+            extra.assets[0].content = bytes.toString("base64");
+            extra.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+            request.controlAssets.push(extra);
+            request.generatedControls.push({ ...request.generatedControls[0],
+                id: "risk.other", control: "risk-other" });
+            request.values["risk.other"] = request.generatedControls[1].value;
+            request.fieldConstraints["risk.other"] = request.fieldConstraints["risk.rating"];
+        }, /generated adapter belongs to both risk-matrix and risk-other/],
+    ]) {
+        const request = JSON.parse(originalRequest);
+        change(request);
+        const { integrity: _hash, ...unsigned } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            message);
+        await assert.rejects(readdir(join(project, prepared.target)), { code: "ENOENT" });
+    }
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        for (const kind of ["control.definition", "generated.adapter"]) {
+            const request = JSON.parse(originalRequest);
+            const asset = request.controlAssets[0].assets.find((entry) => entry.kind === kind);
+            asset.name = name;
+            if (kind === "generated.adapter") {
+                const definitionAsset = request.controlAssets[0].assets[0];
+                const definition = JSON.parse(Buffer.from(definitionAsset.content, "base64").toString("utf8"));
+                definition.adapters.generated = name;
+                const bytes = Buffer.from(JSON.stringify(definition));
+                definitionAsset.content = bytes.toString("base64");
+                definitionAsset.hash = createHash("sha256").update(bytes).digest("hex");
+            }
+            const { integrity: _hash, ...unsigned } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+            await writeFile(requestPath, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /Invalid frozen generated control asset/);
+            await assert.rejects(readdir(join(project, prepared.target)), { code: "ENOENT" });
+        }
+    }
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const request = JSON.parse(originalRequest);
+        const asset = request.controlAssets[0].assets[0];
+        const definition = JSON.parse(Buffer.from(asset.content, "base64").toString("utf8"));
+        definition.value.properties = invalidProperties;
+        const bytes = Buffer.from(JSON.stringify(definition));
+        asset.content = bytes.toString("base64");
+        asset.hash = createHash("sha256").update(bytes).digest("hex");
+        const { integrity: _hash, ...unsigned } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /incompatible frozen control assets/);
+    }
+    for (const [change, error] of [
+        [(request) => { request.values["designer.unbound"] = "not generated"; },
+            /Invalid frozen Designer fields/],
+        [(request) => { request.generatedControls[0].id = "canvas.description"; },
+            /Invalid frozen generated values/],
+    ]) {
+        const request = JSON.parse(originalRequest);
+        change(request);
+        const { integrity: _hash, ...unsigned } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(unsigned)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            error);
+    }
     const invalidRequest = JSON.parse(originalRequest);
     invalidRequest.generatedControls[0].value.likelihood = "impossible";
     const { integrity: _integrity, ...payload } = invalidRequest;
@@ -1937,8 +2252,8 @@ test("paired control validates both adapters, typed values and portable generate
         /incompatible frozen control value or adapters/);
     const oversizedRequest = JSON.parse(originalRequest);
     const oversized = Buffer.alloc(32 * 1024 + 1);
-    oversizedRequest.generatedControls[0].assets[1].content = oversized.toString("base64");
-    oversizedRequest.generatedControls[0].assets[1].hash =
+    oversizedRequest.controlAssets[0].assets[1].content = oversized.toString("base64");
+    oversizedRequest.controlAssets[0].assets[1].hash =
         createHash("sha256").update(oversized).digest("hex");
     const { integrity: _oversizedIntegrity, ...oversizedPayload } = oversizedRequest;
     oversizedRequest.integrity = createHash("sha256").update(JSON.stringify(oversizedPayload)).digest("hex");
@@ -1954,6 +2269,23 @@ test("paired control validates both adapters, typed values and portable generate
         pathToFileURL(join(portable, "server.mjs")).href);
     const config = readConfig();
     assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
+    assert.deepEqual(await readFile(join(portable, "control-contract.mjs")),
+        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            import.meta.url)));
+    const configPath = join(portable, "canvas-config.json");
+    for (const invalidProperties of [
+        Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`key${index}`, ["low"]])),
+        { impact: ["low", "low"] },
+        { impact: ["low", null] },
+        { impact: [""] },
+        { impact: ["x".repeat(81)] },
+    ]) {
+        const invalid = structuredClone(config);
+        invalid.generatedControls[0].properties = invalidProperties;
+        await writeFile(configPath, JSON.stringify(invalid));
+        assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    }
+    await writeFile(configPath, JSON.stringify(config));
     assert.match(renderHtml(config), /data-control-id="risk.rating"/);
     assert.equal((await import(pathToFileURL(join(portable, "controls",
         `${generated.name}.mjs`)).href)).mount.name, "mount");
@@ -2017,7 +2349,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs",
+    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
         "settings.mjs", "generation.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
@@ -2034,6 +2366,10 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     await mkdir(shared, { recursive: true });
     await copyFile(join(source, "..", "speckit-wizard-canvas", "env", "workspace.mjs"),
         join(shared, "workspace.mjs"));
+    for (const file of ["resolve-path.mjs", "specify-invocation.mjs"]) {
+        await copyFile(join(source, "..", "speckit-wizard-canvas", "env", file),
+            join(shared, file));
+    }
     await mkdir(join(extension, "ui"));
     for (const file of ["index.html", "app.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
@@ -2152,20 +2488,27 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             "../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url));
         const testPage = join(project, ".specify", "pr1-test-page.json");
         const testField = join(project, ".specify", "pr1-test-field.json");
+        const testToggle = join(project, ".specify", "pr1-test-toggle.json");
         await copyFile(join(preset, "pages", "pr1-test.json"), testPage);
         await copyFile(join(preset, "contributions", "pr1-test.json"), testField);
+        await copyFile(join(preset, "contributions", "pr1-toggle.json"), testToggle);
         const withPreset = await canvas.open({ instanceId: "same", input: {
             handoffId: ID,
             pages: [...entries, { name: "canvas-settings-pr1-test", path: testPage,
                 kind: "designer.page", strategy: "replace" }],
             templates: [{ name: "canvas-contribution-pr1-test", path: testField,
+                sourceId: "copilot-canvas-design-test", kind: "designer.field", strategy: "replace" },
+            { name: "canvas-contribution-pr1-toggle", path: testToggle,
                 sourceId: "copilot-canvas-design-test", kind: "designer.field", strategy: "replace" }],
         } });
         const presetStateUrl = new URL(withPreset.url);
         presetStateUrl.pathname = "/api/state";
         const presetState = await (await fetch(presetStateUrl)).json();
         assert.equal(presetState.pages.at(-1).title, "Test settings");
-        assert.deepEqual(presetState.pages.at(-1).fields.map((field) => field.id), ["pr1Test.label"]);
+        assert.deepEqual(presetState.pages.at(-1).fields.map((field) => field.id),
+            ["pr1Test.label", "pr1Test.enabled"]);
+        assert.deepEqual(presetState.constraints["pr1Test.enabled"], { type: "boolean" });
+        assert.equal(presetState.values["pr1Test.enabled"], true);
         assert.equal(presetState.contributions[0].sourceId, "copilot-canvas-design-test");
         const changed = JSON.parse(await readFile(entries[0].path, "utf8"));
         changed.title = "Updated Essentials";

@@ -77,7 +77,8 @@ generate.addEventListener("click", async () => {
         const values = draft;
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ revision: model.revision, values,
+            body: JSON.stringify({ modelRevision: model.revision,
+                settingsRevision: model.settingsRevision, values,
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
@@ -229,6 +230,7 @@ function renderPage(pageId) {
                     }
                     if (!mount.isConnected) return;
                     return render({ root: mount, field, value: draft[field.id], onChange(value) {
+                        if (!mount.isConnected) return;
                         draft[field.id] = value;
                         messageBox.hidden = true;
                         showError("");

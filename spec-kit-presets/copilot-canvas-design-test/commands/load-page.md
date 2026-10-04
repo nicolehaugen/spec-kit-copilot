@@ -6,3 +6,4 @@
 ## Additional Canvas Design templates
 
 - `canvas-contribution-pr1-test` — `designer.field`, `replace`
+- `canvas-contribution-pr1-toggle` — `designer.field`, `replace`

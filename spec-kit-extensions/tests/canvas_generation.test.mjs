@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
 import { freezeGeneration, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
@@ -14,12 +14,14 @@ const entryTemplate = await readFile(new URL("../extension-canvas-design/templat
     import.meta.url), "utf8");
 const model = {
     revision: "test-revision",
+    settingsRevision: 0,
     pages: [{ page: "canvas-settings-setup", fields: [
         { id: "canvas.id" }, { id: "canvas.displayName" }, { id: "canvas.description" },
         { id: "canvas.workflowListName" }, { id: "workflowSlug.userProvided" },
     ] }],
     constraints: {
-        "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$" },
+        "canvas.id": { type: "string", minLength: 1, maxLength: 100,
+            pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
         "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
         "canvas.description": { type: "string", maxLength: 240 },
         "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -66,6 +68,14 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.deepEqual(request.installed.presets, handoff.workflow.installed.presets);
     assert.deepEqual(request.values, values);
     assert.throws(() => validateEssentials(model, { ...values, "canvas.id": "../bad" }), /canvas.id/);
+    for (const id of ["con", "prn", "aux", "nul",
+        ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
+        ...Array.from({ length: 9 }, (_, index) => `lpt${index + 1}`)]) {
+        assert.throws(() => validateEssentials(model, { ...values, "canvas.id": id }), /non-reserved/);
+    }
+    for (const id of ["com0", "com10", "lpt0", "lpt10", "con-1"]) {
+        assert.equal(validateEssentials(model, { ...values, "canvas.id": id })["canvas.id"], id);
+    }
     assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /canvas.displayName/);
     assert.throws(() => validateEssentials(model, { ...values, "workflowSlug.userProvided": "true" }), /workflowSlug.userProvided/);
     const { ["workflowSlug.userProvided"]: omitted, ...missingToggle } = values;
@@ -80,7 +90,8 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
             "designer.note": { type: "string", maxLength: 80 } },
         contributions: [{ field: { id: "billing.costCode", label: "Cost code" },
             generatedBinding: { presentation: "stock.readonly",
-                section: { id: "billing", title: "Billing" } } }] };
+                section: { id: "billing", title: "Billing" } } },
+        { field: { id: "designer.note", label: "Internal note" } }] };
     const supplied = { ...values, "billing.costCode": "CC-481", "designer.note": "Designer only" };
     await assert.rejects(freezeGeneration({ model: contributedModel,
         values: { ...supplied, "designer.note": "x".repeat(81) },
@@ -91,6 +102,7 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
     assert.equal(frozen.values["billing.costCode"], "CC-481");
     assert.equal(frozen.values["designer.note"], "Designer only");
+    assert.deepEqual(frozen.generatedFields.map(({ id }) => id), ["billing.costCode"]);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const setup = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-setup.json"), "utf8"));
@@ -99,6 +111,38 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
     assert.equal(config.readOnlyFields.some((field) => field.id === "designer.note"), false);
+});
+
+test("re-signed requests reject inconsistent, missing, and colliding generated values", async (t) => {
+    for (const [name, change, error] of [
+        ["undeclared value", (request) => { request.values["designer.note"] = "not generated"; },
+            /Invalid frozen Designer fields/],
+        ["missing Essential", (request) => { delete request.values["canvas.description"]; },
+            /Invalid frozen Designer fields/],
+        ["missing bound value", (request) => {
+            request.generatedFields = [{ id: "billing.costCode", label: "Cost code", maxLength: 64 }];
+        }, /Invalid frozen generated fields/],
+        ["bound ID collides with Essential", (request) => {
+            request.generatedFields = [{ id: "canvas.displayName", label: "Title", maxLength: 120 }];
+        }, /Invalid frozen generated values/],
+        ["generated field maxLength differs from its constraint", (request) => {
+            request.generatedFields = [{ id: "canvas.description", label: "Description", maxLength: 1000 }];
+        }, /Invalid frozen generated fields/],
+    ]) {
+        await t.test(name, async (child) => {
+            const { project, workspace, prepared, sdk } = await fixture(child);
+            const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                "generations", prepared.requestId, "request.json");
+            const request = JSON.parse(await readFile(path, "utf8"));
+            change(request);
+            const { integrity: _integrity, ...payload } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+            await writeFile(path, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                error);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
 });
 
 test("100 bounded generated fields materialize when the frozen request exceeds 128KB", async (t) => {
@@ -120,7 +164,7 @@ test("100 bounded generated fields materialize when the frozen request exceeds 1
         "generations", prepared.requestId, "request.json");
     const raw = await readFile(path);
     assert.ok(raw.length > 128 * 1024);
-    assert.ok(raw.length <= 512 * 1024);
+    assert.ok(raw.length <= 4 * 1024 * 1024);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
@@ -132,9 +176,46 @@ test("the generator rejects a frozen request above its shared size limit", async
     const { project, workspace, prepared } = await fixture(t);
     const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", prepared.requestId, "request.json");
-    await writeFile(path, "x".repeat(512 * 1024 + 1));
+    await writeFile(path, "x".repeat(4 * 1024 * 1024 + 1));
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /Generation request is too large/);
+});
+
+test("six maximum-size generated pages fit the frozen request and materialize", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const pages = join(project, ".specify", "pages");
+    await mkdir(pages, { recursive: true });
+    const generatedPages = [], templates = [];
+    const rendererContent = "export function renderPage({ root }) { root.textContent = 'Overview'; }"
+        .padEnd(32 * 1024, " ");
+    for (let index = 0; index < 6; index++) {
+        const id = `canvas-generated-${index}`, renderer = `canvas-renderer-${index}`;
+        const title = `Overview ${index}`;
+        const definition = JSON.stringify({ schemaVersion: 1, id, renderer, title })
+            .padEnd(32 * 1024, " ");
+        generatedPages.push({ name: id, id, title, renderer });
+        for (const [name, kind, content, extension] of [
+            [id, "generated.page", definition, "json"],
+            [renderer, "generated.renderer", rendererContent, "mjs"],
+        ]) {
+            const path = join(pages, `${name}.${extension}`);
+            await writeFile(path, content);
+            templates.push({ name, path, kind, sourceId: "test-preset", strategy: "replace",
+                hash: createHash("sha256").update(content).digest("hex") });
+        }
+    }
+    const prepared = await freezeGeneration({ project, workspace,
+        model: { ...model, generatedPages, templates }, values, handoff });
+    const request = await readFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json"));
+    assert.ok(request.length > 512 * 1024);
+    assert.ok(request.length <= 4 * 1024 * 1024);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    for (const page of generatedPages) {
+        const bytes = await readFile(join(project, ".github", "extensions", values["canvas.id"],
+            "pages", `${page.renderer}.mjs`));
+        assert.equal(bytes.length, 32 * 1024);
+    }
 });
 
 test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
@@ -183,6 +264,67 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
             id: "workflow", title: "Workflow", renderer: "workflow-renderer",
         }] }));
     assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    for (const name of ["con", "prn", "aux", "nul", "com1", "lpt9"]) {
+        for (const field of ["id", "renderer"]) {
+            await writeFile(join(target, "canvas-config.json"),
+                JSON.stringify({ ...defaultConfig, generatedPages: [{
+                    id: "overview", title: "Overview", renderer: "overview-renderer", [field]: name,
+                }] }));
+            assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+        }
+    }
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ ...defaultConfig, canvas: { ...defaultConfig.canvas, id: "con" } }));
+    assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+});
+
+test("materialization rejects a re-signed request with a Windows device Canvas ID", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(path, "utf8"));
+    request.canvas.id = "con";
+    request.values["canvas.id"] = "con";
+    request.target = ".github/extensions/con/";
+    const { integrity, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(path, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen canvas identity/);
+    await assert.rejects(readdir(join(project, ".github", "extensions")), { code: "ENOENT" });
+});
+
+test("materialization rejects re-signed requests that diverge from frozen Essentials", async (t) => {
+    for (const [field, canvasField, original] of [
+        ["canvas.description", "description", values["canvas.description"]],
+        ["canvas.workflowListName", "workflowListName", values["canvas.workflowListName"]],
+        ["canvas.description", "description", ""],
+        ["canvas.workflowListName", "workflowListName", ""],
+    ]) {
+        await t.test(`${field} ${original ? "explicit" : "default"}`, async (child) => {
+            const selectedValues = { ...values, [field]: original };
+            const { project, workspace, prepared, sdk } = await fixture(child, handoff, selectedValues);
+            const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+                "generations", prepared.requestId, "request.json");
+            const request = JSON.parse(await readFile(path, "utf8"));
+            request.canvas[canvasField] = "A different value";
+            const { integrity, ...payload } = request;
+            request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+            await writeFile(path, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /Invalid frozen canvas identity/);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
+});
+
+test("materialization accepts frozen default description and workflow header", async (t) => {
+    const selectedValues = { ...values, "canvas.description": "", "canvas.workflowListName": "" };
+    const { project, workspace, prepared, sdk } = await fixture(t, handoff, selectedValues);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.equal(config.canvas.description, "Spec Kit workflow canvas.");
+    assert.equal(config.canvas.workflowListName, "Workflows");
 });
 
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
@@ -197,7 +339,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.match(entry, /createCanvas\(\{/);
     assert.match(entry, /createServer\(\(req, res\)/);
     assert.match(entry, /server\.listen\(0, "127\.0\.0\.1"/);
-    assert.match(entry, /onClose: async \(ctx\)/);
+    assert.match(entry, /onClose: \(ctx\) => withLifecycle\(async \(\) =>/);
     assert.match(entry, /entry\.server\.close/);
     assert.doesNotMatch(entry, /Example agent-callable action/);
     assert.equal((await readFile(join(target, "ui", "workflow-theme.css"), "utf8"))
@@ -205,7 +347,8 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.phases, handoff.workflow.selectedPhases);
     assert.equal(config.userProvidesSlug, false);
-    assert.deepEqual(config.installed, handoff.workflow.installed);
+    assert.deepEqual(config.installed, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [], bundles: [] });
     assert.equal(Object.hasOwn(config, "resultTags"), false);
     assert.equal(Object.hasOwn(config, "phaseResults"), false);
     for (const removed of ["result-tags.mjs", "tag-evaluator.mjs", "staleness.mjs"]) {
@@ -272,7 +415,22 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         await writeFile(path, JSON.stringify(trial));
         await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
             /Invalid frozen generated page assets|frozen generated page definition|Invalid frozen generated pages/);
-        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+        await assert.rejects(readdir(sdk), { code: "ENOENT" });
+    }
+    for (const [field, name] of [["id", "con"], ["renderer", "nul"]]) {
+        const trial = structuredClone(request);
+        const page = trial.generatedPages[0];
+        page[field] = name;
+        page.assets[0] = asset(page.id, "generated.page", JSON.stringify({
+            schemaVersion: 1, id: page.id, renderer: page.renderer, title: page.title,
+        }));
+        page.assets[1] = asset(page.renderer, "generated.renderer", module);
+        const { integrity: _old, ...payload } = trial;
+        trial.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(path, JSON.stringify(trial));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen generated page assets/);
+        await assert.rejects(readdir(sdk), { code: "ENOENT" });
     }
     const boundary = structuredClone(request);
     boundary.generatedPages[0].assets[1] = asset("canvas-generated-overview-renderer",
@@ -553,7 +711,33 @@ test("local development selections remain bound to the frozen handoff at publica
     await materialize(project, workspace, local.handoffId, prepared.requestId);
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
-    assert.deepEqual(config.installed.presets, local.workflow.installed.presets);
+    assert.deepEqual(config.installed.presets, [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }]);
+});
+
+test("generated config excludes session-only installed package locators", async (t) => {
+    const withLocators = { ...handoff, workflow: { ...handoff.workflow, installed: {
+        presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1,
+            path: join(tmpdir(), "private-preset"), source: "local",
+            downloadUrl: "https://example.com/preset.zip" }],
+        extensions: [{ id: "runtime-extension", version: "2.0.0", priority: 2,
+            path: join(tmpdir(), "private-extension"), downloadUrl: "https://example.com/extension.zip" }],
+        bundles: [{ id: "runtime-bundle", version: "3.0.0", source: "community",
+            downloadUrl: "https://example.com/bundle.zip", catalogId: "community-bundle" }],
+    } } };
+    withLocators.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: withLocators.workflow, selections: withLocators.selections,
+    })).digest("hex");
+    const { project, workspace, prepared, sdk } = await fixture(t, withLocators);
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer", "handoffs",
+        withLocators.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.installed, withLocators.workflow.installed);
+    await materialize(project, workspace, withLocators.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.installed, {
+        presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [{ id: "runtime-extension", version: "2.0.0", priority: 2 }],
+        bundles: [{ id: "runtime-bundle", version: "3.0.0" }],
+    });
 });
 
 test("existing canvases are preserved and tampered requests fail before creation", async (t) => {
@@ -586,6 +770,9 @@ test("generator rejects inconsistent all-page values and stock defaults before w
         (request) => { request.values["canvas.description"] = "x".repeat(241); },
         (request) => { request.canvas.description = "not the frozen value"; },
         (request) => { request.fieldConstraints["canvas.description"].type = "object"; },
+        (request) => { request.fieldConstraints["canvas.id"].pattern = "^(a+)+$"; },
+        (request) => { delete request.fieldConstraints["canvas.id"].pattern; },
+        (request) => { request.fieldConstraints["canvas.description"].pattern = "^(a+)+$"; },
     ];
     for (const change of failures) {
         const request = structuredClone(original);
@@ -596,5 +783,65 @@ test("generator rejects inconsistent all-page values and stock defaults before w
         await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
             /Invalid frozen Designer field|Invalid frozen Designer fields|Invalid frozen canvas identity/);
         await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
+});
+
+test("generation request and Wizard handoff reject symlinks and oversized files", async (t) => {
+    for (const [name, limit] of [["request.json", 4 * 1024 * 1024], ["handoff.json", 64 * 1024]]) {
+        await t.test(name, async (child) => {
+            const { project, workspace, prepared, sdk } = await fixture(child);
+            const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
+            const path = name === "request.json"
+                ? join(folder, "generations", prepared.requestId, name) : join(folder, name);
+            const saved = `${path}.saved`;
+            await rename(path, saved);
+            let linked = false;
+            try {
+                await symlink(saved, path, "file");
+                linked = true;
+            } catch (error) {
+                if (!["EPERM", "EACCES", "ENOTSUP"].includes(error.code)) throw error;
+                child.diagnostic(`File symlink unavailable: ${error.code}`);
+            }
+            if (linked) {
+                await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                    /bounded regular session file|ELOOP|EINVAL/);
+                await rm(path);
+            }
+            await writeFile(path, Buffer.alloc(limit + 1, 32));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /too large/);
+            await assert.rejects(readdir(sdk), { code: "ENOENT" });
+        });
+    }
+});
+
+test("pinned generation reads reject leaf and parent swaps during open", async (t) => {
+    for (const [name, limit, label] of [
+        ["request.json", 4 * 1024 * 1024, "Generation request"],
+        ["handoff.json", 64 * 1024, "Wizard handoff"],
+    ]) {
+        for (const swap of ["leaf", "parent"]) {
+            await t.test(`${name} ${swap}`, async (child) => {
+                const { workspace, prepared } = await fixture(child);
+                const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
+                const parent = name === "request.json"
+                    ? join(folder, "generations", prepared.requestId) : folder;
+                const path = join(parent, name);
+                await assert.rejects(readBoundedSessionFile(parent, name, limit, label, async (filePath, flags) => {
+                    if (swap === "parent") {
+                        await rename(parent, `${parent}.old`);
+                        await mkdir(parent);
+                        await writeFile(path, "replacement");
+                    }
+                    const file = await open(filePath, flags);
+                    if (swap === "leaf") {
+                        await rename(path, `${path}.old`);
+                        await writeFile(path, "replacement");
+                    }
+                    return file;
+                }), /bounded regular session file/);
+            });
+        }
     }
 });
