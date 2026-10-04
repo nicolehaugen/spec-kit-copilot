@@ -24,7 +24,7 @@ const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
-let viewer = null, timer, saveFailure = null, workflowQuery = "";
+let viewer = null, timer, saveFailure = null, valueSaveFailure = null, pendingValueSaves = 0, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
 function wireGeneratedPages() {
@@ -209,7 +209,7 @@ function renderValues() {
         }
     }
 }
-async function editValue(element) {
+function editValue(element) {
     const row = element.closest("[data-edit-value]");
     if (!row || !model) return;
     const field = model.valueFields.find((entry) => entry.id === row.dataset.editValue && entry.editable);
@@ -220,10 +220,19 @@ async function editValue(element) {
         value = Object.fromEntries([...row.querySelectorAll("[data-property]")]
             .map((input) => [input.dataset.property, input.value]));
     } else value = row.querySelector("input").value;
-    await flush();
-    const result = await api("/api/values", { id: field.id, value, revision: model.revision });
-    model.revision = result.revision;
-    await refresh();
+    if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
+    pendingValueSaves++;
+    saving = saving.catch(() => {}).then(async () => {
+        if (saveFailure) throw saveFailure;
+        const result = await api("/api/values", { id: field.id, value, revision: model.revision });
+        model.revision = result.revision;
+        valueSaveFailure = null;
+    }).catch((error) => {
+        valueSaveFailure = error;
+        throw error;
+    }).finally(() => { pendingValueSaves--; });
+    saving.catch(() => {});
+    return saving.then(() => refresh());
 }
 async function api(path, input) {
     const response = await fetch(path, {
@@ -274,6 +283,7 @@ async function flush() {
     if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
     await saving;
     if (saveFailure) throw saveFailure;
+    if (valueSaveFailure) throw valueSaveFailure;
 }
 function renderStatus() {
     function pendingLabel(step) {
@@ -644,7 +654,10 @@ events.onmessage = () => {
 };
 events.onerror = () => { setConnectionStatus("lost"); message("Connection interrupted. Drafts are retained; use Refresh if reconnection fails."); };
 window.addEventListener("beforeunload", (event) => {
-    if (timer || saveFailure) { event.preventDefault(); event.returnValue = ""; }
+    if (timer || saveFailure || pendingValueSaves || valueSaveFailure) {
+        event.preventDefault();
+        event.returnValue = "";
+    }
 });
 window.addEventListener("pagehide", () => events.close());
 await refresh().catch((error) => message(error.message, "canvas-message", true));

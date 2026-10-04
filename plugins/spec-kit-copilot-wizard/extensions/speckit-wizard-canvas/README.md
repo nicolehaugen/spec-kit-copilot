@@ -257,7 +257,8 @@ addition to) the hosted registry entry:
   IDs. This exact-byte check applies at preflight only; later `verify-local`
   calls validate the handoff but do not compare its bytes to that launch hash.
   After local installation and later overrides, the child checks the installed
-  manifest and Specify's local inventory entry.
+  manifest ID and Specify's local inventory entry (ID and local source kind);
+  it does not pin a local development version.
   Local development sources remain mutable; their file contents are not
   compared with a preflight snapshot. The hosted Canvas Design requirement
   remains v0.1.7; an approved local source uses its own manifest version and

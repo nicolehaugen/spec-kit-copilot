@@ -70,7 +70,7 @@ test("composed verification resolves every name, rejects warnings and native scr
         if (args[0] === "preset") return { stdout: warning === "missing"
             ? `${name}: not found`
             : `${name}: ${paths[name]}\n(top layer from: ${name.startsWith("sample-")
-                ? "sample v1.0.0" : "extension:extension-canvas-design v0.1.10"})`
+                ? "sample v1.0.0" : "extension:extension-canvas-design v0.1.11"})`
                 + (warning === "composition" ? "\nWarning: composition cannot produce output" : "") };
         if (args[2].startsWith("script:")) {
             if (collision) return { stdout: '{"kind":"script"}' };

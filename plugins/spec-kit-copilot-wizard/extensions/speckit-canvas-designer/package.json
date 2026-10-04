@@ -3,6 +3,7 @@
     "private": true,
     "type": "module",
     "dependencies": {
+        "acorn": "^8.15.0",
         "es-module-lexer": "^3.0.2"
     }
 }

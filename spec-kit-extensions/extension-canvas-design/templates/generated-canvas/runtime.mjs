@@ -147,19 +147,19 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
-    async function items() {
+    async function items(view = state) {
         const found = [];
         for (const root of roots) {
             if (root.includes("<") || root.startsWith(".git")) continue;
             for (const slug of await directories(cwd, root)) {
                 const id = `${root}/${slug}`;
-                found.push({ id, slug, label: state.names?.[id] || slug });
+                found.push({ id, slug, label: view.names?.[id] || slug });
             }
         }
         return found;
     }
-    function runFor(step, item) {
-        return state.runs.findLast((run) => run.phase === step.id && run.item === (step.project ? "project" : item));
+    function runFor(step, item, view = state) {
+        return view.runs.findLast((run) => run.phase === step.id && run.item === (step.project ? "project" : item));
     }
     function authorizeReport(step, path, item) {
         safePath(path);
@@ -185,14 +185,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
         }
     }
-    async function outputPath(step, item) {
-        const run = runFor(step, item);
+    async function outputPath(step, item, view = state, entries) {
+        const run = runFor(step, item, view);
         if (!step.configuredArtifacts && run?.artifact) { authorizeReport(step, run.artifact, run.item); return run.artifact; }
         if (!step.output) return null;
         let path = step.output;
         if (path.includes("<slug>")) {
-            const selected = (await items()).find((entry) => entry.id === item);
-            const slug = selected?.slug ?? (item === "__new__" && config.userProvidesSlug && validSlug(state.slug) ? state.slug : null);
+            const selected = (entries ?? await items(view)).find((entry) => entry.id === item);
+            const slug = selected?.slug ?? (item === "__new__" && config.userProvidesSlug && validSlug(view.slug) ? view.slug : null);
             if (!slug) return null;
             path = path.replace("<slug>", slug);
             if (selected && !path.startsWith(`${selected.id}/`)) throw new UserError("This phase output belongs to a different workflow.");
@@ -229,8 +229,9 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
     }
     async function snapshot() {
-        const entries = await items();
-        const item = state.selected;
+        const view = structuredClone(state);
+        const entries = await items(view);
+        const item = view.selected;
         const selectedWorkflow = item === "__new__" ? null : entries.find((entry) => entry.id === item);
         const visibleValues = [], pageValues = Object.create(null), valueErrors = {};
         const providerDeadline = performance.now() + PROVIDER_REFRESH_LIMIT_MS;
@@ -245,7 +246,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                         label: selectedWorkflow.label,
                     }, providerDeadline);
                 } else if (field.presentation === "stock.editable") {
-                    value = Object.hasOwn(state.values ?? {}, field.id) ? state.values[field.id] : field.source.value;
+                    value = Object.hasOwn(view.values ?? {}, field.id) ? view.values[field.id] : field.source.value;
                 } else value = field.source.value;
                 value = validateValue(field.schema, value, field.id);
             } catch (error) {
@@ -268,10 +269,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
         const statuses = {};
         for (const step of phases) {
-            const run = runFor(step, item);
+            const run = runFor(step, item, view);
             let output = null, artifactError = null, artifactAvailability = "unknown";
             try {
-                output = await outputPath(step, item);
+                output = await outputPath(step, item, view, entries);
                 if (output) {
                     const info = await lstat(await confined(cwd, output));
                     if (!info.isFile()) throw new UserError("The artifact path is not a regular file.");
@@ -290,7 +291,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
-        return { ...structuredClone(state), userProvidesSlug: config.userProvidesSlug,
+        return { ...view, userProvidesSlug: config.userProvidesSlug,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             phases, items: entries, statuses, valueFields: visibleValues, pageValues, valueErrors };
     }

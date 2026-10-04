@@ -1455,6 +1455,23 @@ test("named value sources freeze typed values and run from a portable canvas wit
     const originalProvider = await readFile(provider.path, "utf8");
     await writeFile(provider.path, "export const provideValue = ;");
     await assert.rejects(load(), /invalid value.provider/);
+    for (const invalid of [
+        "export const provideValue = 42;",
+        "export const provideValue = async () => 'ok';",
+        "export async function provideValue() { return 'ok'; }",
+        "export const provideValue = function* () { yield 'ok'; };",
+    ]) {
+        await writeFile(provider.path, invalid);
+        await assert.rejects(load(), /provideValue must be a synchronous function or arrow function/);
+    }
+    for (const valid of [
+        "export const provideValue = function () { return 'ok'; };",
+        "export const provideValue = (input) => input.workflow.slug;",
+    ]) {
+        await writeFile(provider.path, valid);
+        assert.equal((await load()).valueSources.find((value) => value.id === "demo.workflow").id,
+            "demo.workflow");
+    }
     await writeFile(provider.path, "export function otherValue() {}");
     await assert.rejects(load(), /invalid value.provider/);
     await writeFile(provider.path, "function provideValue() { return 'ok'; }\nexport { provideValue };");
@@ -1594,6 +1611,29 @@ test("named value sources freeze typed values and run from a portable canvas wit
     assert.equal(second.valueFields.find((field) => field.id === "demo.workflow").value,
         "002-second (002-second)");
     assert.equal(second.valueFields.find((field) => field.id === "demo.note").value, "Changed globally");
+    await writeFile(packagedProvider, "export function provideValue() { return 'changed'; }");
+    let reachedDiagnostic, releaseDiagnostic;
+    const reached = new Promise((resolve) => { reachedDiagnostic = resolve; });
+    const release = new Promise((resolve) => { releaseDiagnostic = resolve; });
+    const originalLog = session.log;
+    session.log = async () => { reachedDiagnostic(); await release; };
+    const pendingSnapshot = runtime.snapshot();
+    try {
+        await reached;
+        await runtime.saveValue({ id: "demo.note", value: "Edited during refresh",
+            revision: second.revision });
+    } finally {
+        releaseDiagnostic();
+        session.log = originalLog;
+    }
+    const inFlight = await pendingSnapshot;
+    assert.equal(inFlight.revision, second.revision);
+    assert.equal(inFlight.valueFields.find((field) => field.id === "demo.note").value,
+        "Changed globally");
+    const afterOverlap = await runtime.snapshot();
+    assert.equal(afterOverlap.revision, second.revision + 1);
+    assert.equal(afterOverlap.valueFields.find((field) => field.id === "demo.note").value,
+        "Edited during refresh");
     await writeFile(packagedProvider, localResultProvider);
     const localResultConfig = structuredClone(config);
     localResultConfig.valueSources.find((value) => value.id === "demo.workflow").source.hash =
@@ -1618,7 +1658,7 @@ test("named value sources freeze typed values and run from a portable canvas wit
     const reopened = await createRuntime({ config, cwd: project, workspace, session });
     t.after(() => reopened.close());
     assert.equal((await reopened.snapshot()).valueFields.find((field) => field.id === "demo.note").value,
-        "Changed globally");
+        "Edited during refresh");
     const noConsumer = { ...config, generatedPages: config.generatedPages.map((entry) => ({
         ...entry, values: [],
     })) };
@@ -1681,7 +1721,7 @@ test("named value sources freeze typed values and run from a portable canvas wit
     const recovered = await createRuntime({ config, cwd: project, workspace, session });
     t.after(() => recovered.close());
     assert.equal((await recovered.snapshot()).valueFields.find(
-        (field) => field.id === "demo.note").value, "Changed globally");
+        (field) => field.id === "demo.note").value, "Edited during refresh");
 });
 
 test("paired control validates both adapters, typed values and portable generated display", async (t) => {

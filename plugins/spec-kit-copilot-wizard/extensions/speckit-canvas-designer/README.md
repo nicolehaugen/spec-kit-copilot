@@ -64,7 +64,8 @@ registry and declare a typed constant or a workflow-scoped provider, plus
 read-only, runtime-editable, or processing-only presentation. A provider must
 have its own replace-only `value.provider` `.mjs` registration with a direct
 `export function provideValue` or `export const provideValue` declaration
-(named re-exports are unsupported). Designer validates the actual declaration
+with a synchronous function or arrow initializer (named re-exports and async
+functions are unsupported). Designer validates the actual declaration
 and checks that the transformed script parses,
 but does not execute providers; Generate confirms each resolved provider's
 name, source and hash before freezing its bytes for packaging. Changes since

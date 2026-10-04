@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.10"
+  version: "0.1.11"
   description: Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.
   category: process
   author: spec-kit-copilot

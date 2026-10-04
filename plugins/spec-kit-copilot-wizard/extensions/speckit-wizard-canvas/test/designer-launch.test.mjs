@@ -638,7 +638,7 @@ test("read-only preflight pins handoff bytes and checks local installation ident
     const hash = createHash("sha256").update(bytes).digest("hex");
     const run = async (_binary, args) => ({ stdout: args[0] === "--version"
         ? "specify 1.0.7" : JSON.stringify([{ id: "extension-canvas-design",
-            version: "0.1.10", source: { kind: "local" } }]) });
+            version: "0.1.11", source: { kind: "local" } }]) });
     const checked = await preflight(project, root, handoff.handoffId, hash, run);
     assert.equal(checked.initialized, true);
     assert.deepEqual(checked.locals, [{ kind: "extensions", id: "extension-canvas-design", path: source }]);
@@ -656,9 +656,17 @@ test("read-only preflight pins handoff bytes and checks local installation ident
     await writeFile(installedManifest, originalManifest);
     await assert.rejects(verifyLocalInstall(project, handoff, "extensions",
         "extension-canvas-design", async () => ({
-            stdout: JSON.stringify([{ id: "extension-canvas-design", version: "0.1.10",
+            stdout: JSON.stringify([{ id: "extension-canvas-design", version: "0.1.11",
                 source: { kind: "catalog" } }]),
-        })), /wrong source or version/);
+        })), /not a local installation/);
+    await assert.rejects(verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", async () => ({ stdout: "[]" })),
+        /missing or is not a local installation/);
+    assert.equal((await verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", async () => ({
+            stdout: JSON.stringify([{ id: "extension-canvas-design", version: "0.1.11",
+                source: { kind: "local" } }]),
+        }))).id, "extension-canvas-design");
     await writeFile(join(project, ".specify", "extensions",
         "extension-canvas-design", "pages", "essentials.json"), "{}");
     assert.equal((await verifyLocalInstall(project, handoff, "extensions",

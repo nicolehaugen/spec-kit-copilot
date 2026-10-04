@@ -70,9 +70,8 @@ export async function verifyLocalInstall(project, handoff, kind, id, run = exec)
         { cwd: child, timeout: 10000, maxBuffer: 128 * 1024 });
     const inventory = JSON.parse(stdout);
     const actual = inventory.find((item) => item.id === id);
-    if (!actual || actual.source?.kind !== "local"
-        || (source.version !== null && actual.version !== source.version)) {
-        throw new Error(`Installed local ${kind} ${id} has the wrong source or version.`);
+    if (!actual || actual.source?.kind !== "local") {
+        throw new Error(`Installed local ${kind} ${id} is missing or is not a local installation.`);
     }
     return { kind, id, source: source.path, installed: installed.path };
 }

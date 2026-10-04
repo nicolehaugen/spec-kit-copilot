@@ -457,11 +457,23 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                         ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
                 }
                 if (item.kind === "value.provider") {
-                    const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:function|const)\s+provideValue\b/g)];
+                    const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:(?:async\s+)?function|const)\s+provideValue\b/g)];
                     if (exports.length !== 1 || declarations.length !== 1
                         || declarations[0].index + declarations[0][0].lastIndexOf("provideValue")
                             !== exports[0].s) {
                         throw new Error(`${item.name}: value provider must use a direct export function provideValue or export const provideValue declaration; named re-exports are not supported`);
+                    }
+                    const { parse: parseModule } = await import("acorn");
+                    const declaration = parseModule(document, { ecmaVersion: "latest", sourceType: "module" })
+                        .body.find((node) => node.type === "ExportNamedDeclaration"
+                            && node.start <= exports[0].s && node.end >= exports[0].e)?.declaration;
+                    const initializer = declaration?.type === "VariableDeclaration"
+                        && declaration.kind === "const" && declaration.declarations.length === 1
+                        && declaration.declarations[0].id.name === "provideValue"
+                        ? declaration.declarations[0].init : declaration;
+                    if (!initializer || !["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"]
+                        .includes(initializer.type) || initializer.async || initializer.generator) {
+                        throw new Error(`${item.name}: provideValue must be a synchronous function or arrow function`);
                     }
                     const body = document.replace(
                         /(^|\n)\s*export\s+(?=(?:async\s+)?function\s+provideValue\b|const\s+provideValue\b)/g, "$1");
