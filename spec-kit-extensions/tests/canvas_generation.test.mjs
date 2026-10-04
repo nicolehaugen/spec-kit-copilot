@@ -333,21 +333,39 @@ test("frozen named values reject tampered modules and package independently of t
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /Invalid frozen value source asset/);
     await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    const provider = valueSources.find((entry) => entry.id === "demo.workflow").assets[1];
+    const providerSource = await readFile(new URL("values/workflow.mjs", preset), "utf8");
+    const oversized = structuredClone(request);
+    const oversizedBytes = Buffer.from(providerSource.padEnd(32 * 1024 + 1, " "));
+    oversized.valueSources.find((entry) => entry.id === "demo.workflow").assets[1] = {
+        ...provider, hash: createHash("sha256").update(oversizedBytes).digest("hex"),
+        content: oversizedBytes.toString("base64"),
+    };
+    await persist(oversized);
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen value source asset/);
+    await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
     const unregistered = structuredClone(request);
     unregistered.generatedPages[0].values = ["demo.missing"];
     await persist(unregistered);
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /Invalid frozen generated page assets|Invalid frozen generated pages|invalid frozen generated page definition/);
     await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
-    await persist(request);
+    const boundary = structuredClone(request);
+    const boundaryBytes = Buffer.from(providerSource.padEnd(32 * 1024, " "));
+    boundary.valueSources.find((entry) => entry.id === "demo.workflow").assets[1] = {
+        ...provider, hash: createHash("sha256").update(boundaryBytes).digest("hex"),
+        content: boundaryBytes.toString("base64"),
+    };
+    await persist(boundary);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     const config = readConfig();
     assert.equal(config.valueSources.length, definitions.length);
     assert.deepEqual(config.generatedPages[0].values, ["demo.processing"]);
     assert.equal(config.valueSources.find((entry) => entry.id === "demo.note").presentation, "stock.editable");
-    assert.equal(await readFile(join(sdk, "providers", "canvas-value-workflow-provider.mjs"), "utf8"),
-        await readFile(new URL("values/workflow.mjs", preset), "utf8"));
+    assert.deepEqual(await readFile(join(sdk, "providers", "canvas-value-workflow-provider.mjs")),
+        boundaryBytes);
     const portable = join(workspace, "portable-values");
     const { cp } = await import("node:fs/promises");
     await cp(sdk, portable, { recursive: true });

@@ -177,6 +177,7 @@ function configuration(request) {
                 || typeof asset.content !== "string"
                 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
                 || asset.content.length > 44 * 1024
+                || Buffer.from(asset.content, "base64").length > 32 * 1024
                 || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash) {
                 throw new Error(`Invalid frozen value source asset: ${item.id}`);
             }
