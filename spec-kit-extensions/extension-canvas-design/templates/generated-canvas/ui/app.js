@@ -41,8 +41,7 @@ function wireGeneratedPages() {
         root.hidden = workflow;
         root.replaceChildren();
         root.classList.remove("workflow-error");
-        $("phase-navigation").hidden = !workflow;
-        $("phase-card").hidden = !workflow;
+        $("workflow-content").hidden = !workflow;
         for (const candidate of buttons) {
             if (candidate === button) candidate.setAttribute("aria-current", "page");
             else candidate.removeAttribute("aria-current");
