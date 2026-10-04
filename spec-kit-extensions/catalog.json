@@ -1,16 +1,16 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-01T12:21:06Z",
+  "updated_at": "2026-10-01T17:55:45Z",
   "catalog_url": "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json",
   "extensions": {
     "extension-canvas-design": {
       "name": "Canvas Design",
       "id": "extension-canvas-design",
-      "version": "0.1.3",
-      "description": "Settings pages for the Copilot Canvas Designer; loads pages when opening its canvas.",
+      "version": "0.1.4",
+      "description": "Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.",
       "author": "spec-kit-copilot",
       "repository": "https://github.com/nicolehaugen/spec-kit-copilot",
-      "download_url": "https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.3/extension-canvas-design.zip",
+      "download_url": "https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.4/extension-canvas-design.zip",
       "homepage": "https://github.com/nicolehaugen/spec-kit-copilot",
       "documentation": "https://github.com/nicolehaugen/spec-kit-copilot/blob/main/spec-kit-extensions/extension-canvas-design/README.md",
       "license": "MIT",
@@ -18,7 +18,7 @@
         "speckit_version": ">=1.0.7"
       },
       "provides": {
-        "commands": 1,
+        "commands": 2,
         "hooks": 0
       },
       "tags": [

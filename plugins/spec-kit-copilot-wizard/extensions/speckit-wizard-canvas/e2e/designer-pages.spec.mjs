@@ -10,7 +10,7 @@ const templateRoot = new URL("../../../../../spec-kit-extensions/extension-canva
 
 async function model(revision = "first") {
     const pages = [];
-    for (const name of ["setup", "artifacts", "appearance", "results"]) {
+    for (const name of ["essentials", "artifacts", "appearance"]) {
         const document = JSON.parse(await readFile(new URL(`${name}.json`, templateRoot), "utf8"));
         pages.push({ ...document, page: document.id });
     }
@@ -39,7 +39,7 @@ async function startPreparedShell(state) {
     try {
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        const shell = await startShell(handoff, state, workspace);
+        const shell = await startShell(handoff, state, { workspace });
         return { url: shell.url, close: async () => {
             await shell.close();
             await rm(workspace, { recursive: true, force: true });
@@ -74,32 +74,67 @@ async function openWithError(page, name) {
     return shell;
 }
 
-test("Essentials renders the five registered controls; other pages and actions remain empty", async ({ page }) => {
+test("Essentials offers a default-off custom slug toggle independently of Workflow header", async ({ page }) => {
     const shell = await openDesigner(page);
     try {
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Artifacts", "Appearance", "Result Badges"]);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Artifacts", "Appearance"]);
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         const title = page.getByRole("textbox", { name: "Title (required)" });
-        const slug = page.getByRole("checkbox", { name: "Show slug field" });
         await expect(page.getByRole("textbox")).toHaveCount(4);
+        const customSlug = page.getByRole("checkbox", { name: "Allow custom slug" });
+        await expect(customSlug).toHaveCount(1);
+        await expect(customSlug).not.toBeChecked();
+        await expect(customSlug).toHaveAttribute("aria-description",
+            "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.");
         await expect(id).toHaveAttribute("pattern", "^[a-z0-9][a-z0-9-]*$");
+        await expect(page.locator(`[id="${await id.getAttribute("aria-describedby")}"]`))
+            .toHaveText("Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used.");
         await expect(title).toHaveAttribute("maxlength", "120");
         await expect(page.getByRole("textbox", { name: "Description" })).toHaveAttribute("maxlength", "240");
         await expect(page.getByRole("textbox", { name: "Workflow header" })).toHaveAttribute("maxlength", "80");
+        await customSlug.check();
         await id.fill("example-canvas");
-        await slug.check();
-        for (const name of ["Artifacts", "Appearance", "Result Badges"]) {
+        for (const name of ["Artifacts", "Appearance"]) {
             await page.getByRole("tab", { name }).click();
             await expect(page.getByText("This template defines no fields.")).toBeVisible();
         }
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(id).toHaveValue("example-canvas");
-        await expect(slug).toBeChecked();
+        await expect(customSlug).toBeChecked();
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.getByRole("status")).toHaveText("Ready");
     } finally {
         await shell.close();
+    }
+});
+
+test("missing Generate skill explains why the action is disabled", async ({ page }) => {
+    const workspace = await mkdtemp(join(tmpdir(), "designer-generate-unavailable-"));
+    const project = join(workspace, "project");
+    const workflow = { selectedPhases: ["specify"],
+        installed: { presets: [], extensions: [], bundles: [] } };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "missing-generate", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    let shell;
+    try {
+        await mkdir(project);
+        const folder = handoffDirectory(workspace, handoff.handoffId);
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        shell = await startShell(handoff, await model(), { project, workspace,
+            session: { send: async () => {} } });
+        await page.goto(shell.url);
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await expect(page.locator("#generation-error")).toHaveText(
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session using extension-canvas-design v0.1.4 or the current local source.");
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await expect(page.locator("#generation-error")).toBeVisible();
+    } finally {
+        await shell?.close();
+        await rm(workspace, { recursive: true, force: true });
     }
 });
 
@@ -139,13 +174,14 @@ test("Save validates values, persists edits and reports stale revisions", async 
     const initial = await model();
     initial.settingsRevision = 0;
     initial.persisted = false;
-    const shell = await startShell(handoff, initial, workspace);
-    const staleShell = await startShell(handoff, initial, workspace);
+    const shell = await startShell(handoff, initial, { workspace });
+    const staleShell = await startShell(handoff, initial, { workspace });
     try {
         await page.goto(shell.url);
         const save = page.getByRole("button", { name: "Save", exact: true });
         await save.click();
         await expect(page.getByRole("alert")).toContainText("Enter a valid Canvas ID");
+        await expect(page.getByRole("alert")).toContainText("lowercase letters (a–z), numbers (0–9), and hyphens (-)");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("example-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Example");
         await save.click();
@@ -157,7 +193,7 @@ test("Save validates values, persists edits and reports stale revisions", async 
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
 
         const reopenedModel = await loadDesignerSettings(workspace, handoff, await model());
-        const reopened = await startShell(handoff, reopenedModel, workspace);
+        const reopened = await startShell(handoff, reopenedModel, { workspace });
         try {
             await page.goto(reopened.url);
             await expect(page.getByRole("textbox", { name: "Canvas ID (required)" }))

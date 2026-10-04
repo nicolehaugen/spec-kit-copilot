@@ -12,10 +12,13 @@ do not guess or select another session's handoff.
 
 Load these default pages:
 
-- `canvas-settings-setup`
+- Essentials (`canvas-settings-setup`)
 - `canvas-settings-artifacts`
 - `canvas-settings-appearance`
-- `canvas-settings-results`
+
+Use **Essentials** in progress messages and other user-facing descriptions of
+the first page. `canvas-settings-setup` remains its stable template ID for
+`specify preset resolve` and the Designer page input; do not rename the ID.
 
 Presets may add pages in sections titled **Additional Designer pages** anywhere
 in this command, including after the Steps. These additions extend the default
@@ -31,8 +34,8 @@ set; they do not run a second load operation.
    each name from the project root. Resolve all pages before opening Designer.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
-       canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\setup.json
-         (top layer from: extension:extension-canvas-design v0.1.3)
+       canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
+         (top layer from: extension:extension-canvas-design v0.1.4)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
@@ -49,13 +52,16 @@ set; they do not run a second load operation.
    extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer",
    instanceId:"designer-<handoffId>",input:{handoffId:"<handoffId>",
    pages:[{"name":"<template-name>","path":"<resolved-path>"},...]}})`.
-   Submit all four defaults and any additional pages in this single call, not
+   Submit all three defaults and any additional pages in this single call, not
    individual pages. The provider validates the handoff and the complete page
    list before returning a URL. A resolved page with invalid or missing file
    contents appears as an error tab with its path and reason; other pages remain
    available. Do not substitute another provider or open if resolution failed.
-   A successful open means the shell is available, not that every page loaded
-   or that generation is ready. Report any page errors shown in Designer.
+   Confirm the `open_canvas` result matches the requested canvas ID, plugin
+   extension ID, instance ID and `input.handoffId`; report a mismatch as a failure.
+   A successful open means only that the shell is available, not that every
+   page loaded or that generation is ready. Designer shows page-load errors to
+   the user; do not use Playwright or inspect tabs after opening.
 
 If resolution fails before step 4, report the CLI error/output and stop without
 opening Designer. If opening fails, report the error unchanged; do not run a

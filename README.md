@@ -43,7 +43,7 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) to get star
 | `spec-kit-copilot-assess` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the Spec Kit `assess` extension |
 | `spec-kit-copilot-bugfix` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the Spec Kit `bug` extension |
 | `spec-kit-copilot-sdd` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the core spec-driven development workflow |
-| `spec-kit-copilot-wizard` | 0.4.3 | Copilot App canvases | Guided wizard and an under-development Designer shell (not ready for use) |
+| `spec-kit-copilot-wizard` | 0.4.4 | Copilot App canvases | Guided wizard and an Essentials-driven Designer generator (under development) |
 
 The plugins are independently installable and versioned. Install the core skills,
 the assessment canvas, the bug fix canvas, the spec-driven development canvas, the
@@ -103,6 +103,15 @@ own README for full details.
 | [`sdd-canvas`](plugins/spec-kit-copilot-sdd/extensions/sdd-canvas/README.md) | `spec-kit-copilot-sdd` | Dashboard for the core spec-driven workflow — constitution → specify → clarify → plan → tasks → analyze → checklist → implement. |
 | [`speckit-wizard-canvas`](plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/README.md) | `spec-kit-copilot-wizard` | Guided wizard for the full Spec Kit lifecycle — setup → constitution → specify → clarify → plan → tasks → analyze → checklist → implement, with preset / extension / composition inspectors. |
 | [`speckit-canvas-designer`](plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/README.md) | `spec-kit-copilot-wizard` | Under development; not ready for use. Direct opening shows only an empty shell. |
+
+The Designer's Generate action freezes Essentials and the Wizard handoff, then
+the Canvas Design extension copies its maintained SDK entry point and workflow
+modules into a **new** project extension directory, then validates it in place.
+It no longer invokes `create-canvas` or overwrites a generated canvas. To
+propagate generator changes to an existing canvas in a Designer session, use
+the project-local `refresh-generated-canvas` skill in `.github/skills/`, which
+checks the target and merges user changes rather than blindly copying files. See
+the [Canvas Design generation details](spec-kit-extensions/extension-canvas-design/README.md#how-it-works).
 
 ### Previews
 

@@ -38,12 +38,13 @@ test("stripSurroundingQuotes leaves unmatched or embedded quotes for realpath() 
 
 test("validates a well-formed local preset directory and returns its canonical path", async (t) => {
     const dir = await fixture(t);
-    await writeFile(join(dir, "preset.yml"), "schema_version: 1\npreset:\n  id: my-preset\n  name: My Preset\n  version: 1.2.3\n");
+    await writeFile(join(dir, "preset.yml"), "schema_version: 1\npreset:\n  id: my-preset\n  name: My Preset\n  version: 1.2.3\n  description: Custom layout\n");
     const result = await validateLocalSource("presets", dir);
     assert.equal(result.kind, "presets");
     assert.equal(result.id, "my-preset");
     assert.equal(result.name, "My Preset");
     assert.equal(result.version, "1.2.3");
+    assert.equal(result.description, "Custom layout");
     assert.equal(result.path, await realpath(dir));
 });
 
@@ -71,6 +72,7 @@ test("validates a well-formed local extension directory with no version", async 
     assert.equal(result.id, "extension-canvas-design");
     assert.equal(result.name, "Canvas Design");
     assert.equal(result.version, null);
+    assert.equal(result.description, "");
 });
 
 test("rejects unsupported kinds, empty/relative paths and missing directories", async (t) => {

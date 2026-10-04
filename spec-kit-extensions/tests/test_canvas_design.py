@@ -17,13 +17,22 @@ from jsonschema import Draft202012Validator, ValidationError
 EXTENSIONS = Path(__file__).resolve().parents[1]
 EXTENSION_ID = "extension-canvas-design"
 PACKAGE = EXTENSIONS / EXTENSION_ID
-PAGE_NAMES = ("setup", "artifacts", "appearance", "results")
+PAGE_NAMES = ("essentials", "artifacts", "appearance")
+PAGE_IDS = ("setup", "artifacts", "appearance")
 FILES = {
     "extension.yml",
     "README.md",
+    "ARCHITECTURE.md",
     "commands/load-page.md",
+    "commands/generate.md",
+    "scripts/generate.mjs",
     "schemas/page.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
+    *(f"templates/generated-canvas/{name}" for name in (
+        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
+        "phase-response.mjs",
+        "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
+    )),
 }
 
 
@@ -70,12 +79,14 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             [(command["name"], command["file"])
              for command in self.manifest["provides"]["commands"]],
-            [(f"speckit.{EXTENSION_ID}.load-page", "commands/load-page.md")],
+            [(f"speckit.{EXTENSION_ID}.load-page", "commands/load-page.md"),
+             (f"speckit.{EXTENSION_ID}.generate", "commands/generate.md")],
         )
         self.assertEqual(
             [(template["name"], template["file"])
              for template in self.manifest["provides"]["templates"]],
-            [(f"canvas-settings-{name}", f"pages/{name}.json") for name in PAGE_NAMES],
+            [(f"canvas-settings-{page}", f"pages/{filename}.json")
+             for page, filename in zip(PAGE_IDS, PAGE_NAMES)],
         )
         actual_files = set()
         for path in PACKAGE.rglob("*"):
@@ -110,8 +121,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         })
         self.assertEqual(entry["tags"], ["copilot", "canvas-design"])
         self.assertEqual(self.manifest["tags"], entry["tags"])
-        self.assertIn("Copilot", entry["description"])
-        self.assertIn("when opening", entry["description"])
+        self.assertEqual(entry["description"], self.manifest["extension"]["description"])
         version = entry["version"]
         self.assertEqual(
             entry["download_url"],
@@ -140,22 +150,23 @@ class CanvasDesignPackageTests(unittest.TestCase):
         for index, page in enumerate(self.pages):
             with self.subTest(page=page["id"]):
                 self.validator.validate(page)
-                self.assertEqual(page["id"], f"canvas-settings-{PAGE_NAMES[index]}")
+                self.assertEqual(page["id"], f"canvas-settings-{PAGE_IDS[index]}")
                 self.assertEqual(page["order"], (index + 1) * 10)
                 self.assertTrue(page["enabled"])
         self.assertEqual(
             [page["title"] for page in self.pages],
-            ["Essentials", "Artifacts", "Appearance", "Result Badges"],
+            ["Essentials", "Artifacts", "Appearance"],
         )
         self.assertEqual(
             self.pages[0]["fields"],
             [
-                {"id": "canvas.id", "label": "Canvas ID"},
+                {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
                 {"id": "canvas.displayName", "label": "Title"},
                 {"id": "canvas.description", "label": "Description"},
                 {"id": "canvas.workflowListName", "label": "Workflow header"},
-                {"id": "workflowSlug.userProvided", "label": "Show slug field",
-                 "type": "boolean"},
+                {"id": "workflowSlug.userProvided", "type": "boolean", "default": False,
+                 "label": "Allow custom slug",
+                 "description": "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default."},
             ],
         )
         self.assertTrue(all(page["fields"] == [] for page in self.pages[1:]))
@@ -229,8 +240,11 @@ class CanvasDesignPackageTests(unittest.TestCase):
             metadata["description"],
             self.manifest["provides"]["commands"][0]["description"],
         )
-        defaults = re.findall(r"^- `(canvas-settings-[a-z]+)`$", self.command, re.M)
-        self.assertEqual(defaults, [f"canvas-settings-{name}" for name in PAGE_NAMES])
+        defaults = re.findall(
+            r"^- (?:Essentials \()?`(canvas-settings-[a-z]+)`(?:\))?$",
+            self.command, re.M,
+        )
+        self.assertEqual(defaults, [f"canvas-settings-{name}" for name in PAGE_IDS])
         normalized = " ".join(self.command.split())
         for required in (
             "$ARGUMENTS", "`handoffId`",
@@ -247,11 +261,11 @@ class CanvasDesignPackageTests(unittest.TestCase):
             'extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer"',
             "open the official installed Copilot provider exactly once",
             'pages:[{"name":"<template-name>","path":"<resolved-path>"},...]',
-            "Submit all four defaults and any additional pages",
+            "Submit all three defaults and any additional pages",
             "report the CLI error/output and stop without opening Designer",
             "do not run a Python helper or write the provider's state files yourself",
-            "A successful open means the shell is available",
-            "Report any page errors shown in Designer",
+            "A successful open means only that the shell is available",
+            "Designer shows page-load errors to the user",
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, normalized)
