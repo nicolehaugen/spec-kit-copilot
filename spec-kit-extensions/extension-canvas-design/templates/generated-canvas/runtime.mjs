@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { posix } from "node:path";
 import { spawn } from "node:child_process";
 import { UserError, confined, readBounded, directories, atomicJson, safePath, slugPattern,
