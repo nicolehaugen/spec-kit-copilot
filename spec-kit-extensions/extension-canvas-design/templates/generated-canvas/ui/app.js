@@ -58,7 +58,7 @@ function wireGeneratedPages() {
             await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
                 displayName: root.dataset.canvasTitle }, values: JSON.parse(root.dataset.values) });
             if (currentSelection !== selection) return;
-            root.replaceChildren(...content.childNodes);
+            root.replaceChildren(content);
         } catch (error) {
             if (currentSelection !== selection) return;
             root.textContent = `Generated page could not render: ${error.message}`;
