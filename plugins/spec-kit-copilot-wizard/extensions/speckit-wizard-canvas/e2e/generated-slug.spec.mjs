@@ -221,6 +221,42 @@ test("sending a phase keeps the navigation free of run states and clears the dis
     }
 });
 
+test("refresh clears resolved phase and Constitution errors", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    let phaseError = true;
+    const withStatus = async (route) => {
+        const response = await route.fetch();
+        const state = await response.json();
+        state.statuses.specify.error = phaseError ? "Phase failed" : null;
+        await route.fulfill({ response, json: state });
+    };
+    try {
+        await page.route("**/api/state", withStatus);
+        await page.route("**/api/refresh", withStatus);
+        await page.goto(canvas.url);
+        await expect(page.locator("#phase-message")).toHaveText("Phase failed");
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-message")).toHaveText("Phase failed");
+        phaseError = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-message")).toBeEmpty();
+
+        await page.route("**/api/run", (route) => route.fulfill({
+            status: 503, contentType: "application/json",
+            body: JSON.stringify({ error: "Constitution could not be sent" }),
+        }));
+        await page.locator("#run-constitution").click();
+        await page.locator("#send-constitution").click();
+        await expect(page.locator("#constitution-message")).toHaveText("Constitution could not be sent");
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await page.locator("#run-constitution").click();
+        await expect(page.locator("#constitution-message")).toBeEmpty();
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("one workflow header, compact constitution and legible narrow phase navigation", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true,
         ["constitution", "specify", "clarify", "plan", "tasks", "taskstoissues", "analyze", "checklist", "implement"]);

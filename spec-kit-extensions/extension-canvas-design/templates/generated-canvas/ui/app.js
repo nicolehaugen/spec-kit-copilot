@@ -278,6 +278,16 @@ async function refresh(reconcile = false) {
         model.slug = previous.slug;
         model.name = previous.name;
     }
+    const selected = phase();
+    if (selected && !model.statuses[selected.id]?.error
+        && $("phase-message")?.classList.contains("workflow-error")) {
+        message("", "phase-message");
+    }
+    const project = constitution();
+    if (project && !model.statuses[project.id]?.error
+        && $("constitution-message")?.classList.contains("workflow-error")) {
+        message("", "constitution-message");
+    }
     renderCollection();
     if (!previous || previous.selected !== model.selected) renderPhase();
     else renderStatus();
