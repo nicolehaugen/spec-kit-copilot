@@ -553,7 +553,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     delete globalThis.__generatedCanvas;
     assert.equal(canvas.id, "my-workflow");
     assert.deepEqual(canvas.actions.map((action) => action.name),
-        ["run_phase", "report_workflow_slug", "report_phase_artifact"]);
+        ["run_phase", "report_workflow_slug", "report_phase_artifact", "report_autopilot_step"]);
     const opened = await canvas.open({ instanceId: "generated-test" });
     assert.match(await (await fetch(opened.url)).text(), /My Workflow/);
     const state = await (await fetch(new URL(`/api/state?token=${new URL(opened.url).searchParams.get("token")}`,
@@ -698,12 +698,12 @@ test("Workflow layout and phase control freeze, validate and package independent
             /frozen generated.phase-control-placement|Invalid required phase placement/i);
     }
     const replacement = await readFile(new URL(
-        "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/phase-adapter.mjs", import.meta.url));
+        "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url));
     const presetPath = join(project, ".specify", "templates", "generated-phase-adapter.mjs");
     await writeFile(presetPath, replacement);
     const presetModel = { ...model, templates: model.templates.map((entry) =>
         entry.name === "generated-phase-adapter"
-            ? { ...entry, sourceId: "copilot-vertical-pipeline-test", hash: digest(replacement) }
+            ? { ...entry, sourceId: "copilot-vertical-phase-control", hash: digest(replacement) }
             : entry) };
     const frozen = await freezeGeneration({ model: presetModel, values, handoff, project, workspace });
     await rm(presetPath);

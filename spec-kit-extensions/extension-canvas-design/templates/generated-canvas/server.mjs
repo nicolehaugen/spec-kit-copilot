@@ -675,7 +675,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && url.pathname === "/api/artifact") return json(response, 200, await runtime.artifact({
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
             }));
-            if (request.method !== "POST" || !["/api/run", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
+            if (request.method !== "POST" || !["/api/run", "/api/autopilot/start", "/api/autopilot/stop", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;
             if (origin && origin !== `http://127.0.0.1:${port()}`) throw new UserError("Untrusted request origin.", 403);
             if (!request.headers["content-type"]?.startsWith("application/json")) throw new UserError("Expected a JSON request.", 415);
@@ -690,12 +690,14 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             try { input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); } catch { throw new UserError("Invalid JSON request."); }
             if (!input || typeof input !== "object" || Array.isArray(input)) throw new UserError("Expected a JSON object.");
             const result = url.pathname === "/api/run" ? await runtime.run(input, instanceId)
+                : url.pathname === "/api/autopilot/start" ? await runtime.startAutopilot(input, instanceId)
+                    : url.pathname === "/api/autopilot/stop" ? await runtime.stopAutopilot(input, instanceId)
                 : url.pathname === "/api/state" ? await runtime.save(input)
                     : url.pathname === "/api/values" ? await runtime.saveValue(input)
                     : url.pathname === "/api/reveal" ? await runtime.reveal(input)
                         : url.pathname === "/api/workflow/delete" ? await runtime.deleteWorkflow(input)
                             : await runtime.refresh();
-            return json(response, url.pathname === "/api/run" ? 202 : 200, result);
+            return json(response, ["/api/run", "/api/autopilot/start"].includes(url.pathname) ? 202 : 200, result);
         } catch (error) {
             if (!(error instanceof UserError)) await log("Generated canvas request failed. Check the local runtime and state permissions.");
             json(response, error instanceof UserError ? error.status : 500, {

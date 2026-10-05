@@ -425,6 +425,16 @@ The host owns dispatch safeguards, persistence, and artifacts; it never
 reaches into the adapter's DOM. An adapter renders its own controls and updates
 them in `update` when the host supplies new state. A minimal phase list:
 
+The catalog-listed `copilot-vertical-phase-control` preset replaces the
+`generated-phase-adapter` named template. Its adapter exports
+`supportsAutopilot = true` and receives per-step statuses and the current
+Autopilot state. The host offers `runAt`, `viewAt`, `autopilot`, and
+`stopAutopilot` actions in addition to the original actions, validates
+step progress and artifacts, and keeps phase execution in the Copilot
+session. The stock adapter does not opt in, so its layout and behavior
+remain unchanged. See the [preset guide](../../spec-kit-presets/copilot-vertical-phase-control/README.md)
+for local installation; the catalog download requires a published release.
+
 ```js
 export const controlId = "workflow-phases";
 export const contractVersion = 1;

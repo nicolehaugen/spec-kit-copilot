@@ -229,8 +229,13 @@ those slots without duplicating field values. The control definition identifies
 The generated host validates and packages all four resolved assets. The
 adapter owns its DOM and exposes `mount({ root, state, actions })` with
 `update(state)` and `dispose()`; the host retains phase execution,
-persistence, and artifact routes. `copilot-vertical-pipeline-test` exercises
-an alternate vertical adapter without replacing phase-dispatch safeguards.
+persistence, and artifact routes. `copilot-vertical-phase-control` replaces
+only that adapter with a vertical step list and opts in to Copilot Autopilot.
+The generated host verifies the packaged adapter before exposing Autopilot,
+dispatches one Copilot autopilot-mode turn, and accepts in-order step reports
+only after required artifacts are present. An interrupted or unconfirmed turn
+blocks further automatic progress until the user deliberately resumes. The
+stock control and default presentation remain unchanged.
 
 An **adapter** is JavaScript supplied for a particular control or presentation **in one canvas**. A control definition describes its stable ID, supported value schema, host capabilities, and adapter IDs. Multiple fields can reuse one control and adapter; a new field does not necessarily need new JavaScript.
 

@@ -24,6 +24,7 @@ their canonical home.
 | --- | --- | --- |
 | [`copilot-sub-agents`](copilot-sub-agents) | Spec Kit `>= 0.8.0` | Built around Copilot delegation mechanisms — VS Code's `runSubagent` tool, Copilot CLI sub-agent processes, and custom agents in `.github/agents/` / `~/.copilot/agents/`. |
 | [`copilot-assess-ask-questions`](copilot-assess-ask-questions) | Spec Kit `>= 0.9.0`, the `assess` extension | Drives the assess pipeline through Copilot's interactive `ask_user` tool (App, CLI, VS Code). No plain-text fallback — not meant for agents without an interactive question tool. |
+| [`copilot-vertical-phase-control`](copilot-vertical-phase-control) | Spec Kit `>= 1.0.7`, the `extension-canvas-design` extension | Replaces the Copilot generated canvas phase adapter and uses its Copilot Autopilot session and validated artifact-reporting actions. |
 
 Only Copilot-specific presets belong here. Agent-agnostic presets (generic themes,
 extension-specific workflows that don't rely on Copilot's tools) do **not** belong in
@@ -48,6 +49,7 @@ specify preset catalog add https://raw.githubusercontent.com/github/spec-kit-cop
 # then add by id — the normal way:
 specify preset add copilot-sub-agents
 specify preset add copilot-assess-ask-questions   # also: specify extension add assess
+specify preset add copilot-vertical-phase-control # also: specify extension add extension-canvas-design
 ```
 
 The two methods below are escape hatches, not the primary path:

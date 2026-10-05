@@ -7,10 +7,12 @@ export function phaseControlDom() {
         const classes = new Set(attributes.match(/\bclass="([^"]+)"/)?.[1]?.split(" ") ?? []);
         const index = attributes.match(/\bdata-phase-index="([^"]+)"/)?.[1];
         const action = attributes.match(/\bdata-action="([^"]+)"/)?.[1];
+        const rowIndex = attributes.match(/\bdata-index="([^"]+)"/)?.[1];
         const node = {
             id, tag, attributes: new Map(), dataset: {
                 ...(index === undefined ? {} : { phaseIndex: index }),
                 ...(action === undefined ? {} : { action }),
+                ...(rowIndex === undefined ? {} : { index: rowIndex }),
                 ...(attributes.includes("data-phase-draft") ? { phaseDraft: "" } : {}),
             },
             classList: {

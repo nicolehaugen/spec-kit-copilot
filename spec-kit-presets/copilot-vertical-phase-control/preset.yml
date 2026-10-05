@@ -1,10 +1,10 @@
 schema_version: "1.0"
 
 preset:
-  id: "copilot-vertical-pipeline-test"
-  name: "Copilot Vertical Pipeline Test"
-  version: "0.1.0"
-  description: "Test-only vertical presentation of the generated Workflow pipeline."
+  id: "copilot-vertical-phase-control"
+  name: "Copilot Vertical Phase Control"
+  version: "1.0.0"
+  description: "Copilot Autopilot and a vertical phase list for the generated Canvas Design Workflow page."
   author: "spec-kit-copilot"
   license: "MIT"
 
@@ -24,10 +24,10 @@ provides:
     - type: "template"
       name: "generated-phase-adapter"
       file: "generated/phase-adapter.mjs"
-      description: "Show the complete Workflow phase control as a vertical list and card."
+      description: "Show Workflow phases as a vertical list with Copilot Autopilot and step controls."
       strategy: "replace"
 
 tags:
   - "copilot"
   - "canvas-design"
-  - "test"
+  - "autopilot"

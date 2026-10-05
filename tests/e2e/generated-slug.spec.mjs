@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -46,25 +47,55 @@ test("phase actions report connecting before the first state refresh", async ({ 
     }
 });
 
-test("vertical phase adapter keeps navigation and host run actions", async ({ page }) => {
+test("vertical phase adapter keeps the numbered step list and manual retry accessible", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
     try {
         const vertical = await readFile(new URL(
-            "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/phase-adapter.mjs", import.meta.url));
+            "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url));
         await page.route("**/pages/generated-phase-adapter.mjs*", (route) => route.fulfill({
             contentType: "text/javascript", body: vertical,
         }));
         await page.goto(canvas.url);
         await expect(page.locator(".vertical-phase-list [data-phase-index]")).toHaveCount(2);
+        await expect(page.locator('[data-action="autopilot"]')).toBeVisible();
+        await expect(page.locator('[data-action="start"]')).toHaveCount(2);
         await page.locator('.vertical-phase-list [data-phase-index="1"]').click();
         await expect(page.locator(".phase-card h2")).toHaveText("Plan");
-        await expect(page.locator('[data-action="run"]')).toBeVisible();
+        await expect(page.locator('[data-action="start"]').first()).toBeEnabled();
         await page.locator('[data-action="previous"]').click();
         await expect(page.locator(".phase-card h2")).toHaveText("Specify");
         await page.locator("[data-phase-draft]").fill("Vertical proof");
-        await page.locator('[data-action="run"]').click();
-        await expect(page.locator('[data-action="run"]')).toBeVisible();
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        await page.locator('[data-action="start"]').first().click();
+        await expect(page.locator('[data-action="start"]').first()).toBeEnabled();
+        await page.setViewportSize({ width: 390, height: 760 });
+        await expect(page.locator(".vertical-phase-list [data-phase-index]")).toHaveCount(2);
+        await page.locator("#theme-toggle").click();
+        await expect(page.locator(".vertical-phase-list [data-phase-index]").first()).toBeVisible();
         await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
+    } finally { await canvas.close(); }
+});
+
+test("vertical Autopilot initiates the first step through the packaged Copilot session", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"],
+        undefined, undefined, undefined, undefined, true);
+    try {
+        for (const name of ["specify", "plan"]) {
+            const skill = join(canvas.root, ".github", "skills", `speckit-${name}`);
+            await mkdir(skill, { recursive: true });
+            await writeFile(join(skill, "SKILL.md"), `---\nname: speckit-${name}\n---\n`);
+        }
+        await page.goto(canvas.url);
+        await page.locator('[data-action="autopilot"]').click();
+        await expect(page.locator('[data-action="stop"]')).toBeVisible();
+        await expect(page.locator(".vertical-phase-toolbar")).toContainText("step 1 of 2");
+        assert.equal(canvas.sent[0].agentMode, "autopilot");
+        assert.match(canvas.sent[0].prompt, /beginning with step 0/);
+        await page.locator('[data-action="stop"]').click();
+        await expect(page.locator(".vertical-phase-toolbar")).toContainText("Stopped");
+        await expect(page.locator('[data-action="autopilot"]')).toBeEnabled();
     } finally { await canvas.close(); }
 });
 
@@ -115,10 +146,14 @@ test("phase adapter mobile navigation selects phases", async ({ page }) => {
 });
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
-    generatedPages, readOnlyFields, generatedControls, valueSources) {
+    generatedPages, readOnlyFields, generatedControls, valueSources, vertical = false) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
+    const selectedAdapter = vertical ? await readFile(new URL(
+        "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url))
+        : phaseAdapter;
     const config = {
-        schemaVersion: 1, userProvidesSlug, workflowPage, phasePlacement,
+        schemaVersion: 1, userProvidesSlug,
+        workflowPage: { ...workflowPage, hash: digest(selectedAdapter) }, phasePlacement,
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
@@ -146,14 +181,19 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
             ["workflow.json", workflowSource],
             ["generated-phase-placement.json", workflowSource],
             ["phase-control.json", phaseControlSource],
-            ["generated-phase-adapter.mjs", phaseControlSource],
         ].map(([file, source]) => copyFile(new URL(file, source), join(sdk, "pages", file))));
+        await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), selectedAdapter);
         const { createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
         const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
-        runtime = await createRuntime({ config, cwd: root, workspace: root,
-            session: { sessionId: "slug-browser-test", on: () => () => {},
-                getEvents: async () => [], log: async () => {}, send: async () => "sent-message-id",
-                rpc: { skills: { reload: async () => ({ errors: [] }) } } } });
+        const sent = [];
+        const session = { sessionId: "slug-browser-test", mode: "interactive", on: () => () => {},
+            getEvents: async () => [], log: async () => {},
+            send: async (options) => { sent.push(options); return "sent-message-id"; },
+            abort: async () => {},
+            rpc: { skills: { reload: async () => ({ errors: [] }) },
+                mode: { get: async () => session.mode,
+                    set: async ({ mode }) => { session.mode = mode; return { modeApplied: true }; } } } };
+        runtime = await createRuntime({ config, cwd: root, workspace: root, session });
         const token = randomBytes(32).toString("hex");
         routes = createWorkflowRoutes(config, { runtime, instanceId: "slug-test", token,
             port: () => server.address().port });
@@ -164,7 +204,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         return {
             url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
             root,
-            runtime,
+            runtime, sent,
             broadcast: () => routes.broadcast(),
             close: async () => {
                 routes.close();
