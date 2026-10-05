@@ -8,7 +8,8 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 Canvas Design **0.1.18** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
-Workflow page definition and pipeline renderer, plus the
+Workflow page definition, required phase placement, phase control definition,
+and phase adapter, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -17,8 +18,8 @@ The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
 
 Replaceable templates are organized by host: `designer/` contains Designer
-tabs and settings, while `generated/pages/` contains the Workflow definition
-and pipeline renderer. `templates/generated-canvas/` is the static app
+tabs and settings, while `generated/pages/` contains Workflow page and phase
+control definitions, placements, and the phase adapter. `templates/generated-canvas/` is the static app
 scaffold; Generate copies the resolved `generated/` assets into its `pages/`
 directory, so the finished app does not depend on this extension at runtime.
 
@@ -30,8 +31,10 @@ directory, so the finished app does not depend on this extension at runtime.
 | `designer-essentials-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `designer-essentials-header-logo` | Essentials slot | Optional small header logo |
 | `designer-essentials-main-page-logo` | Essentials slot | Optional larger main-page logo |
-| `generated-workflow` | Generated Workflow page | Ordered, required host regions |
-| `generated-pipeline` | Generated Workflow page | Replaceable phase navigation and card presentation |
+| `generated-workflow` | Generated Workflow page | Required page metadata and named slots; host shell stays fixed |
+| `generated-phase-placement` | Generated Workflow page | Required phase control placement in `workflow.phases` |
+| `generated-phase-control` | Generated Workflow page | Phase control identity and adapter reference |
+| `generated-phase-adapter` | Generated Workflow page | Replaceable phase navigation and card presentation |
 | `shared-controls-image` | Shared control | Image value contract and paired adapter names |
 | `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
 | `generated-control-adapter-image` | Generated app | Render packaged images in authorized slots |
@@ -335,8 +338,11 @@ not the JSON document. No kind is inferred from a filename.
 | --- | --- | --- |
 | `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
-| `generated.workflow-page-definition` | Required generated Workflow layout | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
-| `generated.pipeline-renderer` | Workflow pipeline `.mjs` presentation | Module contract below |
+| `generated.workflow-page-definition` | Required generated Workflow page and slots | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `generated.phase-control-placement` | Required phase control placement | [phase placement](schemas/generated.phase-control-placement.schema.json) |
+| `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/generated.field-placement.schema.json) |
+| `generated.phase-control-definition` | Required phase control identity and adapter reference | [phase control](schemas/generated.phase-control-definition.schema.json) |
+| `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
 | `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
@@ -363,54 +369,69 @@ module under its own name as well as its referencing JSON template. The generate
 app packages the winning generated-host modules; it does not load source presets
 at runtime. Do not import another module from a renderer or provider.
 
-The required `generated-workflow` definition has `id: "workflow"`, a `pipeline`
-reference to the registered `generated.pipeline-renderer`, and an ordered
-`regions` array containing each of `collection`, `details`, `values`,
-`controls`, `pages`, `constitution`, `message`, and `pipeline` exactly once.
-The generated host renders these regions in the declared order. Presets may
-replace the whole JSON template to reorder them, but cannot remove host
-regions, invent new ones, or change the phase-dispatch rules. Regions without
-configured content render nothing. This is intentionally distinct from an
-added generated page's `renderPage` contract.
+The required `generated-workflow` page has `id: "workflow"`, title, order,
+and named slots, including the required `workflow.phases`. The generated host
+owns its header, collection, details, values, controls, page navigation,
+constitution, messages, and artifact viewer in a fixed shell. Presets may
+replace the Workflow page JSON to add slots; additional slots render together
+in one ordered contributions area. They cannot remove `workflow.phases` or
+reorder the shell. The separately registered `generated-phase-placement`
+targets `workflow.phases` and references `generated-phase-control`, keeping
+the phase navigation and card at their fixed location. The phase control definition
+has `schemaVersion: 1`, `id: "workflow-phases"`, and
+`adapter: "generated-phase-adapter"`. Designer freezes those definitions,
+the required placement, and the adapter as integrity-checked assets.
 
-The pipeline module exports `mount({ root, phases, actions })`. It owns the
-navigation and selected-phase card within `root` and returns `{ steps }`, an
-ordered array of its phase buttons. `phases` contains `{ id, label, output }`
-display data; the host supplies `actions.select(index, focusId?)`,
+Like Designer settings, separately registered generated field placements
+target a page and one of its declared slots, identify a field and display
+order, and reuse a stock or preset control. Added page renderers expose
+`data-field-slot` mount points for declared field placements. Several
+placements of one field share one value; independent fields can use the
+same control adapter. Read-only is the default; an explicitly editable
+constant typed value saves through the host's existing `/api/values` endpoint.
+Computed values cannot be edited. Stock images are display-only packaged
+assets, not runtime uploads. Fixed legacy brand/intro and details bindings
+retain their current behavior.
+
+The phase adapter exports `controlId = "workflow-phases"`,
+`contractVersion = 1`, and `mount({ root, state, actions })`, returning
+`{ update(state), dispose() }`. It owns phase navigation and the selected-phase
+card within `root`. `state` supplies the phase list, current index, workflow
+identity, status, draft, output, other outputs, and sending status. The host
+supplies `actions.select(index)`,
 `actions.run(args)`, `actions.view()`, `actions.reveal()`,
 `actions.draft(value)`, and `actions.error(error)`. The first four request
 host-validated operations; adapters do not call workflow endpoints directly.
-For this initial proof, the renderer must retain the host's documented
-`phase-navigation`, `phase-card`, `phase-args`, status/action IDs,
-`data-phase-index`/`data-phase-label` buttons and `phase-template-N` elements
-used for state and focus updates. The test-only vertical preset demonstrates
-replacing the module while retaining those interactions; a fully independent
-feature-control lifecycle is a later milestone. A minimal static phase list:
+The host owns dispatch safeguards, persistence, and artifacts; it never
+reaches into the adapter's DOM. An adapter renders its own controls and updates
+them in `update` when the host supplies new state. A minimal phase list:
 
 ```js
-export function mount({ root, phases, actions }) {
+export const controlId = "workflow-phases";
+export const contractVersion = 1;
+export function mount({ root, state, actions }) {
   const list = document.createElement("ol");
-  const steps = phases.map((phase, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.phaseIndex = String(index);
-    button.dataset.phaseLabel = phase.label;
-    button.textContent = phase.label;
-    button.addEventListener("click", () =>
-      Promise.resolve(actions.select(index)).catch(actions.error));
-    const item = document.createElement("li");
-    item.append(button);
-    list.append(item);
-    return button;
-  });
   root.replaceChildren(list);
-  return { steps };
+  const update = ({ phases, current }) => {
+    list.replaceChildren(...phases.map((phase, index) => {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = phase.label;
+      button.setAttribute("aria-current", current === index ? "step" : "false");
+      button.onclick = () => Promise.resolve(actions.select(index)).catch(actions.error);
+      item.append(button);
+      return item;
+    }));
+  };
+  update(state);
+  return { update, dispose() { root.replaceChildren(); } };
 }
 ```
 
-The snippet illustrates the callback shape only; a working replacement must
-also render the required phase card and status/action elements. See
-[`generated-pipeline`](generated/pages/generated-pipeline.mjs)
+The snippet illustrates the lifecycle only; a working replacement also renders
+the phase card and actions. See
+[`generated-phase-adapter`](generated/pages/generated-phase-adapter.mjs)
 for the complete stock implementation. Module imports are not packaged.
 
 `generated.added-page-renderer` exports

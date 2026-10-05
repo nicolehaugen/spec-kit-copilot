@@ -467,7 +467,7 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
 });
 
-test("Workflow layout and renderer freeze, validate and package independently of the preset", async (t) => {
+test("Workflow layout and phase control freeze, validate and package independently of the preset", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
@@ -481,48 +481,71 @@ test("Workflow layout and renderer freeze, validate and package independently of
         await writeFile(requestPath, JSON.stringify(request));
     };
     for (const edit of [
-        (page) => { page.regions.pop(); },
-        (page) => { page.regions[1] = page.regions[0]; },
-        (page) => { page.pipeline = "../escape"; },
+        (page) => { page.slots.pop(); },
+        (page) => { page.slots.push({ id: "workflow.phases" }); },
+        (page) => { page.title = "../escape"; },
         (page) => { page.assets[1].hash = "0".repeat(64); },
+        (page) => { page.assets[2].kind = "script"; },
         (page) => {
-            const bytes = Buffer.from("export function mount( {");
+            const bytes = Buffer.from('{"schemaVersion":1,"id":"workflow-phases","adapter":"wrong"}');
             page.assets[1].content = bytes.toString("base64");
             page.assets[1].hash = digest(bytes);
+        },
+        (page) => {
+            const bytes = Buffer.from("export function mount( {");
+            page.assets[2].content = bytes.toString("base64");
+            page.assets[2].hash = digest(bytes);
         },
     ]) {
         await rewrite((request) => edit(request.workflowPage));
         await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-            /Invalid frozen Workflow page assets|Frozen Workflow page definition|Invalid frozen pipeline renderer/);
+            /Invalid frozen Workflow page assets|Frozen Workflow page definition|Invalid frozen phase control/);
         await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
     }
+    for (const edit of [
+        (placement) => { placement.slot = "workflow.missing"; },
+        (placement) => { placement.assets[0].hash = "0".repeat(64); },
+    ]) {
+        await rewrite((request) => edit(request.phasePlacement));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /frozen generated.phase-control-placement|Invalid required phase placement/i);
+    }
     const replacement = await readFile(new URL(
-        "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/pipeline.mjs", import.meta.url));
-    const presetPath = join(project, ".specify", "templates", "generated-pipeline.mjs");
+        "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/phase-adapter.mjs", import.meta.url));
+    const presetPath = join(project, ".specify", "templates", "generated-phase-adapter.mjs");
     await writeFile(presetPath, replacement);
     const presetModel = { ...model, templates: model.templates.map((entry) =>
-        entry.name === "generated-pipeline"
+        entry.name === "generated-phase-adapter"
             ? { ...entry, sourceId: "copilot-vertical-pipeline-test", hash: digest(replacement) }
             : entry) };
     const frozen = await freezeGeneration({ model: presetModel, values, handoff, project, workspace });
     await rm(presetPath);
     await materialize(project, workspace, handoff.handoffId, frozen.requestId);
-    assert.deepEqual(await readFile(join(sdk, "pages", "generated-pipeline.mjs")), replacement);
-    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    assert.deepEqual(await readFile(join(sdk, "pages", "generated-phase-adapter.mjs")), replacement);
+    const { readConfig, renderHtml: renderPackaged } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     assert.equal(readConfig().workflowPage.hash, digest(replacement));
-    assert.deepEqual(await readdir(join(sdk, "pages")), ["generated-pipeline.mjs", "workflow.json"]);
-    await writeFile(join(sdk, "pages", "generated-pipeline.mjs"), "export function mount() {}");
-    assert.throws(() => readConfig(), /Workflow page|pipeline|Invalid generated canvas/);
+    assert.equal(readConfig().workflowPage.phaseControl, "generated-phase-control");
+    assert.deepEqual(await readdir(join(sdk, "pages")), [
+        "generated-phase-adapter.mjs", "generated-phase-placement.json", "phase-control.json", "workflow.json",
+    ]);
+    assert.match(renderPackaged(readConfig()), /data-module="\/pages\/generated-phase-adapter.mjs"/);
+    await writeFile(join(sdk, "pages", "phase-control.json"), '{"schemaVersion":1,"id":"workflow-phases","adapter":"wrong"}');
+    assert.throws(() => readConfig(), /phase control/);
+    await writeFile(join(sdk, "pages", "phase-control.json"),
+        Buffer.from(original.workflowPage.assets[1].content, "base64"));
+    await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), "export function mount() {}");
+    assert.throws(() => readConfig(), /phase control|Invalid generated canvas/);
 });
 
-test("reordered Workflow regions render in their declared order", async (t) => {
+test("additional Workflow slots do not reorder the fixed shell", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const request = JSON.parse(await readFile(requestPath, "utf8"));
-    const regions = request.workflowPage.regions.reverse();
+    const slots = [...request.workflowPage.slots, { id: "workflow.extra" }];
+    request.workflowPage.slots = slots;
     const definition = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
-    definition.regions = regions;
+    definition.slots = slots;
     const bytes = Buffer.from(JSON.stringify(definition));
     request.workflowPage.assets[0].content = bytes.toString("base64");
     request.workflowPage.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
@@ -533,7 +556,48 @@ test("reordered Workflow regions render in their declared order", async (t) => {
     const { readConfig, renderHtml: renderPackaged } = await import(
         pathToFileURL(join(sdk, "server.mjs")).href);
     const html = renderPackaged(readConfig());
-    assert.ok(html.indexOf('id="workflow-pipeline"') < html.indexOf('id="instance-collection"'));
+    assert.ok(html.indexOf('id="instance-collection"') < html.indexOf('id="workflow-pipeline"'));
+});
+
+test("registered Workflow field placements are packaged and reject unknown slots", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(path, "utf8"));
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    const bytes = Buffer.from(JSON.stringify({
+        schemaVersion: 1, id: "workflow-description-placement", page: "workflow",
+        slot: "workflow.summary", field: "canvas.description", order: 10,
+    }));
+    const request = structuredClone(original);
+    request.workflowPage.slots.push({ id: "workflow.summary" });
+    const page = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
+    page.slots = request.workflowPage.slots;
+    const pageBytes = Buffer.from(JSON.stringify(page));
+    request.workflowPage.assets[0].content = pageBytes.toString("base64");
+    request.workflowPage.assets[0].hash = digest(pageBytes);
+    request.fieldPlacements = [{
+        id: "workflow-description-placement", page: "workflow", slot: "workflow.summary",
+        field: "canvas.description", order: 10, label: "Description", control: "stock.text",
+        assets: [{ kind: "generated.field-placement", name: "workflow-description-placement",
+            sourceId: "test-preset", content: bytes.toString("base64"), hash: digest(bytes) }],
+    }];
+    request.designerFields = [{ id: "canvas.description", label: "Description", control: "stock.text" }];
+    const writeRequest = async () => {
+        const { integrity: _previous, ...payload } = request;
+        request.integrity = digest(JSON.stringify(payload));
+        await writeFile(path, JSON.stringify(request));
+    };
+    await writeRequest();
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const { readConfig, renderHtml: renderPackaged } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    assert.equal(readConfig().fieldPlacements[0].field, "canvas.description");
+    assert.match(renderPackaged(readConfig()), /data-workflow-slot="workflow.summary"/);
+    assert.deepEqual(await readFile(join(sdk, "pages", "workflow-description-placement.json")), bytes);
+    request.fieldPlacements[0].slot = "workflow.unknown";
+    await writeRequest();
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /frozen generated.field-placement|Invalid generated field placement/i);
 });
 
 test("frozen named values reject tampered modules and package independently of their preset", async (t) => {
@@ -730,9 +794,8 @@ test("custom slug toggle controls the field and View target preview; actual dire
         assert.match(collection, /id="workflow-search"/);
         assert.doesNotMatch(html, /id="current-workflow-title"/);
         assert.ok(collection.indexOf('id="workflow-name"') > collection.indexOf('id="new-workflow"'));
-        const firstPhase = html.slice(html.indexOf('<section id="phase-card"'),
-            html.indexOf('<template id="phase-template-1"'));
-        assert.doesNotMatch(firstPhase, /id="workflow-name"|id="workflow-slug"/);
+        assert.match(html, /id="workflow-pipeline" data-module="\/pages\/generated-phase-adapter.mjs"/);
+        assert.doesNotMatch(html, /id="phase-card"|id="phase-args"|phase-template-/);
         assert.match(collection, /id="workflow-name-label">Workflow name <span class="muted">\(optional\)<\/span>/);
         assert.doesNotMatch(collection, /workflow-name-help|workflow-slug-help/);
         if (enabled) {
@@ -742,8 +805,6 @@ test("custom slug toggle controls the field and View target preview; actual dire
         } else assert.doesNotMatch(html, /id="workflow-slug"/);
         const ui = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/ui/app.js", import.meta.url), "utf8");
         assert.match(ui, /input\.placeholder = input\.readOnly \? "Automatically assigned" : "your-slug"/);
-        assert.doesNotMatch(html.slice(html.indexOf('<template id="phase-template-1"')),
-            /id="workflow-slug"|id="workflow-name"/);
         assert.match(html, /<h2 id="workflow-heading">Workflows/);
         assert.match(renderHtml({ ...config, phases: ["constitution"] }), /id="workflow-name"/);
         const skill = join(project, ".github", "skills", "speckit-specify");

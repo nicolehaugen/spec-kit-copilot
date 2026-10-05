@@ -50,13 +50,19 @@ provides:
       file: designer/essentials-settings/main-page-logo.json
       description: Optional independent larger logo for the generated workflow page.
 
-    # Workflow page: required regions and the generated phase presentation.
+    # Workflow page and its required phase-control placement.
     - name: generated-workflow
       file: generated/pages/workflow.json
-      description: Ordered Workflow page regions and pipeline renderer reference.
-    - name: generated-pipeline
-      file: generated/pages/generated-pipeline.mjs
-      description: Horizontal workflow phase presentation.
+      description: Required Workflow page definition and declared contribution slots.
+    - name: generated-phase-placement
+      file: generated/pages/generated-phase-placement.json
+      description: Required Workflow phase-control placement.
+    - name: generated-phase-control
+      file: generated/pages/phase-control.json
+      description: Workflow phase control identity and adapter reference.
+    - name: generated-phase-adapter
+      file: generated/pages/generated-phase-adapter.mjs
+      description: Workflow phase navigation and card adapter.
 
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image

@@ -69,6 +69,16 @@ is shared across Header, Main, and preset placements. An absent Header logo
 retains the brand mark; a configured image with a failing adapter reports a
 visible error rather than falling back.
 
+The required generated Workflow page now declares named slots instead of
+ordering host shell regions. Designer validates and freezes its required
+`workflow.phases` placement, plus separately registered typed field placements
+targeting that page or a preset-added page. Additional Workflow slots render
+together in a host-owned contributions area; preset-added page renderers expose
+`data-field-slot` targets. Designer's own tabs, settings UI, and control model
+are unchanged. Read-only values remain the default; explicit editable
+generated values use the generated shell's existing typed value API, while
+packaged images are display-only.
+
 Workflow name appears in the generated canvas's workflow collection, before
 phase navigation, while creating a workflow. It labels the workflow there.
 Essentials' default-off Allow custom slug setting controls whether an optional
@@ -161,7 +171,7 @@ instead of failing at provider startup. For local tests, install dependencies wi
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
 ```
 
-Canvas Design's [taxonomy, six kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
+Canvas Design's [taxonomy, kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
 define the registration and authoring surface. Required and added Designer tabs
 share the `designer.tab-definition` kind and schema; the required tabs are identified
 by their registered names. Preset fixture JSON omits `$schema` because its

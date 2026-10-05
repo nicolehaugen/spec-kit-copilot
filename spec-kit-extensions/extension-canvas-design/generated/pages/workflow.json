@@ -2,6 +2,7 @@
   "$schema": "../../schemas/generated.workflow-page-definition.schema.json",
   "schemaVersion": 1,
   "id": "workflow",
-  "pipeline": "generated-pipeline",
-  "regions": ["collection", "details", "values", "controls", "pages", "constitution", "message", "pipeline"]
+  "title": "Workflow",
+  "order": 0,
+  "slots": [{"id": "workflow.phases"}]
 }

@@ -18,13 +18,13 @@ provides:
     - type: "command"
       name: "speckit.extension-canvas-design.load-page"
       file: "commands/load-page.md"
-      description: "Register the vertical pipeline replacement."
+      description: "Register the vertical phase control replacement."
       replaces: "speckit.extension-canvas-design.load-page"
       strategy: "append"
     - type: "template"
-      name: "generated-pipeline"
-      file: "generated/pipeline.mjs"
-      description: "Show the Workflow phases in a vertical list."
+      name: "generated-phase-adapter"
+      file: "generated/phase-adapter.mjs"
+      description: "Show the complete Workflow phase control as a vertical list and card."
       strategy: "replace"
 
 tags:

@@ -7,7 +7,9 @@ export async function addWorkflowFixture(project, model) {
     await mkdir(directory, { recursive: true });
     const assets = [
         ["generated-workflow", "generated.workflow-page-definition", "workflow.json"],
-        ["generated-pipeline", "generated.pipeline-renderer", "generated-pipeline.mjs"],
+        ["generated-phase-placement", "generated.phase-control-placement", "generated-phase-placement.json"],
+        ["generated-phase-control", "generated.phase-control-definition", "phase-control.json"],
+        ["generated-phase-adapter", "generated.phase-control-adapter", "generated-phase-adapter.mjs"],
     ];
     model.templates = (model.templates ?? []).filter((entry) =>
         !assets.some(([name]) => name === entry.name));
@@ -21,5 +23,8 @@ export async function addWorkflowFixture(project, model) {
     }
     model.workflowPage = { name: "generated-workflow",
         ...JSON.parse(await readFile(new URL("../extension-canvas-design/generated/pages/workflow.json", import.meta.url))) };
+    model.phasePlacement = { name: "generated-phase-placement",
+        ...JSON.parse(await readFile(new URL(
+            "../extension-canvas-design/generated/pages/generated-phase-placement.json", import.meta.url))) };
     return model;
 }

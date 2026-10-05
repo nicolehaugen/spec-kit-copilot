@@ -217,15 +217,20 @@ At **each milestone**, preserve the unchanged Wizard code, behavior, and handoff
 
 ## 10. What an adapter is
 
-**Workflow layout proof (PR #21):** The generated Workflow page now has a
-required replace-only `generated-workflow` definition listing its host-owned
-regions in render order and referencing a replaceable `generated-pipeline`
-module. The generated host validates and packages their resolved bytes; only
-the phase presentation is replaceable. `copilot-vertical-pipeline-test` is an
-unpublished proof that the phase list can be vertical without replacing phase
-execution, persistence, or artifact routes. Its renderer still implements the
-initial host DOM/update contract; the independent feature-control API and
-broader layout customization remain future work.
+**Workflow layout and phase control:** The required replace-only
+`generated-workflow` page declares its title, order, and named slots; the
+generated host owns the fixed shell rather than taking an ordered list of
+shell regions from the page JSON. The required `workflow.phases` slot has a
+separately registered phase placement referencing `generated-phase-control`.
+Additional Workflow slots share an ordered contributions area; added page
+renderers expose declared mount points. Separate field placements target
+those slots without duplicating field values. The control definition identifies
+`workflow-phases` and references the replaceable `generated-phase-adapter`.
+The generated host validates and packages all four resolved assets. The
+adapter owns its DOM and exposes `mount({ root, state, actions })` with
+`update(state)` and `dispose()`; the host retains phase execution,
+persistence, and artifact routes. `copilot-vertical-pipeline-test` exercises
+an alternate vertical adapter without replacing phase-dispatch safeguards.
 
 An **adapter** is JavaScript supplied for a particular control or presentation **in one canvas**. A control definition describes its stable ID, supported value schema, host capabilities, and adapter IDs. Multiple fields can reuse one control and adapter; a new field does not necessarily need new JavaScript.
 

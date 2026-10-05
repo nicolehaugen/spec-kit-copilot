@@ -31,6 +31,9 @@ FILES = {
     "schemas/designer.setting-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
     "schemas/generated.workflow-page-definition.schema.json",
+    "schemas/generated.phase-control-definition.schema.json",
+    "schemas/generated.phase-control-placement.schema.json",
+    "schemas/generated.field-placement.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
     *(f"designer/tabs/{name}.json" for name in PAGE_NAMES),
@@ -46,7 +49,9 @@ FILES = {
     "controls/stock-checkbox/control.json",
     "controls/stock-checkbox/designer.mjs",
     "generated/pages/workflow.json",
-    "generated/pages/generated-pipeline.mjs",
+    "generated/pages/generated-phase-placement.json",
+    "generated/pages/phase-control.json",
+    "generated/pages/generated-phase-adapter.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
@@ -111,7 +116,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
             + [("generated-workflow", "generated/pages/workflow.json"),
-               ("generated-pipeline", "generated/pages/generated-pipeline.mjs")]
+               ("generated-phase-placement", "generated/pages/generated-phase-placement.json"),
+               ("generated-phase-control", "generated/pages/phase-control.json"),
+               ("generated-phase-adapter", "generated/pages/generated-phase-adapter.mjs")]
             + [(name, f"controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [
@@ -318,7 +325,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
         )
         self.assertEqual(registrations, [
             ("generated-workflow", "generated.workflow-page-definition", "replace"),
-            ("generated-pipeline", "generated.pipeline-renderer", "replace"),
+            ("generated-phase-placement", "generated.phase-control-placement", "replace"),
+            ("generated-phase-control", "generated.phase-control-definition", "replace"),
+            ("generated-phase-adapter", "generated.phase-control-adapter", "replace"),
             ("shared-controls-text", "shared.control-definition", "replace"),
             ("designer-control-adapter-text", "designer.control-adapter", "replace"),
             ("generated-control-adapter-text", "generated.control-adapter", "replace"),

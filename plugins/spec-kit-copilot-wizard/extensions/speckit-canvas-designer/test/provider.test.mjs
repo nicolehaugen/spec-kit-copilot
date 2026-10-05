@@ -94,7 +94,9 @@ async function projectFixture(t, workspace) {
     await mkdir(join(installed, "generated", "pages"), { recursive: true });
     for (const [name, filename, kind] of [
         ["generated-workflow", "workflow.json", "generated.workflow-page-definition"],
-        ["generated-pipeline", "generated-pipeline.mjs", "generated.pipeline-renderer"],
+        ["generated-phase-placement", "generated-phase-placement.json", "generated.phase-control-placement"],
+        ["generated-phase-control", "phase-control.json", "generated.phase-control-definition"],
+        ["generated-phase-adapter", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
         const path = join(installed, "generated", "pages", filename);
         await copyFile(join(source, "generated", "pages", filename), path);
@@ -211,24 +213,39 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     const workflowFile = scalar.find((item) => item.name === "generated-workflow").path;
     const originalWorkflow = await readFile(workflowFile, "utf8");
     const reordered = JSON.parse(originalWorkflow);
-    reordered.regions.reverse();
+    reordered.slots.push({ id: "workflow.summary" });
     await writeFile(workflowFile, JSON.stringify(reordered));
     const changedLayout = await loadResolvedDesignerPages(handoff, project, entries, fields);
-    assert.deepEqual(changedLayout.workflowPage.regions, reordered.regions);
-    reordered.regions[0] = reordered.regions[1];
+    assert.deepEqual(changedLayout.workflowPage.slots, reordered.slots);
+    reordered.slots[1] = reordered.slots[0];
     await writeFile(workflowFile, JSON.stringify(reordered));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /invalid Workflow page definition/);
     await writeFile(workflowFile, originalWorkflow);
-    const pipelineFile = scalar.find((item) => item.name === "generated-pipeline").path;
-    const originalPipeline = await readFile(pipelineFile, "utf8");
-    await writeFile(pipelineFile, "export function other() {}");
+    const controlFile = scalar.find((item) => item.name === "generated-phase-control").path;
+    const originalControl = await readFile(controlFile, "utf8");
+    const changedControl = JSON.parse(originalControl);
+    changedControl.adapter = "missing-adapter";
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /missing or unreferenced phase control adapter/);
+    changedControl.adapter = "generated-phase-adapter";
+    changedControl.id = "wrong-id";
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid phase control definition/);
+    await writeFile(controlFile, originalControl);
+    const adapterFile = scalar.find((item) => item.name === "generated-phase-adapter").path;
+    const originalAdapter = await readFile(adapterFile, "utf8");
+    await writeFile(adapterFile, "export function other() {}");
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /missing mount export/);
-    await writeFile(pipelineFile, originalPipeline);
+    await writeFile(adapterFile, originalAdapter);
     await assert.rejects(loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
-            || item.kind === "generated.pipeline-renderer"), verify),
+            || item.kind === "generated.phase-control-placement"
+            || item.kind === "generated.phase-control-definition"
+            || item.kind === "generated.phase-control-adapter"), verify),
         /missing shared control definition for canvas.id/);
     await assert.rejects(loadPages(handoff, project, entries,
         [...fields, ...scalar.filter((item) => item.name !== "generated-control-adapter-text")],
@@ -254,6 +271,95 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(entries[0].path, JSON.stringify(setup));
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
     assert.match(invalid.pages[0].error.reason, /duplicate or invalid field canvas.id/);
+});
+
+test("preset field placements resolve into Workflow and added-page slots", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const fields = await stockTemplates(project);
+    const workflow = scalarFixtures.get(project).find((item) => item.name === "generated-workflow").path;
+    const page = JSON.parse(await readFile(workflow, "utf8"));
+    page.slots.push({ id: "workflow.summary" });
+    await writeFile(workflow, JSON.stringify(page));
+    const folder = join(project, ".specify", "presets", "placement-fixture");
+    await mkdir(folder, { recursive: true });
+    const extra = async (name, kind, contents, extension = "json") => {
+        const path = join(folder, `${name}.${extension}`);
+        await writeFile(path, typeof contents === "string" ? contents : JSON.stringify(contents));
+        return { name, path, kind, strategy: "replace", sourceId: "placement-fixture" };
+    };
+    const risk = new URL("../../../../../spec-kit-presets/copilot-risk-matrix-test/controls/risk-matrix/",
+        import.meta.url);
+    const riskSchema = { type: "object", properties: {
+        impact: ["low", "medium", "high"], likelihood: ["low", "medium", "high"],
+    } };
+    const templates = [...fields,
+        await extra("billing-view", "generated.added-page-definition", {
+            schemaVersion: 1, id: "billing-view", title: "Billing", order: 20,
+            renderer: "billing-renderer", slots: [{ id: "billing.summary" }],
+        }),
+        await extra("billing-renderer", "generated.added-page-renderer",
+            'export function renderPage({root}) { root.innerHTML = \'<div data-field-slot="billing.summary"></div>\'; }',
+            "mjs"),
+        await extra("workflow-description", "generated.field-placement", {
+            schemaVersion: 1, id: "workflow-description", page: "workflow",
+            slot: "workflow.summary", field: "canvas.description", order: 10,
+        }),
+        await extra("billing-description", "generated.field-placement", {
+            schemaVersion: 1, id: "billing-description", page: "billing-view",
+            slot: "billing.summary", field: "canvas.description", order: 10,
+        }),
+        await extra("canvas-control-risk-matrix", "shared.control-definition",
+            await readFile(new URL("control.json", risk), "utf8")),
+        await extra("canvas-control-risk-matrix-designer", "designer.control-adapter",
+            await readFile(new URL("designer.mjs", risk), "utf8"), "mjs"),
+        await extra("canvas-control-risk-matrix-generated", "generated.control-adapter",
+            await readFile(new URL("generated.mjs", risk), "utf8"), "mjs"),
+        ...await Promise.all(["risk.first", "risk.second"].map((id) => extra(
+            `value-${id.replace(".", "-")}`, "generated.value-definition", {
+                schemaVersion: 1, id, label: id, schema: riskSchema,
+                source: { kind: "constant", value: { impact: "low", likelihood: "high" } },
+                presentation: id === "risk.first" ? "stock.editable" : "stock.readonly",
+            }))),
+        ...await Promise.all(["risk.first", "risk.second"].map((id, order) => extra(
+            `placement-${id.replace(".", "-")}`, "generated.field-placement", {
+                schemaVersion: 1, id: `placement-${id.replace(".", "-")}`,
+                page: "workflow", slot: "workflow.summary", field: id,
+                order: order + 20, control: "risk-matrix",
+            }))),
+    ];
+    const registration = () => ({ kind: "template", stack: [{
+        active: true, sourceId: "placement-fixture", layer: "preset", strategy: "replace",
+    }] });
+    const model = await loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+    assert.deepEqual(model.fieldPlacements.map(({ page: id, field }) => [id, field]),
+        [["billing-view", "canvas.description"], ["workflow", "canvas.description"],
+            ["workflow", "risk.first"], ["workflow", "risk.second"]]);
+    const values = { ...model.values, "canvas.id": "placed-canvas",
+        "canvas.displayName": "Placed Canvas", "canvas.description": "One shared value" };
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, prepared.target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.fieldPlacements.filter((item) => item.field === "canvas.description")
+        .map(({ page: id, field, value }) => [id, field, value]),
+    [["billing-view", "canvas.description", "One shared value"],
+        ["workflow", "canvas.description", "One shared value"]]);
+    assert.equal(config.fieldPlacements.filter((item) => item.adapter === "canvas-control-risk-matrix-generated")
+        .length, 2);
+    const portable = join(workspace, "portable-canvas");
+    await cp(join(project, prepared.target), portable, { recursive: true });
+    await rm(folder, { recursive: true });
+    const { readConfig: readPortable } = await import(pathToFileURL(join(portable, "server.mjs")).href);
+    assert.equal(readPortable().fieldPlacements.length, 4);
+    await writeFile(join(portable, "controls", "canvas-control-risk-matrix-generated.mjs"),
+        "export function mount() {}");
+    assert.throws(readPortable, /Packaged placement control/);
 });
 
 test("custom text requiredness is field-specific at Generate while Save keeps drafts", async (t) => {
@@ -434,6 +540,23 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
         { revision: 0, modelRevision: full.revision, values });
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, saved)).values, values);
     const prepared = await freezeGeneration({ model: saved, values, handoff, project, workspace });
+    const phaseRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(Object.keys(phaseRequest.workflowPage).sort(),
+        ["assets", "id", "order", "slots", "title"]);
+    assert.equal(phaseRequest.workflowPage.id, "workflow");
+    assert.equal(phaseRequest.phasePlacement.control, "generated-phase-control");
+    assert.equal(phaseRequest.phasePlacement.slot, "workflow.phases");
+    assert.deepEqual(phaseRequest.workflowPage.assets.map(({ name, kind }) => [name, kind]), [
+        ["generated-workflow", "generated.workflow-page-definition"],
+        ["generated-phase-control", "generated.phase-control-definition"],
+        ["generated-phase-adapter", "generated.phase-control-adapter"],
+    ]);
+    for (const asset of phaseRequest.workflowPage.assets) {
+        assert.deepEqual(Object.keys(asset).sort(), ["content", "hash", "kind", "name", "sourceId"]);
+        assert.equal(createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex"),
+            asset.hash);
+    }
     const { materialize } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs",
         import.meta.url));
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
@@ -3076,7 +3199,9 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.equal(canvas.inputSchema.properties.templates.maxItems, 100);
     assert.deepEqual(canvas.inputSchema.properties.templates.items.properties.kind.enum,
         ["designer.setting-definition", "generated.workflow-page-definition",
-            "generated.pipeline-renderer", "generated.added-page-definition",
+            "generated.phase-control-definition", "generated.phase-control-adapter",
+            "generated.phase-control-placement", "generated.field-placement",
+            "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",
             "designer.control-adapter", "generated.control-adapter",
             "generated.value-definition", "generated.computed-value-provider"]);

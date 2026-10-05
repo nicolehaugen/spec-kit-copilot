@@ -26,6 +26,9 @@ test("generated skill declarations include appended pages and templates anywhere
     const names = declarations(appended).map((entry) => entry.name);
     assert.ok(names.includes("designer-essentials"));
     assert.ok(names.includes("designer-essentials-description"));
+    assert.ok(names.includes("generated-phase-placement"));
+    assert.ok(names.includes("generated-phase-control"));
+    assert.ok(names.includes("generated-phase-adapter"));
     assert.ok(names.includes("sample-renderer"));
     assert.ok(names.includes("sample-page"));
     assert.throws(() => declarations(`${appended}\n## Additional Canvas Design templates\n- \`sample-page\` — \`generated.computed-value-provider\`, \`replace\``),
@@ -34,7 +37,7 @@ test("generated skill declarations include appended pages and templates anywhere
         /Invalid Canvas Design kind or strategy/);
     assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`bad\` — \`generated.added-page-renderer\`, \`replace\`, \`append\``),
         /Invalid Canvas Design kind or strategy/);
-    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`con\` — \`generated.pipeline-renderer\`, \`replace\``),
+    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`con\` — \`generated.phase-control-adapter\`, \`replace\``),
         /Invalid Canvas Design registration/);
 });
 
@@ -67,7 +70,9 @@ test("composed verification resolves every name, rejects warnings and native scr
         "designer-essentials-header-logo": join(installed, "designer", "essentials-settings", "header-logo.json"),
         "designer-essentials-main-page-logo": join(installed, "designer", "essentials-settings", "main-page-logo.json"),
         "generated-workflow": join(installed, "generated", "pages", "workflow.json"),
-        "generated-pipeline": join(installed, "generated", "pages", "generated-pipeline.mjs"),
+        "generated-phase-placement": join(installed, "generated", "pages", "generated-phase-placement.json"),
+        "generated-phase-control": join(installed, "generated", "pages", "phase-control.json"),
+        "generated-phase-adapter": join(installed, "generated", "pages", "generated-phase-adapter.mjs"),
         "shared-controls-image": join(installed, "controls", "stock-image", "control.json"),
         "designer-control-adapter-image": join(installed, "controls", "stock-image", "designer.mjs"),
         "generated-control-adapter-image": join(installed, "controls", "stock-image", "generated.mjs"),
