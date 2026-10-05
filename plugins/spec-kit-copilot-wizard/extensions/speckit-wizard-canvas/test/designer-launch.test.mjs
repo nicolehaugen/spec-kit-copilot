@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -14,6 +14,7 @@ import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
+import { preflight, verifyLocalInstall } from "../server/designer-launch-check.mjs";
 import { buildAugmentedPath } from "../env/resolve-path.mjs";
 
 // Real, valid manifests in this repo (same fixtures e2e/canvas-designer.spec.mjs
@@ -100,6 +101,12 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.deepEqual(response.body, { queued: true });
     assert.equal(sent.length, 1);
     assert.match(sent[0].prompt, /no base_branch \(the project default\)/);
+    assert.match(sent[0].prompt, /Run ONE read-only preflight: node .*designer-launch-check\.mjs" preflight/);
+    assert.match(sent[0].prompt, /If preflight says initialized:false.*otherwise do not overwrite its setup/);
+    assert.match(sent[0].prompt, /verify-local.*EVERY approved local preset\/extension/);
+    assert.doesNotMatch(sent[0].prompt, /preflight-digest|approved preflight digest/);
+    assert.match(sent[0].prompt, /If the installed Canvas Design package includes scripts\/verify-launch\.mjs.*complete pages\/templates JSON as the ONE open input/);
+    assert.match(sent[0].prompt, /For the older hosted package without that script.*existing per-name manual verification/);
     assert.match(sent[0].prompt, /Session folder:" path in the child session context/);
     assert.match(sent[0].prompt, /session-state ROOT and the parent of its files\/ directory/);
     assert.match(sent[0].prompt, /Do NOT put it under <Session folder>\/files\//);
@@ -128,10 +135,10 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.match(sent[0].prompt, /Verify runtime bundles separately with bundle list --json \(bundle_id and version only\)/);
     assert.match(sent[0].prompt, /bundle IDs have no enabled state or priority and do not appear in preset\/extension lists/);
     assert.doesNotMatch(sent[0].prompt, /verify ALL handoff\.workflow\.installed IDs, versions, enabled states/);
-    assert.match(sent[0].prompt, /confirm it includes any page and template names registered by the installed Canvas Design presets/);
+    assert.doesNotMatch(sent[0].prompt, /confirm it includes any page and template names registered by the installed Canvas Design presets/);
     assert.match(sent[0].prompt, /speckit-extension-canvas-design-load-page/);
     assert.match(sent[0].prompt, /Invoke the generated, preset-composed speckit-extension-canvas-design-load-page skill with handoffId/);
-    assert.match(sent[0].prompt, /If the generated skill is unavailable after reload, report the concrete error and stop/);
+    assert.match(sent[0].prompt, /If the generated speckit-extension-canvas-design-load-page skill is unavailable after reload, report the concrete error and stop/);
     assert.match(sent[0].prompt, /Follow its entire composed command for the complete named-template resolution/);
     assert.match(sent[0].prompt, /ONCE after all installations/);
     assert.match(sent[0].prompt, /Require the installed version to be 0\.1\.7/);
@@ -698,13 +705,78 @@ test("buildDesignerLaunchPrompt documents local-wins precedence, including the e
     assert.match(promptWithExt, /verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force/);
     assert.ok(promptWithExt.indexOf("then install it now with specify extension add <path> --dev --force")
         < promptWithExt.indexOf("Then install approved bundles"));
-    assert.match(promptWithExt, /Verify extension-canvas-design still comes from the approved local path; if a bundle replaced it, restore that local override with specify extension add <path> --dev --force and verify its source again/);
+    assert.match(promptWithExt, /Verify extension-canvas-design's local manifest and inventory.*verify-local.*If a bundle replaced it, restore that local override with specify extension add <path> --dev --force and verify again/);
     assert.ok(promptWithExt.indexOf("Then install approved bundles")
-        < promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path"));
-    assert.ok(promptWithExt.indexOf("Verify extension-canvas-design still comes from the approved local path")
+        < promptWithExt.indexOf("Verify extension-canvas-design's local manifest and inventory"));
+    assert.ok(promptWithExt.indexOf("Verify extension-canvas-design's local manifest and inventory")
         < promptWithExt.indexOf("Only after ALL extensions"));
     assert.doesNotMatch(promptWithExt, /Require extension-canvas-design to remain at hosted version 0\.1\.7/);
     assert.doesNotMatch(promptWithExt, /Install extension-canvas-design by ID \(a normal install, NOT --dev\)/);
+});
+
+test("read-only preflight pins handoff bytes and checks local installation identity", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "designer-launch-check-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const project = join(root, "project");
+    const source = join(root, "approved-extension");
+    await mkdir(join(project, ".specify", "extensions"), { recursive: true });
+    await cp(LOCAL_CANVAS_DESIGN_EXT_PATH, source, { recursive: true });
+    const handoff = buildDesignerHandoff(snapshot, empty, {
+        extensions: [{ id: "extension-canvas-design", source: "local", approved: true, path: source }],
+    }, empty, randomUUID());
+    const handoffDir = join(root, "speckit-canvas-designer", "handoffs", handoff.handoffId);
+    await mkdir(handoffDir, { recursive: true });
+    const bytes = JSON.stringify(handoff);
+    const path = join(handoffDir, "handoff.json");
+    await writeFile(path, bytes);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const augmentedPath = await buildAugmentedPath();
+    const run = async (_binary, args, options) => {
+        assert.equal(options.cwd, project);
+        assert.equal(options.env.PATH, augmentedPath);
+        assert.equal(options.shell, process.platform === "win32");
+        return { stdout: args[0] === "--version"
+            ? "specify 1.0.7" : JSON.stringify([{ id: "extension-canvas-design",
+                version: "0.1.12", source: { kind: "local" } }]) };
+    };
+    const checked = await preflight(project, root, handoff.handoffId, hash, run);
+    assert.equal(checked.initialized, true);
+    assert.deepEqual(checked.locals, [{ kind: "extensions", id: "extension-canvas-design", path: source }]);
+    await cp(source, join(project, ".specify", "extensions", "extension-canvas-design"),
+        { recursive: true });
+    assert.equal((await verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", run)).id, "extension-canvas-design");
+    const installedManifest = join(project, ".specify", "extensions",
+        "extension-canvas-design", "extension.yml");
+    const originalManifest = await readFile(installedManifest, "utf8");
+    await writeFile(installedManifest, originalManifest.replace(
+        "id: extension-canvas-design", "id: wrong-extension"));
+    await assert.rejects(verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", run), /unexpected path or manifest id/);
+    await writeFile(installedManifest, originalManifest);
+    await assert.rejects(verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", async () => ({
+            stdout: JSON.stringify([{ id: "extension-canvas-design", version: "0.1.11",
+                source: { kind: "catalog" } }]),
+        })), /not a local installation/);
+    await assert.rejects(verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", async () => ({ stdout: "[]" })),
+        /missing or is not a local installation/);
+    assert.equal((await verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", async () => ({
+            stdout: JSON.stringify([{ id: "extension-canvas-design", version: "0.1.11",
+                source: { kind: "local" } }]),
+        }))).id, "extension-canvas-design");
+    await writeFile(join(project, ".specify", "extensions",
+        "extension-canvas-design", "pages", "essentials.json"), "{}");
+    assert.equal((await verifyLocalInstall(project, handoff, "extensions",
+        "extension-canvas-design", run)).id, "extension-canvas-design");
+    await writeFile(path, `${bytes} `);
+    await assert.rejects(preflight(project, root, handoff.handoffId, hash, run),
+        /handoff bytes changed/);
+    await writeFile(path, bytes);
+    await assert.rejects(preflight(project, root, handoff.handoffId, hash,
+        async () => ({ stdout: "specify 1.0.6" })), />=1\.0\.7/);
 });
 
 test("Designer launch installs every extension before standalone presets, including local overrides", () => {
@@ -725,7 +797,6 @@ test("Designer launch installs every extension before standalone presets, includ
     assert.ok(extensionStep > 0 && extensionStep < localExtension
         && localExtension < presetStep && presetStep < localPreset);
     assert.match(prompt, /including 'no base command layer'/);
-    assert.match(prompt, /If any registration is missing, stop and report incomplete command composition/);
 });
 
 test("handleDesignerLaunch inlines validated localSelections into the handoff end-to-end", async () => {

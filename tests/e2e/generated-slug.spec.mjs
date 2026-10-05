@@ -8,7 +8,7 @@ import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas
 import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
-    generatedPages, readOnlyFields, generatedControls) {
+    generatedPages, readOnlyFields, generatedControls, valueSources) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug,
@@ -27,6 +27,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         ...(generatedPages ? { generatedPages } : {}),
         ...(readOnlyFields ? { readOnlyFields } : {}),
         ...(generatedControls ? { generatedControls } : {}),
+        ...(valueSources ? { valueSources } : {}),
     };
     let runtime, routes, server;
     try {
@@ -67,6 +68,233 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         throw error;
     }
 }
+
+function sampleValueSources() {
+    const section = { id: "demo", title: "Demo values" };
+    return [
+        { id: "demo.heading", label: "Heading", section,
+            schema: { type: "string", maxLength: 80 },
+            source: { kind: "constant", value: "Read-only heading" },
+            presentation: "stock.readonly" },
+        { id: "demo.note", label: "Note", section,
+            schema: { type: "string", maxLength: 80 },
+            source: { kind: "constant", value: "Initial note" },
+            presentation: "stock.editable" },
+        { id: "demo.enabled", label: "Enabled", section,
+            schema: { type: "boolean" },
+            source: { kind: "constant", value: true },
+            presentation: "stock.editable" },
+        { id: "demo.choice", label: "Choice", section,
+            schema: { type: "object", properties: { level: ["one", "two"] } },
+            source: { kind: "constant", value: { level: "one" } },
+            presentation: "stock.editable" },
+        { id: "demo.processing", label: "Processing only",
+            schema: { type: "string", maxLength: 80 },
+            source: { kind: "constant", value: "Not displayed" },
+            presentation: "processing-only" },
+    ];
+}
+
+test("generated value editors render typed controls without exposing processing-only values", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sampleValueSources());
+    try {
+        await page.goto(canvas.url);
+        const values = page.locator("#canvas-values");
+        await expect(values).toBeVisible();
+        await expect(values.getByRole("heading", { name: "Demo values" })).toBeVisible();
+        await expect(values.locator('[data-field-id="demo.heading"]')).toHaveText("Read-only heading");
+        await expect(values.locator('[data-edit-value="demo.heading"]')).toHaveCount(0);
+        await expect(values.locator('[data-edit-value="demo.note"] input'))
+            .toHaveValue("Initial note");
+        await expect(values.locator('[data-edit-value="demo.note"] input'))
+            .toHaveAttribute("maxlength", "80");
+        await expect(values.locator('[data-edit-value="demo.enabled"] input[type="checkbox"]'))
+            .toBeChecked();
+        await expect(values.locator('[data-edit-value="demo.choice"] select[data-property="level"]'))
+            .toHaveValue("one");
+        await expect(values.locator('[data-edit-value="demo.choice"] option')).toHaveText(["one", "two"]);
+        await expect(values.getByText("Processing only")).toHaveCount(0);
+        await expect(values.getByText("Not displayed")).toHaveCount(0);
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("object value properties have distinct accessible names across values", async ({ page }) => {
+    const sources = sampleValueSources();
+    sources.push({ id: "demo.priority", label: "Priority",
+        schema: { type: "object", properties: { level: ["one", "two"] } },
+        source: { kind: "constant", value: { level: "two" } },
+        presentation: "stock.editable" });
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sources);
+    try {
+        await page.goto(canvas.url);
+        await expect(page.getByRole("combobox", { name: "Choice: level" })).toHaveValue("one");
+        await expect(page.getByRole("combobox", { name: "Priority: level" })).toHaveValue("two");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("generated value editors save typed changes canvas-wide and retain failed edits", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sampleValueSources());
+    let otherPanel;
+    try {
+        await mkdir(join(canvas.root, "specs", "first"), { recursive: true });
+        await mkdir(join(canvas.root, "specs", "second"), { recursive: true });
+        await page.goto(canvas.url);
+        const note = page.locator('[data-edit-value="demo.note"] input');
+        const enabled = page.locator('[data-edit-value="demo.enabled"] input');
+        const choice = page.locator('[data-edit-value="demo.choice"] select[data-property="level"]');
+
+        const textSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.note");
+        await note.fill("Saved across workflows");
+        await note.press("Tab");
+        expect((await textSave).status()).toBe(200);
+        await expect(note).toHaveValue("Saved across workflows");
+
+        const booleanSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.enabled");
+        await enabled.uncheck();
+        expect((await booleanSave).status()).toBe(200);
+        await expect(enabled).not.toBeChecked();
+
+        const objectSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.choice");
+        await choice.selectOption("two");
+        expect((await objectSave).status()).toBe(200);
+        await expect(choice).toHaveValue("two");
+        await page.reload();
+        await expect(note).toHaveValue("Saved across workflows");
+        await expect(enabled).not.toBeChecked();
+        await expect(choice).toHaveValue("two");
+
+        for (const workflow of ["first", "second"]) {
+            await page.getByRole("button", { name: workflow, exact: true }).click();
+            await expect(note).toHaveValue("Saved across workflows");
+            await expect(enabled).not.toBeChecked();
+            await expect(choice).toHaveValue("two");
+        }
+
+        await page.route("**/api/values", async (route) => {
+            if (route.request().postDataJSON().value === "Unsaved draft") {
+                await route.fulfill({ status: 409, contentType: "application/json",
+                    body: JSON.stringify({ error: "Canvas state changed in another panel. Refresh before saving." }) });
+            } else await route.continue();
+        });
+        const rejectedSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().value === "Unsaved draft");
+        await note.fill("Unsaved draft");
+        await note.press("Tab");
+        expect((await rejectedSave).status()).toBe(409);
+        await expect(page.locator("#canvas-message")).toContainText("Value could not be saved");
+        await expect(note).toHaveValue("Unsaved draft");
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(true);
+        otherPanel = await page.context().newPage();
+        await otherPanel.goto(canvas.url);
+        await page.locator("#refresh-state").focus();
+        await expect(page.locator("#connection-status")).toHaveText("Live");
+        const externalSave = otherPanel.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().id === "demo.enabled");
+        await otherPanel.locator('[data-edit-value="demo.enabled"] input').check();
+        expect((await externalSave).status()).toBe(200);
+        const refreshed = page.waitForResponse((response) =>
+            response.url().includes("/api/state") && response.request().method() === "GET");
+        canvas.broadcast();
+        expect((await refreshed).status()).toBe(200);
+        await expect(enabled).toBeChecked();
+        await expect(note).toHaveValue("Unsaved draft");
+        const separateSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().id === "demo.enabled");
+        await enabled.uncheck();
+        expect((await separateSave).status()).toBe(200);
+        await expect(note).toHaveValue("Unsaved draft");
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(true);
+        const retry = page.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().value === "Recovered edit");
+        await note.fill("Recovered edit");
+        await note.press("Tab");
+        expect((await retry).status()).toBe(200);
+        await expect(note).toHaveValue("Recovered edit");
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(false);
+    } finally {
+        await otherPanel?.close();
+        await canvas.close();
+    }
+});
+
+test("generated value edits serialize revisions and block navigation while saving", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sampleValueSources());
+    let releaseFirst;
+    try {
+        await mkdir(join(canvas.root, "specs", "first"), { recursive: true });
+        let firstStarted;
+        const started = new Promise((resolve) => { firstStarted = resolve; });
+        const held = new Promise((resolve) => { releaseFirst = resolve; });
+        const requests = [];
+        await page.route("**/api/values", async (route) => {
+            const input = route.request().postDataJSON();
+            requests.push(input);
+            if (input.id === "demo.note") {
+                firstStarted();
+                await held;
+            }
+            await route.continue();
+        });
+        await page.goto(canvas.url);
+        const firstSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.note");
+        await page.locator('[data-edit-value="demo.note"] input').fill("First edit");
+        await page.locator('[data-edit-value="demo.note"] input').press("Tab");
+        await started;
+        const secondSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.enabled");
+        await page.locator('[data-edit-value="demo.enabled"] input').uncheck();
+        await page.getByRole("button", { name: "first", exact: true }).click();
+        expect(requests).toHaveLength(1);
+        await expect(page.locator("#workflow-identity")).toBeVisible();
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(true);
+        releaseFirst();
+        expect((await firstSave).status()).toBe(200);
+        expect((await secondSave).status()).toBe(200);
+        await expect(page.locator("#workflow-list .instance-row.active")).toContainText("first");
+        expect(requests.map(({ id, revision }) => [id, revision])).toEqual([
+            ["demo.note", requests[0].revision],
+            ["demo.enabled", requests[0].revision + 1],
+        ]);
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(false);
+        await expect(page.locator('[data-edit-value="demo.note"] input')).toHaveValue("First edit");
+        await expect(page.locator('[data-edit-value="demo.enabled"] input')).not.toBeChecked();
+    } finally {
+        releaseFirst?.();
+        await canvas.close();
+    }
+});
 
 test("slow control mount leaves other controls and the workflow shell interactive", async ({ page }) => {
     const control = (id) => ({

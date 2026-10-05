@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.7** registers three JSON page templates and three ordered
+Canvas Design **0.1.12** registers three JSON page templates and three ordered
 stock field templates, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
@@ -91,7 +91,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.7/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.12/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -113,13 +113,23 @@ names and additional page or Canvas Design template names explicitly registered
 in the composed command by presets. It uses `specify preset resolve <name>`
 to find each project's effective named file; package tags alone do not register
 files. Only after all paths resolve does it open the official Designer provider
-once with the complete typed, replace-only set. Missing or ambiguous CLI resolutions, unsafe paths, invalid
-handoffs, and an unavailable provider stop the operation before an open URL is
-returned. A resolved page whose file is missing or invalid shows an error tab
-with a path and reason; healthy pages stay usable. Invalid registered field
-contributions stop the open with both names on a field collision; newly
-registered stock text/checkbox fields render on their declared Designer page
-and can be saved. A registered bounded string contribution with
+once with the complete typed, replace-only set. Missing or ambiguous CLI
+resolutions, unsafe paths, invalid handoffs, and an unavailable provider stop
+the operation before an open URL is returned. A resolved page whose file is
+missing or invalid shows an error tab with a path and reason; healthy pages
+stay usable.
+
+`scripts/verify-launch.mjs` reads the generated skill's declarations and
+verifies each name with Specify's resolution and template-stack metadata
+before returning the complete pages/templates input. It performs no
+installation or provider evaluation. A warning (even on exit status 0),
+missing name, resolution mismatch, or executable script collision stops the
+open.
+
+Invalid registered field contributions stop the open with both names on a
+field collision; newly registered stock text/checkbox fields render on their
+declared Designer page and can be saved. A registered bounded string
+contribution with
 `generatedBinding: {"presentation": "stock.readonly"}` also freezes its
 validated value into a built-in read-only generated display, regardless of
 which declared Designer slot holds the field. A separately registered
@@ -149,6 +159,56 @@ one asset pair per control ID; each field registration refers to that pair by
 its control ID, so reused controls do not repeat module bytes. Missing, wrong-kind,
 non-replace, or multiply owned adapters stop Designer opening rather than
 falling back to a stock control.
+
+Canvas-wide values can also be declared in a registered `value.definition`
+replace-only JSON template. Its `schemaVersion: 1`, stable `id`, `label`,
+`schema` (bounded string, boolean, or enumerated object), `source`, and
+`presentation` are validated against the same field registry, including
+collisions with Designer fields. A constant uses
+`"source":{"kind":"constant","value":...}`; a workflow-derived value uses
+`"source":{"kind":"provider","module":"<registered-template-name>"}` and a
+separate `value.provider` replace-only `.mjs` template exporting
+`provideValue({workflow})` with a direct `export function` or `export const`
+declaration (without imports). Named re-exports are unsupported.
+
+Provider module names must be portable filenames, not Windows device names
+such as `con`, `com1`, or `lpt9`. Designer, the frozen-request materializer,
+and the generated app each enforce this before using `providers/<module>.mjs`.
+
+For example:
+
+```js
+export function provideValue({ workflow }) {
+    return `${workflow.label} (${workflow.slug})`;
+}
+```
+
+`workflow` is a read-only object with `id`, `slug`, and `label` for the selected
+existing workflow. Return a synchronous, JSON-serializable value matching the
+value definition's typed schema; do not use `async` or return a Promise.
+Designer checks the direct export and transformed script syntax, but **does not
+run the provider**. A non-function export, Promise, invalid typed result, or
+provider error is reported on generated-canvas refresh, not silently replaced.
+Generate requires explicit confirmation of every resolved provider's name,
+source (including project overrides), and SHA-256 hash; changed bytes require
+reopening Designer and confirming again. `stock.readonly` displays a value
+automatically, `stock.editable`
+allows a constant's typed value to be edited through shell-owned state shared
+by every workflow, and `processing-only` omits automatic display. A generated
+page must explicitly list consumed IDs in its definition's `values` array;
+processing-only is not a secrecy boundary. Providers require a selected
+existing workflow and must return a value matching their declared schema;
+refresh errors surface rather than substituting a default. A refresh has a
+three-second provider budget shared by all values; providers not evaluated
+before the deadline report an error instead of holding the UI indefinitely.
+The packaged app
+checks provider bytes against the frozen hash before each evaluation and
+reports changes without running them. It does not resolve or need the
+originating preset at runtime. The bounded worker/VM limits accidental hangs;
+**`node:vm` is not a security boundary**. Approved provider JavaScript must be
+trusted with the local user's privileges, including filesystem and network
+access. Hash checks prevent unnoticed substitutions, not malicious approved
+code.
 The Designer, generator, and standalone generated app apply the same object
 contract and value rules: 1-10 named properties, each with 1-20 distinct,
 nonempty string options of at most 80 characters. The canonical

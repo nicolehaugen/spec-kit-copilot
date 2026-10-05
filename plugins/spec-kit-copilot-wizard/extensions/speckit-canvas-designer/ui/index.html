@@ -23,5 +23,14 @@
         <p id="action-message" role="status" hidden></p>
         <section id="settings-page" role="tabpanel" aria-busy="true"><h1>Loading settings...</h1></section>
     </main>
+    <dialog id="provider-approval" aria-labelledby="provider-approval-title">
+        <h2 id="provider-approval-title">Approve generated value providers</h2>
+        <p>These JavaScript modules will run locally with your user privileges. Confirm the resolved source and SHA-256 of each module before packaging it.</p>
+        <dl id="provider-approval-list"></dl>
+        <form method="dialog">
+            <button type="submit" value="cancel">Cancel</button>
+            <button type="submit" value="approve" class="primary">Approve and Generate</button>
+        </form>
+    </dialog>
 </body>
 </html>

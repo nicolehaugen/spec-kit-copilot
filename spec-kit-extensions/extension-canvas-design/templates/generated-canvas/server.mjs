@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isWindowsDeviceName, UserError } from "./files.mjs";
-import { phaseContract } from "./contract.mjs";
+import { phaseContract, valueContract } from "./contract.mjs";
 import { validControlValue } from "./control-contract.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
@@ -49,12 +49,16 @@ function validGeneratedPages(pages) {
     return pages === undefined || (Array.isArray(pages) && pages.length <= 30
         && new Set(pages.map((page) => page?.id)).size === pages.length
         && pages.every((page) => page && typeof page === "object" && !Array.isArray(page)
-            && Object.keys(page).sort().join() === "id,renderer,title"
+            && Object.keys(page).every((key) => ["id", "renderer", "title", "values"].includes(key))
             && typeof page.id === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             && page.id !== RESERVED_GENERATED_PAGE_ID && !isWindowsDeviceName(page.id)
             && typeof page.renderer === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
             && !isWindowsDeviceName(page.renderer)
-            && typeof page.title === "string" && !!page.title.trim() && page.title.length <= 120));
+            && typeof page.title === "string" && !!page.title.trim() && page.title.length <= 120
+            && (page.values === undefined || Array.isArray(page.values)
+                && page.values.length <= 100 && new Set(page.values).size === page.values.length
+                && page.values.every((id) => typeof id === "string"
+                    && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id)))));
 }
 
 function validGeneratedControls(controls) {
@@ -108,6 +112,7 @@ export function readConfig() {
         sections.set(section.id, section.title);
     }
     phaseContract(config);
+    valueContract(config);
     return config;
 }
 
@@ -163,8 +168,7 @@ export function renderHtml(config, token = "") {
         ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
     </nav>
     <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
-        data-canvas-title="${escapeHtml(canvas.displayName)}"
-        data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>
+        data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>
     <p id="canvas-message" role="status"></p>
     <div id="workflow-content" class="workflow-content">` : ""}
     <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
@@ -188,6 +192,7 @@ export function renderHtml(config, token = "") {
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
     ${readOnlySections(config.readOnlyFields)}
+    ${config.valueSources?.length ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
     ${config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
         `<section class="phase-card" aria-label="${escapeHtml(label)}">
             <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
@@ -214,8 +219,12 @@ export function renderHtml(config, token = "") {
     </nav>
     <section id="phase-card" class="phase-card" aria-label="Selected phase">${phases.length ? renderPhase(config, phases, 0) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>
     ${config.generatedPages?.length ? "</div>" : ""}
-    ${config.generatedPages?.map(({ id, renderer }) =>
-        `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"></span>`).join("") ?? ""}
+    ${config.generatedPages?.map(({ id, renderer, values }) =>
+        `<span hidden data-generated-renderer="${escapeHtml(id)}"
+            data-module="/pages/${escapeHtml(renderer)}.mjs"
+            data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? [])
+                .filter((field) => values?.includes(field.id))
+                .map(({ id, value }) => [id, value]))))}"></span>`).join("") ?? ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
@@ -275,7 +284,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && url.pathname === "/api/artifact") return json(response, 200, await runtime.artifact({
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
             }));
-            if (request.method !== "POST" || !["/api/run", "/api/state", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
+            if (request.method !== "POST" || !["/api/run", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;
             if (origin && origin !== `http://127.0.0.1:${port()}`) throw new UserError("Untrusted request origin.", 403);
             if (!request.headers["content-type"]?.startsWith("application/json")) throw new UserError("Expected a JSON request.", 415);
@@ -291,6 +300,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (!input || typeof input !== "object" || Array.isArray(input)) throw new UserError("Expected a JSON object.");
             const result = url.pathname === "/api/run" ? await runtime.run(input, instanceId)
                 : url.pathname === "/api/state" ? await runtime.save(input)
+                    : url.pathname === "/api/values" ? await runtime.saveValue(input)
                     : url.pathname === "/api/reveal" ? await runtime.reveal(input)
                         : url.pathname === "/api/workflow/delete" ? await runtime.deleteWorkflow(input)
                             : await runtime.refresh();

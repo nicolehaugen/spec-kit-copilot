@@ -77,6 +77,20 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--color-focus
 .page-diagnostic { border: 1px solid var(--danger-color); border-radius: var(--radius-sm);
     background: var(--background-color-elevated); padding: 1rem; overflow-wrap: anywhere; }
 .page-diagnostic p { margin-top: .7rem; }
+#provider-approval { width: min(640px, calc(100vw - 2rem)); max-height: 85vh; overflow: auto;
+    border: 1px solid var(--border-color-default); border-radius: var(--radius-md);
+    background: var(--background-color-elevated); color: var(--text-color-default);
+    padding: 1.5rem; box-shadow: var(--shadow-sm); }
+#provider-approval::backdrop { background: rgba(0, 0, 0, .5); }
+#provider-approval h2 { margin: 0 0 .75rem; }
+#provider-approval dl { overflow-wrap: anywhere; }
+#provider-approval dt { font-weight: 600; margin-top: 1rem; }
+#provider-approval dd { margin: 0; }
+#provider-approval form { display: flex; justify-content: flex-end; gap: .75rem; margin-top: 1.5rem; }
+#provider-approval button { font: inherit; padding: .5rem 1rem; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color-strong); background: var(--background-color-elevated);
+    color: var(--text-color-default); cursor: pointer; }
+#provider-approval button.primary { background: var(--accent-color); color: white; border-color: var(--accent-color); }
 @media (max-width: 700px) {
     .app-header { padding: .75rem; gap: .5rem; }
     .app-header .brand, .app-header .toolbar-actions { grid-column: 1 / -1; }

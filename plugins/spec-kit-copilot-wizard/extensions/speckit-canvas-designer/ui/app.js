@@ -26,6 +26,20 @@ function updateGenerate() {
         || missingIdentity;
 }
 
+function confirmProviders(providers) {
+    const dialog = document.getElementById("provider-approval");
+    const list = document.getElementById("provider-approval-list");
+    list.replaceChildren();
+    for (const { name, sourceId, hash } of providers) {
+        list.append(element("dt", name), element("dd", `Source: ${sourceId}`),
+            element("dd", `SHA-256: ${hash}`));
+    }
+    dialog.returnValue = "";
+    dialog.showModal();
+    return new Promise((resolve) => dialog.addEventListener("close",
+        () => resolve(dialog.returnValue === "approve"), { once: true }));
+}
+
 generate.addEventListener("click", async () => {
     if (generate.disabled || !validateDraft("generating")) return;
     for (const field of ["canvas.id", "canvas.displayName"]) {
@@ -53,15 +67,19 @@ generate.addEventListener("click", async () => {
             return;
         }
     }
+    const providers = model.templates.filter((item) => item.kind === "value.provider")
+        .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
     updateGenerate();
     showError("");
     try {
+        if (providers.length && !await confirmProviders(providers)) return;
         const values = draft;
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
-                settingsRevision: model.settingsRevision, values }),
+                settingsRevision: model.settingsRevision, values,
+                ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);

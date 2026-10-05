@@ -67,6 +67,23 @@ failures beside the affected control. Callbacks from controls removed during a
 tab change cannot overwrite the current draft. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
+Registered `value.definition` JSON templates join the same field-ID collision
+registry and declare a typed constant or a workflow-scoped provider, plus
+read-only, runtime-editable, or processing-only presentation. A provider must
+have its own replace-only `value.provider` `.mjs` registration with a direct
+`export function provideValue` or `export const provideValue` declaration
+(`export { provideValue }` and imports are unsupported). The function receives
+`{ workflow: { id, slug, label } }` for the selected workflow and must return
+a synchronous, JSON-serializable value matching the definition's typed schema.
+Async functions and non-function exports fail visibly during generated-canvas
+refresh; Designer checks syntax but does not execute providers. Generate
+confirms each resolved provider's
+name, source and hash before freezing its bytes for packaging. Changes since
+Designer opened require reopening and reconfirming. Generated pages may declare
+the IDs they consume in `values`. The packaged app rejects changed provider
+bytes before execution; this is not a sandbox for approved provider code.
+Runtime-editable values belong to the generated canvas shell, not to a
+particular workflow's drafts.
 Save rejects stale revisions and invalid values, and reports failures without
 discarding edits. Generate validates and freezes fields on every enabled page
 while requiring non-reserved Canvas ID and Title on Essentials, and dispatches the
@@ -77,8 +94,9 @@ skill is not installed in the child checkout.
 Pages explicitly marked `enabled: false` are omitted even if their other fields
 are malformed; unreadable pages still show errors because their enabled state
 cannot be determined.
-A missing skill shows how to relaunch with Canvas Design v0.1.7 or the current
-local source, before any generation request is prepared. Healthy pages remain
+A missing skill directs users to launch a new Designer session with a compatible
+Canvas Design extension or the current local source, before any generation
+request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
 no Canvas ID or Title values, so Generate remains unavailable. Tab changes display the in-memory model without re-resolving

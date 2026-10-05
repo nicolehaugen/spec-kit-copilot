@@ -11,22 +11,23 @@ async function mountGeneratedControl(root) {
                 !== JSON.stringify(Object.entries(expected.properties).sort())) {
             throw new Error("Incompatible control ID or value contract");
         }
-        await mount({ root, field, value: JSON.parse(root.dataset.value) });
+        await mount({ root, field, value: JSON.parse(root.dataset.value),
+            values: model?.controlValues?.[field.id] ?? {},
+            readValues: () => ({ ...(model?.controlValues?.[field.id] ?? {}) }) });
     } catch (error) {
         root.setAttribute("role", "alert");
         root.textContent = `Generated control could not render: ${error.message}`;
     }
 }
-for (const root of document.querySelectorAll("[data-control-id]")) {
-    void mountGeneratedControl(root);
-}
 const $ = (id) => document.getElementById(id);
 const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
+const failedValueDrafts = new Map();
 const failedPatches = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
-let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null, workflowQuery = "";
+let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null,
+    pendingValueSaves = 0, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
 function wireGeneratedPages() {
@@ -56,7 +57,8 @@ function wireGeneratedPages() {
             if (typeof renderPage !== "function") throw new Error(`Invalid renderer for ${id}`);
             const content = document.createElement("div");
             await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
-                displayName: root.dataset.canvasTitle }, values: JSON.parse(root.dataset.values) });
+                displayName: root.dataset.canvasTitle },
+                values: { ...JSON.parse(registration.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
             if (currentSelection !== selection) return;
             root.replaceChildren(content);
         } catch (error) {
@@ -101,6 +103,141 @@ function setConnectionStatus(status) {
 function message(text, id = "canvas-message", error = false) {
     $(id).textContent = text;
     $(id).classList.toggle("workflow-error", error);
+}
+function displayValue(value) {
+    return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+function renderValues() {
+    const container = $("canvas-value-list");
+    if (!container || !model) return;
+    $("canvas-value-errors").textContent = Object.values(model.valueErrors).join(" ");
+    $("canvas-values").hidden = !model.valueFields.length && !Object.keys(model.valueErrors).length;
+    const active = document.activeElement;
+    const editing = active?.closest?.("[data-edit-value]");
+    const draft = editing && {
+        id: editing.dataset.editValue,
+        values: [...editing.querySelectorAll("input, select")].map((input) =>
+            ({ property: input.dataset.property, value: input.value, checked: input.checked })),
+        property: active.dataset.property,
+        selectionStart: active instanceof HTMLInputElement && active.type === "text"
+            ? active.selectionStart : null,
+        selectionEnd: active instanceof HTMLInputElement && active.type === "text"
+            ? active.selectionEnd : null,
+    };
+    container.replaceChildren();
+    const groups = new Map();
+    for (const field of model.valueFields) {
+        const groupId = field.section?.id ?? "";
+        let group = groups.get(groupId);
+        if (!group) {
+            group = document.createElement("div");
+            if (field.section) {
+                const heading = document.createElement("h3");
+                heading.textContent = field.section.title;
+                group.append(heading);
+            }
+            groups.set(groupId, group);
+            container.append(group);
+        }
+        const row = document.createElement("div");
+        row.className = "field";
+        const label = document.createElement("label");
+        label.className = "field-label";
+        label.textContent = field.label;
+        row.append(label);
+        if (!field.editable) {
+            const output = document.createElement("div");
+            output.dataset.fieldId = field.id;
+            output.textContent = displayValue(field.value);
+            row.append(output);
+        } else {
+            const editor = document.createElement("div");
+            editor.dataset.editValue = field.id;
+            const retained = failedValueDrafts.get(field.id);
+            const value = retained ? retained.value : field.value;
+            if (field.schema.type === "boolean") {
+                const input = document.createElement("input");
+                input.type = "checkbox";
+                input.checked = value;
+                input.id = `value-${field.id}`;
+                label.htmlFor = input.id;
+                editor.append(input);
+            } else if (field.schema.type === "object") {
+                for (const [key, options] of Object.entries(field.schema.properties)) {
+                    const property = document.createElement("label");
+                    property.textContent = key;
+                    const select = document.createElement("select");
+                    select.className = "phase-input-control";
+                    select.dataset.property = key;
+                    select.setAttribute("aria-label", `${field.label}: ${key}`);
+                    for (const option of options) {
+                        const item = document.createElement("option");
+                        item.value = option;
+                        item.textContent = option;
+                        select.append(item);
+                    }
+                    select.value = value[key];
+                    property.append(select);
+                    editor.append(property);
+                }
+            } else {
+                const input = document.createElement("input");
+                input.type = "text";
+                input.className = "phase-input-control";
+                input.maxLength = field.schema.maxLength;
+                input.value = value;
+                input.id = `value-${field.id}`;
+                label.htmlFor = input.id;
+                editor.append(input);
+            }
+            row.append(editor);
+        }
+        group.append(row);
+    }
+    if (draft) {
+        const editor = [...container.querySelectorAll("[data-edit-value]")]
+            .find((entry) => entry.dataset.editValue === draft.id);
+        if (editor) {
+            const inputs = [...editor.querySelectorAll("input, select")];
+            for (const [index, input] of inputs.entries()) {
+                const retained = draft.values[index];
+                if (!retained || retained.property !== input.dataset.property) continue;
+                if (input.type === "checkbox") input.checked = retained.checked;
+                else input.value = retained.value;
+            }
+            const focused = inputs.find((input) => input.dataset.property === draft.property) ?? inputs[0];
+            focused?.focus({ preventScroll: true });
+            if (focused instanceof HTMLInputElement && focused.type === "text"
+                && draft.selectionStart !== null && draft.selectionEnd !== null) {
+                focused.setSelectionRange(draft.selectionStart, draft.selectionEnd);
+            }
+        }
+    }
+}
+function editValue(element) {
+    const row = element.closest("[data-edit-value]");
+    if (!row || !model) return;
+    const field = model.valueFields.find((entry) => entry.id === row.dataset.editValue && entry.editable);
+    if (!field) return;
+    let value;
+    if (field.schema.type === "boolean") value = row.querySelector("input").checked;
+    else if (field.schema.type === "object") {
+        value = Object.fromEntries([...row.querySelectorAll("[data-property]")]
+            .map((input) => [input.dataset.property, input.value]));
+    } else value = row.querySelector("input").value;
+    if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
+    pendingValueSaves++;
+    saving = saving.catch(() => {}).then(async () => {
+        if (saveFailure) throw saveFailure;
+        const result = await api("/api/values", { id: field.id, value, revision: model.revision });
+        model.revision = result.revision;
+        failedValueDrafts.delete(field.id);
+    }).catch((error) => {
+        failedValueDrafts.set(field.id, { value, error });
+        throw error;
+    }).finally(() => { pendingValueSaves--; });
+    saving.catch(() => {});
+    return saving.then(() => refresh());
 }
 async function api(path, input) {
     const response = await fetch(path, {
@@ -178,6 +315,7 @@ async function flush() {
     }
     await saving;
     if (saveFailure) throw saveFailure;
+    if (failedValueDrafts.size) throw failedValueDrafts.values().next().value.error;
 }
 function renderStatus() {
     function pendingLabel(step) {
@@ -376,8 +514,10 @@ async function refresh(reconcile = false) {
         message("", "constitution-message");
     }
     renderCollection();
+    renderValues();
     if (!previous || previous.selected !== model.selected) renderPhase();
     else renderStatus();
+    document.querySelector('[data-canvas-page][aria-current="page"]:not([data-canvas-page="workflow"])')?.click();
 }
 async function selectPhase(index, focusId) {
     if (index < 0 || index >= workflowPhases().length) {
@@ -490,6 +630,12 @@ document.addEventListener("input", (event) => {
         constitutionTimer = setTimeout(() => { constitutionTimer = null; saveConstitutionDraft(); }, 400);
     }
 });
+document.addEventListener("change", (event) => {
+    if (event.target.closest?.("[data-edit-value]")) {
+        editValue(event.target).catch((error) =>
+            message(`Value could not be saved: ${error.message} Your edit remains in this panel.`, "canvas-message", true));
+    }
+});
 $("workflow-search").addEventListener("input", (event) => {
     workflowQuery = event.target.value;
     if (model) filterWorkflowList();
@@ -567,7 +713,13 @@ events.onmessage = () => {
 };
 events.onerror = () => { setConnectionStatus("lost"); message("Connection interrupted. Drafts are retained; use Refresh if reconnection fails."); };
 window.addEventListener("beforeunload", (event) => {
-    if (timer || constitutionTimer || saveFailure) { event.preventDefault(); event.returnValue = ""; }
+    if (timer || constitutionTimer || saveFailure || pendingValueSaves || failedValueDrafts.size) {
+        event.preventDefault();
+        event.returnValue = "";
+    }
 });
 window.addEventListener("pagehide", () => events.close());
 await refresh().catch((error) => message(error.message, "canvas-message", true));
+for (const root of document.querySelectorAll("[data-control-id]")) {
+    void mountGeneratedControl(root);
+}

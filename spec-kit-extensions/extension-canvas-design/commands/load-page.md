@@ -29,11 +29,17 @@ templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.field`,
 `generated.page`, `generated.renderer`, `control.definition`,
-`designer.adapter`, or `generated.adapter`) and strategy (`replace`).
+`designer.adapter`, `generated.adapter`, `value.definition`, or
+`value.provider`) and strategy (`replace`).
 Designer pages have kind `designer.page` and strategy `replace` (implicit for
 the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
-themselves. Control definitions and host-specific adapters must each be explicitly registered.
+themselves. Control definitions, host-specific adapters, value definitions,
+and provider modules must each be explicitly registered. `value.definition`
+declares a typed constant or a workflow-scoped provider; a generated page
+declares the value IDs it consumes in its `values` list. A processing-only value
+is not automatically presented and is not secret from its declared consumers.
+Providers are packaged, never evaluated by Designer.
 
 ## Canvas Design templates
 
@@ -42,6 +48,15 @@ themselves. Control definitions and host-specific adapters must each be explicit
 - `canvas-stock-custom-slug` — `designer.field`, `replace`
 
 ## Steps
+
+After installation and one successful skill reload, run
+`node .specify/extensions/extension-canvas-design/scripts/verify-launch.mjs
+<child-checkout>` once from the child project root. It reads this **generated**
+composed skill, checks all declarations and performs the read-only resolution,
+replace-only stack and script-collision checks in steps 1-3. Use its complete
+`pages` and `templates` JSON for step 4; stop on a nonzero exit or missing
+registration. Do not repeat those CLI checks or open twice. Older compatible
+hosted packages without this verifier must perform steps 1-3 manually.
 
 1. Read this entire composed command first. Collect the defaults and every name
    in every **Additional Designer pages**, **Canvas Design templates**, and
@@ -56,7 +71,7 @@ themselves. Control definitions and host-specific adapters must each be explicit
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.7)
+         (top layer from: extension:extension-canvas-design v0.1.12)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
