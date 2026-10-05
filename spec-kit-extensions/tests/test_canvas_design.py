@@ -52,7 +52,7 @@ FILES = {
     "generated-host/workflow-page/generated-phase-placement.json",
     "generated-host/phase-control/phase-control.json",
     "generated-host/phase-control/generated-phase-adapter.mjs",
-    *(f"templates/generated-canvas/{name}" for name in (
+    *(f"generated-scaffold/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",

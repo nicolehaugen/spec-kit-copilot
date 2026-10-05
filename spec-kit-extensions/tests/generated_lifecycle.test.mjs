@@ -10,7 +10,7 @@ test("closing the last started panel while another opens retains the shared runt
     const root = await mkdtemp(join(tmpdir(), "generated-lifecycle-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const target = join(root, "generated");
-    await cp(new URL("../extension-canvas-design/templates/generated-canvas/", import.meta.url),
+    await cp(new URL("../extension-canvas-design/generated-scaffold/", import.meta.url),
         target, { recursive: true });
     const definition = await readFile(new URL("../extension-canvas-design/generated-host/workflow-page/workflow.json", import.meta.url));
     const placement = await readFile(new URL(

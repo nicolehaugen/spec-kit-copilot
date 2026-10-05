@@ -10,7 +10,7 @@ import { saveDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/exte
 import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { mountPageAssets, createStockImageRenderer } from
-    "../extension-canvas-design/templates/generated-canvas/ui/page-assets.mjs";
+    "../extension-canvas-design/generated-scaffold/ui/page-assets.mjs";
 import { addDesignerAdapterFixture } from "./designer_adapter_fixture.mjs";
 
 const source = new URL("../extension-canvas-design/", import.meta.url);

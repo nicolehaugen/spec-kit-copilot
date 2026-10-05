@@ -5,12 +5,12 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { validControlContract, validControlValue } from "../templates/generated-canvas/control-contract.mjs";
-import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
-import { phaseContract } from "../templates/generated-canvas/contract.mjs";
+import { validControlContract, validControlValue } from "../generated-scaffold/control-contract.mjs";
+import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
+import { phaseContract } from "../generated-scaffold/contract.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-const featureRoot = join(packageRoot, "templates", "generated-canvas");
+const featureRoot = join(packageRoot, "generated-scaffold");
 const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
     "phase-response.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/page-assets.mjs", "ui/runtime.css", "ui/workflow-theme.css"];

@@ -37,7 +37,7 @@ async function loadResolvedDesignerPages(handoff, project, entries, templates = 
 test("Designer packages the same control validator as the generated app", async () => {
     assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
         await readFile(new URL(
-            "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            "../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
             import.meta.url)));
 });
 
@@ -217,8 +217,8 @@ async function projectFixture(t, workspace) {
     }
     const scalar = [];
     for (const [name, directory, filename, kind] of [
-        ["generated-workflow", "workflow", "workflow.json", "generated.workflow-page-definition"],
-        ["generated-phase-placement", "workflow", "generated-phase-placement.json", "generated.phase-control-placement"],
+        ["generated-workflow", "workflow-page", "workflow.json", "generated.workflow-page-definition"],
+        ["generated-phase-placement", "workflow-page", "generated-phase-placement.json", "generated.phase-control-placement"],
         ["generated-phase-control", "phase-control", "phase-control.json", "generated.phase-control-definition"],
         ["generated-phase-adapter", "phase-control", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
@@ -731,7 +731,7 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     assert.equal(defaults.canvas.description, "Spec Kit workflow canvas.");
     assert.equal(defaults.canvas.workflowListName, "Workflows");
     assert.equal(defaults.userProvidesSlug, false);
-    const { renderHtml } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs",
+    const { renderHtml } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/server.mjs",
         import.meta.url));
     const defaultHtml = renderHtml(defaults);
     assert.match(defaultHtml, /Workflows/);
@@ -3205,7 +3205,7 @@ test("paired control validates both adapters, typed values and portable generate
     const config = readConfig();
     assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
     assert.deepEqual(await readFile(join(portable, "control-contract.mjs")),
-        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
             import.meta.url)));
     const configPath = join(portable, "canvas-config.json");
     for (const invalidProperties of [

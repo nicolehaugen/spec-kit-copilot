@@ -16,7 +16,7 @@ against an existing target. Do not touch the main checkout.
 Resolve the current worktree and inspect
 `spec-kit-extensions/extension-canvas-design/scripts/generate.mjs` before
 selecting files. Its `featureFiles` inventory plus
-`templates/generated-canvas/extension.mjs` are the complete source-owned
+`generated-scaffold/extension.mjs` are the complete source-owned
 runtime copied into a new canvas. Include **all relevant changed files** in
 that inventory: SDK registration/hosting (`extension.mjs`), server, runtime,
 contract, behavior modules, UI JavaScript, Markdown renderer and CSS. This

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, unlink, writeFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { deleteConfinedDirectory } from "../extension-canvas-design/templates/generated-canvas/files.mjs";
+import { deleteConfinedDirectory } from "../extension-canvas-design/generated-scaffold/files.mjs";
 
 async function fixture(t) {
     const root = await mkdtemp(join(tmpdir(), "generated-deletion-"));

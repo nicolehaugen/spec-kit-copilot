@@ -126,7 +126,7 @@ At Generate:
 
 Generated configuration remains derived from the frozen request; there is no competing preset-replaceable generated-config template. Changes to a source preset do not alter an app that was already generated.
 The control contract and typed-value checks are authored once in
-`templates/generated-canvas/control-contract.mjs`. The generator imports that module,
+`generated-scaffold/control-contract.mjs`. The generator imports that module,
 the Wizard Designer ships a byte-identical copy checked by package tests, and
 generated apps receive the same module with their source-owned shell. Validation
 of each host's envelope (template provenance, frozen bytes, or saved app config)
@@ -302,7 +302,7 @@ spec-kit-extensions/extension-canvas-design/
   shared-controls/stock-{text,checkbox,image}/  cross-host definitions and adapters
   schemas/designer.tab-definition.schema.json  currently string/boolean fields
   scripts/generate.mjs
-  templates/generated-canvas/
+  generated-scaffold/
     extension.mjs
     server.mjs
     runtime.mjs
@@ -351,7 +351,7 @@ spec-kit-extensions/extension-canvas-design/
     designer.tab-definition.schema.json
     contribution.schema.json           proposed versioned contribution schema
   scripts/generate.mjs
-  templates/generated-canvas/
+  generated-scaffold/
     extension.mjs
     server.mjs
     runtime.mjs

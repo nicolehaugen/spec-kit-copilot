@@ -3,7 +3,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
+import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
 
 const exec = promisify(execFile);
 const NAME = /^[a-z][a-z0-9-]{0,79}$/;

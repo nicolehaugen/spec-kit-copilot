@@ -21,7 +21,7 @@ Replaceable templates are organized by host: `designer-host/` contains Designer
 tabs and settings, `generated-host/workflow-page/` contains the Workflow page and
 phase placement, and `generated-host/phase-control/` contains the phase control
 and adapter. `shared-controls/` contains definitions and adapters used by both
-hosts. `templates/generated-canvas/` is the static app scaffold; Generate
+hosts. `generated-scaffold/` is the static app scaffold; Generate
 copies the resolved generated-host assets into its `pages/` directory, so the
 finished app does not depend on this extension at runtime.
 
@@ -314,7 +314,7 @@ code.
 The Designer, generator, and standalone generated app apply the same object
 contract and value rules: 1-10 named properties, each with 1-20 distinct,
 nonempty string options of at most 80 characters. The canonical
-`templates/generated-canvas/control-contract.mjs` is copied into generated apps;
+`generated-scaffold/control-contract.mjs` is copied into generated apps;
 the Wizard provider includes a byte-checked copy, without a runtime dependency
 on the design-time extension.
 The browser reports incompatible `controlId` or `valueContract` exports,

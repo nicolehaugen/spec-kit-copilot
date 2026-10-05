@@ -6,17 +6,17 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
-import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
-import { phaseContract } from "../extension-canvas-design/templates/generated-canvas/contract.mjs";
-import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
+import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
+import { phaseContract } from "../extension-canvas-design/generated-scaffold/contract.mjs";
+import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
 import { isWindowsDeviceName as designerDeviceName } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
-import { isWindowsDeviceName as runtimeDeviceName } from "../extension-canvas-design/templates/generated-canvas/files.mjs";
+import { isWindowsDeviceName as runtimeDeviceName } from "../extension-canvas-design/generated-scaffold/files.mjs";
 
-const entryTemplate = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/extension.mjs",
+const entryTemplate = await readFile(new URL("../extension-canvas-design/generated-scaffold/extension.mjs",
     import.meta.url), "utf8");
 const model = {
     revision: "test-revision",
@@ -1102,7 +1102,7 @@ test("custom slug toggle controls the field and View target preview; actual dire
             assert.match(collection, /id="workflow-slug-label">Artifact directory slug <span class="muted">\(optional\)<\/span>/);
             assert.match(collection, /id="workflow-slug"[^>]+placeholder="your-slug"/);
         } else assert.doesNotMatch(html, /id="workflow-slug"/);
-        const ui = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/ui/app.js", import.meta.url), "utf8");
+        const ui = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js", import.meta.url), "utf8");
         assert.match(ui, /input\.placeholder = input\.readOnly \? "Automatically assigned" : "your-slug"/);
         assert.match(html, /<h2 id="workflow-heading">Workflows/);
         assert.match(renderHtml({ ...config, phases: ["constitution"] }), /id="workflow-name"/);
