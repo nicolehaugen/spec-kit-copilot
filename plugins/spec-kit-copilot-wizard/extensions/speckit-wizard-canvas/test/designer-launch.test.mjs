@@ -14,7 +14,7 @@ import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
     readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
-import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
+import { fingerprint, HANDOFF_LIMIT, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
 import { resolveRuntimeInstallLocators } from "../server/runtime-provenance.mjs";
 import { prepareHandoff, preflight, verifyLocalInstall } from "../server/designer-launch-check.mjs";
@@ -1019,6 +1019,14 @@ test("handoff preparation removes only a matching single line ending before stri
         assert.equal(await readFile(path, "utf8"), bytes);
         assert.equal((await preflight(project, root, handoff.handoffId, hash, run)).initialized, true);
     }
+    const maximum = bytes + " ".repeat(HANDOFF_LIMIT - Buffer.byteLength(bytes));
+    const maximumHash = createHash("sha256").update(maximum).digest("hex");
+    await writeFile(path, maximum + "\r\n");
+    await prepareHandoff(root, handoff.handoffId, maximumHash);
+    assert.equal(await readFile(path, "utf8"), maximum);
+    await writeFile(path, maximum + "\r\n ");
+    await assert.rejects(prepareHandoff(root, handoff.handoffId, maximumHash),
+        /Invalid Designer handoff file/);
     for (const changed of [`${bytes} `, `${bytes}\n\n`, `${bytes} \n`,
         `${bytes.replace('"schemaVersion":1', '"schemaVersion":2')}\r\n`]) {
         await writeFile(path, changed);

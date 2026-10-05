@@ -276,6 +276,19 @@ class CanvasDesignPackageTests(unittest.TestCase):
         generated["slots"] = [{"id": "same.slot"}, {"id": "same.slot"}]
         with self.assertRaises(ValidationError):
             Draft202012Validator(schemas["generated.added-page-definition"]).validate(generated)
+        workflow = json.loads(fixtures["generated.workflow-page-definition"][0].read_text("utf-8"))
+        workflow_validator = Draft202012Validator(schemas["generated.workflow-page-definition"])
+        for slots in (
+            [{"id": "workflow.summary"}],
+            [{"id": "workflow.phases"}, {"id": "workflow.phases"}],
+            [{"id": "workflow.summary"}, {"id": "workflow.phases"}],
+        ):
+            with self.subTest(slots=slots):
+                with self.assertRaises(ValidationError):
+                    workflow_validator.validate({**workflow, "slots": slots})
+        workflow_validator.validate({**workflow, "slots": [
+            {"id": "workflow.phases"}, {"id": "workflow.summary"},
+        ]})
         value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
         validator = Draft202012Validator(schemas["generated.value-definition"])

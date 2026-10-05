@@ -386,7 +386,8 @@ the required placement, and the adapter as integrity-checked assets.
 
 Like Designer settings, separately registered generated field placements
 target a page and one of its declared slots, identify a field and display
-order, and reuse a stock or preset control. Added page renderers expose
+order, and reuse a stock control for scalar fields or a preset control for
+object fields. Custom scalar controls are not supported. Added page renderers expose
 `data-field-slot` mount points for declared field placements. Several
 placements of one field share one value; independent fields can use the
 same control adapter. Read-only is the default; an explicitly editable

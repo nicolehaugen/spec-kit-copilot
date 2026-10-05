@@ -38,9 +38,16 @@ export async function prepareHandoff(sessionRoot, handoffId, expectedHash) {
             || stat.size > HANDOFF_LIMIT + 2) {
             throw new Error("Invalid Designer handoff file");
         }
-        const bytes = await file.readFile();
+        const buffer = Buffer.alloc(HANDOFF_LIMIT + 3);
+        let length = 0;
+        while (length < buffer.length) {
+            const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+            if (!bytesRead) break;
+            length += bytesRead;
+        }
         const digest = (value) => createHash("sha256").update(value).digest("hex");
-        if (bytes.length > HANDOFF_LIMIT + 2) throw new Error("Invalid Designer handoff file");
+        if (length > HANDOFF_LIMIT + 2) throw new Error("Invalid Designer handoff file");
+        const bytes = buffer.subarray(0, length);
         if (digest(bytes) !== expectedHash) {
             const suffixLength = bytes.subarray(-2).equals(Buffer.from("\r\n")) ? 2
                 : bytes.at(-1) === 10 ? 1 : 0;

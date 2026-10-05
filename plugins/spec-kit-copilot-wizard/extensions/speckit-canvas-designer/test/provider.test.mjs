@@ -210,6 +210,14 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     assert.equal(model.pages[0].fields[1].control, "stock.text");
     assert.equal(model.adapters["stock.text"], "designer-control-adapter-text");
     assert.equal(model.adapters["stock.checkbox"], "designer-control-adapter-checkbox");
+    const textControlFile = scalar.find((item) => item.name === "shared-controls-text").path;
+    const originalTextControl = await readFile(textControlFile, "utf8");
+    await writeFile(textControlFile, JSON.stringify({
+        ...JSON.parse(originalTextControl), id: "custom-text",
+    }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid shared control value contract or adapter references/);
+    await writeFile(textControlFile, originalTextControl);
     const workflowFile = scalar.find((item) => item.name === "generated-workflow").path;
     const originalWorkflow = await readFile(workflowFile, "utf8");
     const reordered = JSON.parse(originalWorkflow);
