@@ -5,10 +5,11 @@ applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,
 Keep phase Run and retry actions available when a Copilot agent turn is
 `Request sent`, `Running`, or otherwise awaiting a response. An agent turn may
 never report completion, so do not disable or hide these actions solely until
-the turn completes. Show the current status and, when a repeat dispatch could
-duplicate work, explain that risk and let the user deliberately choose whether
-to retry. An in-flight submission guard must not depend on an agent response to
-release it; provide a bounded recovery path after errors, timeouts, or refresh.
+the turn completes. For the MVP, assume the user waits for the agent to return
+before clicking Run again; a second click while pending may dispatch the same
+phase again. Show the current status, but do not add pending-state disablement
+or a duplicate-run confirmation solely to enforce that usage assumption.
 
-When changing pending-action behavior, cover the case where the agent never
-responds and verify that the user can still initiate a retry.
+If later adding retry safeguards, keep the action reachable when an agent never
+responds. Any in-flight submission guard must have a bounded recovery path
+after errors, timeouts, or refresh.
