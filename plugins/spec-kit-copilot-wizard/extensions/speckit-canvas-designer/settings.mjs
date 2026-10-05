@@ -9,10 +9,26 @@ import { isWindowsDeviceName } from "./pages.mjs";
 export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
-const initialOutputs = (handoff) => fixedConstitutionOutputs(
+export const initialOutputs = (handoff) => fixedConstitutionOutputs(
     handoff.workflow.outputEvidence
         ?? Object.fromEntries(handoff.workflow.selectedPhases.map((id) =>
             [id, { outputs: [], view: null }])), handoff.workflow.selectedPhases);
+
+function restorePipelineOutputs(saved, pipeline) {
+    return Object.fromEntries(Object.entries(pipeline).map(([id, original]) => {
+        const seen = new Set(original.outputs.map((path) => path.toLowerCase()));
+        const additions = saved[id].outputs.filter((path) => {
+            const key = path.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        const outputs = [...original.outputs, ...additions];
+        const view = outputs.find((path) => path.toLowerCase() === saved[id].view?.toLowerCase())
+            ?? original.view;
+        return [id, { outputs, view }];
+    }));
+}
 
 export function validateValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
@@ -113,9 +129,9 @@ async function assertTemporaryFile(file, path, folder) {
 export async function loadDesignerSettings(workspacePath, handoff, model, openFile = open) {
     const record = await readSettings(await settingsPath(workspacePath, handoff),
         handoff, model, openFile);
-    const outputs = fixedConstitutionOutputs(record?.outputs ?? initialOutputs(handoff),
-        handoff.workflow.selectedPhases);
-    validatePhaseOutputs(outputs, handoff.workflow.selectedPhases);
+    const pipeline = initialOutputs(handoff);
+    const outputs = record?.outputs ? restorePipelineOutputs(record.outputs, pipeline) : pipeline;
+    validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases, pipeline);
     return { ...model, values: record?.values ?? model.values, outputs,
         settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
 }
@@ -131,7 +147,7 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
     validateValues(request.values, model.constraints);
     const outputs = validateConfirmedOutputs(Object.hasOwn(request, "outputs")
         ? request.outputs : model.outputs ?? initialOutputs(handoff),
-        handoff.workflow.selectedPhases);
+        handoff.workflow.selectedPhases, initialOutputs(handoff));
     const path = await settingsPath(workspacePath, handoff);
     const prior = saves.get(path) ?? Promise.resolve();
     const work = prior.catch(() => {}).then(async () => {

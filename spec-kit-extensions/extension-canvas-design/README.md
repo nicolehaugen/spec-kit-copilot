@@ -40,7 +40,7 @@ directory, so the finished app does not depend on this extension at runtime.
 | `generated-control-adapter-text` | Generated app | Render visible text in authorized placements |
 | `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
 | `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
-| `designer-artifacts` | Outputs | Confirm each phase's Markdown outputs and default viewer target |
+| `designer-artifacts` | Outputs | Review fixed pipeline artifacts, add viewer links, and select the default viewer target |
 | `designer-appearance` | Appearance | Empty placeholder |
 
 The Essentials core template lives in `designer/tabs/essentials.json`; its
@@ -138,13 +138,15 @@ shows phase names without run states; the selected phase card retains its status
 Dispatch success does not add a separate "Request sent" notice to the canvas.
 View artifact opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
-The Outputs tab confirms the Wizard-provided Markdown files for each phase except
-Constitution, including phases with none, with add/remove controls and a selected View artifact
-default. The generated phase card lists the confirmed files as viewer links;
-the View artifact button opens the selected default and is hidden when a phase
-has no outputs. Constitution always opens `.specify/memory/constitution.md`;
-its output cannot be changed in the Designer. Existing header Save persists
-the other selections.
+The Outputs tab shows one phase at a time, except Constitution. Wizard-inferred
+pipeline artifacts cannot be edited or removed; users can add and remove separate
+Markdown artifact links and choose the View artifact default. Adding a link does
+not create the file or change what the pipeline produces. Removing a selected
+addition restores the phase's original viewer default. The generated phase card
+lists all links and opens the selected one; View artifact is hidden when a phase
+has none. Constitution always opens `.specify/memory/constitution.md` and cannot
+be changed in the Designer. Existing header Save persists the viewer selections
+and additional links.
 
 ## Requirements
 

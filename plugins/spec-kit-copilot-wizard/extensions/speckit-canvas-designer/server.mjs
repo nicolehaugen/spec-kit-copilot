@@ -4,7 +4,8 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { readFrozenAsset } from "./pages.mjs";
-import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
+import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
+    loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
 import { freezeGeneration } from "./generation.mjs";
 
 export function shellHtml() {
@@ -72,6 +73,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? GENERATE_UNAVAILABLE : null;
     const state = () => ({ ...model, phases: handoff?.workflow.selectedPhases ?? [],
+        pipelineOutputs: handoff ? initialOutputs(handoff) : {},
         handoffId: handoff?.handoffId,
         generationAvailable: !!handoff?.workflow?.installed && !!session?.send
             && !!project && skillAvailable,
@@ -126,7 +128,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
                 res.end(JSON.stringify(state()));
             } catch (error) {
-                const invalid = error instanceof SyntaxError || /Invalid Designer|unexpected or missing fields/.test(error.message);
+                const invalid = error instanceof SyntaxError
+                    || /Invalid Designer|Invalid outputs for phase|unexpected or missing fields|Pipeline artifacts cannot be changed|Constitution output is fixed/.test(error.message);
                 const conflict = [
                     "Designer handoff changed; reopen before saving",
                     "Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before saving.",

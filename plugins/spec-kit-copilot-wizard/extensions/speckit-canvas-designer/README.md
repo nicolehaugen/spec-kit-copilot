@@ -74,20 +74,22 @@ phase navigation, while creating a workflow. It labels the workflow there.
 Essentials' default-off Allow custom slug setting controls whether an optional
 Workflow slug field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
-The **Outputs** tab (resolved template ID `designer-artifacts`) shows every
-selected phase except Constitution and the Wizard's existing file-output evidence. Paths are
-project-relative Markdown files; folders do not become file outputs. Users
-can add or remove paths and select one default per phase. Removing the last
-output warns that the generated phase will have no View artifact button.
+The **Outputs** tab (resolved template ID `designer-artifacts`) lets users select
+one phase at a time, except Constitution. Wizard-inferred pipeline artifacts are
+read-only; users may add or remove separate project-relative Markdown artifact
+links and choose which one opens with View artifact. Additions do not create
+files or change what the pipeline produces. Removing a selected addition restores
+the original inferred viewer default. If a phase has no pipeline artifacts or
+additions, the tab warns that its generated card will have no View artifact button.
 Constitution always opens `.specify/memory/constitution.md` and cannot be edited
 on this tab.
 The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff restores them when its resolved pages are unchanged.
-Generate freezes these outputs into the app: its phase card links to each
-confirmed file and View artifact opens the selected default. An explicitly
-empty phase stays empty rather than reverting to a built-in output.
+Generate freezes the combined artifact links into the app: its phase card links
+to each listed file and View artifact opens the selected default. A phase with no
+inferred artifacts remains empty unless a link is added.
 Appearance remains empty by default.
 Preset-registered stock text and checkbox fields mount their shared adapters
 in their declared Designer page slot and are saved alongside required values. A registered

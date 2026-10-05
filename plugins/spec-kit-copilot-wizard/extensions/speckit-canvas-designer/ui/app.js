@@ -5,6 +5,8 @@ const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
 let model, currentPage, draft, draftOutputs, saving = false;
+let selectedOutputPhase;
+const pendingArtifacts = new Map();
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
@@ -192,83 +194,152 @@ function renderPage(pageId, invalidFieldId) {
         root.setAttribute("aria-busy", "false");
         return true;
     }
-    root.replaceChildren(element("h1", page.title), element("p", page.description ?? "", "muted"));
     if (pageId === "designer-artifacts") {
+        const phases = model.phases.filter((id) => id.replace(/^speckit\./, "") !== "constitution");
+        if (!phases.includes(selectedOutputPhase)) selectedOutputPhase = phases[0];
+        const header = element("div", undefined, "output-header");
+        header.append(element("h1", page.title));
+        if (phases.length) {
+            const label = element("label", "Phase: ");
+            const select = element("select");
+            select.setAttribute("aria-label", "Phase");
+            for (const id of phases) {
+                const option = element("option", id.replace(/^speckit\./, "").replace(/[.-]/g, " ")
+                    .replace(/^./, (first) => first.toUpperCase()));
+                option.value = id;
+                select.append(option);
+            }
+            select.value = selectedOutputPhase;
+            select.addEventListener("change", () => {
+                selectedOutputPhase = select.value;
+                renderPage(pageId);
+            });
+            label.append(select);
+            header.append(label);
+        }
+        root.replaceChildren(header,
+            element("p", "Choose which artifact opens when someone clicks View artifact."),
+            element("p", "Add other artifacts to the canvas if needed."),
+            element("p", "This list doesn’t change the artifacts that a pipeline creates."));
         const sections = element("div", undefined, "output-sections");
         root.append(sections);
-        for (const [index, id] of model.phases.entries()) {
-            if (id.replace(/^speckit\./, "") === "constitution") continue;
+        if (!phases.length) {
+            sections.append(element("p", "No phases have configurable artifacts. Constitution always opens its fixed artifact.", "settings-note"));
+        } else {
+            const id = selectedOutputPhase;
             const entry = draftOutputs[id];
+            const pipeline = model.pipelineOutputs?.[id]?.outputs ?? [];
+            const originalView = model.pipelineOutputs?.[id]?.view ?? null;
             const section = element("section", undefined, "output-section");
-            const heading = element("h2", `${index + 1}. ${id}`);
-            section.append(heading);
-            const list = element("div", undefined, "output-list");
-            const incomplete = element("p",
-                "Enter a .md output path or remove the unfinished row before saving or generating.",
-                "output-warning");
-            const updateIncomplete = () => {
-                incomplete.hidden = entry.outputs.every((path) => path.endsWith(".md"));
-            };
-            const render = () => {
-                list.replaceChildren();
-                if (!entry.outputs.length) {
-                    list.append(element("p", "No outputs yet.", "settings-note"));
-                    list.append(element("p",
-                        "This phase will not have a View artifact button in the generated canvas.",
-                        "output-warning"));
-                }
-                for (const [position, path] of entry.outputs.entries()) {
-                    const row = element("div", undefined, "output-row");
-                    const radio = element("input");
-                    radio.type = "radio";
-                    radio.name = `viewer-${index}`;
-                    radio.checked = entry.view === path;
-                    radio.setAttribute("aria-label", `Open output ${position + 1} by default for ${id}`);
-                    radio.addEventListener("change", () => {
-                        entry.view = entry.outputs[position];
-                        updateSave();
-                    });
-                    const input = element("input");
-                    input.type = "text";
-                    input.value = path;
-                    input.maxLength = 1000;
-                    input.placeholder = "specs/<slug>/output.md";
-                    input.setAttribute("aria-label", `Output ${position + 1} path for ${id}`);
-                    input.addEventListener("input", () => {
-                        if (entry.view === entry.outputs[position]) entry.view = input.value;
-                        entry.outputs[position] = input.value;
-                        updateIncomplete();
-                        updateSave();
-                    });
+            section.append(element("h2", "Opens with View artifact"),
+                element("p", "Select one artifact to open by default.", "settings-note"),
+                element("h3", "Pipeline artifacts"));
+            const pipelineList = element("div", undefined, "output-list");
+            const additionList = element("div", undefined, "output-list");
+            const rowFor = (path, position, added) => {
+                const row = element("div", undefined, "output-row");
+                const label = element("label", undefined, "output-choice");
+                const radio = element("input");
+                radio.type = "radio";
+                radio.name = `viewer-${id}`;
+                radio.checked = entry.view === path;
+                radio.setAttribute("aria-label", `Open ${path} by default`);
+                radio.addEventListener("change", () => {
+                    entry.view = path;
+                    render();
+                    [...section.querySelectorAll("input[type=radio]")]
+                        .find((item) => item.getAttribute("aria-label") === `Open ${path} by default`)
+                        ?.focus();
+                    updateSave();
+                });
+                label.append(radio, element("span", path));
+                row.append(label);
+                if (added) {
                     const remove = element("button", "Remove");
                     remove.type = "button";
+                    remove.setAttribute("aria-label", `Remove ${path}`);
                     remove.addEventListener("click", () => {
                         entry.outputs.splice(position, 1);
-                        if (!entry.outputs.includes(entry.view)) entry.view = entry.outputs[0] ?? null;
+                        if (entry.view === path) entry.view = originalView;
                         render();
                         updateSave();
                     });
-                    row.append(radio, input, remove);
-                    list.append(row);
+                    row.append(remove);
+                } else if (entry.view === path) {
+                    row.append(element("span", "Opens by default", "settings-note"));
                 }
-                updateIncomplete();
+                return row;
+            };
+            const render = () => {
+                pipelineList.replaceChildren();
+                additionList.replaceChildren();
+                for (const [position, path] of pipeline.entries()) {
+                    pipelineList.append(rowFor(path, position, false));
+                }
+                if (!pipeline.length) {
+                    pipelineList.append(element("p", "No pipeline artifacts for this phase.", "settings-note"));
+                }
+                for (const [position, path] of entry.outputs.entries()) {
+                    if (position >= pipeline.length) additionList.append(rowFor(path, position, true));
+                }
+                if (entry.outputs.length === pipeline.length) {
+                    additionList.append(element("p", "No additional artifacts.", "settings-note"));
+                }
+                if (!entry.outputs.length) {
+                    additionList.append(element("p",
+                        "This phase will not have a View artifact button in the generated canvas.",
+                        "output-warning"));
+                }
             };
             render();
-            const add = element("button", "+ Add output");
-            add.type = "button";
-            add.addEventListener("click", () => {
-                entry.outputs.push("");
-                if (entry.outputs.length === 1) entry.view = "";
+            section.append(pipelineList, element("h3", "Additional artifacts"), additionList);
+            const form = element("form", undefined, "output-add");
+            const input = element("input");
+            input.type = "text";
+            input.maxLength = 1000;
+            input.value = pendingArtifacts.get(id) ?? "";
+            input.placeholder = "Artifact path";
+            input.setAttribute("aria-label", "Artifact path");
+            const add = element("button", "Add artifact");
+            add.type = "submit";
+            const hint = element("p", "Adding an artifact here doesn’t create the file.", "settings-note");
+            const inputError = element("p", undefined, "output-warning");
+            const validateInput = () => {
+                const path = input.value.trim();
+                const duplicate = entry.outputs.some((item) => item.toLowerCase() === path.toLowerCase());
+                add.disabled = !path.endsWith(".md") || duplicate || entry.outputs.length >= 100;
+                inputError.textContent = entry.outputs.length >= 100
+                    ? "A phase can list at most 100 artifacts."
+                    : duplicate ? "This artifact is already listed."
+                        : path && !path.endsWith(".md") ? "Enter a Markdown (.md) artifact path."
+                            : "";
+                inputError.hidden = !inputError.textContent;
+            };
+            input.addEventListener("input", () => {
+                pendingArtifacts.set(id, input.value);
+                validateInput();
+            });
+            form.addEventListener("submit", (event) => {
+                event.preventDefault();
+                if (add.disabled) return;
+                const path = input.value.trim();
+                entry.outputs.push(path);
+                if (!entry.view) entry.view = path;
+                pendingArtifacts.delete(id);
+                input.value = "";
                 render();
-                list.querySelector(".output-row:last-child input[type=text]")?.focus();
+                validateInput();
                 updateSave();
             });
-            section.append(list, incomplete, add);
+            form.append(input, add);
+            section.append(form, hint, inputError);
             sections.append(section);
+            validateInput();
         }
         root.setAttribute("aria-busy", "false");
         return true;
     }
+    root.replaceChildren(element("h1", page.title), element("p", page.description ?? "", "muted"));
     const form = element("form");
     form.noValidate = true;
     form.addEventListener("submit", (event) => {

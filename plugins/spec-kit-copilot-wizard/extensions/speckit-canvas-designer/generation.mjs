@@ -3,7 +3,7 @@ import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
-import { validateValues } from "./settings.mjs";
+import { initialOutputs, validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
 import { validateConfirmedOutputs } from "./handoff.mjs";
 
@@ -77,7 +77,8 @@ async function validateAdapterValues(model, values, project) {
 
 export async function freezeGeneration({ model, values, outputs = model.outputs, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
-    if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases);
+    if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases,
+        initialOutputs(handoff));
     await validateAdapterValues(model, essentials, project);
     if (!canvasIdPattern.test(essentials["canvas.id"])
         || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {

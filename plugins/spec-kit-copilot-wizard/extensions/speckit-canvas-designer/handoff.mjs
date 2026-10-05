@@ -21,13 +21,17 @@ export function fixedConstitutionOutputs(outputs, phases) {
         : outputs;
 }
 
-export function validateConfirmedOutputs(outputs, phases) {
+export function validateConfirmedOutputs(outputs, phases, pipelineOutputs) {
     validatePhaseOutputs(outputs, phases);
     const id = phases.find((phase) => phase.replace(/^speckit\./, "") === "constitution");
     if (id && (outputs[id].outputs.length !== 1
         || outputs[id].outputs[0] !== CONSTITUTION_OUTPUT
         || outputs[id].view !== CONSTITUTION_OUTPUT)) {
         throw new Error("Constitution output is fixed");
+    }
+    if (pipelineOutputs && phases.some((phase) => pipelineOutputs[phase]?.outputs.some(
+        (path, index) => outputs[phase].outputs[index] !== path))) {
+        throw new Error("Pipeline artifacts cannot be changed");
     }
     return outputs;
 }

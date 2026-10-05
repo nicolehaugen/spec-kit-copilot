@@ -156,45 +156,54 @@ async function openDesigner(page) {
     return shell;
 }
 
-test("Outputs page confirms phase files with the header Save and warns when a phase becomes empty", async ({ page }) => {
+test("Outputs page keeps pipeline artifacts fixed and restores the viewer default after removing an addition", async ({ page }) => {
     const state = await model();
     state.outputs = {
         constitution: { outputs: [".specify/memory/constitution.md"],
             view: ".specify/memory/constitution.md" },
         specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
-            view: "specs/<slug>/research.md" },
+            view: "specs/<slug>/spec.md" },
         "speckit.assess.intake": { outputs: [], view: null },
     };
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
         await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.locator(".output-section")).toHaveCount(2);
-        await expect(page.locator(".output-section").filter({ hasText: "constitution" })).toHaveCount(0);
-        await expect(page.getByText("No outputs yet.")).toBeVisible();
-        await expect(page.locator(".output-section").first().locator("input[type=radio]").last()).toBeChecked();
-        await page.locator(".output-section").first().getByRole("button", { name: "Remove" }).last().click();
-        await page.locator(".output-section").first().getByRole("button", { name: "Remove" }).click();
-        await expect(page.locator(".output-section").first()).toContainText(
-            "will not have a View artifact button");
-        await page.locator(".output-section").first().getByRole("button", { name: "+ Add output" }).click();
-        await expect(page.locator(".output-section").first().getByText(
-            "Enter a .md output path or remove the unfinished row")).toBeVisible();
-        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
-        await page.getByRole("textbox", { name: "Output 1 path for specify" }).fill("draft.txt");
-        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
-        await page.getByRole("textbox", { name: "Output 1 path for specify" })
-            .fill("specs/<slug>/updated.md");
-        await expect(page.locator(".output-section").first().getByText(
-            "Enter a .md output path or remove the unfinished row")).toBeHidden();
+        await expect(page.locator(".output-section")).toHaveCount(1);
+        await expect(page.getByRole("combobox", { name: "Phase" })).toHaveValue("specify");
+        await expect(page.getByRole("combobox", { name: "Phase" }).locator("option")).toHaveCount(2);
+        await expect(page.getByText("This list doesn’t change the artifacts that a pipeline creates.")).toBeVisible();
+        await expect(page.locator(".output-list").first().getByRole("radio")).toHaveCount(2);
+        await expect(page.locator(".output-list").first().getByRole("button", { name: "Remove" })).toHaveCount(0);
+        await expect(page.getByRole("radio", { name: "Open specs/<slug>/spec.md by default" })).toBeChecked();
+        await page.getByRole("textbox", { name: "Artifact path" }).fill("draft.txt");
+        await expect(page.getByRole("button", { name: "Add artifact" })).toBeDisabled();
+        await page.getByRole("textbox", { name: "Artifact path" }).fill("specs/<slug>/design-notes.md");
+        await page.getByRole("button", { name: "Add artifact" }).click();
+        await expect(page.locator(".output-list").last().getByRole("button", { name: "Remove" })).toHaveCount(1);
+        await page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" }).check();
+        await expect(page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" })).toBeChecked();
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.getByRole("textbox", { name: "Output 1 path for specify" }))
-            .toHaveValue("specs/<slug>/updated.md");
+        await expect(page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" })).toBeChecked();
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.getByText("Settings saved.")).toBeVisible();
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+        await page.reload();
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await expect(page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" })).toBeChecked();
+        await page.getByRole("button", { name: "Remove specs/<slug>/design-notes.md" }).click();
+        await expect(page.getByRole("radio", { name: "Open specs/<slug>/spec.md by default" })).toBeChecked();
+        await expect(page.locator(".output-list").last().getByRole("button", { name: "Remove" })).toHaveCount(0);
+        await page.getByRole("combobox", { name: "Phase" }).selectOption("speckit.assess.intake");
+        await expect(page.getByText("No pipeline artifacts for this phase.")).toBeVisible();
+        await expect(page.getByText("will not have a View artifact button", { exact: false })).toBeVisible();
+        await page.getByRole("textbox", { name: "Artifact path" }).fill("specs/<slug>/assessment.md");
+        await page.getByRole("button", { name: "Add artifact" }).click();
+        await expect(page.getByRole("radio", { name: "Open specs/<slug>/assessment.md by default" })).toBeChecked();
+        await page.getByRole("button", { name: "Remove specs/<slug>/assessment.md" }).click();
+        await expect(page.getByText("will not have a View artifact button", { exact: false })).toBeVisible();
     } finally {
         await shell.close();
     }

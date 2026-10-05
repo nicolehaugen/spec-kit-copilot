@@ -59,7 +59,8 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
     const constitution = { outputs: [".specify/memory/constitution.md"],
         view: ".specify/memory/constitution.md" };
     assert.deepEqual(initial.outputs, { ...handoff.workflow.outputEvidence, constitution });
-    const outputs = { constitution, specify: { outputs: ["specs/<slug>/research.md"],
+    const outputs = { constitution, specify: { outputs: [
+        "specs/<slug>/spec.md", "specs/<slug>/research.md"],
         view: "specs/<slug>/research.md" }, plan: { outputs: [], view: null } };
     const saved = await saveDesignerSettings(workspace, handoff, initial,
         { modelRevision: model.revision, revision: 0, values: {}, outputs });
@@ -67,14 +68,31 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, outputs);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
         modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, specify: { outputs: ["specs/<slug>/research.md"],
+            view: "specs/<slug>/research.md" } },
+    }), /Pipeline artifacts cannot be changed/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, specify: { outputs: [
+            "specs/<slug>/SPEC.md", "specs/<slug>/research.md"],
+        view: "specs/<slug>/research.md" } },
+    }), /Pipeline artifacts cannot be changed/);
+    const removed = { ...outputs, specify: { outputs: ["specs/<slug>/spec.md"],
+        view: "specs/<slug>/spec.md" } };
+    const restored = await saveDesignerSettings(workspace, handoff, saved,
+        { modelRevision: model.revision, revision: 1, values: {}, outputs: removed });
+    assert.deepEqual(restored.outputs, removed);
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, removed);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, constitution: { outputs: [], view: null } },
     }), /Constitution output is fixed/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 1, values: {},
+        modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, plan: { outputs: ["../outside.md"], view: "../outside.md" } },
     }), /Invalid outputs for phase plan/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 1, values: {},
+        modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, plan: { outputs: Array.from({ length: 101 },
             (_, index) => `specs/<slug>/output-${index}.md`),
         view: "specs/<slug>/output-0.md" } },
@@ -82,6 +100,70 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
         modelRevision: model.revision, revision: 0, values: {}, outputs,
     }), /changed elsewhere/);
+});
+
+test("Older saved output edits restore inferred artifacts without losing additions", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.outputEvidence = {
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    const directory = await saveHandoff(workspace, handoff);
+    const base = { revision: "legacy-outputs", constraints: {}, values: {} };
+    await writeFile(join(directory, "settings.json"), JSON.stringify({
+        schemaVersion: 1, handoffId: handoff.handoffId, modelRevision: base.revision,
+        revision: 1, values: {}, outputs: {
+            specify: { outputs: ["specs/<slug>/design-notes.md"],
+                view: "specs/<slug>/design-notes.md" },
+            plan: { outputs: [], view: null },
+        },
+    }));
+    const loaded = await loadDesignerSettings(workspace, handoff, base);
+    assert.deepEqual(loaded.outputs.specify, {
+        outputs: ["specs/<slug>/spec.md", "specs/<slug>/design-notes.md"],
+        view: "specs/<slug>/design-notes.md",
+    });
+    assert.equal(loaded.settingsRevision, 1);
+});
+
+test("Generation freezes the pipeline links and chosen additional viewer target", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.workflow.outputEvidence = {
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const pages = await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project));
+    const model = await loadDesignerSettings(workspace, handoff, pages);
+    const values = { ...model.values, "canvas.id": "links-canvas",
+        "canvas.displayName": "Links Canvas" };
+    const outputs = { ...model.outputs, specify: {
+        outputs: ["specs/<slug>/spec.md", "specs/<slug>/design-notes.md"],
+        view: "specs/<slug>/design-notes.md",
+    } };
+    await assert.rejects(freezeGeneration({ model, values, outputs: {
+        ...outputs, specify: { outputs: ["specs/<slug>/design-notes.md"],
+            view: "specs/<slug>/design-notes.md" },
+    }, handoff, project, workspace }), /Pipeline artifacts cannot be changed/);
+    const prepared = await freezeGeneration({ model, values, outputs, handoff, project, workspace });
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.workflow.phaseArtifacts, outputs);
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, prepared.target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.phaseArtifacts.specify, outputs.specify);
 });
 
 function validHandoff(id = ID) {
