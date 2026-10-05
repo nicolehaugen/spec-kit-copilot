@@ -21,7 +21,7 @@ custom-slug availability `false`. Removing either required identity field or
 entering an invalid ID blocks Generate.
 
 Because this preset **replaces** the load-page command, it captures the
-Canvas Design v0.1.13 resolution instructions. Reconcile it with the base command
-before using it against future contract revisions. Other presets may append
+Canvas Design resolution instructions. Keep the replacement command in sync
+with the base command when its contract changes. Other presets may append
 their page/template registrations to its **Additional Designer pages** and
 **Additional Canvas Design templates** sections in Specify's usual order.

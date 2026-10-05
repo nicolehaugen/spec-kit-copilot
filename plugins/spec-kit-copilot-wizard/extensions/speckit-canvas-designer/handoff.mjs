@@ -115,7 +115,8 @@ export function validateHandoff(handoff, id) {
                     || handoff.workflow.installed[kind].length > 40
                     || handoff.workflow.installed[kind].some((item) => !record(item)
                         || Object.keys(item).some((key) =>
-                            !["id", "version", "source", "priority", "enabled"].includes(key))
+                            !["id", "version", "source", "priority", "enabled",
+                                "path", "downloadUrl", "catalogId"].includes(key))
                         || typeof item.id !== "string" || !PACKAGE.test(item.id)
                         || (kind !== "bundles"
                             && (!Number.isSafeInteger(item.priority)
@@ -125,8 +126,19 @@ export function validateHandoff(handoff, id) {
                                     && typeof item.enabled !== "boolean")))
                         || (kind === "bundles"
                             && (item.priority !== undefined || item.enabled !== undefined))
+                        || (item.catalogId !== undefined
+                            && (kind !== "bundles" || item.source !== "default"
+                                || typeof item.catalogId !== "string" || !PACKAGE.test(item.catalogId)))
                         || (item.source !== undefined
                             && (typeof item.source !== "string" || !PACKAGE.test(item.source)))
+                        || (item.path !== undefined
+                            && (kind === "bundles" || item.source === undefined || !LOCAL_PATH.test(item.path)
+                                || item.downloadUrl !== undefined))
+                        || (item.downloadUrl !== undefined
+                            && (item.source === "local" || item.path !== undefined
+                                || (item.downloadUrl === null
+                                    ? kind !== "bundles" || item.source !== "default"
+                                    : typeof item.downloadUrl !== "string" || !safeUrl(item.downloadUrl))))
                         || typeof item.version !== "string" || !item.version || item.version.length > 64))))
         || (handoff.workflow.installLocators !== undefined
             && (!handoff.workflow.installed || !validInstallLocators(handoff.workflow)))
@@ -160,7 +172,7 @@ export function validateHandoff(handoff, id) {
     return handoff;
 }
 
-export async function readHandoff(workspacePath, handoffId, openFile = open) {
+export async function readHandoff(workspacePath, handoffId, openFile = open, expectedHash = null) {
     const id = validateHandoffId(handoffId);
     if (typeof workspacePath !== "string" || !workspacePath.trim()) {
         throw new Error("Designer session workspace is unavailable");
@@ -201,6 +213,8 @@ export async function readHandoff(workspacePath, handoffId, openFile = open) {
             length += bytesRead;
         }
         if (length > HANDOFF_LIMIT) throw new Error("Oversized Designer handoff");
+        if (expectedHash && createHash("sha256").update(bytes.subarray(0, length)).digest("hex")
+            !== expectedHash) throw new Error("Designer handoff bytes changed; stop and relaunch.");
         text = bytes.toString("utf8", 0, length);
     } finally {
         await file.close();

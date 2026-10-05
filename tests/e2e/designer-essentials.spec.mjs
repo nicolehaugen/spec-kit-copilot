@@ -3,8 +3,12 @@ import { test, expect } from "./playwright.mjs";
 
 const ui = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/ui/",
     import.meta.url);
+const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design/controls/",
+    import.meta.url);
 
 async function openDesigner(page, fields, extraPage) {
+    const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
+        JSON.parse(await readFile(new URL(`${name}/control.json`, stockControls), "utf8"))));
     const constraints = {
         "canvas.id": { type: "string", minLength: 1, maxLength: 100,
             pattern: "^[a-z0-9][a-z0-9-]*$" },
@@ -19,7 +23,9 @@ async function openDesigner(page, fields, extraPage) {
         "workflowSlug.userProvided": false, "billing.costCode": "" };
     const ids = [...fields, ...(extraPage?.fields ?? [])].map((field) => field.id);
     const state = { handoffId: "test", revision: "test", generationAvailable: true,
-        settingsRevision: 0, persisted: false, adapters: {},
+        settingsRevision: 0, persisted: false, controls,
+        adapters: { "stock.text": "canvas-stock-text-designer",
+            "stock.checkbox": "canvas-stock-checkbox-designer" }, templates: [],
         pages: [{ page: "canvas-settings-setup", title: "Essentials", order: 10,
             description: "Configure your canvas.", fields },
         ...(extraPage ? [extraPage] : [])],
@@ -33,6 +39,11 @@ async function openDesigner(page, fields, extraPage) {
         } else if (path === "/api/generate") {
             requests.push(route.request().postDataJSON());
             await route.fulfill({ status: 202, json: { target: ".github/extensions/test/" } });
+        } else if (path.startsWith("/adapters/")) {
+            const type = path.match(/^\/adapters\/canvas-stock-(text|checkbox)-designer\.mjs$/)?.[1];
+            if (!type) throw new Error(`Unexpected Designer adapter request: ${path}`);
+            await route.fulfill({ body: await readFile(new URL(`stock-${type}/designer.mjs`, stockControls)),
+                contentType: "text/javascript" });
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css") {
             const file = path === "/" ? "index.html" : path.slice(4);
             await route.fulfill({ body: await readFile(new URL(file, ui)), contentType:

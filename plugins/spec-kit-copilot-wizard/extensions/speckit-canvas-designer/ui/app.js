@@ -104,7 +104,8 @@ generate.addEventListener("click", async () => {
         const values = draft;
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ revision: model.revision, values,
+            body: JSON.stringify({ modelRevision: model.revision,
+                settingsRevision: model.settingsRevision, values,
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
@@ -274,6 +275,7 @@ function renderPage(pageId, invalidFieldId) {
                             updateSave();
                         } } : {}) },
                     onChange(value) {
+                        if (!mount.isConnected) return;
                         if (image ? !validImage(value)
                             : rules.type === "boolean" ? typeof value !== "boolean"
                                 : rules.type === "string" ? typeof value !== "string"

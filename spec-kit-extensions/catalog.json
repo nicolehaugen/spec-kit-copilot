@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-10-03T18:46:55Z",
+  "updated_at": "2026-10-04T20:00:56Z",
   "catalog_url": "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json",
   "extensions": {
     "extension-canvas-design": {

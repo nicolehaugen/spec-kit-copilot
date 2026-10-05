@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "canvas-settings-pr1-test",
   "title": "Test settings",
-  "description": "Designer-only test of a contributed field.",
+  "description": "Designer-only test of contributed stock fields.",
   "order": 40,
   "enabled": true,
   "slots": [{"id": "pr1-test.options", "accepts": ["field"],

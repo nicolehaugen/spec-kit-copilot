@@ -51,8 +51,11 @@ async function mountGeneratedControl(root) {
 const $ = (id) => document.getElementById(id);
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
+const failedValueDrafts = new Map();
+const failedPatches = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
-let viewer = null, timer, saveFailure = null, workflowQuery = "";
+let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null,
+    pendingValueSaves = 0, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 
 function wireGeneratedPages() {
@@ -69,8 +72,7 @@ function wireGeneratedPages() {
         root.hidden = workflow;
         root.replaceChildren();
         root.classList.remove("workflow-error");
-        $("phase-navigation").hidden = !workflow;
-        $("phase-card").hidden = !workflow;
+        $("workflow-content").hidden = !workflow;
         for (const candidate of buttons) {
             if (candidate === button) candidate.setAttribute("aria-current", "page");
             else candidate.removeAttribute("aria-current");
@@ -86,14 +88,14 @@ function wireGeneratedPages() {
             const content = document.createElement("div");
             await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
                 displayName: root.dataset.canvasTitle },
-                values: { ...JSON.parse(root.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
+                values: { ...JSON.parse(registration.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
             if (currentSelection !== selection) return;
             await mountPageAssets(content, JSON.parse(registration.dataset.assetSlots),
                 JSON.parse(registration.dataset.assets),
                 (target, asset) => renderStockImage(target,
                     { id: asset.id, label: asset.label }, asset, asset.label, "generated-image"));
             if (currentSelection !== selection) return;
-            root.replaceChildren(...content.childNodes);
+            root.replaceChildren(content);
         } catch (error) {
             if (currentSelection !== selection) return;
             root.textContent = `Generated page could not render: ${error.message}`;
@@ -186,10 +188,12 @@ function renderValues() {
         } else {
             const editor = document.createElement("div");
             editor.dataset.editValue = field.id;
+            const retained = failedValueDrafts.get(field.id);
+            const value = retained ? retained.value : field.value;
             if (field.schema.type === "boolean") {
                 const input = document.createElement("input");
                 input.type = "checkbox";
-                input.checked = field.value;
+                input.checked = value;
                 input.id = `value-${field.id}`;
                 label.htmlFor = input.id;
                 editor.append(input);
@@ -200,13 +204,14 @@ function renderValues() {
                     const select = document.createElement("select");
                     select.className = "phase-input-control";
                     select.dataset.property = key;
+                    select.setAttribute("aria-label", `${field.label}: ${key}`);
                     for (const option of options) {
                         const item = document.createElement("option");
                         item.value = option;
                         item.textContent = option;
                         select.append(item);
                     }
-                    select.value = field.value[key];
+                    select.value = value[key];
                     property.append(select);
                     editor.append(property);
                 }
@@ -215,7 +220,7 @@ function renderValues() {
                 input.type = "text";
                 input.className = "phase-input-control";
                 input.maxLength = field.schema.maxLength;
-                input.value = field.value;
+                input.value = value;
                 input.id = `value-${field.id}`;
                 label.htmlFor = input.id;
                 editor.append(input);
@@ -244,7 +249,7 @@ function renderValues() {
         }
     }
 }
-async function editValue(element) {
+function editValue(element) {
     const row = element.closest("[data-edit-value]");
     if (!row || !model) return;
     const field = model.valueFields.find((entry) => entry.id === row.dataset.editValue && entry.editable);
@@ -255,10 +260,19 @@ async function editValue(element) {
         value = Object.fromEntries([...row.querySelectorAll("[data-property]")]
             .map((input) => [input.dataset.property, input.value]));
     } else value = row.querySelector("input").value;
-    await flush();
-    const result = await api("/api/values", { id: field.id, value, revision: model.revision });
-    model.revision = result.revision;
-    await refresh();
+    if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
+    pendingValueSaves++;
+    saving = saving.catch(() => {}).then(async () => {
+        if (saveFailure) throw saveFailure;
+        const result = await api("/api/values", { id: field.id, value, revision: model.revision });
+        model.revision = result.revision;
+        failedValueDrafts.delete(field.id);
+    }).catch((error) => {
+        failedValueDrafts.set(field.id, { value, error });
+        throw error;
+    }).finally(() => { pendingValueSaves--; });
+    saving.catch(() => {});
+    return saving.then(() => refresh());
 }
 async function api(path, input) {
     const response = await fetch(path, {
@@ -280,11 +294,23 @@ function remember(step, value) {
     return { item: step.project ? "project" : model.selected, phase: step.id, value };
 }
 function persist(patch) {
+    const parts = [];
+    if (Object.hasOwn(patch, "selected") || Object.hasOwn(patch, "name") || Object.hasOwn(patch, "slug")) {
+        parts.push([`identity:${patch.selected ?? model.selected}`, {
+            ...(Object.hasOwn(patch, "selected") ? { selected: patch.selected } : {}),
+            ...(Object.hasOwn(patch, "name") ? { name: patch.name } : {}),
+            ...(Object.hasOwn(patch, "slug") ? { slug: patch.slug } : {}),
+        }]);
+    }
+    if (patch.draft) parts.push([`draft:${JSON.stringify([patch.draft.item, patch.draft.phase])}`,
+        { draft: patch.draft }]);
     saving = saving.catch(() => {}).then(async () => {
         const saved = await api("/api/state", { revision: model.revision, ...patch });
         model.revision = saved.revision;
-        saveFailure = null;
+        for (const [key] of parts) failedPatches.delete(key);
+        if (!failedPatches.size) saveFailure = null;
     }).catch((error) => {
+        for (const [key, value] of parts) failedPatches.set(key, value);
         saveFailure = error;
         message(`Inputs could not be saved: ${error.message} Your draft is retained in this panel.`, "canvas-message", true);
         throw error;
@@ -305,10 +331,26 @@ function saveInputs() {
     if (selected) patch.draft = { item: model.selected, phase: selected.id, value: drafts.get(draftKey(selected)) ?? $("phase-args")?.value ?? "" };
     return persist(patch);
 }
+function saveConstitutionDraft() {
+    const draft = constitutionDraft;
+    if (draft) {
+        const pending = persist({ draft });
+        pending.then(() => {
+            if (constitutionDraft === draft) constitutionDraft = null;
+        }, () => {});
+        return pending;
+    }
+}
 async function flush() {
     if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
+    if (constitutionTimer) {
+        clearTimeout(constitutionTimer);
+        constitutionTimer = null;
+        saveConstitutionDraft();
+    }
     await saving;
     if (saveFailure) throw saveFailure;
+    if (failedValueDrafts.size) throw failedValueDrafts.values().next().value.error;
 }
 function renderStatus() {
     function pendingLabel(step) {
@@ -492,9 +534,19 @@ async function refresh(reconcile = false) {
     model = next;
     if (!previous) current = Math.max(0, workflowPhases().findIndex((step) => step.id === model.phase));
     // Do not replace live input text during events or background refresh.
-    if (previous && timer) {
+    if (previous && (timer || saveFailure)) {
         model.slug = previous.slug;
         model.name = previous.name;
+    }
+    const selected = phase();
+    if (selected && !model.statuses[selected.id]?.error
+        && $("phase-message")?.classList.contains("workflow-error")) {
+        message("", "phase-message");
+    }
+    const project = constitution();
+    if (project && !model.statuses[project.id]?.error
+        && $("constitution-message")?.classList.contains("workflow-error")) {
+        message("", "constitution-message");
     }
     renderCollection();
     renderValues();
@@ -579,7 +631,7 @@ async function refreshArtifact() {
         const result = await api(`/api/artifact?${query}`);
         if (viewer !== context) return;
         $("artifact-path").textContent = result.path;
-        if (result.content.trim() || !context.loaded) $("artifact-content").innerHTML = renderMarkdown(result.content);
+        $("artifact-content").innerHTML = renderMarkdown(result.content);
         context.loaded = true;
         message(result.message ?? "", "artifact-message");
     } catch (error) {
@@ -607,7 +659,11 @@ document.addEventListener("input", (event) => {
         queueInput();
     }
     if (event.target.id === "workflow-slug") { model.slug = event.target.value; queueInput(); renderStatus(); }
-    if (event.target.id === "constitution-args") persist({ draft: remember(constitution(), event.target.value) });
+    if (event.target.id === "constitution-args") {
+        constitutionDraft = remember(constitution(), event.target.value);
+        clearTimeout(constitutionTimer);
+        constitutionTimer = setTimeout(() => { constitutionTimer = null; saveConstitutionDraft(); }, 400);
+    }
 });
 document.addEventListener("change", (event) => {
     if (event.target.closest?.("[data-edit-value]")) {
@@ -639,7 +695,19 @@ document.addEventListener("click", (event) => {
             // Fetch the current revision first; retry locally retained drafts explicitly.
             await saving.catch(() => {});
             await refresh(true);
-            if (saveFailure) await saveInputs();
+            if (saveFailure) {
+                if (failedPatches.size) {
+                    let selectionRetried = false;
+                    for (const patch of [...failedPatches.values()]) {
+                        await persist(patch);
+                        if (Object.hasOwn(patch, "selected")) selectionRetried = true;
+                        if (patch.draft === constitutionDraft) constitutionDraft = null;
+                    }
+                    if (selectionRetried) await refresh();
+                } else if (constitutionDraft) await saveConstitutionDraft();
+                else await saveInputs();
+            }
+            if (saveFailure) throw saveFailure;
             message("Canvas refreshed.");
             return;
         }
@@ -674,12 +742,16 @@ wireGeneratedPages();
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {
-    if (!timer) saving.catch(() => {}).then(() => refresh()).catch((error) => message(error.message, "canvas-message", true));
+    if (!timer && !constitutionTimer) saving.catch(() => {}).then(() => refresh())
+        .catch((error) => message(error.message, "canvas-message", true));
     if (viewer) refreshArtifact();
 };
 events.onerror = () => { setConnectionStatus("lost"); message("Connection interrupted. Drafts are retained; use Refresh if reconnection fails."); };
 window.addEventListener("beforeunload", (event) => {
-    if (timer || saveFailure) { event.preventDefault(); event.returnValue = ""; }
+    if (timer || constitutionTimer || saveFailure || pendingValueSaves || failedValueDrafts.size) {
+        event.preventDefault();
+        event.returnValue = "";
+    }
 });
 window.addEventListener("pagehide", () => events.close());
 await refresh().catch((error) => message(error.message, "canvas-message", true));

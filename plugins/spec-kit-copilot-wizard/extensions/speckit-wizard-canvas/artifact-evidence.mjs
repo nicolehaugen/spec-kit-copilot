@@ -317,7 +317,10 @@ export async function collectArtifactEvidence(cwd, snapshot, openFile = open) {
                 const inferred = normalizeInferredEvidence(
                     validateCandidates(cached.outputEvidence.candidates, { inference: true }),
                     validatePrimaryIndex(cached.outputEvidence.primaryIndex, cached.outputEvidence.candidates));
+                const hasExplicitPath = candidates.some(({ kind, source }) =>
+                    ["file", "folder"].includes(kind) && ["declaration", "manual"].includes(source));
                 for (const candidate of inferred.candidates) {
+                    if (hasExplicitPath && candidate.kind === "none") continue;
                     if (!candidates.some((item) => item.path && item.path === candidate.path
                         && item.relativeTo === candidate.relativeTo && item.root?.name === candidate.root?.name
                         && item.root?.path === candidate.root?.path)) {
@@ -338,6 +341,9 @@ export async function collectArtifactEvidence(cwd, snapshot, openFile = open) {
             }
             if (current && candidates.some((candidate) => candidate.source === "manual" && candidate.kind === "file")) {
                 primaryIndex = candidates.findIndex((candidate) => candidate.source === "manual" && candidate.kind === "file");
+            }
+            if (primaryIndex === null && declaration?.kind === "file") {
+                primaryIndex = candidates.indexOf(declaration);
             }
             evidence[id] = { candidates, ...(source ? { fingerprint: source.fingerprint } : {}),
                 ...(current ? { primaryIndex } : {}) };

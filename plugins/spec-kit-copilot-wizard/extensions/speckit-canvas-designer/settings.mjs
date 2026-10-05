@@ -4,6 +4,7 @@ import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
 import { decodeImage } from "./image.mjs";
+import { validControlValue } from "./control-contract.mjs";
 
 export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
@@ -29,10 +30,7 @@ export function validateValues(values, constraints) {
             try { decodeImage(value, rule.maxBytes); }
             catch (error) { throw new Error(`Invalid Designer setting: ${key}: ${error.message}`, { cause: error }); }
         } else if (rule.type === "object") {
-            if (!value || typeof value !== "object" || Array.isArray(value)
-                || Object.keys(value).sort().join() !== Object.keys(rule.properties).sort().join()
-                || Object.entries(rule.properties).some(([name, allowed]) =>
-                    !allowed.includes(value[name]))) {
+            if (!validControlValue(value, rule)) {
                 throw new Error(`Invalid Designer setting: ${key}`);
             }
         } else if (typeof value !== "string" || value.length > rule.maxLength
