@@ -1,10 +1,10 @@
 <!-- speckit:risk-matrix-test v1 -->
 ## Additional Canvas Design templates
 
-- `canvas-control-risk-matrix` — `control.definition`, `replace`
-- `canvas-contributions-risk-designer` — `designer.field`, `replace`
-- `canvas-control-risk-matrix-designer` — `designer.adapter`, `replace`
-- `canvas-control-risk-matrix-generated` — `generated.adapter`, `replace`
+- `canvas-control-risk-matrix` — `shared.control-definition`, `replace`
+- `canvas-contributions-risk-designer` — `designer.setting-definition`, `replace`
+- `canvas-control-risk-matrix-designer` — `designer.control-adapter`, `replace`
+- `canvas-control-risk-matrix-generated` — `generated.control-adapter`, `replace`
 
 ## Risk-matrix resolution requirements
 

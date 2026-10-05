@@ -12,12 +12,12 @@ do not guess or select another session's handoff.
 
 Load these default pages:
 
-- Essentials (`canvas-settings-setup`)
-- `canvas-settings-artifacts`
-- `canvas-settings-appearance`
+- Essentials (`designer-essentials`)
+- `designer-artifacts`
+- `designer-appearance`
 
 Use **Essentials** in progress messages and other user-facing descriptions of
-the first page. `canvas-settings-setup` remains its stable template ID for
+the first page. `designer-essentials` is its template ID for
 `specify preset resolve` and the Designer page input; do not rename the ID.
 
 Presets may add pages in sections titled **Additional Designer pages** anywhere
@@ -27,25 +27,29 @@ set; they do not run a second load operation.
 The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
-Each registration declares its Canvas Design kind (`designer.field`,
-`generated.page`, `generated.renderer`, `control.definition`,
-`designer.adapter`, `generated.adapter`, `value.definition`, or
-`value.provider`) and strategy (`replace`).
-Designer pages have kind `designer.page` and strategy `replace` (implicit for
-the extension's default page templates). A name must be a Specify template
+Each registration declares its Canvas Design kind (`designer.setting-definition`,
+`generated.workflow-page-definition`, `generated.pipeline-renderer`,
+`generated.added-page-definition`, `generated.added-page-renderer`, `shared.control-definition`,
+`designer.control-adapter`, `generated.control-adapter`, `generated.value-definition`, or
+`generated.computed-value-provider`) and strategy (`replace`).
+All Designer tabs have kind `designer.tab-definition` and strategy `replace`
+(implicit for the extension's required tab templates). The required tabs are
+identified by their registered names. A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions, host-specific adapters, value definitions,
-and provider modules must each be explicitly registered. `value.definition`
-declares a typed constant or a workflow-scoped provider; a generated page
+and provider modules must each be explicitly registered. `generated.value-definition`
+declares a typed constant or a workflow-scoped computed value; a generated page
 declares the value IDs it consumes in its `values` list. A processing-only value
 is not automatically presented and is not secret from its declared consumers.
 Providers are packaged, never evaluated by Designer.
 
 ## Canvas Design templates
 
-- `canvas-stock-text` — `control.definition`, `replace`
-- `canvas-stock-text-designer` — `designer.adapter`, `replace`
-- `canvas-stock-text-generated` — `generated.adapter`, `replace`
+- `generated-workflow` — `generated.workflow-page-definition`, `replace`
+- `generated-pipeline` — `generated.pipeline-renderer`, `replace`
+- `shared-controls-text` — `shared.control-definition`, `replace`
+- `designer-control-adapter-text` — `designer.control-adapter`, `replace`
+- `generated-control-adapter-text` — `generated.control-adapter`, `replace`
 
 ## Steps
 
@@ -70,8 +74,8 @@ hosted packages without this verifier must perform steps 1-3 manually.
    opening Designer. Its order and winning files belong to Specify.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
-       canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.15)
+       designer-essentials: C:\project\.specify\extensions\extension-canvas-design\designer\tabs\essentials.json
+         (top layer from: extension:extension-canvas-design v0.1.18)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
@@ -95,7 +99,7 @@ hosted packages without this verifier must perform steps 1-3 manually.
    `open_canvas({canvasId:"speckit-canvas-designer",
    extensionId:"plugin:spec-kit-copilot-wizard:speckit-canvas-designer",
    instanceId:"designer-<handoffId>",input:{handoffId:"<handoffId>",
-   pages:[{"name":"<page-name>","path":"<resolved-path>","kind":"designer.page","strategy":"replace"},...],
+   pages:[{"name":"<page-name>","path":"<resolved-path>","kind":"designer.tab-definition","strategy":"replace"},...],
    templates:[{"name":"<asset-name>","path":"<resolved-path>","sourceId":"<Specify-reported-source-ID>","kind":"<declared-kind>","strategy":"replace"},...]}})`.
    Obtain each `sourceId` from that name's `top layer from:` metadata:
    map the exact versionless `project override` marker to `project`; for a

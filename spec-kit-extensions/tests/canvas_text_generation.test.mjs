@@ -7,6 +7,8 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { addWorkflowFixture } from "./workflow_fixture.mjs";
+import { addDesignerAdapterFixture } from "./designer_adapter_fixture.mjs";
 
 const source = new URL("../extension-canvas-design/", import.meta.url);
 const digest = (data) => createHash("sha256").update(data).digest("hex");
@@ -27,15 +29,15 @@ async function fixture(t) {
     await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
     const templates = [];
     for (const [name, kind, file] of [
-        ["canvas-stock-text", "control.definition", "controls/stock-text/control.json"],
-        ["canvas-stock-text-designer", "designer.adapter", "controls/stock-text/designer.mjs"],
-        ["canvas-stock-text-generated", "generated.adapter", "controls/stock-text/generated.mjs"],
-        ["canvas-stock-checkbox", "control.definition", "controls/stock-checkbox/control.json"],
-        ["canvas-stock-checkbox-designer", "designer.adapter", "controls/stock-checkbox/designer.mjs"],
+        ["shared-controls-text", "shared.control-definition", "controls/stock-text/control.json"],
+        ["designer-control-adapter-text", "designer.control-adapter", "controls/stock-text/designer.mjs"],
+        ["generated-control-adapter-text", "generated.control-adapter", "controls/stock-text/generated.mjs"],
+        ["shared-controls-checkbox", "shared.control-definition", "controls/stock-checkbox/control.json"],
+        ["designer-control-adapter-checkbox", "designer.control-adapter", "controls/stock-checkbox/designer.mjs"],
     ]) {
         const bytes = await readFile(new URL(file, source));
         const path = join(project, ".specify", "templates",
-            `${name}.${kind === "control.definition" ? "json" : "mjs"}`);
+            `${name}.${kind === "shared.control-definition" ? "json" : "mjs"}`);
         await writeFile(path, bytes);
         templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
             strategy: "replace", path: await realpath(path), hash: digest(bytes) });
@@ -47,7 +49,7 @@ async function fixture(t) {
     ];
     const model = {
         revision: "text-revision",
-        pages: [{ page: "canvas-settings-setup", fields: [
+        pages: [{ page: "designer-essentials", fields: [
             { id: "canvas.id" }, { id: "canvas.displayName" }] }],
         constraints: {
             "canvas.id": { type: "string", minLength: 1, maxLength: 100,
@@ -59,8 +61,8 @@ async function fixture(t) {
             "workflowSlug.userProvided": { type: "boolean" },
         },
         templates, controls: [{ id: "stock.text",
-            adapters: { designer: "canvas-stock-text-designer", generated: "canvas-stock-text-generated" } },
-        { id: "stock.checkbox", adapters: { designer: "canvas-stock-checkbox-designer" } }],
+            adapters: { designer: "designer-control-adapter-text", generated: "generated-control-adapter-text" } },
+        { id: "stock.checkbox", adapters: { designer: "designer-control-adapter-checkbox" } }],
         contributions: [...fields.map(([id, label, slot]) => ({
             name: id,
             field: { id, label, type: "string", control: "stock.text" },
@@ -76,6 +78,8 @@ async function fixture(t) {
         "canvas.workflowListName": "My workflows", "billing.code": "CC-481",
         "workflowSlug.userProvided": false,
     };
+    await addDesignerAdapterFixture(project, model);
+    await addWorkflowFixture(project, model);
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     return { project, workspace, prepared, model, values, templates,
         requestPath: join(folder, "generations", prepared.requestId, "request.json"),
@@ -100,9 +104,9 @@ test("frozen stock.text is packaged once and mounted at visible slots without de
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig, renderHtml, createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     const config = readConfig();
-    assert.equal(config.textControl.adapter, "canvas-stock-text-generated");
+    assert.equal(config.textControl.adapter, "generated-control-adapter-text");
     assert.deepEqual((await readdir(join(sdk, "controls"))).sort(),
-        ["canvas-stock-text-generated.mjs", "canvas-stock-text.json"]);
+        ["generated-control-adapter-text.mjs", "shared-controls-text.json"]);
     const html = renderHtml(config, "secret");
     assert.match(html, /data-stock-text="workflow.description"[^>]*>Hello &lt;script&gt;&quot;there&quot;&lt;\/script&gt;/);
     assert.match(html, /data-stock-text="workflow.heading"[^>]*>My workflows<\/span> <span class="muted" id="workflow-count">\(0\)/);
@@ -117,14 +121,14 @@ test("frozen stock.text is packaged once and mounted at visible slots without de
         server.closeAllConnections();
         return new Promise((resolve) => server.close(resolve));
     });
-    const url = `http://127.0.0.1:${server.address().port}/controls/canvas-stock-text-generated.mjs`;
+    const url = `http://127.0.0.1:${server.address().port}/controls/generated-control-adapter-text.mjs`;
     assert.equal((await fetch(url)).status, 401);
     assert.equal((await fetch(`${url}?token=secret`)).status, 200);
     const portable = join(workspace, "portable");
     await cp(sdk, portable, { recursive: true });
     assert.equal((await import(`${pathToFileURL(join(portable, "server.mjs")).href}?portable=1`))
         .readConfig().textControl.hash, config.textControl.hash);
-    const packaged = join(sdk, "controls", "canvas-stock-text-generated.mjs");
+    const packaged = join(sdk, "controls", "generated-control-adapter-text.mjs");
     await writeFile(packaged, "export function mount() {}");
     assert.throws(() => readConfig(), /stock.text adapter does not match its frozen hash/);
     assert.equal((await fetch(`${url}?token=secret`)).status, 500);
@@ -178,7 +182,7 @@ test("stock.text freezes winning bytes and rejects missing, altered and incompat
         /Invalid frozen stock.text placements/);
     await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
     await writeFile(requestPath, JSON.stringify(original));
-    await writeFile(templates.find((asset) => asset.name === "canvas-stock-text-generated").path,
+    await writeFile(templates.find((asset) => asset.name === "generated-control-adapter-text").path,
         "export function mount() {}");
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
         /generated asset changed/);
@@ -226,7 +230,7 @@ test("stock.readonly text resolves the winning shared definition by control ID",
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
-    assert.equal(request.generatedTextControl.assets[0].name, "canvas-stock-text");
+    assert.equal(request.generatedTextControl.assets[0].name, "shared-controls-text");
     assert.deepEqual(request.generatedTextPlacements.at(-1), {
         id: "billing.code", label: "Cost code",
         presentation: "stock.readonly", slot: "details.content",
@@ -235,11 +239,11 @@ test("stock.readonly text resolves the winning shared definition by control ID",
     const { readConfig, renderHtml } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     assert.match(renderHtml(readConfig()), /data-field-id="billing.code" data-stock-text="details.content"/);
     const invalid = { ...model, templates: model.templates.filter((entry) =>
-        entry.name !== "canvas-stock-text") };
+        entry.name !== "shared-controls-text") };
     await assert.rejects(freezeGeneration({ model: invalid, values, handoff, project, workspace }),
         /Missing paired stock.text definition or generated adapter/);
     const duplicate = { ...model, templates: [...model.templates, {
-        ...model.templates.find((entry) => entry.name === "canvas-stock-text"),
+        ...model.templates.find((entry) => entry.name === "shared-controls-text"),
         name: "another-stock-text",
     }] };
     await assert.rejects(freezeGeneration({ model: duplicate, values, handoff, project, workspace }),

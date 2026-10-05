@@ -1,3 +1,19 @@
+/**
+ * Designer adapter: risk-matrix
+ * Required exports: controlId and valueContract must match the shared control;
+ * mount and validate must be functions.
+ * Value: a draft may be null or an incomplete object; a valid value has exactly
+ * impact and likelihood selected from field.validation.properties.
+ * field: The Designer supplies canonical id, label, optional description,
+ * control, and validation rules; request values cannot redefine these rules.
+ * mount: The Designer creates an empty <div> for each control and passes it
+ * as root. Render and style only inside that div. onChange(nextValue) updates
+ * the unsaved draft without remounting; return { isReady(): boolean }.
+ * The Designer requires isReady() === true before Save, Generate, or tab exit.
+ * validate: Return a pure, synchronous boolean using the canonical field.
+ * Generate calls it in Node on the value being frozen; false, a throw, or
+ * a non-boolean result blocks generation. Do not depend on browser APIs.
+ */
 export const controlId = "risk-matrix";
 export const valueContract = {
     type: "object",
@@ -8,6 +24,7 @@ export const valueContract = {
 };
 
 const LEVELS = ["low", "medium", "high"];
+let nextScope = 0;
 
 function validValue(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -15,23 +32,34 @@ function validValue(value) {
         && LEVELS.includes(value.impact) && LEVELS.includes(value.likelihood);
 }
 
+export function validate(value, field) {
+    const properties = field?.validation?.properties;
+    return field?.validation?.type === "object" && !!properties
+        && value !== null && typeof value === "object" && !Array.isArray(value)
+        && Object.keys(value).sort().join() === Object.keys(properties).sort().join()
+        && Object.entries(properties).every(([key, allowed]) => allowed.includes(value[key]));
+}
+
 export function mount({ root, field, value, onChange }) {
     if (!root || typeof root.replaceChildren !== "function"
         || !field || typeof field.id !== "string" || !field.id
-        || typeof onChange !== "function" || (value !== null && !validValue(value))) {
+        || typeof onChange !== "function"
+        || (value !== null && (typeof value !== "object" || Array.isArray(value)))) {
         throw new Error("Invalid Designer risk-matrix control or value");
     }
 
+    const scope = String(++nextScope);
+    root.dataset.riskMatrixScope = scope;
     const style = document.createElement("style");
     style.textContent = `
-        .risk-matrix-designer .risk-matrix-grid {
+        [data-risk-matrix-scope="${scope}"] .risk-matrix-designer .risk-matrix-grid {
             display: grid;
             grid-template-columns: minmax(6rem, auto) repeat(3, minmax(3rem, 1fr));
             gap: .35rem;
             max-width: 30rem;
         }
-        .risk-matrix-designer .risk-matrix-grid > span { align-self: center; }
-        .risk-matrix-designer button {
+        [data-risk-matrix-scope="${scope}"] .risk-matrix-designer .risk-matrix-grid > span { align-self: center; }
+        [data-risk-matrix-scope="${scope}"] .risk-matrix-designer button {
             border: 1px solid currentColor;
             border-radius: .35rem;
             background: transparent;
@@ -39,11 +67,11 @@ export function mount({ root, field, value, onChange }) {
             min-height: 2.75rem;
             cursor: pointer;
         }
-        .risk-matrix-designer button[aria-checked="true"] {
+        [data-risk-matrix-scope="${scope}"] .risk-matrix-designer button[aria-checked="true"] {
             background: CanvasText;
             color: Canvas;
         }
-        .risk-matrix-designer button:focus-visible {
+        [data-risk-matrix-scope="${scope}"] .risk-matrix-designer button:focus-visible {
             outline: 3px solid Highlight;
             outline-offset: 3px;
         }
@@ -68,7 +96,7 @@ export function mount({ root, field, value, onChange }) {
     }
 
     const cells = [];
-    let selected = value === null ? null : { impact: value.impact, likelihood: value.likelihood };
+    let selected = validValue(value) ? { impact: value.impact, likelihood: value.likelihood } : null;
     function refresh() {
         for (const { button, impact, likelihood } of cells) {
             const active = selected?.impact === impact && selected?.likelihood === likelihood;
@@ -124,4 +152,5 @@ export function mount({ root, field, value, onChange }) {
     refresh();
     container.append(title, hint, grid);
     root.replaceChildren(style, container);
+    return { isReady: () => true };
 }

@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.15"
+  version: "0.1.18"
   description: Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.
   category: process
   author: spec-kit-copilot
@@ -22,52 +22,69 @@ provides:
       file: commands/generate.md
       description: Generate a source-owned workflow canvas from frozen Designer Essentials.
   templates:
-    - name: canvas-settings-setup
-      file: pages/essentials.json
+    # designer.tab-definition: required Designer tabs
+    - name: designer-essentials
+      file: designer/tabs/essentials.json
       description: Essentials fields for canvas identity and workflow naming.
-    - name: canvas-settings-artifacts
-      file: pages/artifacts.json
+    - name: designer-artifacts
+      file: designer/tabs/artifacts.json
       description: Artifacts settings placeholder.
-    - name: canvas-settings-appearance
-      file: pages/appearance.json
+    - name: designer-appearance
+      file: designer/tabs/appearance.json
       description: Appearance settings placeholder.
-    - name: canvas-stock-description
-      file: pages/stock-description.json
+
+    # designer.setting-definition: fields placed in Designer tab slots
+    - name: designer-essentials-description
+      file: designer/essentials-settings/description.json
       description: Optional Essentials collection description.
-    - name: canvas-stock-workflow-heading
-      file: pages/stock-workflow-heading.json
+    - name: designer-essentials-workflow-heading
+      file: designer/essentials-settings/workflow-heading.json
       description: Optional Essentials workflow heading.
-    - name: canvas-stock-custom-slug
-      file: pages/stock-custom-slug.json
+    - name: designer-essentials-custom-slug
+      file: designer/essentials-settings/custom-slug.json
       description: Optional Essentials custom slug option.
-    - name: canvas-stock-logo
-      file: pages/stock-logo.json
+    - name: designer-essentials-header-logo
+      file: designer/essentials-settings/header-logo.json
       description: Optional image asset for the generated canvas header.
-    - name: canvas-stock-logo-main-page
-      file: pages/stock-logo-main-page.json
+    - name: designer-essentials-main-page-logo
+      file: designer/essentials-settings/main-page-logo.json
       description: Optional independent larger logo for the generated workflow page.
-    - name: canvas-stock-image
+
+    # Workflow page: required regions and the generated phase presentation.
+    - name: generated-workflow
+      file: generated/pages/workflow.json
+      description: Ordered Workflow page regions and pipeline renderer reference.
+    - name: generated-pipeline
+      file: generated/pages/generated-pipeline.mjs
+      description: Horizontal workflow phase presentation.
+
+    # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
+    - name: shared-controls-image
       file: controls/stock-image/control.json
-      description: Shared image value contract and paired adapters.
-    - name: canvas-stock-image-designer
+      description: Image value type, size and MIME limits, and adapter registrations.
+    - name: designer-control-adapter-image
       file: controls/stock-image/designer.mjs
       description: Image upload, preview, replacement, and removal in Designer.
-    - name: canvas-stock-image-generated
+    - name: generated-control-adapter-image
       file: controls/stock-image/generated.mjs
-      description: Portable image presentation in generated canvases.
-    - name: canvas-stock-text
+      description: Image rendering in generated canvases.
+
+    # Text control: define string values, edit them in Designer, and render them in generated canvases.
+    - name: shared-controls-text
       file: controls/stock-text/control.json
-      description: Shared text value contract and host adapters.
-    - name: canvas-stock-text-designer
+      description: String value type and adapter registrations.
+    - name: designer-control-adapter-text
       file: controls/stock-text/designer.mjs
       description: Text editing in Designer.
-    - name: canvas-stock-text-generated
+    - name: generated-control-adapter-text
       file: controls/stock-text/generated.mjs
-      description: Portable visual text presentation in generated canvases.
-    - name: canvas-stock-checkbox
+      description: Text rendering in generated canvases.
+
+    # Checkbox control: define boolean values and edit them in Designer.
+    - name: shared-controls-checkbox
       file: controls/stock-checkbox/control.json
-      description: Shared boolean value contract and Designer adapter.
-    - name: canvas-stock-checkbox-designer
+      description: Boolean value type and Designer adapter registration.
+    - name: designer-control-adapter-checkbox
       file: controls/stock-checkbox/designer.mjs
       description: Boolean editing in Designer.
 

@@ -1,8 +1,9 @@
 {
+  "$schema": "../../schemas/shared.control-definition.schema.json",
   "schemaVersion": 1,
   "id": "stock.checkbox",
   "value": {"type": "boolean"},
   "adapters": {
-    "designer": "canvas-stock-checkbox-designer"
+    "designer": "designer-control-adapter-checkbox"
   }
 }

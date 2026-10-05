@@ -21,19 +21,21 @@ test("template containment rejects outside paths and other Windows drives", () =
 
 test("generated skill declarations include appended pages and templates anywhere", async () => {
     const base = await readFile(join(source, "commands", "load-page.md"), "utf8");
-    const appended = `${base}\n## Additional Canvas Design templates\n- \`sample-renderer\` — \`generated.renderer\`, \`replace\`\n`
+    const appended = `${base}\n## Additional Canvas Design templates\n- \`sample-renderer\` — \`generated.added-page-renderer\`, \`replace\`\n`
         + "## Additional Designer pages\n- `sample-page`\n";
     const names = declarations(appended).map((entry) => entry.name);
-    assert.ok(names.includes("canvas-settings-setup"));
-    assert.ok(names.includes("canvas-stock-description"));
+    assert.ok(names.includes("designer-essentials"));
+    assert.ok(names.includes("designer-essentials-description"));
     assert.ok(names.includes("sample-renderer"));
     assert.ok(names.includes("sample-page"));
-    assert.throws(() => declarations(`${appended}\n## Additional Canvas Design templates\n- \`sample-page\` — \`value.provider\`, \`replace\``),
+    assert.throws(() => declarations(`${appended}\n## Additional Canvas Design templates\n- \`sample-page\` — \`generated.computed-value-provider\`, \`replace\``),
         /Conflicting Canvas Design registration/);
-    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`bad\` — \`generated.renderer\`, \`append\``),
+    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`bad\` — \`generated.added-page-renderer\`, \`append\``),
         /Invalid Canvas Design kind or strategy/);
-    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`bad\` — \`generated.renderer\`, \`replace\`, \`append\``),
+    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`bad\` — \`generated.added-page-renderer\`, \`replace\`, \`append\``),
         /Invalid Canvas Design kind or strategy/);
+    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`con\` — \`generated.pipeline-renderer\`, \`replace\``),
+        /Invalid Canvas Design registration/);
 });
 
 test("composed verification resolves every name, rejects warnings and native scripts before open", async (t) => {
@@ -43,7 +45,7 @@ test("composed verification resolves every name, rejects warnings and native scr
     await cp(source, installed, { recursive: true });
     const preset = join(project, ".specify", "presets", "sample");
     const contribution = "## Additional Designer pages\n- `sample-page`\n\n"
-        + "## Additional Canvas Design templates\n- `sample-renderer` — `generated.renderer`, `replace`\n";
+        + "## Additional Canvas Design templates\n- `sample-renderer` — `generated.added-page-renderer`, `replace`\n";
     await mkdir(join(preset, "pages"), { recursive: true });
     await writeFile(join(preset, "pages", "sample.json"), "{}");
     await writeFile(join(preset, "pages", "renderer.mjs"), "export function renderPage() {}");
@@ -56,24 +58,26 @@ test("composed verification resolves every name, rejects warnings and native scr
     const paths = {
         "sample-page": join(preset, "pages", "sample.json"),
         "sample-renderer": join(preset, "pages", "renderer.mjs"),
-        "canvas-settings-setup": join(installed, "pages", "essentials.json"),
-        "canvas-settings-artifacts": join(installed, "pages", "artifacts.json"),
-        "canvas-settings-appearance": join(installed, "pages", "appearance.json"),
-        "canvas-stock-description": join(installed, "pages", "stock-description.json"),
-        "canvas-stock-workflow-heading": join(installed, "pages", "stock-workflow-heading.json"),
-        "canvas-stock-custom-slug": join(installed, "pages", "stock-custom-slug.json"),
-        "canvas-stock-logo": join(installed, "pages", "stock-logo.json"),
-        "canvas-stock-logo-main-page": join(installed, "pages", "stock-logo-main-page.json"),
-        "canvas-stock-image": join(installed, "controls", "stock-image", "control.json"),
-        "canvas-stock-image-designer": join(installed, "controls", "stock-image", "designer.mjs"),
-        "canvas-stock-image-generated": join(installed, "controls", "stock-image", "generated.mjs"),
-        "canvas-stock-text": join(installed, "controls", "stock-text", "control.json"),
-        "canvas-stock-text-designer": join(installed, "controls", "stock-text", "designer.mjs"),
-        "canvas-stock-text-generated": join(installed, "controls", "stock-text", "generated.mjs"),
-        "canvas-stock-checkbox": join(installed, "controls", "stock-checkbox", "control.json"),
-        "canvas-stock-checkbox-designer": join(installed, "controls", "stock-checkbox", "designer.mjs"),
+        "designer-essentials": join(installed, "designer", "tabs", "essentials.json"),
+        "designer-artifacts": join(installed, "designer", "tabs", "artifacts.json"),
+        "designer-appearance": join(installed, "designer", "tabs", "appearance.json"),
+        "designer-essentials-description": join(installed, "designer", "essentials-settings", "description.json"),
+        "designer-essentials-workflow-heading": join(installed, "designer", "essentials-settings", "workflow-heading.json"),
+        "designer-essentials-custom-slug": join(installed, "designer", "essentials-settings", "custom-slug.json"),
+        "designer-essentials-header-logo": join(installed, "designer", "essentials-settings", "header-logo.json"),
+        "designer-essentials-main-page-logo": join(installed, "designer", "essentials-settings", "main-page-logo.json"),
+        "generated-workflow": join(installed, "generated", "pages", "workflow.json"),
+        "generated-pipeline": join(installed, "generated", "pages", "generated-pipeline.mjs"),
+        "shared-controls-image": join(installed, "controls", "stock-image", "control.json"),
+        "designer-control-adapter-image": join(installed, "controls", "stock-image", "designer.mjs"),
+        "generated-control-adapter-image": join(installed, "controls", "stock-image", "generated.mjs"),
+        "shared-controls-text": join(installed, "controls", "stock-text", "control.json"),
+        "designer-control-adapter-text": join(installed, "controls", "stock-text", "designer.mjs"),
+        "generated-control-adapter-text": join(installed, "controls", "stock-text", "generated.mjs"),
+        "shared-controls-checkbox": join(installed, "controls", "stock-checkbox", "control.json"),
+        "designer-control-adapter-checkbox": join(installed, "controls", "stock-checkbox", "designer.mjs"),
     };
-    const stockTemplateCount = declarations(base).filter((entry) => entry.kind !== "designer.page").length;
+    const stockTemplateCount = declarations(base).filter((entry) => entry.kind !== "designer.tab-definition").length;
     const minimalBase = base.replace(/## Canvas Design templates[\s\S]*?(?=## Steps)/, "");
     let warning = "", collision = false, strategy = "replace";
     const run = async (_binary, args) => {

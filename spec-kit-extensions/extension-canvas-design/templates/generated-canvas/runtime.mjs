@@ -238,10 +238,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const providerDeadline = performance.now() + PROVIDER_REFRESH_LIMIT_MS;
         let reportedDeadline = false;
         for (const field of valueFields) {
-            if (field.source.kind === "provider" && !selectedWorkflow) continue;
+            if (field.source.kind === "computed" && !selectedWorkflow) continue;
             let value;
             try {
-                if (field.source.kind === "provider") {
+                if (field.source.kind === "computed") {
                     value = await evaluateProvider(field.source.module, field.source.hash, {
                         id: selectedWorkflow.id, slug: selectedWorkflow.slug,
                         label: selectedWorkflow.label,
@@ -251,7 +251,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 } else value = field.source.value;
                 value = validateValue(field.schema, value, field.id);
             } catch (error) {
-                const contractError = field.source.kind === "provider"
+                const contractError = field.source.kind === "computed"
                     && (error.message === "provideValue must be a function"
                         || error.message === "Async providers are not supported");
                 valueErrors[field.id] = error instanceof UserError || contractError

@@ -2,8 +2,8 @@
 
 This repository-local fixture is intentionally absent from `catalog.json`.
 Its appended `load-page` command registers four distinct, replace-only
-Specify named templates: `control.definition`, `designer.field`,
-`designer.adapter`, and `generated.adapter`. Only the command is appended;
+Specify named templates: `shared.control-definition`, `designer.setting-definition`,
+`designer.control-adapter`, and `generated.control-adapter`. Only the command is appended;
 the JSON files and complete `.mjs` modules are never appended, merged, or
 registered as Specify scripts. Resolve all four names before opening
 Designer. There is no separate Designer tab: the field is placed in
@@ -17,15 +17,16 @@ never point those destructive checks back into this checked-in fixture.
 The `risk-matrix` control defines the frozen `risk.rating` value:
 `{impact, likelihood}`, where both properties are required, no others are
 allowed, and each is exactly `low`, `medium`, or `high`. Designer initially
-receives `null` as an unselected draft. The host must reject an incomplete or
-invalid value on Save and Generate. The Designer adapter permits `null` until
-the user selects a cell; the generated adapter requires a complete value.
+receives `null` as an unselected draft. Save may keep an incomplete `null` draft; Generate rejects incomplete or
+invalid values. The Designer adapter permits `null` until the user selects
+a cell; the generated adapter requires a complete value.
 
-Both complete, self-contained host modules export `mount`. Designer calls
-`mount({root, field, value, onChange})`; generated calls
+Both complete, self-contained host modules export `mount`. Designer also exports
+pure `validate(value, field): boolean`, and its `mount` returns a handle with
+`isReady(): boolean`. Designer calls `mount({root, field, value, onChange})`; generated calls
 `mount({root, field, value})`. `root` is an exclusively owned DOM element,
 `field` is the resolved field definition with `id`, and `onChange(nextValue)`
-requests a draft update for host-side validation and persistence. The host
+updates the unsaved draft. Generate validates using the approved Designer adapter; the host
 supplies values by field ID but does not re-mount after `onChange`; the adapter
 updates only its owned root to reflect the new selection. Generate packages
 the winning generated `.mjs` locally with the source-owned app. There are no imports,

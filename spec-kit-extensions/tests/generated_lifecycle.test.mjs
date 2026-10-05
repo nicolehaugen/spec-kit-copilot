@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -11,10 +12,18 @@ test("closing the last started panel while another opens retains the shared runt
     const target = join(root, "generated");
     await cp(new URL("../extension-canvas-design/templates/generated-canvas/", import.meta.url),
         target, { recursive: true });
+    const definition = await readFile(new URL("../extension-canvas-design/generated/pages/workflow.json", import.meta.url));
+    const renderer = await readFile(new URL("../extension-canvas-design/generated/pages/generated-pipeline.mjs", import.meta.url));
+    await mkdir(join(target, "pages"), { recursive: true });
+    await writeFile(join(target, "pages", "workflow.json"), definition);
+    await writeFile(join(target, "pages", "generated-pipeline.mjs"), renderer);
     await writeFile(join(target, "canvas-config.json"), JSON.stringify({
         schemaVersion: 1, userProvidesSlug: false,
         canvas: { id: "lifecycle", displayName: "Lifecycle",
             description: "Test canvas", workflowListName: "Workflows" },
+        workflowPage: { regions: JSON.parse(definition).regions, pipeline: "generated-pipeline",
+            definitionHash: createHash("sha256").update(definition).digest("hex"),
+            hash: createHash("sha256").update(renderer).digest("hex") },
         phases: ["specify"],
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" } },
         phaseArtifacts: {}, installed: { presets: [], extensions: [], bundles: [] },

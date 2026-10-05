@@ -9,6 +9,8 @@ import { materialize, readBoundedSessionFile } from "../extension-canvas-design/
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
 import { freezeGeneration, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { addWorkflowFixture } from "./workflow_fixture.mjs";
+import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
 import { isWindowsDeviceName as designerDeviceName } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
 import { isWindowsDeviceName as runtimeDeviceName } from "../extension-canvas-design/templates/generated-canvas/files.mjs";
 
@@ -17,7 +19,7 @@ const entryTemplate = await readFile(new URL("../extension-canvas-design/templat
 const model = {
     revision: "test-revision",
     settingsRevision: 0,
-    pages: [{ page: "canvas-settings-setup", fields: [
+    pages: [{ page: "designer-essentials", fields: [
         { id: "canvas.id" }, { id: "canvas.displayName" }, { id: "canvas.description" },
         { id: "canvas.workflowListName" }, { id: "workflowSlug.userProvided" },
     ] }],
@@ -49,6 +51,8 @@ async function fixture(t, selectedHandoff = handoff, selectedValues = values) {
     const project = join(root, "project"), workspace = join(root, "workspace");
     await mkdir(project);
     await mkdir(workspace);
+    await addDesignerAdapterFixture(project, model);
+    await addWorkflowFixture(project, model);
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId);
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, "handoff.json"), JSON.stringify(selectedHandoff));
@@ -69,6 +73,10 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     assert.deepEqual(request.workflow.selectedPhases, handoff.workflow.selectedPhases);
     assert.deepEqual(request.installed.presets, handoff.workflow.installed.presets);
     assert.deepEqual(request.values, values);
+    await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.id": "../bad" },
+        handoff, project, workspace }), /Invalid Designer setting: canvas.id/);
+    await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.displayName": " " },
+        handoff, project, workspace }), /Canvas ID and Title must be valid/);
     assert.throws(() => validateEssentials(model, { ...values, "canvas.id": "../bad" }), /canvas.id/);
     for (const id of ["con", "prn", "aux", "nul",
         ...Array.from({ length: 9 }, (_, index) => `com${index + 1}`),
@@ -78,7 +86,7 @@ test("Essentials are validated before freezing a bounded, immutable generation r
     for (const id of ["com0", "com10", "lpt0", "lpt10", "con-1"]) {
         assert.equal(validateEssentials(model, { ...values, "canvas.id": id })["canvas.id"], id);
     }
-    assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /canvas.displayName/);
+    assert.throws(() => validateEssentials(model, { ...values, "canvas.displayName": " " }), /Canvas ID and Title must be valid/);
     assert.throws(() => validateEssentials(model, { ...values, "workflowSlug.userProvided": "true" }), /workflowSlug.userProvided/);
     const { ["workflowSlug.userProvided"]: omitted, ...missingToggle } = values;
     assert.throws(() => validateEssentials(model, missingToggle), /unexpected or missing fields/);
@@ -87,6 +95,7 @@ test("Essentials are validated before freezing a bounded, immutable generation r
 test("all enabled Designer values are validated and frozen, with only bound fields rendered", async (t) => {
     const { project, workspace } = await fixture(t);
     const contributedModel = { ...model,
+        pages: model.pages.map((page) => ({ ...page, fields: [...page.fields] })),
         constraints: { ...model.constraints,
             "billing.costCode": { type: "string", maxLength: 64 },
             "designer.note": { type: "string", maxLength: 80 } },
@@ -94,10 +103,11 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
             generatedBinding: { presentation: "stock.readonly",
                 section: { id: "billing", title: "Billing" } } },
         { field: { id: "designer.note", label: "Internal note" } }] };
+    resolveFixtureFields(contributedModel);
     const supplied = { ...values, "billing.costCode": "CC-481", "designer.note": "Designer only" };
     await assert.rejects(freezeGeneration({ model: contributedModel,
         values: { ...supplied, "designer.note": "x".repeat(81) },
-        handoff, project, workspace }), /Invalid Designer setting: designer.note/);
+        handoff, project, workspace }), /Invalid Internal note \(designer.note\)/);
     const prepared = await freezeGeneration({ model: contributedModel, values: supplied,
         handoff, project, workspace });
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
@@ -187,7 +197,7 @@ test("six maximum-size generated pages fit the frozen request and materialize", 
     const { project, workspace } = await fixture(t);
     const pages = join(project, ".specify", "pages");
     await mkdir(pages, { recursive: true });
-    const generatedPages = [], templates = [];
+    const generatedPages = [], templates = [...model.templates];
     const rendererContent = "export function renderPage({ root }) { root.textContent = 'Overview'; }"
         .padEnd(32 * 1024, " ");
     for (let index = 0; index < 6; index++) {
@@ -197,8 +207,8 @@ test("six maximum-size generated pages fit the frozen request and materialize", 
             .padEnd(32 * 1024, " ");
         generatedPages.push({ name: id, id, title, renderer });
         for (const [name, kind, content, extension] of [
-            [id, "generated.page", definition, "json"],
-            [renderer, "generated.renderer", rendererContent, "mjs"],
+            [id, "generated.added-page-definition", definition, "json"],
+            [renderer, "generated.added-page-renderer", rendererContent, "mjs"],
         ]) {
             const path = join(pages, `${name}.${extension}`);
             await writeFile(path, content);
@@ -410,8 +420,8 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         content: Buffer.from(content).toString("base64") });
     request.generatedPages = [{ id: "canvas-generated-overview", title: "Overview",
         renderer: "canvas-generated-overview-renderer", assets: [
-            asset("canvas-generated-overview", "generated.page", definition),
-            asset("canvas-generated-overview-renderer", "generated.renderer", module),
+            asset("canvas-generated-overview", "generated.added-page-definition", definition),
+            asset("canvas-generated-overview-renderer", "generated.added-page-renderer", module),
         ] }];
     for (const change of [
         (page) => { page.assets[0].hash = "0".repeat(64); },
@@ -419,7 +429,7 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         (page) => { page.title = "Changed"; },
         (page) => { page.renderer = "../escape"; },
         (page) => { page.id = "workflow"; },
-        (page) => { page.assets[1] = asset(page.renderer, "generated.renderer",
+        (page) => { page.assets[1] = asset(page.renderer, "generated.added-page-renderer",
             module.padEnd(32 * 1024 + 1, " ")); },
     ]) {
         const trial = structuredClone(request);
@@ -435,10 +445,10 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         const trial = structuredClone(request);
         const page = trial.generatedPages[0];
         page[field] = name;
-        page.assets[0] = asset(page.id, "generated.page", JSON.stringify({
+        page.assets[0] = asset(page.id, "generated.added-page-definition", JSON.stringify({
             schemaVersion: 1, id: page.id, renderer: page.renderer, title: page.title,
         }));
-        page.assets[1] = asset(page.renderer, "generated.renderer", module);
+        page.assets[1] = asset(page.renderer, "generated.added-page-renderer", module);
         const { integrity: _old, ...payload } = trial;
         trial.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
         await writeFile(path, JSON.stringify(trial));
@@ -448,13 +458,82 @@ test("generation rejects malformed or mismatched frozen page assets before creat
     }
     const boundary = structuredClone(request);
     boundary.generatedPages[0].assets[1] = asset("canvas-generated-overview-renderer",
-        "generated.renderer", module.padEnd(32 * 1024, " "));
+        "generated.added-page-renderer", module.padEnd(32 * 1024, " "));
     const { integrity: _old, ...payload } = boundary;
     boundary.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     await writeFile(path, JSON.stringify(boundary));
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     assert.equal((await readFile(join(project, ".github", "extensions", "my-workflow",
         "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
+});
+
+test("Workflow layout and renderer freeze, validate and package independently of the preset", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(requestPath, "utf8"));
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    const rewrite = async (edit) => {
+        const request = structuredClone(original);
+        edit(request);
+        const { integrity: _old, ...payload } = request;
+        request.integrity = digest(JSON.stringify(payload));
+        await writeFile(requestPath, JSON.stringify(request));
+    };
+    for (const edit of [
+        (page) => { page.regions.pop(); },
+        (page) => { page.regions[1] = page.regions[0]; },
+        (page) => { page.pipeline = "../escape"; },
+        (page) => { page.assets[1].hash = "0".repeat(64); },
+        (page) => {
+            const bytes = Buffer.from("export function mount( {");
+            page.assets[1].content = bytes.toString("base64");
+            page.assets[1].hash = digest(bytes);
+        },
+    ]) {
+        await rewrite((request) => edit(request.workflowPage));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen Workflow page assets|Frozen Workflow page definition|Invalid frozen pipeline renderer/);
+        await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
+    }
+    const replacement = await readFile(new URL(
+        "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/pipeline.mjs", import.meta.url));
+    const presetPath = join(project, ".specify", "templates", "generated-pipeline.mjs");
+    await writeFile(presetPath, replacement);
+    const presetModel = { ...model, templates: model.templates.map((entry) =>
+        entry.name === "generated-pipeline"
+            ? { ...entry, sourceId: "copilot-vertical-pipeline-test", hash: digest(replacement) }
+            : entry) };
+    const frozen = await freezeGeneration({ model: presetModel, values, handoff, project, workspace });
+    await rm(presetPath);
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    assert.deepEqual(await readFile(join(sdk, "pages", "generated-pipeline.mjs")), replacement);
+    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    assert.equal(readConfig().workflowPage.hash, digest(replacement));
+    assert.deepEqual(await readdir(join(sdk, "pages")), ["generated-pipeline.mjs", "workflow.json"]);
+    await writeFile(join(sdk, "pages", "generated-pipeline.mjs"), "export function mount() {}");
+    assert.throws(() => readConfig(), /Workflow page|pipeline|Invalid generated canvas/);
+});
+
+test("reordered Workflow regions render in their declared order", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    const regions = request.workflowPage.regions.reverse();
+    const definition = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
+    definition.regions = regions;
+    const bytes = Buffer.from(JSON.stringify(definition));
+    request.workflowPage.assets[0].content = bytes.toString("base64");
+    request.workflowPage.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+    const { integrity: _old, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const { readConfig, renderHtml: renderPackaged } = await import(
+        pathToFileURL(join(sdk, "server.mjs")).href);
+    const html = renderPackaged(readConfig());
+    assert.ok(html.indexOf('id="workflow-pipeline"') < html.indexOf('id="instance-collection"'));
 });
 
 test("frozen named values reject tampered modules and package independently of their preset", async (t) => {
@@ -479,19 +558,19 @@ test("frozen named values reject tampered modules and package independently of t
     ];
     const valueSources = await Promise.all(definitions.map(async ([file, name]) => {
         const definition = JSON.parse(await readFile(new URL(`values/${file}.json`, preset)));
-        const assets = [await asset(name, "value.definition", `values/${file}.json`)];
-        if (definition.source.kind === "provider") {
-            assets.push(await asset(definition.source.module, "value.provider", "values/workflow.mjs"));
+        const assets = [await asset(name, "generated.value-definition", `values/${file}.json`)];
+        if (definition.source.kind === "computed") {
+            assets.push(await asset(definition.source.module, "generated.computed-value-provider", "values/workflow.mjs"));
         }
         const { schemaVersion: _version, ...source } = definition;
         return { ...source, assets };
     }));
-    const page = JSON.parse(await readFile(new URL("pages/values.json", preset)));
+    const page = JSON.parse(await readFile(new URL("generated/pages/values.json", preset)));
     const request = { ...original, valueSources, generatedPages: [{
         id: page.id, title: page.title, renderer: page.renderer, values: page.values,
         assets: [
-            await asset(page.id, "generated.page", "pages/values.json"),
-            await asset(page.renderer, "generated.renderer", "pages/values.mjs"),
+            await asset(page.id, "generated.added-page-definition", "generated/pages/values.json"),
+            await asset(page.renderer, "generated.added-page-renderer", "generated/pages/values.mjs"),
         ],
     }] };
     const persist = async (candidate) => {
@@ -567,10 +646,10 @@ test("frozen named values reject tampered modules and package independently of t
 });
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
-    const page = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/essentials.json", import.meta.url)));
+    const page = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/tabs/essentials.json", import.meta.url)));
     assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
-    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-workflow-heading.json", import.meta.url)));
-    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/pages/stock-custom-slug.json", import.meta.url)));
+    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/essentials-settings/workflow-heading.json", import.meta.url)));
+    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/essentials-settings/custom-slug.json", import.meta.url)));
     assert.deepEqual(slug.field, {
         id: "workflowSlug.userProvided", type: "boolean", control: "stock.checkbox", default: false, label: "Allow custom slug",
         description: "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.",
