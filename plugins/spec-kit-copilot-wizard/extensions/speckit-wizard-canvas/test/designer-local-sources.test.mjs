@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, open, realpath, rename, rm, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { isSupportedLocalKind, stripSurroundingQuotes, validateLocalSource } from "../server/designer-local-sources.mjs";
+import { isSupportedLocalKind, readDesignerContract, stripSurroundingQuotes,
+    validateLocalSource } from "../server/designer-local-sources.mjs";
 
 async function fixture(t) {
     const dir = await mkdtemp(join(tmpdir(), "speckit-local-source-"));
@@ -73,6 +74,30 @@ test("validates a well-formed local extension directory with no version", async 
     assert.equal(result.name, "Canvas Design");
     assert.equal(result.version, null);
     assert.equal(result.description, "");
+});
+
+test("Designer contract reads only from a real schemas directory", async (t) => {
+    const dir = await fixture(t);
+    const schemas = join(dir, "schemas");
+    await mkdir(schemas);
+    await writeFile(join(schemas, "designer.tab-definition.schema.json"),
+        JSON.stringify({ properties: { schemaVersion: { const: 1 } } }));
+    assert.equal(await readDesignerContract(dir), 1);
+
+    const outside = await fixture(t);
+    await mkdir(join(outside, "schemas"));
+    await writeFile(join(outside, "schemas", "designer.tab-definition.schema.json"),
+        JSON.stringify({ properties: { schemaVersion: { const: 2 } } }));
+    await rm(schemas, { recursive: true });
+    try {
+        await symlink(join(outside, "schemas"), schemas,
+            process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.skip("Windows symlink creation is not permitted");
+        return;
+    }
+    await assert.rejects(readDesignerContract(dir), /schemas must be a real directory/);
 });
 
 test("rejects unsupported kinds, empty/relative paths and missing directories", async (t) => {
