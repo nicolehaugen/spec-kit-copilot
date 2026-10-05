@@ -735,6 +735,20 @@ export async function materialize(project, workspace, handoffId, requestId) {
         || JSON.stringify(handoff.workflow.installed) !== JSON.stringify(request.installed)) {
         throw new Error("Frozen generation request differs from the Wizard handoff");
     }
+    if (request.actualInstalled !== undefined
+        && (!request.actualInstalled || typeof request.actualInstalled !== "object"
+            || Array.isArray(request.actualInstalled)
+            || Object.keys(request.actualInstalled).sort().join() !== "bundles,extensions,presets"
+            || ["presets", "extensions", "bundles"].some((kind) =>
+                !Array.isArray(request.actualInstalled[kind])
+                || request.actualInstalled[kind].length !== request.installed[kind].length
+                || request.actualInstalled[kind].some((item, index) =>
+                    item?.id !== request.installed[kind][index].id
+                    || typeof item.version !== "string" || !item.version
+                    || (kind !== "bundles" && item.priority !== undefined
+                        && !Number.isSafeInteger(item.priority)))))) {
+        throw new Error("Invalid verified generation inventory");
+    }
     if (!/^[a-f0-9]{64}$/.test(handoff.sourceFingerprint)
         || !/^[a-f0-9]{64}$/.test(request.sourceFingerprint)) {
         throw new Error("Invalid generation source fingerprint");
@@ -747,7 +761,15 @@ export async function materialize(project, workspace, handoffId, requestId) {
     const warnings = handoff.sourceFingerprint === request.sourceFingerprint
         && handoff.sourceFingerprint === expectedFingerprint ? [] :
         ["Generation source fingerprint differs from the Wizard handoff; using the intact frozen request with matching checkout, workflow, and installed inventory."];
-    const config = configuration(request);
+    for (const kind of ["presets", "extensions", "bundles"]) {
+        for (const [index, item] of (request.actualInstalled?.[kind] ?? []).entries()) {
+            const frozen = request.installed[kind][index];
+            if (item.version !== frozen.version) {
+                warnings.push(`${kind} ${item.id}: Wizard version ${frozen.version}, installed version ${item.version}.`);
+            }
+        }
+    }
+    const config = configuration({ ...request, installed: request.actualInstalled ?? request.installed });
     const pageFiles = (request.generatedPages ?? []).flatMap((page) => [
         { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
         { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },

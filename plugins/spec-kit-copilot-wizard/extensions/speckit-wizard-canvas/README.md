@@ -274,7 +274,9 @@ addition to) the hosted registry entry:
   Missing or ambiguous sources and sources that change before dispatch
   block launch instead of guessing. Child package version drift is reported
   as a warning, while mismatched package identity or source still blocks
-  launch. It installs remaining standalone extensions (including local
+  launch. Hosted Canvas Design download URLs are quoted as single shell
+  arguments in both install instructions, including the post-bundle restore.
+  It installs remaining standalone extensions (including local
   overrides), then
   standalone presets (including local overrides).
   This ensures bundled and standalone preset command additions have the base

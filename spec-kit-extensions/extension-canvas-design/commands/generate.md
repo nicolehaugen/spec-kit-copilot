@@ -23,11 +23,12 @@ packages or run workflow phases.
    "<child-checkout>" "<session.workspacePath>" "<handoffId>" "<requestId>"`.
    This copies the maintained SDK entry point and workflow modules into a
    new `.github/extensions/<canvas-id>/`, writes the frozen configuration
-   with runtime package IDs, versions, and priorities but no install-source
+   with runtime package IDs and the versions observed by Designer at Generate
+   (or `unverified` when unavailable), plus observed priorities but no install-source
    paths or URLs, then validates the extension. The full install locators stay
    in the session-scoped handoff and request. It never overwrites an existing target.
-   A source-fingerprint difference is reported in the command's `warnings`
-   output; report it to the user, but proceed with the intact frozen request
+   Source-fingerprint differences and installed-version drift are reported in
+   the command's `warnings` output; report them to the user, but proceed with the intact frozen request
    when checkout, target, workflow, and installed inventory checks pass.
    On failure, report the error unchanged and leave any partial target for
    inspection; do not create an alternative implementation or retry.

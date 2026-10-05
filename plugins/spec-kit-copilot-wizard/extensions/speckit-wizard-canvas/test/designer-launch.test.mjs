@@ -10,7 +10,7 @@ import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     checkDesignerProvider, DESIGNER_EXTENSION_ID, enableDesignerProvider,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
-    readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
+    quoteInstallUrl, readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
@@ -43,6 +43,19 @@ const catalog = {
 };
 const snapshot = { pipeline: [{ id: "commands/plan" }], catalog };
 const empty = { presets: [], extensions: [], bundles: [] };
+
+test("hosted install URLs are quoted as single shell arguments in both install steps", () => {
+    const url = "https://example.org/canvas.zip?x=1&y=';$(id)";
+    assert.equal(quoteInstallUrl(url, "win32"), "'https://example.org/canvas.zip?x=1&y='';$(id)'");
+    assert.equal(quoteInstallUrl(url, "linux"), "'https://example.org/canvas.zip?x=1&y='\\'';$(id)'");
+    const handoff = buildDesignerHandoff({ ...snapshot, catalog: { ...catalog,
+        extensions: [{ ...hostedBase, downloadUrl: url }],
+    } }, empty, undefined, empty);
+    const prompt = buildDesignerLaunchPrompt(handoff);
+    const command = `specify extension add extension-canvas-design --from ${quoteInstallUrl(url)}`;
+    assert.equal(prompt.split(command).length - 1, 2);
+    assert.match(prompt, /Run the quoted --from commands in PowerShell on Windows or a POSIX shell elsewhere/);
+});
 
 function fixture(overrides = {}) {
     const sent = [];

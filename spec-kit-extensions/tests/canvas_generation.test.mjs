@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
-import { freezeGeneration, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
 import { isWindowsDeviceName as designerDeviceName } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
@@ -45,7 +45,7 @@ handoff.sourceFingerprint = createHash("sha256").update(JSON.stringify({
     workflow: handoff.workflow, selections: handoff.selections,
 })).digest("hex");
 
-async function fixture(t, selectedHandoff = handoff, selectedValues = values) {
+async function fixture(t, selectedHandoff = handoff, selectedValues = values, runtimeInventory) {
     const root = await mkdtemp(join(tmpdir(), "designer-generate-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const project = join(root, "project"), workspace = join(root, "workspace");
@@ -57,10 +57,100 @@ async function fixture(t, selectedHandoff = handoff, selectedValues = values) {
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, "handoff.json"), JSON.stringify(selectedHandoff));
     const prepared = await freezeGeneration({ project, workspace, model, values: selectedValues,
-        handoff: selectedHandoff });
+        handoff: selectedHandoff, runtimeInventory });
     const sdk = join(project, ".github", "extensions", selectedValues["canvas.id"]);
     return { project, workspace, prepared, sdk };
 }
+
+test("Specify inventories supply observed package versions and reject invalid responses", async () => {
+    const lists = {
+        preset: [{ id: "copilot-sub-agents", version: "1.2.3", priority: 4 }],
+        extension: [{ id: "extension-canvas-design", version: "0.1.19", priority: 1 }],
+        bundle: [{ bundle_id: "bundle-one", version: "2.0.0" }],
+    };
+    const kinds = ["presets", "extensions", "bundles"];
+    const calls = [];
+    const run = async (_command, args, options) => {
+        calls.push({ args, cwd: options.cwd });
+        return { stdout: JSON.stringify(lists[args[0]]) };
+    };
+    assert.deepEqual(await readCurrentInstalledVersions("child", kinds, run), {
+        inventory: { presets: lists.preset, extensions: lists.extension,
+            bundles: [{ id: "bundle-one", version: "2.0.0" }] }, warnings: [],
+    });
+    assert.deepEqual(calls, kinds.map((kind) => ({
+        args: [kind === "presets" ? "preset" : kind === "extensions" ? "extension" : "bundle",
+            "list", "--json"], cwd: "child",
+    })));
+    assert.deepEqual(await readCurrentInstalledVersions("child", [], run),
+        { inventory: { presets: [], extensions: [], bundles: [] }, warnings: [] });
+    const unreadable = await readCurrentInstalledVersions("child", kinds, async (_command, args) => ({
+        stdout: args[0] === "preset" ? "not JSON" : JSON.stringify(lists[args[0]]),
+    }));
+    assert.match(unreadable.warnings[0], /Invalid presets JSON from Specify/);
+    assert.deepEqual(unreadable.inventory.extensions, lists.extension);
+    const duplicates = await readCurrentInstalledVersions("child", kinds, async (_command, args) => ({
+        stdout: JSON.stringify(args[0] === "preset"
+            ? [lists.preset[0], lists.preset[0]] : lists[args[0]]),
+    }));
+    assert.match(duplicates.warnings[0], /Invalid presets package identity or version/);
+});
+
+test("generated package versions reflect the installed inventory without blocking drift", async (t) => {
+    const current = { presets: [{ id: "copilot-sub-agents", version: "1.2.3", priority: 4 }],
+        extensions: [], bundles: [] };
+    const { project, workspace, prepared, sdk } = await fixture(t, handoff, values, current);
+    assert.match(prepared.warnings[0], /Wizard version 1\.0\.0, installed version 1\.2\.3/);
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.installed, handoff.workflow.installed);
+    assert.deepEqual(request.actualInstalled.presets, [{ id: "copilot-sub-agents",
+        version: "1.2.3", priority: 4 }]);
+    const generated = await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    assert.match(generated.warnings[0], /Wizard version 1\.0\.0, installed version 1\.2\.3/);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.installed.presets, request.actualInstalled.presets);
+});
+
+test("unavailable installed packages remain unverified, not mislabeled as frozen versions", async (t) => {
+    const empty = { presets: [], extensions: [], bundles: [] };
+    const { project, workspace, prepared, sdk } = await fixture(t, handoff, values, empty);
+    assert.match(prepared.warnings[0], /installed version unverified/);
+    const generated = await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    assert.match(generated.warnings[0], /installed version unverified/);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.installed.presets, [{ id: "copilot-sub-agents", version: "unverified" }]);
+});
+
+test("bundle version drift is recorded from Specify without changing the Wizard snapshot", async (t) => {
+    const withBundle = structuredClone(handoff);
+    withBundle.workflow.installed.bundles = [{ id: "sample-bundle", version: "2.0.0" }];
+    withBundle.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: withBundle.workflow, selections: withBundle.selections,
+    })).digest("hex");
+    const current = { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
+        extensions: [], bundles: [{ id: "sample-bundle", version: "2.1.0" }] };
+    const { project, workspace, prepared, sdk } = await fixture(t, withBundle, values, current);
+    assert.match(prepared.warnings[0], /bundles sample-bundle: Wizard version 2\.0\.0, installed version 2\.1\.0/);
+    await materialize(project, workspace, withBundle.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.installed.bundles, [{ id: "sample-bundle", version: "2.1.0" }]);
+});
+
+test("a signed generation request cannot relabel a Wizard package ID", async (t) => {
+    const current = { presets: [{ id: "copilot-sub-agents", version: "1.2.3", priority: 4 }],
+        extensions: [], bundles: [] };
+    const { project, workspace, prepared } = await fixture(t, handoff, values, current);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(path, "utf8"));
+    request.actualInstalled.presets[0].id = "wrong-package";
+    const { integrity: _integrity, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(path, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid verified generation inventory/);
+});
 
 test("Essentials are validated before freezing a bounded, immutable generation request", async (t) => {
     const { project, workspace, prepared } = await fixture(t);

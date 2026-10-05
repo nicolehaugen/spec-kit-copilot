@@ -208,6 +208,10 @@ when recomputing the handoff fingerprint. If only the source fingerprint
 differs, the command returns a warning and attempts generation from the intact
 frozen request; the agent reports that warning when opening the generated
 canvas. Request or checkout integrity and workflow mismatches still stop it.
+The generated `canvas-config.json` records the versions observed in the child
+checkout's Specify inventory at Generate; changed versions produce warnings
+without blocking. Unavailable package versions are marked `unverified` instead
+of being attributed to the Wizard's older inventory.
 
 Invalid registered field contributions stop the open with both names on a
 field collision; newly registered stock text/checkbox fields mount their
