@@ -238,6 +238,38 @@ test("outdated hosted Canvas Design requires a checked local override before dis
         /do not install its hosted selection even if that selection names an older release/);
 });
 
+test("different-version local overrides supersede installed runtime packages", async () => {
+    const installed = {
+        presets: [{ id: "copilot-sub-agents", version: "0.9.0", priority: 7,
+            enabled: false, source: "copilot" }],
+        extensions: [{ id: "extension-canvas-design", version: "0.1.7", priority: 3,
+            enabled: true, source: "copilot" }],
+        bundles: [],
+    };
+    const { post, sent } = fixture({
+        getState: async () => ({ ...snapshot, catalog }),
+        getInstalledWorkflow: async () => installed,
+    });
+    const response = await post({ ...request(), localSelections: {
+        presets: [{ id: "copilot-sub-agents", path: LOCAL_PRESET_PATH }],
+        extensions: [{ id: "extension-canvas-design", path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
+    } });
+    assert.equal(response.statusCode, 202, response.body.error);
+    const handoff = JSON.parse(sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
+    assert.deepEqual(handoff.workflow.installed, installed);
+    assert.deepEqual(handoff.workflow.installLocators, {
+        presets: [{ installedId: "copilot-sub-agents", source: "local",
+            path: LOCAL_PRESET_PATH }],
+        extensions: [{ installedId: "extension-canvas-design", source: "local",
+            path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
+        bundles: [],
+    });
+    assert.equal(handoff.localSelections.presets[0].version, "1.0.0");
+    assert.equal(handoff.localSelections.extensions[0].version, "0.1.15");
+    assert.match(sent[0].prompt, /Do not replay the old hosted or installed copy in the child/);
+    assert.match(sent[0].prompt, /expect that ID to have a local source and the version actually installed/);
+});
+
 test("Designer handoff keeps runtime packages separate from Designer-only selections", async () => {
     assert.deepEqual(normalizeInstalledBundles([{
         bundle_id: "workflow-kit", version: "2.0.0",
@@ -854,7 +886,7 @@ test("runtime package locators are carried into the child installation instructi
     const prompt = buildDesignerLaunchPrompt(handoff);
     assert.match(prompt, /runtime presets or extensions.*installLocator.*source "local"/);
     assert.match(prompt, /specify preset add --dev <path>.*specify extension add <path> --dev --force/);
-    assert.match(prompt, /Verify the installed ID and version after each add/);
+    assert.match(prompt, /Verify the installed ID and the local manifest version after each add/);
 });
 
 test("buildDesignerLaunchPrompt documents local-wins precedence, including the extension-canvas-design special case", () => {

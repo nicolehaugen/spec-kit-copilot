@@ -2891,6 +2891,10 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
 });
 
 test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {
+    if (spawnSync("specify", ["--version"], { encoding: "utf8" }).error?.code === "ENOENT") {
+        t.skip("Specify CLI is required for resolved-template integration");
+        return;
+    }
     const workspace = await fixture(t);
     const source = fileURLToPath(new URL("../", import.meta.url));
     const extension = join(workspace, "provider");

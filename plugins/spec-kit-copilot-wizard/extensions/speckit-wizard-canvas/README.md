@@ -262,7 +262,12 @@ addition to) the hosted registry entry:
   the Wizard checkout, not from an ID/version-matched catalog entry. Bundle
   membership does not prove a component's installed source; each runtime
   preset/extension is replayed from its own locator even if a bundle lists
-  the same ID. Since the CLI bundle inventory does not report provenance,
+  the same ID, except when an approved local selection replaces it. A
+  same-ID local override can have a different version: its installed
+  version and local source replace the frozen runtime version and source
+  in the child, while the approved local path is frozen as its install
+  locator. The original runtime inventory is still checked before dispatch.
+  Since the CLI bundle inventory does not report provenance,
   installed bundles use a matching catalog ID/name and version; an explicitly
   selected bundle disambiguates matching catalog sources. A missing or
   ambiguous match blocks launch rather than guessing a source.
