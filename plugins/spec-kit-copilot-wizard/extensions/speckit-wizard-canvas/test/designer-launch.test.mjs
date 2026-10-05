@@ -231,7 +231,7 @@ test("outdated hosted Canvas Design requires a checked local override before dis
     const handoff = JSON.parse(withLocal.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1]);
     assert.deepEqual(handoff.localSelections.extensions, [{
         id: "extension-canvas-design", source: "local", approved: true,
-        path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.15",
+        path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.18",
     }]);
     assert.match(withLocal.sent[0].prompt, /skip the official by-ID install/);
     assert.match(withLocal.sent[0].prompt,
@@ -265,7 +265,7 @@ test("different-version local overrides supersede installed runtime packages", a
         bundles: [],
     });
     assert.equal(handoff.localSelections.presets[0].version, "1.0.0");
-    assert.equal(handoff.localSelections.extensions[0].version, "0.1.15");
+    assert.equal(handoff.localSelections.extensions[0].version, "0.1.18");
     assert.match(sent[0].prompt, /Do not replay the old hosted or installed copy in the child/);
     assert.match(sent[0].prompt, /expect that ID to have a local source and the version actually installed/);
 });
@@ -835,7 +835,7 @@ test("validateLocalDesignerSelections validates real manifests and stays undefin
         presets: [{ id: "copilot-sub-agents", source: "local", approved: true,
             path: LOCAL_PRESET_PATH, version: "1.0.0" }],
         extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
-            path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.15" }],
+            path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: "0.1.18" }],
     });
 });
 
@@ -982,7 +982,7 @@ test("read-only preflight pins handoff bytes and checks local installation ident
                 source: { kind: "local" } }]),
         }))).id, "extension-canvas-design");
     await writeFile(join(project, ".specify", "extensions",
-        "extension-canvas-design", "pages", "essentials.json"), "{}");
+        "extension-canvas-design", "designer", "tabs", "essentials.json"), "{}");
     assert.equal((await verifyLocalInstall(project, handoff, "extensions",
         "extension-canvas-design", run)).id, "extension-canvas-design");
     await writeFile(path, `${bytes} `);

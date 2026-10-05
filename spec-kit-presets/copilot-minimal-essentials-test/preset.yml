@@ -22,8 +22,8 @@ provides:
       replaces: "speckit.extension-canvas-design.load-page"
       strategy: "replace"
     - type: "template"
-      name: "canvas-settings-setup"
-      file: "pages/essentials.json"
+      name: "designer-essentials"
+      file: "designer/tabs/essentials.json"
       description: "Replace Essentials with required identity fields only."
       strategy: "replace"
 

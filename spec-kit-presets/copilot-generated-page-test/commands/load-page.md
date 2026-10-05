@@ -1,8 +1,8 @@
 <!-- speckit:generated-page-test v1 -->
 ## Additional Canvas Design templates
 
-- `canvas-generated-overview` — `generated.page`, `replace`
-- `canvas-generated-overview-renderer` — `generated.renderer`, `replace`
+- `canvas-generated-overview` — `generated.added-page-definition`, `replace`
+- `canvas-generated-overview-renderer` — `generated.added-page-renderer`, `replace`
 
 ## Generated page registration
 

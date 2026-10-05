@@ -6,11 +6,11 @@
     "extension-canvas-design": {
       "name": "Canvas Design",
       "id": "extension-canvas-design",
-      "version": "0.1.15",
+      "version": "0.1.18",
       "description": "Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.",
       "author": "spec-kit-copilot",
       "repository": "https://github.com/nicolehaugen/spec-kit-copilot",
-      "download_url": "https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.15/extension-canvas-design.zip",
+      "download_url": "https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.18/extension-canvas-design.zip",
       "homepage": "https://github.com/nicolehaugen/spec-kit-copilot",
       "documentation": "https://github.com/nicolehaugen/spec-kit-copilot/blob/main/spec-kit-extensions/extension-canvas-design/README.md",
       "license": "MIT",

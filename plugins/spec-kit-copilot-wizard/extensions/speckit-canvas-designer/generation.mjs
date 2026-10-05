@@ -1,16 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
+const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 
 export function validateEssentials(model, values) {
-    const setup = model.pages.find((page) => page.page === "canvas-settings-setup");
+    const setup = model.pages.find((page) => page.page === "designer-essentials");
     if (!setup || setup.error || !Array.isArray(setup.fields)
         || required.some((id) => !setup.fields.some((field) => field.id === id))) {
         throw new Error("Essentials must load with Canvas ID and Title before generation");
@@ -21,17 +23,12 @@ export function validateEssentials(model, values) {
     }
     if (typeof values?.["canvas.id"] === "string"
         && (reserved.has(values["canvas.id"]) || isWindowsDeviceName(values["canvas.id"]))) {
-        throw new Error("Canvas ID must be non-reserved");
+        throw new Error("Canvas ID (canvas.id) must be non-reserved");
     }
     validateValues(values, model.constraints);
     const result = { ...values };
     for (const id of required) {
-        const rule = model.constraints[id];
-        const value = values[id];
-        if (rule?.type !== "string" || !value.trim()) {
-            throw new Error(`Invalid Essentials field: ${id}`);
-        }
-        result[id] = value.trim();
+        result[id] = values[id].trim();
     }
     for (const id of ["canvas.description", "canvas.workflowListName"]) {
         if (Object.hasOwn(result, id)) result[id] = result[id].trim();
@@ -43,8 +40,47 @@ export function validateEssentials(model, values) {
     return result;
 }
 
+async function validateAdapterValues(model, values, project) {
+    const specify = join(await realpath(project), ".specify");
+    const modules = new Map();
+    for (const page of model.pages) {
+        for (const field of page.fields ?? []) {
+            const name = model.adapters[field.control];
+            const asset = model.templates.find((item) =>
+                item.name === name && item.kind === "designer.control-adapter");
+            const control = model.controls.find((item) => item.id === field.control);
+            if (!asset || !control) throw new Error(`Missing Designer adapter for ${field.label} (${field.id})`);
+            if (!modules.has(name)) {
+                const bytes = await readFrozenAsset(asset, specify);
+                const module = await import(`data:text/javascript;base64,${bytes.toString("base64")}`);
+                if (module.controlId !== control.id
+                    || !isDeepStrictEqual(module.valueContract, control.value)
+                    || typeof module.validate !== "function") {
+                    throw new Error(`${name}: incompatible Designer adapter exports`);
+                }
+                modules.set(name, module);
+            }
+            let valid;
+            try {
+                valid = modules.get(name).validate(values[field.id], field);
+            } catch (error) {
+                throw new Error(`${field.label} (${field.id}) validator failed: ${error.message}`, { cause: error });
+            }
+            if (typeof valid !== "boolean") {
+                throw new Error(`${field.label} (${field.id}) validator must return a boolean`);
+            }
+            if (!valid) throw new Error(`Invalid ${field.label} (${field.id})`);
+        }
+    }
+}
+
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
+    await validateAdapterValues(model, essentials, project);
+    if (!canvasIdPattern.test(essentials["canvas.id"])
+        || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {
+        throw new Error("Invalid frozen Canvas ID for generated extension path");
+    }
     const textContributions = (model.contributions ?? []).filter((item) =>
         item.field.control === "stock.text"
         && (item.generatedBinding?.presentation === "text"
@@ -70,7 +106,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const generatedControl = async (id) => {
         const controls = model.controls?.filter((entry) => entry.id === id) ?? [];
         definitions ??= Promise.all((model.templates ?? [])
-            .filter((entry) => entry.kind === "control.definition").map(async (entry) => {
+            .filter((entry) => entry.kind === "shared.control-definition").map(async (entry) => {
                 const bytes = await readFrozenAsset(entry, specify);
                 let document;
                 try { document = JSON.parse(bytes.toString("utf8")); }
@@ -79,7 +115,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             }));
         const matches = (await definitions).filter(({ document }) => document?.id === id);
         const control = controls[0];
-        const adapter = model.templates?.find((entry) => entry.kind === "generated.adapter"
+        const adapter = model.templates?.find((entry) => entry.kind === "generated.control-adapter"
             && entry.name === control?.adapters?.generated);
         if (controls.length !== 1 || matches.length !== 1 || !adapter
             || matches[0].document.adapters?.generated !== adapter.name) {
@@ -138,24 +174,34 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     }
     for (const page of model.generatedPages ?? []) {
         const definition = model.templates.find((item) => item.name === page.name
-            && item.kind === "generated.page");
+            && item.kind === "generated.added-page-definition");
         const renderer = model.templates.find((item) => item.name === page.renderer
-            && item.kind === "generated.renderer");
+            && item.kind === "generated.added-page-renderer");
         if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
         const assets = await Promise.all([definition, renderer].map(asset));
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer,
             ...(page.values ? { values: page.values } : {}),
             ...(page.slots ? { slots: page.slots } : {}), assets });
     }
+    const workflowDefinition = model.templates?.find((item) =>
+        item.name === model.workflowPage?.name && item.kind === "generated.workflow-page-definition");
+    const pipelineRenderer = model.templates?.find((item) =>
+        item.name === model.workflowPage?.pipeline && item.kind === "generated.pipeline-renderer");
+    if (!workflowDefinition || !pipelineRenderer) {
+        throw new Error("Missing validated Workflow page definition or pipeline renderer");
+    }
+    const workflowPage = { id: "workflow", regions: model.workflowPage.regions,
+        pipeline: model.workflowPage.pipeline,
+        assets: await Promise.all([workflowDefinition, pipelineRenderer].map(asset)) };
     const valueSources = [];
     for (const value of model.valueSources ?? []) {
         const definition = model.templates.find((entry) => entry.name === value.name
-            && entry.kind === "value.definition");
+            && entry.kind === "generated.value-definition");
         if (!definition) throw new Error(`${value.name}: missing validated value definition`);
-        const provider = value.source.kind === "provider"
+        const provider = value.source.kind === "computed"
             ? model.templates.find((entry) => entry.name === value.source.module
-                && entry.kind === "value.provider") : null;
-        if (value.source.kind === "provider" && !provider) {
+                && entry.kind === "generated.computed-value-provider") : null;
+        if (value.source.kind === "computed" && !provider) {
             throw new Error(`${value.name}: missing validated value provider`);
         }
         valueSources.push({ id: value.id, label: value.label, schema: value.schema,
@@ -190,7 +236,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         const control = model.controls.find((entry) => entry.id === contribution.field.control);
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
         const definition = model.templates.find((entry) => entry.name === control.template
-            && entry.kind === "control.definition");
+            && entry.kind === "shared.control-definition");
         if (!definition || (contribution.requires !== undefined
             && (contribution.requires.length !== 1
                 || contribution.requires[0] !== definition.name))) {
@@ -229,6 +275,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         fieldConstraints: model.constraints,
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
+        workflowPage,
         ...(generatedControls.length ? { generatedControls } : {}),
         ...(generatedAssets.length ? { generatedAssets } : {}),
         ...(generatedImageControl ? { generatedImageControl } : {}),

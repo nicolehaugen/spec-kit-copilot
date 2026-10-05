@@ -5,9 +5,9 @@
 
 ## Additional Canvas Design templates
 
-- `canvas-logo-gallery-image` — `designer.field`, `replace`
-- `canvas-generated-logo-gallery` — `generated.page`, `replace`
-- `canvas-generated-logo-gallery-renderer` — `generated.renderer`, `replace`
+- `canvas-logo-gallery-image` — `designer.setting-definition`, `replace`
+- `canvas-generated-logo-gallery` — `generated.added-page-definition`, `replace`
+- `canvas-generated-logo-gallery-renderer` — `generated.added-page-renderer`, `replace`
 
 ## Logo gallery registration
 

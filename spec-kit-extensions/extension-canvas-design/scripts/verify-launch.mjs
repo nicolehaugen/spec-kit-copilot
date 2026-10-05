@@ -3,16 +3,19 @@ import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
 
 const exec = promisify(execFile);
 const NAME = /^[a-z][a-z0-9-]{0,79}$/;
-const KINDS = new Set(["designer.field", "generated.page", "generated.renderer",
-    "control.definition", "designer.adapter", "generated.adapter",
-    "value.definition", "value.provider"]);
+const KINDS = new Set(["designer.setting-definition",
+    "generated.workflow-page-definition", "generated.pipeline-renderer",
+    "generated.added-page-definition", "generated.added-page-renderer",
+    "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
+    "generated.value-definition", "generated.computed-value-provider"]);
 const HEADINGS = new Set(["Pages", "Additional Designer pages",
     "Canvas Design templates", "Additional Canvas Design templates"]);
-const EXECUTABLE = new Set(["generated.renderer", "designer.adapter",
-    "generated.adapter", "value.provider"]);
+const EXECUTABLE = new Set(["generated.pipeline-renderer", "generated.added-page-renderer",
+    "designer.control-adapter", "generated.control-adapter", "generated.computed-value-provider"]);
 
 export function isInside(root, target) {
     const part = relative(root, target);
@@ -28,9 +31,11 @@ export function declarations(command) {
         if (!HEADINGS.has(heading) || !/^\s*-\s/.test(line)) continue;
         const names = [...line.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
         const name = names[0];
-        if (!NAME.test(name ?? "")) throw new Error(`Invalid Canvas Design registration: ${line.trim()}`);
+        if (!NAME.test(name ?? "") || isWindowsDeviceName(name)) {
+            throw new Error(`Invalid Canvas Design registration: ${line.trim()}`);
+        }
         const page = heading === "Pages" || heading === "Additional Designer pages";
-        const kind = page ? "designer.page" : names[1];
+        const kind = page ? "designer.tab-definition" : names[1];
         const strategy = page ? "replace" : names[2];
         if ((!page && (names.length !== 3 || !KINDS.has(kind) || strategy !== "replace"))
             || (page && names.length !== 1
@@ -43,7 +48,7 @@ export function declarations(command) {
         }
         if (!existing) result.set(name, { name, kind, strategy: "replace" });
     }
-    if (![...result.values()].some((entry) => entry.kind === "designer.page")) {
+    if (![...result.values()].some((entry) => entry.kind === "designer.tab-definition")) {
         throw new Error("Generated load-page skill is missing Designer pages.");
     }
     return [...result.values()];
@@ -118,7 +123,7 @@ export async function verifyComposition(project, run = exec) {
             }
         }
         const verified = { ...entry, path };
-        if (entry.kind === "designer.page") pages.push(verified);
+        if (entry.kind === "designer.tab-definition") pages.push(verified);
         else templates.push({ ...verified, sourceId });
     }
     return { pages, templates };

@@ -1,17 +1,152 @@
-import { randomBytes } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test, expect } from "./playwright.mjs";
-import { createWorkflowRoutes } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
-import { createRuntime } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/runtime.mjs";
+
+const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated/pages/", import.meta.url);
+const scaffoldSource = new URL("../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/", import.meta.url);
+const workflowDefinition = await readFile(new URL("workflow.json", workflowSource));
+const pipelineModule = await readFile(new URL("generated-pipeline.mjs", workflowSource));
+const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const workflowPage = { pipeline: "generated-pipeline",
+    regions: JSON.parse(workflowDefinition).regions,
+    definitionHash: digest(workflowDefinition), hash: digest(pipelineModule) };
+
+test("pipeline actions report connecting before the first state refresh", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    let releaseState;
+    const waiting = new Promise((resolve) => { releaseState = resolve; });
+    try {
+        await page.route("**/api/state", async (route) => {
+            if (route.request().method() === "GET") await waiting;
+            await route.continue();
+        });
+        await page.goto(canvas.url, { waitUntil: "commit" });
+        await expect(page.locator("#run-phase")).toBeVisible();
+        for (const selector of ["#run-phase", "#browse-output-folder", '[data-phase-index="1"]']) {
+            await page.locator(selector).click();
+            await expect(page.locator("#canvas-message")).toHaveText(
+                "The canvas is connecting. Use Refresh to try again.");
+        }
+        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+    } finally {
+        releaseState();
+        await canvas.close();
+    }
+});
+
+test("vertical pipeline replacement keeps phase navigation and host run actions", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+    try {
+        const vertical = await readFile(new URL(
+            "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/pipeline.mjs", import.meta.url));
+        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript", body: vertical,
+        }));
+        await page.goto(canvas.url);
+        await expect(page.locator(".vertical-phase-list [data-phase-index]")).toHaveCount(2);
+        await page.locator('.vertical-phase-list [data-phase-index="1"]').click();
+        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
+        await expect(page.locator("#run-phase")).toBeVisible();
+        await page.locator("#previous-phase").click();
+        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+        await page.locator("#phase-args").fill("Vertical proof");
+        await page.locator("#run-phase").click();
+        await expect(page.locator("#run-phase")).toBeVisible();
+        await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
+    } finally { await canvas.close(); }
+});
+
+for (const [scenario, module] of [
+    ["missing phase card", `export function mount({root, phases}) {
+        const nav = document.createElement("nav");
+        nav.id = "phase-navigation";
+        const steps = phases.map((_, index) => {
+            const button = document.createElement("button");
+            button.dataset.phaseIndex = String(index);
+            nav.append(button);
+            return button;
+        });
+        root.replaceChildren(nav);
+        return { steps };
+    }`],
+    ["non-element steps", `export function mount() { return { steps: [null, null] }; }`],
+]) {
+    test(`invalid pipeline replacement reports ${scenario}`, async ({ page }) => {
+        const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+        try {
+            await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+                contentType: "text/javascript", body: module,
+            }));
+            await page.goto(canvas.url);
+            await expect(page.locator("#canvas-message")).toContainText(
+                "Pipeline could not render: Pipeline renderer did not render the required phase controls");
+        } finally { await canvas.close(); }
+    });
+}
+
+test("pipeline replacement without live phase controls fails at startup", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+    try {
+        const original = pipelineModule.toString("utf8");
+        expect(original).toContain("? phaseCard(phases[0]) :");
+        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: original.replace("? phaseCard(phases[0]) :", '? "" :'),
+        }));
+        await page.goto(canvas.url);
+        await expect(page.locator("#canvas-message")).toContainText(
+            "Pipeline could not render: Pipeline renderer did not render the required phase controls");
+    } finally { await canvas.close(); }
+});
+
+test("pipeline replacement without mobile next-phase hint still navigates", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+    try {
+        const original = pipelineModule.toString("utf8");
+        const hint = '<span id="mobile-next-phase" class="muted"></span>';
+        expect(original).toContain(hint);
+        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript", body: original.replace(hint, ""),
+        }));
+        await page.setViewportSize({ width: 390, height: 780 });
+        await page.goto(canvas.url);
+        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+        await page.locator("#mobile-phase-select").selectOption("1");
+        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
+        await expect(page.locator("#canvas-message")).toBeEmpty();
+    } finally { await canvas.close(); }
+});
+
+for (const [scenario, missing] of [
+    ["phase label", 'data-phase-label="${escapeHtml(phase.label)}"'],
+    ["artifact action", 'id="view-artifact"'],
+    ["artifact status", 'id="phase-artifact-status"'],
+    ["phase message", 'id="phase-message"'],
+]) {
+    test(`pipeline replacement missing ${scenario} fails at startup`, async ({ page }) => {
+        const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+        try {
+            const original = pipelineModule.toString("utf8");
+            expect(original).toContain(missing);
+            await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+                contentType: "text/javascript", body: original.replace(missing, ""),
+            }));
+            await page.goto(canvas.url);
+            await expect(page.locator("#canvas-message")).toContainText(
+                "Pipeline could not render: Pipeline renderer did not render the required phase controls");
+        } finally { await canvas.close(); }
+    });
+}
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
     generatedPages, readOnlyFields, generatedControls, valueSources) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
-        schemaVersion: 1, userProvidesSlug,
+        schemaVersion: 1, userProvidesSlug, workflowPage,
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
@@ -29,8 +164,16 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         ...(generatedControls ? { generatedControls } : {}),
         ...(valueSources ? { valueSources } : {}),
     };
-    let runtime, routes, server;
+    let runtime, routes, server, sdkRoot;
     try {
+        sdkRoot = await mkdtemp(join(tmpdir(), "generated-sdk-e2e-"));
+        const sdk = join(sdkRoot, "generated-canvas");
+        await cp(scaffoldSource, sdk, { recursive: true });
+        await mkdir(join(sdk, "pages"), { recursive: true });
+        await Promise.all(["workflow.json", "generated-pipeline.mjs"].map((file) =>
+            copyFile(new URL(file, workflowSource), join(sdk, "pages", file))));
+        const { createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+        const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
         runtime = await createRuntime({ config, cwd: root, workspace: root,
             session: { sessionId: "slug-browser-test", on: () => () => {},
                 getEvents: async () => [], log: async () => {}, send: async () => "sent-message-id",
@@ -54,7 +197,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
                     server.close(resolve);
                     server.closeAllConnections();
                 });
-                await rm(root, { recursive: true, force: true });
+                await Promise.all([root, sdkRoot].map((path) =>
+                    rm(path, { recursive: true, force: true })));
             },
         };
     } catch (error) {
@@ -65,6 +209,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
             server.closeAllConnections();
         });
         await rm(root, { recursive: true, force: true });
+        if (sdkRoot) await rm(sdkRoot, { recursive: true, force: true });
         throw error;
     }
 }

@@ -16,11 +16,22 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "control-cont
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
+    "pages", "constitution", "message", "pipeline"];
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided"]);
+
+function withoutSchema(document) {
+    if (!document || typeof document !== "object" || Array.isArray(document)) return document;
+    const { $schema, ...definition } = document;
+    if ($schema !== undefined && typeof $schema !== "string") {
+        throw new Error("Invalid frozen definition $schema reference");
+    }
+    return definition;
+}
 
 function validateFrozenValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
@@ -142,8 +153,8 @@ const imageContract = { type: "image", maxBytes: 32768,
 function frozenImageControl(item) {
     if (!item || Object.keys(item).sort().join() !== "assets,control"
         || item.control !== "stock.image" || !Array.isArray(item.assets) || item.assets.length !== 2
-        || item.assets[0]?.kind !== "control.definition"
-        || item.assets[1]?.kind !== "generated.adapter") {
+        || item.assets[0]?.kind !== "shared.control-definition"
+        || item.assets[1]?.kind !== "generated.control-adapter") {
         throw new Error("Invalid frozen stock.image control registration");
     }
     for (const asset of item.assets) {
@@ -160,7 +171,7 @@ function frozenImageControl(item) {
         }
     }
     let definition;
-    try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+    try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid stock.image control definition"); }
     if (!definition || Object.keys(definition).sort().join() !== "adapters,id,schemaVersion,value"
         || definition.schemaVersion !== 1 || definition.id !== item.control
@@ -183,8 +194,8 @@ function frozenImageControl(item) {
 function frozenTextControl(item) {
     if (!item || Object.keys(item).sort().join() !== "assets,control"
         || item.control !== "stock.text" || !Array.isArray(item.assets) || item.assets.length !== 2
-        || item.assets[0]?.kind !== "control.definition"
-        || item.assets[1]?.kind !== "generated.adapter") {
+        || item.assets[0]?.kind !== "shared.control-definition"
+        || item.assets[1]?.kind !== "generated.control-adapter") {
         throw new Error("Invalid frozen stock.text control registration");
     }
     for (const asset of item.assets) {
@@ -201,7 +212,7 @@ function frozenTextControl(item) {
         }
     }
     let definition;
-    try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+    try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid stock.text control definition"); }
     if (!definition || Object.keys(definition).sort().join() !== "adapters,id,schemaVersion,value"
         || definition.schemaVersion !== 1 || definition.id !== "stock.text"
@@ -227,11 +238,52 @@ const imageFile = (item) => `${item.page
     "image/webp": "webp",
 }[item.mime]}`;
 
+function frozenWorkflowPage(page) {
+    if (!page || Object.keys(page).sort().join() !== "assets,id,pipeline,regions"
+        || page.id !== "workflow" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.pipeline)
+        || isWindowsDeviceName(page.pipeline)
+        || !Array.isArray(page.regions) || page.regions.length !== WORKFLOW_REGIONS.length
+        || new Set(page.regions).size !== WORKFLOW_REGIONS.length
+        || page.regions.some((region) => !WORKFLOW_REGIONS.includes(region))
+        || !Array.isArray(page.assets) || page.assets.length !== 2
+        || page.assets[0]?.name !== "generated-workflow"
+        || page.assets[0]?.kind !== "generated.workflow-page-definition"
+        || page.assets[1]?.name !== page.pipeline
+        || page.assets[1]?.kind !== "generated.pipeline-renderer"
+        || page.assets.some((asset) => !asset || typeof asset !== "object"
+            || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+            || typeof asset.sourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+            || typeof asset.content !== "string"
+            || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+            || Buffer.from(asset.content, "base64").length > 32 * 1024
+            || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash)) {
+        throw new Error("Invalid frozen Workflow page assets");
+    }
+    let definition;
+    try { definition = withoutSchema(JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8"))); }
+    catch { throw new Error("Invalid frozen Workflow page definition"); }
+    if (!definition || Object.keys(definition).sort().join() !== "id,pipeline,regions,schemaVersion"
+        || definition.schemaVersion !== 1 || definition.id !== page.id
+        || definition.pipeline !== page.pipeline
+        || JSON.stringify(definition.regions) !== JSON.stringify(page.regions)) {
+        throw new Error("Frozen Workflow page definition differs from registration");
+    }
+    const module = Buffer.from(page.assets[1].content, "base64").toString("utf8");
+    const check = spawnSync("node", ["--check", "--input-type=module"],
+        { input: module, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
+    if (check.error || check.status !== 0) {
+        throw new Error(`Invalid frozen pipeline renderer: ${check.stderr || check.error || "module validation failed"}`);
+    }
+    return { regions: page.regions, pipeline: page.pipeline,
+        definitionHash: page.assets[0].hash, hash: page.assets[1].hash };
+}
+
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
         generatedPages, generatedControls, generatedAssets, generatedImageControl,
-        generatedTextControl, generatedTextPlacements, controlAssets, valueSources } = request;
+        generatedTextControl, generatedTextPlacements, controlAssets, valueSources, workflowPage } = request;
     validateFrozenValues(values, fieldConstraints);
+    const workflowLayout = frozenWorkflowPage(workflowPage);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -384,7 +436,7 @@ function configuration(request) {
             || !["stock.readonly", "stock.editable", "processing-only"].includes(item.presentation)
             || !item.source || typeof item.source !== "object" || Array.isArray(item.source)
             || !(item.source.kind === "constant" && Object.keys(item.source).sort().join() === "kind,value"
-                || item.source.kind === "provider" && Object.keys(item.source).sort().join() === "kind,module"
+                || item.source.kind === "computed" && Object.keys(item.source).sort().join() === "kind,module"
                     && typeof item.source.module === "string"
                     && /^[a-z][a-z0-9-]{0,79}$/.test(item.source.module)
                     && !isWindowsDeviceName(item.source.module))
@@ -393,11 +445,11 @@ function configuration(request) {
                 || typeof item.section.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(item.section.id)
                 || typeof item.section.title !== "string" || !item.section.title.trim()
                 || item.section.title.length > 120))
-            || !Array.isArray(item.assets) || item.assets.length !== (item.source?.kind === "provider" ? 2 : 1)
-            || item.assets[0]?.kind !== "value.definition"
-            || item.assets[1] && (item.assets[1].kind !== "value.provider"
+            || !Array.isArray(item.assets) || item.assets.length !== (item.source?.kind === "computed" ? 2 : 1)
+            || item.assets[0]?.kind !== "generated.value-definition"
+            || item.assets[1] && (item.assets[1].kind !== "generated.computed-value-provider"
                 || item.assets[1].name !== item.source.module)
-            || item.source?.kind === "provider" && item.presentation === "stock.editable") {
+            || item.source?.kind === "computed" && item.presentation === "stock.editable") {
             throw new Error("Invalid frozen value source registration");
         }
         for (const asset of item.assets) {
@@ -413,7 +465,7 @@ function configuration(request) {
             }
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8")); }
+        try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
         catch { throw new Error(`${item.id}: invalid frozen value definition`); }
         if (!isDeepStrictEqual(definition, {
             schemaVersion: 1, id: item.id, label: item.label, schema: item.schema,
@@ -426,7 +478,7 @@ function configuration(request) {
                     : Object.fromEntries(Object.entries(item.schema.properties ?? {})
                         .map(([key, allowed]) => [key, allowed[0]])) },
         { [item.id]: item.schema });
-        if (item.source.kind === "provider") {
+        if (item.source.kind === "computed") {
             const prior = valueModules.get(item.source.module);
             if (prior && prior !== item.assets[1].hash) {
                 throw new Error(`Conflicting frozen value provider: ${item.source.module}`);
@@ -452,6 +504,7 @@ function configuration(request) {
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             || page.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(page.id)
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            || page.renderer === workflowLayout.pipeline
             || isWindowsDeviceName(page.renderer)
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
             || (page.values !== undefined && (!Array.isArray(page.values)
@@ -461,12 +514,11 @@ function configuration(request) {
                 || page.slots.length > 30
                 || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
                 || page.slots.some((slot) => !slot || typeof slot !== "object"
-                    || Object.keys(slot).sort().join() !== "accepts,id"
-                    || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
-                    || JSON.stringify(slot.accepts) !== '["asset"]')))
+                    || Object.keys(slot).join() !== "id"
+                    || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))))
             || !Array.isArray(page.assets) || page.assets.length !== 2
-            || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.page"
-            || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.renderer"
+            || page.assets[0]?.name !== page.id || page.assets[0]?.kind !== "generated.added-page-definition"
+            || page.assets[1]?.name !== page.renderer || page.assets[1]?.kind !== "generated.added-page-renderer"
             || page.assets.some((asset) => !asset || typeof asset !== "object"
                 || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
                 || typeof asset.sourceId !== "string"
@@ -479,7 +531,7 @@ function configuration(request) {
             throw new Error("Invalid frozen generated page assets");
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8")); }
+        try { definition = withoutSchema(JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8"))); }
         catch { throw new Error(`${page.id}: invalid frozen generated page definition`); }
         if (!definition || Object.keys(definition).some((key) =>
             !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
@@ -492,7 +544,7 @@ function configuration(request) {
     }
     for (const image of generatedAssets ?? []) {
         if (image.page && !generatedPages?.some((page) => page.id === image.page
-            && page.slots?.some((slot) => slot.id === image.slot && slot.accepts.includes("asset")))) {
+            && page.slots?.some((slot) => slot.id === image.slot))) {
             throw new Error(`${image.id}: unknown generated page asset slot`);
         }
     }
@@ -512,8 +564,8 @@ function configuration(request) {
             || Object.keys(entry).sort().join() !== "assets,control"
             || typeof entry.control !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(entry.control)
             || !Array.isArray(entry.assets) || entry.assets.length !== 2
-            || entry.assets[0]?.kind !== "control.definition"
-            || entry.assets[1]?.kind !== "generated.adapter") {
+            || entry.assets[0]?.kind !== "shared.control-definition"
+            || entry.assets[1]?.kind !== "generated.control-adapter") {
             throw new Error("Invalid frozen generated control assets");
         }
         for (const asset of entry.assets) {
@@ -531,7 +583,7 @@ function configuration(request) {
             }
         }
         let definition;
-        try { definition = JSON.parse(Buffer.from(entry.assets[0].content, "base64").toString("utf8")); }
+        try { definition = withoutSchema(JSON.parse(Buffer.from(entry.assets[0].content, "base64").toString("utf8"))); }
         catch { throw new Error(`${entry.control}: invalid control definition`); }
         if (definition?.schemaVersion !== 1 || definition.id !== entry.control
             || definition.adapters?.generated !== entry.assets[1].name
@@ -578,6 +630,7 @@ function configuration(request) {
     const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
+        workflowPage: workflowLayout,
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
         ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
         ...(pageImages.length ? { generatedPageAssets: pageImages.map((item) =>
@@ -590,7 +643,7 @@ function configuration(request) {
             ...(declared ? { values: declared } : {}), ...(slots ? { slots } : {}) })) } : {}),
         ...(valueSources?.length ? { valueSources: valueSources.map(
             ({ id, label, schema, source, presentation, section, assets }) => ({
-                id, label, schema, source: source.kind === "provider"
+                id, label, schema, source: source.kind === "computed"
                     ? { ...source, hash: assets[1].hash } : source,
                 presentation, provenance: assets[0].sourceId,
                 ...(section ? { section } : {}),
@@ -691,24 +744,28 @@ export async function materialize(project, workspace, handoffId, requestId) {
         { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
         { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },
     ]);
+    pageFiles.push(
+        { filename: "workflow.json", bytes: Buffer.from(request.workflowPage.assets[0].content, "base64") },
+        { filename: `${request.workflowPage.pipeline}.mjs`,
+            bytes: Buffer.from(request.workflowPage.assets[1].content, "base64") });
     const controlFiles = (request.controlAssets ?? []).flatMap(({ assets }) => [
         { filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") },
         { filename: `${assets[1].name}.mjs`, bytes: Buffer.from(assets[1].content, "base64") },
     ]);
     if (request.generatedImageControl) {
         controlFiles.push(...request.generatedImageControl.assets.map((asset) => ({
-            filename: `${asset.name}.${asset.kind === "control.definition" ? "json" : "mjs"}`,
+            filename: `${asset.name}.${asset.kind === "shared.control-definition" ? "json" : "mjs"}`,
             bytes: Buffer.from(asset.content, "base64"),
         })));
     }
     if (request.generatedTextControl) {
         controlFiles.push(...request.generatedTextControl.assets.map((asset) => ({
-            filename: `${asset.name}.${asset.kind === "control.definition" ? "json" : "mjs"}`,
+            filename: `${asset.name}.${asset.kind === "shared.control-definition" ? "json" : "mjs"}`,
             bytes: Buffer.from(asset.content, "base64"),
         })));
     }
     const providerFiles = [...new Map((request.valueSources ?? []).filter(
-        (item) => item.source.kind === "provider").map((item) => [
+        (item) => item.source.kind === "computed").map((item) => [
         item.source.module, { filename: `${item.source.module}.mjs`,
             bytes: Buffer.from(item.assets[1].content, "base64") },
     ])).values()];

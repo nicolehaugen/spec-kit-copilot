@@ -60,7 +60,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
         const specify = adapters.length ? join(await realpath(project), ".specify") : null;
         for (const name of adapters) {
             const adapter = model.templates.find((item) => item.name === name
-                && item.kind === "designer.adapter");
+                && item.kind === "designer.control-adapter");
             if (!adapter) throw new Error(`${name}: Designer adapter is unavailable`);
             assets.set(`/adapters/${name}.mjs`, {
                 type: "text/javascript", content: await readFrozenAsset(adapter, specify),
@@ -165,7 +165,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
                 if (!input || typeof input !== "object" || Array.isArray(input)
                     || Object.keys(input).sort().join() !== (model.templates?.some(
-                        (item) => item.kind === "value.provider")
+                        (item) => item.kind === "generated.computed-value-provider")
                         ? "approvedProviders,modelRevision,settingsRevision,values"
                         : "modelRevision,settingsRevision,values")
                     || input.modelRevision !== model.revision
@@ -176,7 +176,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 if (input.settingsRevision !== current.settingsRevision) {
                     throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");
                 }
-                const providers = (model.templates ?? []).filter((item) => item.kind === "value.provider")
+                const providers = (model.templates ?? []).filter((item) => item.kind === "generated.computed-value-provider")
                     .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
                 if (providers.length) {
                     if (!Array.isArray(input.approvedProviders)
@@ -184,7 +184,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                         throw new Error("Provider approval does not match the resolved names, sources and hashes; review and confirm again");
                     }
                     const specify = join(await realpath(project), ".specify");
-                    for (const item of model.templates.filter((entry) => entry.kind === "value.provider")) {
+                    for (const item of (model.templates ?? []).filter((entry) => entry.kind === "generated.computed-value-provider")) {
                         await readFrozenAsset(item, specify);
                     }
                 }

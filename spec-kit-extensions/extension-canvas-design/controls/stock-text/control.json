@@ -1,9 +1,10 @@
 {
+  "$schema": "../../schemas/shared.control-definition.schema.json",
   "schemaVersion": 1,
   "id": "stock.text",
   "value": {"type": "string"},
   "adapters": {
-    "designer": "canvas-stock-text-designer",
-    "generated": "canvas-stock-text-generated"
+    "designer": "designer-control-adapter-text",
+    "generated": "generated-control-adapter-text"
   }
 }
