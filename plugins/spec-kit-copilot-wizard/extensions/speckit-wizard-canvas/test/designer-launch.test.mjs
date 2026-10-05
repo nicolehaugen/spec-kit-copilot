@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,6 +7,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { load } from "js-yaml";
 import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
@@ -13,10 +15,10 @@ import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
     quoteInstallUrl, readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
-import { fingerprint, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
+import { fingerprint, HANDOFF_LIMIT, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
 import { resolveRuntimeInstallLocators } from "../server/runtime-provenance.mjs";
-import { preflight, verifyHostedCanvasDesign, verifyLocalInstall } from "../server/designer-launch-check.mjs";
+import { prepareHandoff, preflight, verifyHostedCanvasDesign, verifyLocalInstall } from "../server/designer-launch-check.mjs";
 import { buildAugmentedPath } from "../env/resolve-path.mjs";
 import releaseCatalog from "../../../../../spec-kit-extensions/catalog.json" with { type: "json" };
 
@@ -43,6 +45,7 @@ const catalog = {
 };
 const snapshot = { pipeline: [{ id: "commands/plan" }], catalog };
 const empty = { presets: [], extensions: [], bundles: [] };
+const exec = promisify(execFile);
 
 test("hosted install URLs are quoted as single shell arguments in both install steps", () => {
     const url = "https://example.org/canvas.zip?x=1&y=';$(id)";
@@ -134,19 +137,25 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.equal(sent.length, 1);
     assert.match(sent[0].prompt, /no base_branch \(the project default\)/);
     assert.match(sent[0].prompt, /ONE read-only preflight: node .*designer-launch-check\.mjs" preflight/);
+    assert.match(sent[0].prompt, /designer-launch-check\.mjs" prepare <child-checkout> <session-root>/);
+    assert.ok(sent[0].prompt.indexOf('" prepare <child-checkout>')
+        < sent[0].prompt.indexOf('" preflight <child-checkout>'));
+    assert.match(sent[0].prompt, /removes exactly one trailing LF\/CRLF only when the remaining bytes match that hash/);
     assert.match(sent[0].prompt, /If preflight says initialized:false.*Otherwise do not overwrite its setup/);
     assert.match(sent[0].prompt, /verify-local.*EVERY approved local preset or extension/);
     assert.doesNotMatch(sent[0].prompt, /preflight-digest|approved preflight digest/);
     assert.match(sent[0].prompt, /If the installed Canvas Design package includes scripts\/verify-launch\.mjs.*complete pages\/templates JSON as the ONE open input/);
     assert.match(sent[0].prompt, /Older compatible hosted packages without that verifier.*manual per-name checks/);
+    assert.match(sent[0].prompt, /compatible contract version alone does not establish readiness/i);
     assert.match(sent[0].prompt, /Session folder:" path in the child session context/);
     assert.match(sent[0].prompt, /session-state ROOT and the parent of its files\/ directory/);
     assert.match(sent[0].prompt, /Do NOT put it under <Session folder>\/files\//);
     assert.match(sent[0].prompt, /Before any Designer open, verify the file exists at that exact root-relative path/);
     assert.match(sent[0].prompt, /if the session folder cannot be identified or the file is missing, stop and report the error/);
+    assert.doesNotMatch(sent[0].prompt, /bytes equal HANDOFF_JSON/);
+    assert.match(sent[0].prompt, /Only the following preparation command may trim a verified line ending; do not edit it otherwise/);
     assert.match(sent[0].prompt, /exact UTF-8 bytes of the single-line HANDOFF_JSON/);
     assert.match(sent[0].prompt, /Do not append a newline \(including Windows CRLF\), a BOM/);
-    assert.match(sent[0].prompt, /Do not edit it afterward/);
     assert.match(sent[0].prompt, /speckit-extension.*--install-allowed/);
     assert.match(sent[0].prompt, /Install extension-canvas-design with specify extension add extension-canvas-design --from/);
     assert.match(sent[0].prompt, /install the required Canvas Design base before any bundle or preset/);
@@ -245,7 +254,7 @@ test("current hosted Canvas Design launches without a local override", async () 
 });
 
 test("hosted Canvas Design handoff verifies the installed package", async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "designer-hosted-"));
+    const root = join(process.cwd(), `.designer-hosted-${randomUUID()}`);
     t.after(() => rm(root, { recursive: true, force: true }));
     const path = join(root, ".specify", "extensions", "extension-canvas-design");
     await mkdir(join(root, ".specify", "extensions"), { recursive: true });
@@ -258,6 +267,21 @@ test("hosted Canvas Design handoff verifies the installed package", async (t) =>
         id: "extension-canvas-design", version: releasedBase.version,
         source: { kind: "local" },
     }]) });
+    assert.equal((await verifyHostedCanvasDesign(root, handoff, run)).designerContract, 1);
+    const manifestPath = join(path, "extension.yml");
+    const manifest = await readFile(manifestPath, "utf8");
+    await writeFile(manifestPath, manifest.replace(
+        /    - name: generated-(?:workflow|phase-placement|phase-control|phase-adapter)\r?\n      file: [^\r\n]+\r?\n      description: [^\r\n]+\r?\n/g,
+        ""));
+    await assert.rejects(verifyHostedCanvasDesign(root, handoff, run),
+        /lacks required Workflow registrations\/files: generated-workflow, generated-phase-placement, generated-phase-control, generated-phase-adapter.*approved local-source override/);
+    await writeFile(manifestPath, manifest);
+    await rm(join(path, "generated-host", "phase-control", "generated-phase-adapter.mjs"));
+    await assert.rejects(verifyHostedCanvasDesign(root, handoff, run),
+        /lacks required Workflow registrations\/files: generated-phase-adapter/);
+    await cp(join(LOCAL_CANVAS_DESIGN_EXT_PATH, "generated-host", "phase-control",
+        "generated-phase-adapter.mjs"), join(path, "generated-host", "phase-control",
+        "generated-phase-adapter.mjs"));
     assert.equal((await verifyHostedCanvasDesign(root, handoff, run)).designerContract, 1);
     await assert.rejects(verifyHostedCanvasDesign(root, handoff,
         async () => ({ stdout: "[]" })), /source or ID differs/);
@@ -1057,7 +1081,7 @@ test("read-only preflight pins handoff bytes and checks local installation ident
                 source: { kind: "local" } }]),
         }))).id, "extension-canvas-design");
     await writeFile(join(project, ".specify", "extensions",
-        "extension-canvas-design", "designer", "tabs", "essentials.json"), "{}");
+        "extension-canvas-design", "designer-host", "tabs", "essentials.json"), "{}");
     assert.equal((await verifyLocalInstall(project, handoff, "extensions",
         "extension-canvas-design", run)).id, "extension-canvas-design");
     await writeFile(path, `${bytes} `);
@@ -1066,6 +1090,69 @@ test("read-only preflight pins handoff bytes and checks local installation ident
     await writeFile(path, bytes);
     await assert.rejects(preflight(project, root, handoff.handoffId, hash,
         async () => ({ stdout: "specify 1.0.6" })), />=1\.0\.7/);
+});
+
+test("handoff preparation removes only a matching single line ending before strict preflight", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "designer-prepare-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const project = join(root, "project");
+    await mkdir(join(project, ".specify"), { recursive: true });
+    const handoff = buildDesignerHandoff(snapshot, empty, undefined, empty, randomUUID());
+    const directory = join(root, "speckit-canvas-designer", "handoffs", handoff.handoffId);
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, "handoff.json");
+    const bytes = JSON.stringify(handoff);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const run = async () => ({ stdout: "specify 1.0.7" });
+
+    for (const suffix of ["", "\n", "\r\n"]) {
+        await writeFile(path, bytes + suffix);
+        assert.equal((await prepareHandoff(root, handoff.handoffId, hash)).handoffPath, path);
+        assert.equal(await readFile(path, "utf8"), bytes);
+        assert.equal((await preflight(project, root, handoff.handoffId, hash, run)).initialized, true);
+    }
+    const maximum = bytes + " ".repeat(HANDOFF_LIMIT - Buffer.byteLength(bytes));
+    const maximumHash = createHash("sha256").update(maximum).digest("hex");
+    await writeFile(path, maximum + "\r\n");
+    await prepareHandoff(root, handoff.handoffId, maximumHash);
+    assert.equal(await readFile(path, "utf8"), maximum);
+    await writeFile(path, maximum + "\r\n ");
+    await assert.rejects(prepareHandoff(root, handoff.handoffId, maximumHash),
+        /Invalid Designer handoff file/);
+    for (const changed of [`${bytes} `, `${bytes}\n\n`, `${bytes} \n`,
+        `${bytes.replace('"schemaVersion":1', '"schemaVersion":2')}\r\n`]) {
+        await writeFile(path, changed);
+        await assert.rejects(prepareHandoff(root, handoff.handoffId, hash),
+            /handoff bytes changed/);
+        assert.equal(await readFile(path, "utf8"), changed);
+    }
+    await writeFile(path, `${bytes}\r\n`);
+    await assert.rejects(preflight(project, root, handoff.handoffId, hash, run),
+        /handoff bytes changed/);
+});
+
+test("Designer launch-check prepare CLI normalizes only matching handoff bytes", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "designer-prepare-cli-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const project = join(root, "project");
+    await mkdir(project);
+    const handoff = buildDesignerHandoff(snapshot, empty, undefined, empty, randomUUID());
+    const directory = join(root, "speckit-canvas-designer", "handoffs", handoff.handoffId);
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, "handoff.json");
+    const bytes = JSON.stringify(handoff);
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const cli = fileURLToPath(new URL("../server/designer-launch-check.mjs", import.meta.url));
+    await writeFile(path, `${bytes}\r\n`);
+    const { stdout } = await exec(process.execPath,
+        [cli, "prepare", project, root, handoff.handoffId, hash]);
+    assert.equal(JSON.parse(stdout).handoffPath, path);
+    assert.equal(await readFile(path, "utf8"), bytes);
+    await writeFile(path, `${bytes} \n`);
+    await assert.rejects(exec(process.execPath,
+        [cli, "prepare", project, root, handoff.handoffId, hash]),
+    /Designer handoff bytes changed/);
+    assert.equal(await readFile(path, "utf8"), `${bytes} \n`);
 });
 
 test("Designer launch installs every extension before standalone presets, including local overrides", () => {

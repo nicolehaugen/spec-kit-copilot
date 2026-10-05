@@ -244,20 +244,56 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             && item.kind === "generated.added-page-renderer");
         if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
         const assets = await Promise.all([definition, renderer].map(asset));
-        generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer,
+        generatedPages.push({ id: page.id, title: page.title,
+            ...(page.order !== undefined ? { order: page.order } : {}),
+            renderer: page.renderer,
             ...(page.values ? { values: page.values } : {}),
             ...(page.slots ? { slots: page.slots } : {}), assets });
     }
+    const defaultPageOrder = new Map(generatedPages.map((page, index) => [page.id, index + 1]));
+    generatedPages.sort((a, b) => (a.order ?? defaultPageOrder.get(a.id))
+        - (b.order ?? defaultPageOrder.get(b.id)) || a.id.localeCompare(b.id));
     const workflowDefinition = model.templates?.find((item) =>
         item.name === model.workflowPage?.name && item.kind === "generated.workflow-page-definition");
-    const pipelineRenderer = model.templates?.find((item) =>
-        item.name === model.workflowPage?.pipeline && item.kind === "generated.pipeline-renderer");
-    if (!workflowDefinition || !pipelineRenderer) {
-        throw new Error("Missing validated Workflow page definition or pipeline renderer");
+    const placementDefinition = model.templates?.find((item) =>
+        item.name === model.phasePlacement?.name && item.kind === "generated.phase-control-placement");
+    const controlDefinition = model.templates?.find((item) =>
+        item.name === model.phasePlacement?.control && item.kind === "generated.phase-control-definition");
+    const controlBytes = controlDefinition && await readFrozenAsset(controlDefinition, specify);
+    let phaseControl;
+    try { phaseControl = controlBytes && JSON.parse(controlBytes.toString("utf8")); }
+    catch { throw new Error("Invalid frozen phase control definition"); }
+    const adapter = model.templates?.find((item) =>
+        item.name === phaseControl?.adapter && item.kind === "generated.phase-control-adapter");
+    if (!workflowDefinition || !placementDefinition || !controlDefinition || !adapter
+        || phaseControl?.id !== "workflow-phases"
+        || model.phasePlacement?.page !== "workflow" || model.phasePlacement?.slot !== "workflow.phases") {
+        throw new Error("Missing validated Workflow page, phase placement, phase control, or adapter");
     }
-    const workflowPage = { id: "workflow", regions: model.workflowPage.regions,
-        pipeline: model.workflowPage.pipeline,
-        assets: await Promise.all([workflowDefinition, pipelineRenderer].map(asset)) };
+    const workflowPage = { id: "workflow", title: model.workflowPage.title,
+        order: model.workflowPage.order, slots: model.workflowPage.slots,
+        assets: await Promise.all([workflowDefinition, controlDefinition, adapter].map(asset)) };
+    const phasePlacement = { id: model.phasePlacement.id, page: model.phasePlacement.page,
+        slot: model.phasePlacement.slot, control: model.phasePlacement.control,
+        assets: [await asset(placementDefinition)] };
+    const designerFields = new Map();
+    const fieldPlacements = await Promise.all((model.fieldPlacements ?? []).map(async (placement) => {
+        const definition = model.templates.find((item) => item.name === placement.name
+            && item.kind === "generated.field-placement");
+        if (!definition) throw new Error(`${placement.name}: missing validated field placement`);
+        const field = model.pages.flatMap((page) => page.fields ?? [])
+            .find((candidate) => candidate.id === placement.field);
+        const value = model.valueSources?.find((candidate) => candidate.id === placement.field);
+        if (!field && !value) throw new Error(`${placement.name}: missing resolved field`);
+        if (field) {
+            designerFields.set(field.id, { id: field.id, label: field.label,
+                control: field.control });
+        }
+        return { id: placement.id, page: placement.page, slot: placement.slot,
+            field: placement.field, label: (field ?? value).label,
+            order: placement.order, control: placement.control,
+            assets: [await asset(definition)] };
+    }));
     const valueSources = [];
     for (const value of model.valueSources ?? []) {
         const definition = model.templates.find((entry) => entry.name === value.name
@@ -318,6 +354,13 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         generatedControls.push({ id, label, control: control.id, slot: binding.slot,
             value: essentials[id] });
     }
+    for (const placement of model.fieldPlacements ?? []) {
+        if (model.controls.find((control) => control.id === placement.control)?.value.type !== "object"
+            || controlAssets.has(placement.control)) continue;
+        const paired = await generatedControl(placement.control);
+        controlAssets.set(placement.control, { control: placement.control,
+            assets: await Promise.all([paired.definition, paired.adapter].map(asset)) });
+    }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
     try {
@@ -344,6 +387,9 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         workflowPage,
+        phasePlacement,
+        ...(fieldPlacements.length ? { fieldPlacements } : {}),
+        ...(designerFields.size ? { designerFields: [...designerFields.values()] } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),
         ...(generatedAssets.length ? { generatedAssets } : {}),
         ...(generatedImageControl ? { generatedImageControl } : {}),

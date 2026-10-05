@@ -10,7 +10,7 @@
 
 import { constants } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 // js-yaml (deferred import, mirrors composition/preset-loader.mjs and
 // composition/collect.mjs): the wizard auto-runs `npm install` on first
@@ -295,4 +295,37 @@ export async function readDesignerContract(path) {
         throw new Error("Invalid Canvas Design Designer tab schema version");
     }
     return version;
+}
+
+export async function verifyHostedWorkflowRegistrations(path) {
+    const canonical = await realpath(path);
+    const file = "extension.yml";
+    const text = await readBoundedManifest(join(canonical, file), { file }, canonical);
+    let manifest;
+    try { manifest = (await getYaml()).load(text); }
+    catch { throw new Error("Invalid installed Canvas Design extension manifest"); }
+    const templates = manifest?.provides?.templates;
+    const required = [
+        "generated-workflow", "generated-phase-placement",
+        "generated-phase-control", "generated-phase-adapter",
+    ];
+    const missing = [];
+    for (const name of required) {
+        const matches = Array.isArray(templates) ? templates.filter((entry) => entry?.name === name) : [];
+        const registered = matches.length === 1 && typeof matches[0].file === "string"
+            && !isAbsolute(matches[0].file);
+        const target = registered ? join(canonical, matches[0].file) : null;
+        const rel = target && relative(canonical, target);
+        let valid = registered && rel && rel !== ".." && !rel.startsWith(`..${sep}`)
+            && !isAbsolute(rel);
+        if (valid) {
+            try {
+                valid = (await lstat(target)).isFile() && await realpath(target) === target;
+            } catch { valid = false; }
+        }
+        if (!valid) missing.push(name);
+    }
+    if (missing.length) {
+        throw new Error(`Installed hosted Canvas Design lacks required Workflow registrations/files: ${missing.join(", ")}. Use an approved local-source override containing the Workflow phase controls; do not open Designer.`);
+    }
 }

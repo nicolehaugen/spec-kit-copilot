@@ -1,0 +1,8 @@
+{
+  "$schema": "../../schemas/generated.workflow-page-definition.schema.json",
+  "schemaVersion": 1,
+  "id": "workflow",
+  "title": "Workflow",
+  "order": 0,
+  "slots": [{"id": "workflow.phases"}]
+}

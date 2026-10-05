@@ -28,7 +28,9 @@ The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.setting-definition`,
-`generated.workflow-page-definition`, `generated.pipeline-renderer`,
+`generated.workflow-page-definition`, `generated.phase-control-definition`,
+`generated.phase-control-adapter`, `generated.phase-control-placement`,
+`generated.field-placement`,
 `generated.added-page-definition`, `generated.added-page-renderer`,
 `shared.control-definition`, `designer.control-adapter`, `generated.control-adapter`,
 `generated.value-definition`, or `generated.computed-value-provider`) and strategy
@@ -52,6 +54,18 @@ declares a typed constant or a workflow-scoped computed value; a generated page
 declares the value IDs it consumes in its `values` list. A processing-only value
 is not automatically presented and is not secret from its declared consumers.
 Computed-value providers are packaged, never evaluated by Designer.
+The required `generated-workflow` page declares `workflow.phases` first; the
+separate `generated-phase-placement` targets that slot and references the phase
+control definition. Each placement JSON `id` equals its registered template
+name. Presets may replace the Workflow page to add slots or add
+pages with declared slots. `generated.field-placement` targets a declared slot
+and references a Designer setting field or a generated value ID; its `order`
+orders fields in that slot. Object values require an explicit `control` in their placement, naming a
+compatible shared control with a generated adapter. Scalar placements may name
+a compatible shared control or infer the stock text/checkbox control from their
+typed source; image placements use `stock.image` when no control is declared.
+Designer setting placements cannot override their field's control. Image asset
+bindings retain their separate slots; a field placement cannot occupy one.
 
 ## Canvas Design templates
 
@@ -61,7 +75,9 @@ Computed-value providers are packaged, never evaluated by Designer.
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
-- `generated-pipeline` — `generated.pipeline-renderer`, `replace`
+- `generated-phase-placement` — `generated.phase-control-placement`, `replace`
+- `generated-phase-control` — `generated.phase-control-definition`, `replace`
+- `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`
 - `designer-control-adapter-image` — `designer.control-adapter`, `replace`
 - `generated-control-adapter-image` — `generated.control-adapter`, `replace`
