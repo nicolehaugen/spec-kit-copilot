@@ -989,7 +989,7 @@ test("read-only preflight pins handoff bytes and checks local installation ident
                 source: { kind: "local" } }]),
         }))).id, "extension-canvas-design");
     await writeFile(join(project, ".specify", "extensions",
-        "extension-canvas-design", "designer", "tabs", "essentials.json"), "{}");
+        "extension-canvas-design", "designer-host", "tabs", "essentials.json"), "{}");
     assert.equal((await verifyLocalInstall(project, handoff, "extensions",
         "extension-canvas-design", run)).id, "extension-canvas-design");
     await writeFile(path, `${bytes} `);

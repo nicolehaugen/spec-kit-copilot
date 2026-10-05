@@ -6,6 +6,12 @@ const outputs = {
     plan: "specs/<slug>/plan.md", tasks: "specs/<slug>/tasks.md",
     implement: "specs/<slug>/tasks.md", checklist: "specs/<slug>/checklists/<name>.md",
 };
+function phaseLabel(id) {
+    const short = id.replace(/^speckit\./, "");
+    if (short === "taskstoissues") return "Create issues";
+    return short.split(/[._-]/)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+}
 export function phaseContract(config) {
     const ids = new Set();
     const artifacts = config.phaseArtifacts === undefined ? {} : config.phaseArtifacts;
@@ -40,7 +46,8 @@ export function phaseContract(config) {
                 throw new UserError("Phase outputs must be workflow Markdown artifacts.");
             }
         }
-        return { id, command, skill: command.replaceAll(".", "-"), output: output ? safePath(output, true) : null,
+        return { id, label: phaseLabel(id), command, skill: command.replaceAll(".", "-"),
+            output: output ? safePath(output, true) : null,
             outputs: normalized, configuredArtifacts: !!mapping,
             expectsArtifact: mapping ? true : config.phaseOutputs[id]?.expectsArtifact,
             project: short === "constitution", first: short === "specify" };

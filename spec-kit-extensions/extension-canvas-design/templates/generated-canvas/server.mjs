@@ -489,12 +489,6 @@ function readTextControl(control) {
     }
     return bytes;
 }
-function phaseLabel(phase) {
-    if (phase.replace(/^speckit\./, "") === "taskstoissues") return "Create issues";
-    return phase.replace(/^speckit\./, "").split(/[._-]/)
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
-}
-
 export function renderHtml(config, token = "") {
     const { canvas } = config;
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
@@ -556,7 +550,7 @@ export function renderHtml(config, token = "") {
         message: '<p id="canvas-message" role="status"></p>',
         pipeline: `<div id="workflow-pipeline" data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
             data-phases="${escapeHtml(JSON.stringify(phaseContract(config).filter((step) => !step.project)
-                .map((step) => ({ id: step.id, label: phaseLabel(step.id), output: step.output }))))}"></div>`,
+                .map((step) => ({ id: step.id, label: step.label, output: step.output }))))}"></div>`,
     };
     const workflowContributions = config.workflowPage.slots.filter(({ id }) => id !== "workflow.phases"
         && config.fieldPlacements?.some((item) => item.page === "workflow" && item.slot === id))

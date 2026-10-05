@@ -28,7 +28,8 @@ export async function prepareHandoff(sessionRoot, handoffId, expectedHash) {
         throw new Error("Designer handoff escapes session artifacts");
     }
     const path = join(folder, "handoff.json");
-    const file = await open(path, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+    const file = await open(path, constants.O_RDWR
+        | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     try {
         const [stat, pathStat, currentFolder] = await Promise.all([
             file.stat(), lstat(path), realpath(folder),

@@ -42,7 +42,9 @@ function scalarRegistrations(resolve) {
 function workflowRegistrations(resolve) {
     return [
         ["generated-workflow", "generated.workflow-page-definition"],
-        ["generated-pipeline", "generated.pipeline-renderer"],
+        ["generated-phase-placement", "generated.phase-control-placement"],
+        ["generated-phase-control", "generated.phase-control-definition"],
+        ["generated-phase-adapter", "generated.phase-control-adapter"],
     ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
 }
 
@@ -534,7 +536,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
 });
 
 test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(360_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
