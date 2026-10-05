@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HANDOFF_LIMIT, readHandoff, validateHandoffId } from "../../speckit-canvas-designer/handoff.mjs";
 import { specifySpawnOptions } from "../env/specify-invocation.mjs";
-import { readDesignerContract, validateLocalSource } from "./designer-local-sources.mjs";
+import { readDesignerContract, validateLocalSource, verifyHostedWorkflowRegistrations } from "./designer-local-sources.mjs";
 import designerCompatibility from "../../speckit-canvas-designer/designer-contract.json" with { type: "json" };
 
 const exec = promisify(execFile);
@@ -149,6 +149,7 @@ export async function verifyHostedCanvasDesign(project, handoff, run = exec) {
     if (!designerCompatibility.supportedVersions.includes(contract)) {
         throw new Error(`Installed Canvas Design contract ${contract} is not supported by this Designer.`);
     }
+    await verifyHostedWorkflowRegistrations(path);
     const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
         ["extension", "list", "--json"],
         await specifySpawnOptions(child, { timeout: 10000, maxBuffer: 128 * 1024 }));

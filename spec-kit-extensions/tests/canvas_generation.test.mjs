@@ -623,6 +623,37 @@ test("generation rejects malformed or mismatched frozen page assets before creat
         "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
 });
 
+test("generated page IDs cannot overwrite fixed page assets before target creation", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(path, "utf8"));
+    const digest = (content) => createHash("sha256").update(content).digest("hex");
+    const asset = (name, kind, content) => ({
+        name, kind, sourceId: "copilot-generated-page-test",
+        hash: digest(content), content: Buffer.from(content).toString("base64"),
+    });
+    for (const id of ["phase-control", "generated-phase-placement"]) {
+        const request = structuredClone(original);
+        const renderer = "unique-page-renderer";
+        request.generatedPages = [{
+            id, title: "Extra page", renderer, assets: [
+                asset(id, "generated.added-page-definition", JSON.stringify({
+                    schemaVersion: 1, id, renderer, title: "Extra page",
+                })),
+                asset(renderer, "generated.added-page-renderer",
+                    "export function renderPage({ root }) { root.textContent = 'Extra page'; }"),
+            ],
+        }];
+        const { integrity: _previous, ...payload } = request;
+        request.integrity = digest(JSON.stringify(payload));
+        await writeFile(path, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            new RegExp(`Conflicting generated page asset: ${id}\\.json`));
+        await assert.rejects(readdir(sdk), { code: "ENOENT" });
+    }
+});
+
 test("Workflow layout and phase control freeze, validate and package independently of the preset", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
@@ -754,6 +785,42 @@ test("registered Workflow field placements are packaged and reject unknown slots
     await writeRequest();
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /frozen generated.field-placement|Invalid generated field placement/i);
+});
+
+test("field placement IDs cannot overwrite fixed page assets before target creation", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(path, "utf8"));
+    const digest = (content) => createHash("sha256").update(content).digest("hex");
+    for (const [id, error] of [
+        ["phase-control", /Invalid generated field placement: phase-control/],
+        ["generated-phase-placement", /Conflicting generated page asset: generated-phase-placement\.json/],
+    ]) {
+        const request = structuredClone(original);
+        request.workflowPage.slots.push({ id: "workflow.summary" });
+        const page = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
+        page.slots = request.workflowPage.slots;
+        const pageBytes = JSON.stringify(page);
+        request.workflowPage.assets[0].content = Buffer.from(pageBytes).toString("base64");
+        request.workflowPage.assets[0].hash = digest(pageBytes);
+        const placement = JSON.stringify({
+            schemaVersion: 1, id, page: "workflow", slot: "workflow.summary",
+            field: "canvas.description", order: 10,
+        });
+        request.fieldPlacements = [{
+            id, page: "workflow", slot: "workflow.summary", field: "canvas.description",
+            order: 10, label: "Description", control: "stock.text",
+            assets: [{ kind: "generated.field-placement", name: id, sourceId: "test-preset",
+                content: Buffer.from(placement).toString("base64"), hash: digest(placement) }],
+        }];
+        request.designerFields = [{ id: "canvas.description", label: "Description", control: "stock.text" }];
+        const { integrity: _previous, ...payload } = request;
+        request.integrity = digest(JSON.stringify(payload));
+        await writeFile(path, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId), error);
+        await assert.rejects(readdir(sdk), { code: "ENOENT" });
+    }
 });
 
 test("frozen named values reject tampered modules and package independently of their preset", async (t) => {

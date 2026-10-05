@@ -21,7 +21,6 @@ function render(state) {
     const phase = phases[current];
     const status = state.status?.status ?? "Not run";
     const output = state.output;
-    const pending = state.sending || ["Request sent", "Running"].includes(status);
     const otherOutputs = state.otherOutputs.join(", ");
     const available = output && output === state.status?.output
         && state.status?.artifactAvailability === "available";
@@ -61,8 +60,8 @@ function render(state) {
         <footer class="phase-actions phase-actions-nav">
             <div class="phase-actions-left"><button class="btn btn-secondary" data-action="previous" type="button"
                 ${current === 0 ? "disabled" : ""}>&#9664; Back</button></div>
-            <div class="phase-actions-center"><button class="btn btn-primary" data-action="run" type="button"
-                ${pending ? "disabled" : ""}>${escapeHtml(state.runLabel
+            <div class="phase-actions-center"><button class="btn btn-primary"
+                data-action="run" type="button">${escapeHtml(state.runLabel
                     ?? (status === "Not run" ? "Run phase" : "Run again"))}</button>
                 <button class="btn btn-secondary" data-action="view" type="button"
                     ${available ? "" : "hidden"}>View artifact</button></div>

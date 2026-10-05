@@ -146,6 +146,7 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.doesNotMatch(sent[0].prompt, /preflight-digest|approved preflight digest/);
     assert.match(sent[0].prompt, /If the installed Canvas Design package includes scripts\/verify-launch\.mjs.*complete pages\/templates JSON as the ONE open input/);
     assert.match(sent[0].prompt, /Older compatible hosted packages without that verifier.*manual per-name checks/);
+    assert.match(sent[0].prompt, /compatible contract version alone does not establish readiness/i);
     assert.match(sent[0].prompt, /Session folder:" path in the child session context/);
     assert.match(sent[0].prompt, /session-state ROOT and the parent of its files\/ directory/);
     assert.match(sent[0].prompt, /Do NOT put it under <Session folder>\/files\//);
@@ -253,7 +254,7 @@ test("current hosted Canvas Design launches without a local override", async () 
 });
 
 test("hosted Canvas Design handoff verifies the installed package", async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "designer-hosted-"));
+    const root = join(process.cwd(), `.designer-hosted-${randomUUID()}`);
     t.after(() => rm(root, { recursive: true, force: true }));
     const path = join(root, ".specify", "extensions", "extension-canvas-design");
     await mkdir(join(root, ".specify", "extensions"), { recursive: true });
@@ -266,6 +267,21 @@ test("hosted Canvas Design handoff verifies the installed package", async (t) =>
         id: "extension-canvas-design", version: releasedBase.version,
         source: { kind: "local" },
     }]) });
+    assert.equal((await verifyHostedCanvasDesign(root, handoff, run)).designerContract, 1);
+    const manifestPath = join(path, "extension.yml");
+    const manifest = await readFile(manifestPath, "utf8");
+    await writeFile(manifestPath, manifest.replace(
+        /    - name: generated-(?:workflow|phase-placement|phase-control|phase-adapter)\r?\n      file: [^\r\n]+\r?\n      description: [^\r\n]+\r?\n/g,
+        ""));
+    await assert.rejects(verifyHostedCanvasDesign(root, handoff, run),
+        /lacks required Workflow registrations\/files: generated-workflow, generated-phase-placement, generated-phase-control, generated-phase-adapter.*approved local-source override/);
+    await writeFile(manifestPath, manifest);
+    await rm(join(path, "generated-host", "phase-control", "generated-phase-adapter.mjs"));
+    await assert.rejects(verifyHostedCanvasDesign(root, handoff, run),
+        /lacks required Workflow registrations\/files: generated-phase-adapter/);
+    await cp(join(LOCAL_CANVAS_DESIGN_EXT_PATH, "generated-host", "phase-control",
+        "generated-phase-adapter.mjs"), join(path, "generated-host", "phase-control",
+        "generated-phase-adapter.mjs"));
     assert.equal((await verifyHostedCanvasDesign(root, handoff, run)).designerContract, 1);
     await assert.rejects(verifyHostedCanvasDesign(root, handoff,
         async () => ({ stdout: "[]" })), /source or ID differs/);

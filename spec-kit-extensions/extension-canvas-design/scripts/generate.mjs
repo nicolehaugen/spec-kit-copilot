@@ -899,6 +899,11 @@ export async function materialize(project, workspace, handoffId, requestId) {
     for (const item of request.fieldPlacements ?? []) {
         pageFiles.push({ filename: `${item.id}.json`, bytes: Buffer.from(item.assets[0].content, "base64") });
     }
+    const pageFilenames = new Set();
+    for (const { filename } of pageFiles) {
+        if (pageFilenames.has(filename)) throw new Error(`Conflicting generated page asset: ${filename}`);
+        pageFilenames.add(filename);
+    }
     const controlFiles = (request.controlAssets ?? []).flatMap(({ assets }) => [
         { filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") },
         { filename: `${assets[1].name}.mjs`, bytes: Buffer.from(assets[1].content, "base64") },
