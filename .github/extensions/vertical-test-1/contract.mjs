@@ -1,0 +1,148 @@
+import { isWindowsDeviceName, safePath, UserError } from "./files.mjs";
+
+const outputs = {
+    constitution: ".specify/memory/constitution.md",
+    specify: "specs/<slug>/spec.md", clarify: "specs/<slug>/spec.md",
+    plan: "specs/<slug>/plan.md", tasks: "specs/<slug>/tasks.md",
+    implement: "specs/<slug>/tasks.md", checklist: "specs/<slug>/checklists/<name>.md",
+};
+export function phaseContract(config) {
+    const ids = new Set();
+    const artifacts = config.phaseArtifacts === undefined ? {} : config.phaseArtifacts;
+    if (!artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)
+        || Object.keys(artifacts).some((id) => !config.phases.includes(id))) throw new UserError("Invalid phase artifact configuration.");
+    return config.phases.map((id) => {
+        if (typeof id !== "string" || !/^(?:speckit\.)?[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(id) || ids.has(id)) {
+            throw new UserError("Invalid or duplicate generated phase.");
+        }
+
+        ids.add(id);
+        const short = id.replace(/^speckit\./, "");
+        const command = `speckit.${short}`;
+        const declared = config.phaseOutputs[id]?.outputPath;
+        const mapping = artifacts[id];
+        if (mapping && (typeof mapping !== "object" || Object.keys(mapping).some((key) => !["outputs", "view"].includes(key))
+            || !Array.isArray(mapping.outputs) || !mapping.outputs.length || !mapping.outputs.includes(mapping.view))) {
+            throw new UserError("Invalid phase artifact outputs or viewer target.");
+        }
+        if (Object.hasOwn(artifacts, id) && !mapping) throw new UserError("Invalid phase artifact configuration.");
+        const output = mapping?.view ?? (config.phaseOutputs[id]?.expectsArtifact === false ? null : declared || outputs[short] || null);
+        const paths = mapping?.outputs ?? (output ? [output] : []);
+        const normalized = paths.map((path) => safePath(path, true));
+        if (new Set(normalized.map((path) => path.toLowerCase())).size !== normalized.length) throw new UserError("Duplicate phase output path.");
+        for (const path of normalized) {
+            if (!path.endsWith(".md") || /^(?:\.git|\.github|node_modules|\.speckit-canvas)\//i.test(path)
+                || /^\.specify\/(?:extensions|presets|templates)\//i.test(path)
+                || (mapping && ([...path].length > 1000 || /\x7f/.test(path)))
+                || (mapping && (path.includes("<name>") || path.startsWith("<slug>/")
+                    || path.split("/").filter((part) => part === "<slug>").length > 1
+                    || (short === "constitution" && path.includes("<slug>"))))) {
+                throw new UserError("Phase outputs must be workflow Markdown artifacts.");
+            }
+        }
+        return { id, command, skill: command.replaceAll(".", "-"), output: output ? safePath(output, true) : null,
+            outputs: normalized, configuredArtifacts: !!mapping,
+            expectsArtifact: mapping ? true : config.phaseOutputs[id]?.expectsArtifact,
+            project: short === "constitution", first: short === "specify" };
+    });
+}
+
+const fieldId = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
+const moduleId = /^[a-z][a-z0-9-]{0,79}$/;
+
+export function validateValue(schema, value, id) {
+    const invalid = () => { throw new UserError(`Invalid value for ${id}.`); };
+    if (schema.type === "string") {
+        if (typeof value !== "string" || value.length > schema.maxLength
+            || value.length < (schema.minLength ?? 0)
+            || (schema.pattern && !new RegExp(schema.pattern).test(value))) invalid();
+    } else if (schema.type === "boolean") {
+        if (typeof value !== "boolean") invalid();
+    } else if (schema.type === "object") {
+        if (!value || typeof value !== "object" || Array.isArray(value)
+            || Object.keys(value).sort().join() !== Object.keys(schema.properties).sort().join()
+            || Object.entries(schema.properties).some(([key, options]) => !options.includes(value[key]))) invalid();
+    } else invalid();
+    return structuredClone(value);
+}
+
+export function valueContract(config) {
+    const fields = config.valueSources ?? [];
+    if (!Array.isArray(fields) || fields.length > 100) throw new UserError("Invalid generated value fields.");
+    const readableIds = new Set((config.readOnlyFields ?? []).map(({ id }) => id));
+    const ids = new Set([...readableIds,
+        ...(config.generatedControls ?? []).map(({ id }) => id)]);
+    const sections = new Map((config.readOnlyFields ?? []).filter(({ section }) => section)
+        .map(({ section }) => [section.id, section.title]));
+    for (const field of fields) {
+        if (!field || typeof field !== "object" || Array.isArray(field)
+            || Object.keys(field).some((key) => !["id", "label", "schema", "source", "presentation", "section", "provenance"].includes(key))
+            || typeof field.id !== "string" || !fieldId.test(field.id) || ids.has(field.id)
+            || typeof field.label !== "string" || !field.label.trim() || field.label.length > 120
+            || !["stock.readonly", "stock.editable", "processing-only"].includes(field.presentation)
+            || !field.schema || typeof field.schema !== "object" || Array.isArray(field.schema)
+            || !field.source || typeof field.source !== "object" || Array.isArray(field.source)
+            || (field.provenance !== undefined && (typeof field.provenance !== "string"
+                || !/^[A-Za-z0-9_.:-]{1,160}$/.test(field.provenance)))
+            || (field.section !== undefined && (!field.section || typeof field.section !== "object"
+                || Array.isArray(field.section) || Object.keys(field.section).sort().join() !== "id,title"
+                || typeof field.section.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
+                || typeof field.section.title !== "string" || !field.section.title.trim()
+                || field.section.title.length > 120))) throw new UserError("Invalid generated value field.");
+        ids.add(field.id);
+        readableIds.add(field.id);
+        if (field.section) {
+            if (sections.has(field.section.id) && sections.get(field.section.id) !== field.section.title) {
+                throw new UserError(`Conflicting generated value section ${field.section.id}.`);
+            }
+            sections.set(field.section.id, field.section.title);
+        }
+        const schema = field.schema;
+        if (schema.type === "string") {
+            if (Object.keys(schema).some((key) => !["type", "maxLength", "minLength", "pattern"].includes(key))
+                || !Number.isInteger(schema.maxLength) || schema.maxLength < 1 || schema.maxLength > 1000
+                || (schema.minLength !== undefined && (!Number.isInteger(schema.minLength)
+                    || schema.minLength < 0 || schema.minLength > schema.maxLength))
+                || (schema.pattern !== undefined && (typeof schema.pattern !== "string" || schema.pattern.length > 120
+                    || (() => { try { new RegExp(schema.pattern); return false; } catch { return true; } })()))) {
+                throw new UserError(`Invalid value schema for ${field.id}.`);
+            }
+        } else if (schema.type === "boolean") {
+            if (Object.keys(schema).sort().join() !== "type") throw new UserError(`Invalid value schema for ${field.id}.`);
+        } else if (schema.type === "object") {
+            if (Object.keys(schema).sort().join() !== "properties,type"
+                || !schema.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties)
+                || !Object.keys(schema.properties).length || Object.keys(schema.properties).length > 10
+                || Object.entries(schema.properties).some(([key, options]) =>
+                    !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
+                    || !Array.isArray(options) || !options.length || options.length > 20
+                    || new Set(options).size !== options.length
+                    || options.some((option) => typeof option !== "string" || !option || option.length > 80))) {
+                throw new UserError(`Invalid value schema for ${field.id}.`);
+            }
+        } else throw new UserError(`Invalid value schema for ${field.id}.`);
+        const source = field.source;
+        if (source.kind === "computed") {
+            if (Object.keys(source).sort().join() !== "hash,kind,module"
+                || typeof source.module !== "string" || !moduleId.test(source.module)
+                || isWindowsDeviceName(source.module)
+                || typeof source.hash !== "string" || !/^[a-f0-9]{64}$/.test(source.hash)
+                || field.presentation === "stock.editable") {
+                throw new UserError(`Invalid value provider for ${field.id}.`);
+            }
+        } else if (source.kind === "constant") {
+            if (Object.keys(source).sort().join() !== "kind,value") {
+                throw new UserError(`Invalid value source for ${field.id}.`);
+            }
+            validateValue(schema, source.value, field.id);
+        } else throw new UserError(`Invalid value source for ${field.id}.`);
+    }
+    for (const page of config.generatedPages ?? []) {
+        if (page.values !== undefined && (!Array.isArray(page.values) || page.values.length > 100
+            || new Set(page.values).size !== page.values.length
+            || page.values.some((id) => !readableIds.has(id)))) {
+            throw new UserError(`Invalid declared values for page ${page.id}.`);
+        }
+    }
+    return fields;
+}
