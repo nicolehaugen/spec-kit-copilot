@@ -31,7 +31,7 @@ provides:
       strategy: "replace"
     - type: "template"
       name: "canvas-contribution-pr1-toggle"
-      file: "contributions/pr1-toggle.json"
+      file: "designer/settings/pr1-toggle.json"
       description: "Stock checkbox field for the test page."
       strategy: "replace"
 

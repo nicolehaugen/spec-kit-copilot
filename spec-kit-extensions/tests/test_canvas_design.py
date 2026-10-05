@@ -238,7 +238,12 @@ class CanvasDesignPackageTests(unittest.TestCase):
             manifest = yaml.safe_load(manifest_path.read_text("utf-8"))
             for template in manifest.get("provides", {}).get("templates", []):
                 with self.subTest(preset=manifest_path.parent.name, template=template["name"]):
-                    self.assertTrue((manifest_path.parent / template["file"]).is_file())
+                    path = manifest_path.parent / template["file"]
+                    self.assertTrue(path.is_file())
+                    if path.suffix == ".json":
+                        doc = json.loads(path.read_text("utf-8"))
+                        if doc.get("host") == "designer" and "field" in doc:
+                            self.assertIn(path, fixtures["designer.setting-definition"])
         for kind, schema in schemas.items():
             Draft202012Validator.check_schema(schema)
             validator = Draft202012Validator(schema)
@@ -260,6 +265,10 @@ class CanvasDesignPackageTests(unittest.TestCase):
             with self.subTest(kind=kind, obsolete=obsolete):
                 with self.assertRaises(ValidationError):
                     Draft202012Validator(schemas[kind]).validate(page)
+        generated = json.loads(fixtures["generated.added-page-definition"][0].read_text("utf-8"))
+        generated["slots"] = [{"id": "same.slot"}, {"id": "same.slot"}]
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(schemas["generated.added-page-definition"]).validate(generated)
         value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
         validator = Draft202012Validator(schemas["generated.value-definition"])
