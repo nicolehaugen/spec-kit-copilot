@@ -100,7 +100,7 @@ export function validateHandoff(handoff, id) {
     validateHandoffId(id);
     if (!record(handoff)
         || Object.keys(handoff).some((key) =>
-            !["schemaVersion", "handoffId", "workflow", "selections", "sourceFingerprint", "localSelections"]
+            !["schemaVersion", "handoffId", "workflow", "selections", "sourceFingerprint", "localSelections", "canvasDesign"]
                 .includes(key))
         || handoff.schemaVersion !== 1 || handoff.handoffId !== id
         || !record(handoff.workflow)
@@ -158,6 +158,13 @@ export function validateHandoff(handoff, id) {
                     && /^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(item.version)))
                 && safeUrl(item.downloadUrl)))
         || !validLocalSelections(handoff.localSelections)
+        || (handoff.canvasDesign !== undefined
+            && (!record(handoff.canvasDesign)
+                || Object.keys(handoff.canvasDesign).sort().join() !== "downloadUrl,version"
+                || typeof handoff.canvasDesign.version !== "string"
+                || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(handoff.canvasDesign.version)
+                || !safeUrl(handoff.canvasDesign.downloadUrl)
+                || handoff.canvasDesign.downloadUrl === null))
         || typeof handoff.sourceFingerprint !== "string"
         || !/^[a-f0-9]{64}$/.test(handoff.sourceFingerprint)
         || Buffer.byteLength(JSON.stringify(handoff)) > HANDOFF_LIMIT) {
@@ -165,6 +172,7 @@ export function validateHandoff(handoff, id) {
     }
     const expected = Buffer.from(fingerprint({
         workflow: handoff.workflow, selections: handoff.selections, localSelections: handoff.localSelections,
+        ...(handoff.canvasDesign !== undefined ? { canvasDesign: handoff.canvasDesign } : {}),
     }), "hex");
     if (!timingSafeEqual(expected, Buffer.from(handoff.sourceFingerprint, "hex"))) {
         throw new Error("Designer handoff fingerprint mismatch");

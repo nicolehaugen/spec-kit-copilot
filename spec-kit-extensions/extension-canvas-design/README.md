@@ -146,8 +146,12 @@ separate Refresh button.
   provider accepting the resolved pages and templates in its open input.
 - A launching integration that supplies the Designer handoff.
 
-Installing this extension does not install or open a Designer. Compatibility
-with a released Wizard version is not established by this package.
+Installing this extension does not install or open a Designer. The Designer
+contract is the `schemaVersion.const` in
+`schemas/designer.tab-definition.schema.json` (currently `1`). Bump that
+schema version and coordinate with the Designer provider when changing its
+supported interface; the extension release version alone does not establish
+compatibility.
 
 ## Installation
 

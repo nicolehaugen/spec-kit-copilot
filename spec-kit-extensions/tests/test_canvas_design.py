@@ -494,7 +494,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertIn('--integration copilot --integration-options="--skills"', readme)
         self.assertNotIn("--dev", readme)
         self.assertIn("does not install or open a Designer", readme)
-        self.assertIn("Compatibility\nwith a released Wizard version is not established", readme)
+        self.assertIn("extension release version alone does not establish", readme)
 
     @unittest.skipUnless(os.environ.get("CANVAS_DESIGN_ARCHIVE"), "No release ZIP supplied")
     def test_release_archive_has_exact_package_bytes(self):
@@ -567,6 +567,15 @@ class CanvasDesignPackageTests(unittest.TestCase):
             package = root / "spec-kit-extensions" / EXTENSION_ID
             package.mkdir(parents=True)
             shutil.copyfile(PACKAGE / "extension.yml", package / "extension.yml")
+            (package / "schemas").mkdir()
+            shutil.copyfile(PACKAGE / "schemas/designer.tab-definition.schema.json",
+                            package / "schemas/designer.tab-definition.schema.json")
+            designer = root / "plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer"
+            designer.mkdir(parents=True)
+            shutil.copyfile(
+                EXTENSIONS.parent / "plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/designer-contract.json",
+                designer / "designer-contract.json",
+            )
             for field, value, error in mutations:
                 with self.subTest(field=field):
                     catalog = copy.deepcopy(self.catalog)

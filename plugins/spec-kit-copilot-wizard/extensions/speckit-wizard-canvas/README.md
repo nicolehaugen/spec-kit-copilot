@@ -290,9 +290,11 @@ addition to) the hosted registry entry:
   manifest ID and Specify's local inventory entry (ID and local source kind);
   it does not pin a local development version.
   Local development sources remain mutable; their file contents are not
-  compared with a preflight snapshot. The hosted Canvas Design requirement
-  remains v0.1.7; an approved local source uses its own manifest version and
-  composed capabilities instead.
+  compared with a preflight snapshot. The hosted Canvas Design version and
+  download URL are frozen from the approved catalog at launch, and the child
+  verifies the installed version, catalog source, and Designer contract.
+  An approved local source may have a different version but must declare a
+  compatible Designer tab schema version.
 - Newer Canvas Design packages run a read-only verifier over the **generated,
   composed** load-page skill and Specify's per-name resolution/stack metadata.
   It produces the complete pages/templates input only when all registrations

@@ -275,3 +275,18 @@ export async function validateLocalSource(kind, rawPath, openFile = open) {
     const resolvedKind = auto ? await detectLocalKind(canonical) : kind;
     return validateManifest(resolvedKind, canonical, openFile);
 }
+
+export async function readDesignerContract(path) {
+    const canonical = await realpath(path);
+    const file = "schemas/designer.tab-definition.schema.json";
+    const text = await readBoundedManifest(join(canonical, file),
+        { file }, canonical);
+    let contract;
+    try { contract = JSON.parse(text); }
+    catch { throw new Error("Invalid Canvas Design Designer tab schema"); }
+    const version = contract?.properties?.schemaVersion?.const;
+    if (!Number.isSafeInteger(version) || version < 1) {
+        throw new Error("Invalid Canvas Design Designer tab schema version");
+    }
+    return version;
+}

@@ -11,13 +11,13 @@ import { buildAugmentedPath } from "../env/resolve-path.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
 import { jsonError, jsonRes } from "./http-utils.mjs";
 import { resolveRuntimeInstallLocators } from "./runtime-provenance.mjs";
+import designerCompatibility from "../../speckit-canvas-designer/designer-contract.json" with { type: "json" };
 
 const KINDS = ["presets", "extensions", "bundles"];
 // Local development sources: presets/extensions only (no local bundles).
 const LOCAL_KINDS = ["presets", "extensions"];
 const LOCAL_PATH_LIMIT = 4096;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const REQUIRED_CANVAS_DESIGN_VERSION = "0.1.7";
 export const DESIGNER_EXTENSION_ID = "plugin:spec-kit-copilot-wizard:speckit-canvas-designer";
 const DESIGNER_CANVAS_ID = "speckit-canvas-designer";
 const READINESS_TIMEOUT_MS = 8000;
@@ -311,9 +311,21 @@ export function buildDesignerHandoff(snapshot, selections, localSelections, inst
     if (!installed || !installLocators) {
         throw new Error("Verified installed workflow inventory and sources are required");
     }
+    const candidates = snapshot.catalog.extensions.filter((item) =>
+        item.id === "extension-canvas-design" && item.source === "copilot");
+    const localBase = localSelections?.extensions?.some((item) => item.id === "extension-canvas-design");
+    const hosted = candidates.length === 1 && candidates[0].version
+        && safeDownloadUrl(candidates[0].downloadUrl);
+    if (!localBase && !hosted) {
+        throw new Error("Canvas Design catalog entry is missing a valid version or download URL");
+    }
+    const canvasDesign = hosted ? { version: candidates[0].version,
+        downloadUrl: candidates[0].downloadUrl } : undefined;
     const workflow = { selectedPhases: designerPhaseIds(snapshot), installed, installLocators };
     const handoff = { schemaVersion: 1, handoffId, workflow, selections,
-        sourceFingerprint: fingerprint({ workflow, selections, localSelections }) };
+        ...(canvasDesign ? { canvasDesign } : {}),
+        sourceFingerprint: fingerprint({ workflow, selections, localSelections,
+            ...(canvasDesign ? { canvasDesign } : {}) }) };
     if (localSelections !== undefined) handoff.localSelections = localSelections;
     if (Buffer.byteLength(JSON.stringify(handoff)) > HANDOFF_LIMIT) {
         throw new RangeError("Designer handoff exceeds 64KB");
@@ -329,12 +341,13 @@ export function buildDesignerLaunchPrompt(handoff) {
     const localExtensions = handoff.localSelections?.extensions ?? [];
     const hasLocal = localPresets.length > 0 || localExtensions.length > 0;
     const hasLocalCanvasDesignExt = localExtensions.some((item) => item.id === "extension-canvas-design");
+    const { version: baseVersion, downloadUrl: baseUrl } = handoff.canvasDesign ?? {};
     const officialCanvasDesignClause = hasLocalCanvasDesignExt
-        ? `Because HANDOFF_JSON.localSelections.extensions includes an approved entry with id "extension-canvas-design", skip the official by-ID install of extension-canvas-design and its required-version-${REQUIRED_CANVAS_DESIGN_VERSION} check entirely; verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force. Immediately run node "${verifier}" verify-local <child-checkout> <session-root> ${handoff.handoffId} extensions extension-canvas-design and stop on a manifest or inventory mismatch. That install supplies the generated load-page and generate skills/schema.`
-        : `Install extension-canvas-design by ID (a normal install, NOT --dev). Require the installed version to be ${REQUIRED_CANVAS_DESIGN_VERSION}, whose composed load-page and generate commands are installed.`;
+        ? `Because HANDOFF_JSON.localSelections.extensions includes an approved entry with id "extension-canvas-design", skip the hosted install of extension-canvas-design; verify the approved local path and manifest id, then install it now with specify extension add <path> --dev --force. Immediately run node "${verifier}" verify-local <child-checkout> <session-root> ${handoff.handoffId} extensions extension-canvas-design and stop on a manifest or inventory mismatch. That install supplies the generated load-page and generate skills/schema.`
+        : `Install extension-canvas-design with specify extension add extension-canvas-design --from ${baseUrl} (a normal install, NOT --dev). Require the installed version to be ${baseVersion}, whose composed load-page and generate commands are installed. Run node "${verifier}" verify-base <child-checkout> <session-root> ${handoff.handoffId} and stop on a version, source, or contract mismatch.`;
     const postBundleCanvasDesignClause = hasLocalCanvasDesignExt
         ? `Verify extension-canvas-design's local manifest and inventory using node "${verifier}" verify-local <child-checkout> <session-root> ${handoff.handoffId} extensions extension-canvas-design. If a bundle replaced it, restore that local override with specify extension add <path> --dev --force and verify again. Stop if it cannot be restored or verified.`
-        : `Require extension-canvas-design to remain at hosted version ${REQUIRED_CANVAS_DESIGN_VERSION} from the registered approved catalog. If a bundle replaced it, reinstall extension-canvas-design by ID with --force from that catalog, then verify its version and source again. Stop if either differs or cannot be verified.`;
+        : `Require extension-canvas-design to remain at hosted version ${baseVersion} from the frozen approved URL ${baseUrl}. If a bundle replaced it, reinstall with specify extension add extension-canvas-design --from ${baseUrl} --force, then run node "${verifier}" verify-base <child-checkout> <session-root> ${handoff.handoffId} again. Stop if its version, source, or contract differs.`;
     const steps = [
         `Find YOUR absolute "Session folder:" path in the child session context. That directory is session.workspacePath, the session-state ROOT and the parent of its files/ directory. Write HANDOFF_JSON to <Session folder>/speckit-canvas-designer/handoffs/${handoff.handoffId}/handoff.json. Do NOT put it under <Session folder>/files/, the repository, or the Wizard's session folder. Before any Designer open, verify the file exists at that exact root-relative path; if the session folder cannot be identified or the file is missing, stop and report the error. Do not edit it afterward.`,
         `Work only in YOUR child checkout. Invoke each named Spec Kit skill before running its CLI commands. Check specify --version (>=1.0.7); use speckit-cli-setup if missing or speckit-self if too old. If the checkout has no .specify directory, use speckit-init with --here --force --non-interactive --ignore-agent-tools --integration copilot --integration-options="--skills" and --script ps on Windows or sh elsewhere; otherwise do not overwrite its setup. The installed plugin skills are already available for the package installs; do not reload skills yet.`,
@@ -352,6 +365,7 @@ export function buildDesignerLaunchPrompt(handoff) {
         steps.splice(3, 0, `If a bundle installed a same-ID member in the child, replace it with the runtime preset or extension from its own frozen locator: use --force for extensions; if preset add reports an existing preset, remove that preset once and retry the frozen locator. Do not infer the installed source from bundle membership or skip the standalone runtime install.`);
     }
     steps.push(`After all installations and overrides, verify ALL handoff.workflow.installed presets and extensions (IDs, versions, enabled states, and priorities) against their respective preset/extension list --json inventories before opening Designer, applying the approved local override exception above to source and version. Verify runtime bundles separately with bundle list --json (bundle_id and version only); bundle IDs have no enabled state or priority and do not appear in preset/extension lists. Read the generated speckit-extension-canvas-design-load-page SKILL.md in the child checkout and confirm it includes any page and template names registered by the installed Canvas Design presets. If any registration is missing, stop and report incomplete command composition; never open Designer with a base-only skill. Call speckit_designer_reload_skills ONCE after all installations and require success. Do not print /skills reload as a substitute. If the generated skill is unavailable after reload, report the concrete error and stop; do not reload extensions.`);
+    steps.push(`Before opening Designer, run node "${verifier}" ${hasLocalCanvasDesignExt ? `verify-local <child-checkout> <session-root> ${handoff.handoffId} extensions extension-canvas-design` : `verify-base <child-checkout> <session-root> ${handoff.handoffId}`} on the final installed base and stop on a version, source, or contract mismatch.`);
     steps.push(`Invoke the generated, preset-composed speckit-extension-canvas-design-load-page skill with handoffId "${handoff.handoffId}". Follow its entire composed command for the complete named-template resolution and the single official Designer open. The composed skill owns the names to resolve and the open_canvas input; do not substitute a page-only input, another provider, a load action, or copied provider files. On any resolution failure stop without opening Designer; on opening failure report the concrete error, not ready. Confirm the open_canvas result has the requested canvasId:"${DESIGNER_CANVAS_ID}", extensionId:"${DESIGNER_EXTENSION_ID}", instanceId:"designer-${handoff.handoffId}" and input.handoffId; report a mismatch as a failure. Otherwise report only that the Designer shell opened. Do not use Playwright or inspect page tabs after opening: Designer shows page-load errors to the user. Do not claim all pages loaded or generation is ready. Do not send a parent status callback.`);
     steps.splice(steps.length - 1, 0, `Run node "${verifier}" verify-local <child-checkout> <session-root> ${handoff.handoffId} <kind> <id> for EVERY approved local preset or extension, including the Canvas Design base, and stop on a manifest or inventory mismatch. If the installed Canvas Design package includes scripts/verify-launch.mjs, run node .specify/extensions/extension-canvas-design/scripts/verify-launch.mjs <child-checkout> once and use its complete pages/templates JSON as the ONE open input. Older compatible hosted packages without that verifier use the generated skill's manual per-name checks instead. Never skip the composed skill's checks or open twice.`);
     const numbered = steps.map((step, index) => `${index + 1}. ${step}`).join("\n");
@@ -393,13 +407,15 @@ export async function handleDesignerLaunch(res, body, {
         let localSelections;
         try { localSelections = await validateLocalDesignerSelections(body.localSelections); }
         catch (error) { return jsonError(res, 422, error.message); }
-        const incompatibleCanvasDesign = selections.extensions.find((item) =>
-            item.id === "extension-canvas-design" && item.source === "copilot"
-            && item.version !== REQUIRED_CANVAS_DESIGN_VERSION);
-        if (incompatibleCanvasDesign
-            && !localSelections?.extensions?.some((item) => item.id === "extension-canvas-design")) {
-            return jsonError(res, 422,
-                `The Spec Kit extension \`extension-canvas-design\` has a version mismatch: the Wizard canvas expects v${incompatibleCanvasDesign.version ?? "unknown"}, while Canvas Designer requires v${REQUIRED_CANVAS_DESIGN_VERSION}. Use compatible canvas versions or add a compatible extension under Local development.`);
+        const localBase = localSelections?.extensions?.find((item) => item.id === "extension-canvas-design");
+        if (localBase) {
+            try {
+                const { readDesignerContract } = await import("./designer-local-sources.mjs");
+                const contract = await readDesignerContract(localBase.path);
+                if (!designerCompatibility.supportedVersions.includes(contract)) {
+                    return jsonError(res, 422, `Canvas Design local contract ${contract} is not supported by this Designer`);
+                }
+            } catch (error) { return jsonError(res, 422, error.message); }
         }
         let handoff;
         let installed;
