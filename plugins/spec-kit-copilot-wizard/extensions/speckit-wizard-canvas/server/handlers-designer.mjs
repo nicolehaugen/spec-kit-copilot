@@ -328,7 +328,7 @@ export function buildDesignerHandoff(snapshot, selections, localSelections, inst
     if (!localBase && !hosted) {
         throw new Error("Canvas Design catalog entry is missing a valid version or download URL");
     }
-    const canvasDesign = hosted ? { version: candidates[0].version,
+    const canvasDesign = !localBase && hosted ? { version: candidates[0].version,
         downloadUrl: candidates[0].downloadUrl } : undefined;
     const workflow = { selectedPhases: designerPhaseIds(snapshot), installed, installLocators };
     const handoff = { schemaVersion: 1, handoffId, workflow, selections,

@@ -294,6 +294,12 @@ test("a newer hosted Canvas Design uses its catalog version without a Wizard pin
         id: "extension-canvas-design", source: "local", approved: true,
         path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: localBaseVersion,
     }]);
+    assert.equal(Object.hasOwn(handoff, "canvasDesign"), false);
+    assert.equal(handoff.sourceFingerprint, fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+        localSelections: handoff.localSelections,
+    }));
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
     assert.match(withLocal.sent[0].prompt, /skip the hosted install/);
     assert.match(withLocal.sent[0].prompt,
         /do not install its hosted selection even if that selection names an older release/);
