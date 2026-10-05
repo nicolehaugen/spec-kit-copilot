@@ -228,9 +228,16 @@ export function designerPhaseOutputs(snapshot) {
                 ? `${candidate.root.path}/${candidate.path}` : null;
             return candidate.path;
         });
-        const outputs = [...new Set(paths.filter(Boolean))];
+        const seen = new Set();
+        const outputs = paths.filter((path) => {
+            if (!path || seen.has(path.toLowerCase())) return false;
+            seen.add(path.toLowerCase());
+            return true;
+        });
         const preferred = paths[evidence?.primaryIndex];
-        return [id, { outputs, view: outputs.includes(preferred) ? preferred : outputs[0] ?? null }];
+        return [id, { outputs,
+            view: outputs.find((path) => path.toLowerCase() === preferred?.toLowerCase())
+                ?? outputs[0] ?? null }];
     }));
 }
 

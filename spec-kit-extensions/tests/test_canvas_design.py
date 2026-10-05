@@ -17,8 +17,8 @@ from jsonschema import Draft202012Validator, ValidationError
 EXTENSIONS = Path(__file__).resolve().parents[1]
 EXTENSION_ID = "extension-canvas-design"
 PACKAGE = EXTENSIONS / EXTENSION_ID
-PAGE_NAMES = ("essentials", "artifacts", "appearance")
-PAGE_IDS = PAGE_NAMES
+PAGE_NAMES = ("essentials", "outputs", "appearance")
+PAGE_IDS = ("essentials", "artifacts", "appearance")
 FILES = {
     "extension.yml",
     "README.md",
@@ -187,7 +187,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 self.assertTrue(page["enabled"])
         self.assertEqual(
             [page["title"] for page in self.pages],
-            ["Essentials", "Artifacts", "Appearance"],
+            ["Essentials", "Outputs", "Appearance"],
         )
         self.assertEqual(
             self.pages[0]["fields"],

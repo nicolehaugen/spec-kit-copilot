@@ -60,6 +60,20 @@ test("Designer handoff carries existing Wizard file outputs and default without 
     assert.throws(() => validateHandoff(invalid, invalid.handoffId), /Invalid outputs for phase plan/);
 });
 
+test("Designer handoff deduplicates case-only file evidence and retains the default", () => {
+    const state = { pipeline: [{ id: "plan" }], artifactEvidence: {
+        plan: { primaryIndex: 1, candidates: [
+            { kind: "file", path: "Plan.md", relativeTo: "feature" },
+            { kind: "file", path: "plan.md", relativeTo: "feature" },
+        ] },
+    } };
+    const handoff = buildDesignerHandoff(state, empty, undefined, empty);
+    assert.deepEqual(handoff.workflow.outputEvidence.plan, {
+        outputs: ["specs/<slug>/Plan.md"], view: "specs/<slug>/Plan.md",
+    });
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
+});
+
 function fixture(overrides = {}) {
     const sent = [];
     const errors = [];

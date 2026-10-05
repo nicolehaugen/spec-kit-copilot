@@ -13,6 +13,11 @@ const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
 const mounted = new Map();
 
+function outputPathsReady() {
+    return Object.values(draftOutputs ?? {}).every((entry) =>
+        entry.outputs.every((path) => path.endsWith(".md")));
+}
+
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "designer-essentials");
     const generationError = document.getElementById("generation-error");
@@ -24,7 +29,8 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = saving || activeUploads.size > 0 || generating || queued || !model?.handoffId
+    generate.disabled = saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
+        || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity;
 }
@@ -127,7 +133,7 @@ function updateSave() {
     const noChanges = model?.persisted
         && JSON.stringify(draft) === JSON.stringify(model.values)
         && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs);
-    saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges;
+    saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
@@ -196,6 +202,12 @@ function renderPage(pageId, invalidFieldId) {
             const heading = element("h2", `${index + 1}. ${id}`);
             section.append(heading);
             const list = element("div", undefined, "output-list");
+            const incomplete = element("p",
+                "Enter a .md output path or remove the unfinished row before saving or generating.",
+                "output-warning");
+            const updateIncomplete = () => {
+                incomplete.hidden = entry.outputs.every((path) => path.endsWith(".md"));
+            };
             const render = () => {
                 list.replaceChildren();
                 if (!entry.outputs.length) {
@@ -224,6 +236,7 @@ function renderPage(pageId, invalidFieldId) {
                     input.addEventListener("input", () => {
                         if (entry.view === entry.outputs[position]) entry.view = input.value;
                         entry.outputs[position] = input.value;
+                        updateIncomplete();
                         updateSave();
                     });
                     const remove = element("button", "Remove");
@@ -237,6 +250,7 @@ function renderPage(pageId, invalidFieldId) {
                     row.append(radio, input, remove);
                     list.append(row);
                 }
+                updateIncomplete();
             };
             render();
             const add = element("button", "+ Add output");
@@ -248,7 +262,7 @@ function renderPage(pageId, invalidFieldId) {
                 list.querySelector(".output-row:last-child input[type=text]")?.focus();
                 updateSave();
             });
-            section.append(list, add);
+            section.append(list, incomplete, add);
             sections.append(section);
         }
         root.setAttribute("aria-busy", "false");

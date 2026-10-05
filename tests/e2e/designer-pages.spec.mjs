@@ -175,8 +175,16 @@ test("Outputs page confirms phase files with the header Save and warns when a ph
         await expect(page.locator(".output-section").first()).toContainText(
             "will not have a View artifact button");
         await page.locator(".output-section").first().getByRole("button", { name: "+ Add output" }).click();
+        await expect(page.locator(".output-section").first().getByText(
+            "Enter a .md output path or remove the unfinished row")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+        await page.getByRole("textbox", { name: "Output 1 path for specify" }).fill("draft.txt");
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
         await page.getByRole("textbox", { name: "Output 1 path for specify" })
             .fill("specs/<slug>/updated.md");
+        await expect(page.locator(".output-section").first().getByText(
+            "Enter a .md output path or remove the unfinished row")).toBeHidden();
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("tab", { name: "Outputs" }).click();
         await expect(page.getByRole("textbox", { name: "Output 1 path for specify" }))
