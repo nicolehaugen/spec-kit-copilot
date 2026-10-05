@@ -9,6 +9,7 @@ import { materialize, readBoundedSessionFile } from "../extension-canvas-design/
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
 import { isWindowsDeviceName as designerDeviceName } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
@@ -74,16 +75,18 @@ test("Specify inventories supply observed package versions and reject invalid re
     const kinds = ["presets", "extensions", "bundles"];
     const calls = [];
     const run = async (_command, args, options) => {
-        calls.push({ args, cwd: options.cwd });
+        calls.push({ args, cwd: options.cwd, env: options.env, shell: options.shell });
         return { stdout: JSON.stringify(lists[args[0]]) };
     };
     assert.deepEqual(await readCurrentInstalledVersions("child", frozen, run), {
         inventory: { presets: lists.preset, extensions: lists.extension,
             bundles: [{ id: "bundle-one", version: "2.0.0" }] }, warnings: [],
     });
+    const augmentedPath = await buildAugmentedPath();
     assert.deepEqual(calls, kinds.map((kind) => ({
         args: [kind === "presets" ? "preset" : kind === "extensions" ? "extension" : "bundle",
             "list", "--json"], cwd: "child",
+        env: { ...process.env, PATH: augmentedPath }, shell: process.platform === "win32",
     })));
     assert.deepEqual(await readCurrentInstalledVersions("child",
         { presets: [], extensions: [], bundles: [] }, run),
@@ -114,6 +117,11 @@ test("Specify inventories supply observed package versions and reject invalid re
                 : lists[args[0]]),
         }));
     assert.match(malformedRelevant.warnings[0], /Invalid presets package identity or version/);
+    const missingCli = await readCurrentInstalledVersions("child", frozen, async () => {
+        throw Object.assign(new Error("specify not found"), { code: "ENOENT" });
+    });
+    assert.equal(missingCli.warnings.length, 3);
+    assert.deepEqual(missingCli.inventory, { presets: [], extensions: [], bundles: [] });
 });
 
 test("generated package versions reflect the installed inventory without blocking drift", async (t) => {

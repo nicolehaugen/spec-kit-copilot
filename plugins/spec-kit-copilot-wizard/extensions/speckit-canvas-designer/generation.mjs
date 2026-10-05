@@ -6,6 +6,7 @@ import { isDeepStrictEqual, promisify } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
+import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
@@ -84,7 +85,8 @@ export async function readCurrentInstalledVersions(project, frozen, run = execFi
         if (!relevantIds.size) continue;
         try {
             const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
-                [command, "list", "--json"], { cwd: project, timeout: 10000, maxBuffer: 128 * 1024 });
+                [command, "list", "--json"],
+                await specifySpawnOptions(project, { timeout: 10000, maxBuffer: 128 * 1024 }));
             let entries;
             try { entries = JSON.parse(stdout); }
             catch { throw new Error(`Invalid ${kind} JSON from Specify`); }
