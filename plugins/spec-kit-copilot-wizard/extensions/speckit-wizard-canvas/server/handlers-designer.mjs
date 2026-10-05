@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { fingerprint, HANDOFF_LIMIT, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
+import { CONSTITUTION_OUTPUT, fingerprint, HANDOFF_LIMIT, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { dispatchPromptToSession } from "../canvas-runtime/dispatch.mjs";
 import { buildAugmentedPath } from "../env/resolve-path.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
@@ -218,6 +218,9 @@ export function designerPhaseIds(snapshot) {
 
 export function designerPhaseOutputs(snapshot) {
     return Object.fromEntries(designerPhaseIds(snapshot).map((id) => {
+        if (id.replace(/^speckit\./, "") === "constitution") {
+            return [id, { outputs: [CONSTITUTION_OUTPUT], view: CONSTITUTION_OUTPUT }];
+        }
         const evidence = snapshot.artifactEvidence?.[id]
             ?? snapshot.artifactEvidence?.[id.startsWith("speckit.") ? id : `speckit.${id}`];
         const candidates = evidence?.candidates ?? [];

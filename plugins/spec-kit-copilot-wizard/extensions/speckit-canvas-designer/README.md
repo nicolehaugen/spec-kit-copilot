@@ -75,10 +75,12 @@ Essentials' default-off Allow custom slug setting controls whether an optional
 Workflow slug field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
 The **Outputs** tab (resolved template ID `designer-artifacts`) shows every
-selected phase and the Wizard's existing file-output evidence. Paths are
+selected phase except Constitution and the Wizard's existing file-output evidence. Paths are
 project-relative Markdown files; folders do not become file outputs. Users
 can add or remove paths and select one default per phase. Removing the last
 output warns that the generated phase will have no View artifact button.
+Constitution always opens `.specify/memory/constitution.md` and cannot be edited
+on this tab.
 The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);

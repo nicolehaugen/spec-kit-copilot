@@ -74,6 +74,17 @@ test("Designer handoff deduplicates case-only file evidence and retains the defa
     assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
 });
 
+test("Designer handoff fixes Constitution to its canonical artifact", () => {
+    const state = { pipeline: [{ id: "constitution" }],
+        artifactEvidence: { constitution: { primaryIndex: null, candidates: [{ kind: "none" }] } } };
+    const handoff = buildDesignerHandoff(state, empty, undefined, empty);
+    assert.deepEqual(handoff.workflow.outputEvidence.constitution, {
+        outputs: [".specify/memory/constitution.md"],
+        view: ".specify/memory/constitution.md",
+    });
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
+});
+
 function fixture(overrides = {}) {
     const sent = [];
     const errors = [];

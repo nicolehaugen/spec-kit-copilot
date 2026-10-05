@@ -197,6 +197,7 @@ function renderPage(pageId, invalidFieldId) {
         const sections = element("div", undefined, "output-sections");
         root.append(sections);
         for (const [index, id] of model.phases.entries()) {
+            if (id.replace(/^speckit\./, "") === "constitution") continue;
             const entry = draftOutputs[id];
             const section = element("section", undefined, "output-section");
             const heading = element("h2", `${index + 1}. ${id}`);

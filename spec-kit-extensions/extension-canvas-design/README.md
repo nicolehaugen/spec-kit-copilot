@@ -138,11 +138,13 @@ shows phase names without run states; the selected phase card retains its status
 Dispatch success does not add a separate "Request sent" notice to the canvas.
 View artifact opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
-The Outputs tab confirms the Wizard-provided Markdown files for each phase,
-including phases with none, with add/remove controls and a selected View artifact
+The Outputs tab confirms the Wizard-provided Markdown files for each phase except
+Constitution, including phases with none, with add/remove controls and a selected View artifact
 default. The generated phase card lists the confirmed files as viewer links;
 the View artifact button opens the selected default and is hidden when a phase
-has no outputs. Existing header Save persists these selections.
+has no outputs. Constitution always opens `.specify/memory/constitution.md`;
+its output cannot be changed in the Designer. Existing header Save persists
+the other selections.
 
 ## Requirements
 

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "id": "designer-artifacts",
   "title": "Outputs",
-  "description": "Confirm the files each phase produces. Choose the default file opened by View artifact.",
+  "description": "Confirm the files each phase produces. Choose the default file opened by View artifact. Constitution always opens its fixed artifact.",
   "order": 20,
   "enabled": true,
   "fields": []

@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
-import { validatePhaseOutputs } from "./handoff.mjs";
+import { validateConfirmedOutputs } from "./handoff.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
@@ -77,7 +77,7 @@ async function validateAdapterValues(model, values, project) {
 
 export async function freezeGeneration({ model, values, outputs = model.outputs, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
-    if (outputs !== undefined) validatePhaseOutputs(outputs, handoff.workflow.selectedPhases);
+    if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases);
     await validateAdapterValues(model, essentials, project);
     if (!canvasIdPattern.test(essentials["canvas.id"])
         || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {

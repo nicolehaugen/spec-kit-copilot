@@ -2,15 +2,17 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { handoffDirectory, validatePhaseOutputs } from "./handoff.mjs";
+import { fixedConstitutionOutputs, handoffDirectory, validateConfirmedOutputs,
+    validatePhaseOutputs } from "./handoff.mjs";
 import { isWindowsDeviceName } from "./pages.mjs";
 
 export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
-const initialOutputs = (handoff) => handoff.workflow.outputEvidence
-    ?? Object.fromEntries(handoff.workflow.selectedPhases.map((id) =>
-        [id, { outputs: [], view: null }]));
+const initialOutputs = (handoff) => fixedConstitutionOutputs(
+    handoff.workflow.outputEvidence
+        ?? Object.fromEntries(handoff.workflow.selectedPhases.map((id) =>
+            [id, { outputs: [], view: null }])), handoff.workflow.selectedPhases);
 
 export function validateValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
@@ -111,7 +113,8 @@ async function assertTemporaryFile(file, path, folder) {
 export async function loadDesignerSettings(workspacePath, handoff, model, openFile = open) {
     const record = await readSettings(await settingsPath(workspacePath, handoff),
         handoff, model, openFile);
-    const outputs = record?.outputs ?? initialOutputs(handoff);
+    const outputs = fixedConstitutionOutputs(record?.outputs ?? initialOutputs(handoff),
+        handoff.workflow.selectedPhases);
     validatePhaseOutputs(outputs, handoff.workflow.selectedPhases);
     return { ...model, values: record?.values ?? model.values, outputs,
         settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
@@ -126,7 +129,7 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
         throw new Error("Invalid Designer save request");
     }
     validateValues(request.values, model.constraints);
-    const outputs = validatePhaseOutputs(Object.hasOwn(request, "outputs")
+    const outputs = validateConfirmedOutputs(Object.hasOwn(request, "outputs")
         ? request.outputs : model.outputs ?? initialOutputs(handoff),
         handoff.workflow.selectedPhases);
     const path = await settingsPath(workspacePath, handoff);

@@ -63,10 +63,20 @@ test("confirmed outputs override legacy defaults, including an explicitly empty 
     }
 });
 
+test("Constitution always opens its fixed artifact despite stale output mappings", () => {
+    const [phase] = phaseContract({ phases: ["constitution"], phaseOutputs: {
+        constitution: { expectsArtifact: false, outputPath: null },
+    }, phaseArtifacts: { constitution: { outputs: [], view: null } } });
+    assert.equal(phase.output, ".specify/memory/constitution.md");
+    assert.deepEqual(phase.outputs, [".specify/memory/constitution.md"]);
+    assert.equal(phase.expectsArtifact, true);
+});
+
 test("frozen Designer outputs become the generated viewer and link configuration", async (t) => {
     const { project, workspace } = await fixture(t);
     const outputs = {
-        constitution: { outputs: [], view: null },
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
         specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
             view: "specs/<slug>/research.md" },
         plan: { outputs: [], view: null },
@@ -79,6 +89,11 @@ test("frozen Designer outputs become the generated viewer and link configuration
     const steps = phaseContract(config);
     assert.equal(steps.find((step) => step.id === "specify").output, "specs/<slug>/research.md");
     assert.equal(steps.find((step) => step.id === "plan").output, null);
+    assert.equal(steps.find((step) => step.id === "constitution").output,
+        ".specify/memory/constitution.md");
+    await assert.rejects(freezeGeneration({ project, workspace, model, values, handoff,
+        outputs: { ...outputs, constitution: { outputs: [], view: null } } }),
+    /Constitution output is fixed/);
     const directory = join(project, "specs", "demo");
     await mkdir(directory, { recursive: true });
     await writeFile(join(directory, "spec.md"), "# Spec");

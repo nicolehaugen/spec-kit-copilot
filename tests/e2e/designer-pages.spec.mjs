@@ -159,6 +159,8 @@ async function openDesigner(page) {
 test("Outputs page confirms phase files with the header Save and warns when a phase becomes empty", async ({ page }) => {
     const state = await model();
     state.outputs = {
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
         specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
             view: "specs/<slug>/research.md" },
         "speckit.assess.intake": { outputs: [], view: null },
@@ -168,6 +170,7 @@ test("Outputs page confirms phase files with the header Save and warns when a ph
         await page.goto(shell.url);
         await page.getByRole("tab", { name: "Outputs" }).click();
         await expect(page.locator(".output-section")).toHaveCount(2);
+        await expect(page.locator(".output-section").filter({ hasText: "constitution" })).toHaveCount(0);
         await expect(page.getByText("No outputs yet.")).toBeVisible();
         await expect(page.locator(".output-section").first().locator("input[type=radio]").last()).toBeChecked();
         await page.locator(".output-section").first().getByRole("button", { name: "Remove" }).last().click();

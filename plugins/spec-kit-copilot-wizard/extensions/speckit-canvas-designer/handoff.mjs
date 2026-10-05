@@ -13,6 +13,24 @@ const KINDS = ["presets", "extensions", "bundles"];
 const LOCAL_KINDS = ["presets", "extensions"];
 const LOCAL_PATH = /^(?:[A-Za-z]:[\\/]|\\\\|\/)[^\x00-\x1f]{0,4094}$/;
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+export const CONSTITUTION_OUTPUT = ".specify/memory/constitution.md";
+
+export function fixedConstitutionOutputs(outputs, phases) {
+    const id = phases.find((phase) => phase.replace(/^speckit\./, "") === "constitution");
+    return id ? { ...outputs, [id]: { outputs: [CONSTITUTION_OUTPUT], view: CONSTITUTION_OUTPUT } }
+        : outputs;
+}
+
+export function validateConfirmedOutputs(outputs, phases) {
+    validatePhaseOutputs(outputs, phases);
+    const id = phases.find((phase) => phase.replace(/^speckit\./, "") === "constitution");
+    if (id && (outputs[id].outputs.length !== 1
+        || outputs[id].outputs[0] !== CONSTITUTION_OUTPUT
+        || outputs[id].view !== CONSTITUTION_OUTPUT)) {
+        throw new Error("Constitution output is fixed");
+    }
+    return outputs;
+}
 
 export function validatePhaseOutputs(value, phases) {
     if (!record(value) || Object.keys(value).length !== phases.length

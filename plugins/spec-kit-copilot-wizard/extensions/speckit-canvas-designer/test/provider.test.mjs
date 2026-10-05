@@ -44,7 +44,9 @@ test("Designer packages the same control validator as the generated app", async 
 test("Outputs persist with Designer settings and reject unsafe or stale edits", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
+    handoff.workflow.selectedPhases.unshift("constitution");
     handoff.workflow.outputEvidence = {
+        constitution: { outputs: [], view: null },
         specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
         plan: { outputs: [], view: null },
     };
@@ -54,13 +56,19 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
     await saveHandoff(workspace, handoff);
     const model = { revision: "outputs-test", constraints: {}, values: {} };
     const initial = await loadDesignerSettings(workspace, handoff, model);
-    assert.deepEqual(initial.outputs, handoff.workflow.outputEvidence);
-    const outputs = { specify: { outputs: ["specs/<slug>/research.md"],
+    const constitution = { outputs: [".specify/memory/constitution.md"],
+        view: ".specify/memory/constitution.md" };
+    assert.deepEqual(initial.outputs, { ...handoff.workflow.outputEvidence, constitution });
+    const outputs = { constitution, specify: { outputs: ["specs/<slug>/research.md"],
         view: "specs/<slug>/research.md" }, plan: { outputs: [], view: null } };
     const saved = await saveDesignerSettings(workspace, handoff, initial,
         { modelRevision: model.revision, revision: 0, values: {}, outputs });
     assert.deepEqual(saved.outputs, outputs);
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, outputs);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, constitution: { outputs: [], view: null } },
+    }), /Constitution output is fixed/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
         modelRevision: model.revision, revision: 1, values: {},
         outputs: { ...outputs, plan: { outputs: ["../outside.md"], view: "../outside.md" } },
