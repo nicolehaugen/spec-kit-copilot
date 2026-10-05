@@ -49,7 +49,7 @@ async function mountGeneratedControl(root) {
     }
 }
 const $ = (id) => document.getElementById(id);
-let steps = [];
+let phaseControl;
 const drafts = new Map();
 const failedValueDrafts = new Map();
 const failedPatches = new Map();
@@ -57,47 +57,214 @@ let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequ
 let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null,
     pendingValueSaves = 0, workflowQuery = "";
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
+const placements = JSON.parse($("generated-field-placements")?.dataset.placements ?? "[]");
+const mountedFields = new Map();
+const pendingFieldDrafts = new Map();
+let pageSelection = 0, mountedPage = "workflow", renderedPageValues = null;
+
+function placementValue(placement) {
+    const field = model?.valueFields?.find((entry) => entry.id === placement.field);
+    return {
+        field: { id: placement.field, label: field?.label ?? placement.label ?? placement.field },
+        value: pendingFieldDrafts.get(placement.field)?.value
+            ?? failedValueDrafts.get(placement.field)?.value ?? field?.value ?? placement.value,
+        schema: field?.schema ?? placement.schema,
+        editable: Boolean(field ? field.editable : placement.editable),
+    };
+}
+
+function disposeFieldMounts(page) {
+    for (const [id, mounted] of mountedFields) {
+        if (mounted.page !== page) continue;
+        mountedFields.delete(id);
+        mounted.disposed = true;
+        try { mounted.instance?.dispose?.(); }
+        catch (error) { message(`Generated control could not be disposed: ${error.message}`, "canvas-message", true); }
+        mounted.root.remove();
+    }
+}
+
+function declaredFieldTargets(root, page, selector, slotProperty) {
+    const targets = new Map();
+    const needed = new Set(placements.filter((entry) => entry.page === page).map((entry) => entry.slot));
+    for (const target of root.querySelectorAll(selector)) {
+        const slot = target.dataset[slotProperty];
+        if (!needed.has(slot)) continue;
+        if (targets.has(slot)) throw new Error(`Duplicate generated field slot ${slot} on ${page}`);
+        targets.set(slot, target);
+    }
+    for (const slot of needed) {
+        if (!targets.has(slot)) throw new Error(`Generated page did not render field slot ${slot} on ${page}`);
+    }
+    return targets;
+}
+
+async function mountField(placement, root) {
+    const mounted = { page: placement.page, root, placement, instance: null, disposed: false };
+    mountedFields.set(placement.id, mounted);
+    const state = placementValue(placement);
+    mounted.lastValue = JSON.stringify(state.value);
+    const onChange = state.editable ? (value) => saveFieldValue(placement.field, value)
+        .catch((error) => message(`Value could not be saved: ${error.message} Your edit remains in this panel.`,
+            "canvas-message", true)) : undefined;
+    try {
+        if (placement.control === "stock.image") {
+            if (placement.asset) {
+                await renderStockImage(root, state.field, placement.asset, state.field.label, "generated-image");
+            } else root.replaceChildren();
+        } else if (placement.control === "stock.text" || placement.control === "stock.checkbox") {
+            const input = state.editable ? document.createElement("input") : null;
+            if (input) {
+                input.type = placement.control === "stock.checkbox" ? "checkbox" : "text";
+                input.className = "phase-input-control";
+                input.setAttribute("aria-label", state.field.label);
+                if (state.schema?.maxLength && input.type === "text") input.maxLength = state.schema.maxLength;
+                input.addEventListener("change", () => onChange(input.type === "checkbox" ? input.checked : input.value));
+                root.replaceChildren(input);
+            } else {
+                root.replaceChildren();
+                if (placement.control === "stock.checkbox") {
+                    const indicator = document.createElement("input");
+                    indicator.type = "checkbox";
+                    indicator.disabled = true;
+                    indicator.setAttribute("aria-label", state.field.label);
+                    root.append(indicator);
+                }
+            }
+            mounted.instance = { update: ({ value }) => {
+                if (input) {
+                    if (document.activeElement === input || failedValueDrafts.has(placement.field)) return;
+                    if (input.type === "checkbox") input.checked = Boolean(value);
+                    else input.value = value ?? "";
+                } else if (placement.control === "stock.checkbox") root.querySelector("input").checked = Boolean(value);
+                else root.textContent = value == null ? "" : String(value);
+            } };
+            mounted.instance.update(state);
+        } else {
+            if (!placement.adapter || !/^[a-z][a-z0-9-]{0,79}$/.test(placement.adapter)) {
+                throw new Error(`Missing generated adapter for ${placement.field}`);
+            }
+            const { mount, controlId, valueContract } = await import(
+                `/controls/${placement.adapter}.mjs?token=${encodeURIComponent(token)}`);
+            if (mounted.disposed) return;
+            if (typeof mount !== "function" || controlId !== placement.control
+                || valueContract?.type !== state.schema?.type
+                || (state.schema?.type === "object" && JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
+                    !== JSON.stringify(Object.entries(state.schema.properties ?? {}).sort()))) {
+                throw new Error(`Incompatible generated adapter for ${placement.field}`);
+            }
+            const values = () => ({ ...(model?.controlValues?.[placement.field] ?? {}) });
+            mounted.instance = await mount({ root, field: state.field, value: state.value,
+                values: values(), readValues: values, editable: state.editable,
+                ...(onChange ? { onChange } : {}) });
+            if (mounted.disposed) mounted.instance?.dispose?.();
+        }
+    } catch (error) {
+        if (mounted.disposed) return;
+        root.setAttribute("role", "alert");
+        root.textContent = `Generated control could not render: ${error.message}`;
+    }
+}
+
+async function syncFieldMounts(page, root, selector, slotProperty) {
+    const targets = declaredFieldTargets(root, page, selector, slotProperty);
+    const entries = placements.filter((entry) => entry.page === page);
+    const seen = new Set();
+    for (const entry of entries) {
+        if (seen.has(entry.id)) throw new Error(`Duplicate generated field placement ${entry.id}`);
+        seen.add(entry.id);
+    }
+    const ordered = entries.map((entry, index) => ({ entry, index }))
+        .sort((a, b) => a.entry.order - b.entry.order || a.index - b.index);
+    for (const { entry } of ordered) {
+        const existing = mountedFields.get(entry.id);
+        if (existing && existing.root.isConnected) {
+            const state = placementValue(entry);
+            if (!existing.root.contains(document.activeElement)) {
+                if (typeof existing.instance?.update === "function") {
+                    try { await existing.instance.update({ field: state.field, value: state.value, values: {
+                        ...(model?.controlValues?.[entry.field] ?? {}) },
+                        readValues: () => ({ ...(model?.controlValues?.[entry.field] ?? {}) }),
+                        editable: state.editable });
+                        existing.lastValue = JSON.stringify(state.value);
+                    }
+                    catch (error) {
+                        existing.root.setAttribute("role", "alert");
+                        existing.root.textContent = `Generated control could not update: ${error.message}`;
+                    }
+                } else if (entry.control !== "stock.image" && existing.lastValue !== JSON.stringify(state.value)) {
+                    existing.disposed = true;
+                    try { existing.instance?.dispose?.(); }
+                    catch (error) { message(`Generated control could not be disposed: ${error.message}`, "canvas-message", true); }
+                    existing.root.replaceChildren();
+                    await mountField(entry, existing.root);
+                }
+            }
+            continue;
+        }
+        if (existing) {
+            existing.disposed = true;
+            try { existing.instance?.dispose?.(); }
+            catch (error) { message(`Generated control could not be disposed: ${error.message}`, "canvas-message", true); }
+        }
+        const target = targets.get(entry.slot);
+        const mountPoint = document.createElement("div");
+        mountPoint.dataset.fieldPlacement = entry.id;
+        target.append(mountPoint);
+        await mountField(entry, mountPoint);
+    }
+}
 
 function wireGeneratedPages() {
     const root = $("generated-page");
     if (!root) return;
     const buttons = [...document.querySelectorAll("[data-canvas-page]")];
-    let selection = 0;
     for (const button of buttons) button.addEventListener("click", async () => {
-        const currentSelection = ++selection;
+        const currentSelection = ++pageSelection;
         const id = button.dataset.canvasPage;
         const workflow = id === "workflow";
+        if (mountedPage !== id || !workflow) disposeFieldMounts(mountedPage);
+        mountedPage = id;
         const introLogo = document.querySelector('[data-stock-image="workflow.intro"]');
         if (introLogo) introLogo.hidden = !workflow;
         root.hidden = workflow;
         root.replaceChildren();
+        renderedPageValues = null;
         root.classList.remove("workflow-error");
         $("workflow-content").hidden = !workflow;
         for (const candidate of buttons) {
             if (candidate === button) candidate.setAttribute("aria-current", "page");
             else candidate.removeAttribute("aria-current");
         }
-        if (workflow) return;
+        if (workflow) {
+            try { await syncFieldMounts("workflow", $("workflow-content") ?? document,
+                "[data-workflow-slot]", "workflowSlot"); }
+            catch (error) { message(`Generated workflow could not render: ${error.message}`, "canvas-message", true); }
+            return;
+        }
         const registration = [...document.querySelectorAll("[data-generated-renderer]")]
             .find((item) => item.dataset.generatedRenderer === id);
         try {
             if (!registration) throw new Error(`Missing generated page ${id}`);
             const { renderPage } = await import(`${registration.dataset.module}?token=${encodeURIComponent(token)}`);
-            if (currentSelection !== selection) return;
+            if (currentSelection !== pageSelection) return;
             if (typeof renderPage !== "function") throw new Error(`Invalid renderer for ${id}`);
             const content = document.createElement("div");
             await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
                 displayName: root.dataset.canvasTitle },
                 values: { ...JSON.parse(registration.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
-            if (currentSelection !== selection) return;
+            if (currentSelection !== pageSelection) return;
             await mountPageAssets(content, JSON.parse(registration.dataset.assetSlots),
                 JSON.parse(registration.dataset.assets),
                 (target, asset) => renderStockImage(target,
                     { id: asset.id, label: asset.label }, asset, asset.label, "generated-image"));
-            if (currentSelection !== selection) return;
+            if (currentSelection !== pageSelection) return;
             root.replaceChildren(content);
+            await syncFieldMounts(id, content, "[data-field-slot]", "fieldSlot");
+            if (currentSelection !== pageSelection) return;
+            renderedPageValues = JSON.stringify(model?.pageValues?.[id] ?? {});
         } catch (error) {
-            if (currentSelection !== selection) return;
+            if (currentSelection !== pageSelection) return;
             root.textContent = `Generated page could not render: ${error.message}`;
             root.classList.add("workflow-error");
         }
@@ -260,6 +427,21 @@ function editValue(element) {
         value = Object.fromEntries([...row.querySelectorAll("[data-property]")]
             .map((input) => [input.dataset.property, input.value]));
     } else value = row.querySelector("input").value;
+    return saveFieldValue(field.id, value);
+}
+function saveFieldValue(id, value) {
+    const field = model?.valueFields.find((entry) => entry.id === id && entry.editable);
+    if (!field) return Promise.reject(new Error(`Field ${id} is not editable.`));
+    const draft = { value };
+    pendingFieldDrafts.set(id, draft);
+    const pageRoot = mountedPage === "workflow"
+        ? $("workflow-content") ?? document : $("generated-page")?.firstElementChild;
+    if (pageRoot && placements.some((entry) => entry.page === mountedPage && entry.field === id)) {
+        void syncFieldMounts(mountedPage, pageRoot,
+            mountedPage === "workflow" ? "[data-workflow-slot]" : "[data-field-slot]",
+            mountedPage === "workflow" ? "workflowSlot" : "fieldSlot")
+            .catch((error) => message(`Generated field could not update: ${error.message}`, "canvas-message", true));
+    }
     if (timer) { clearTimeout(timer); timer = null; saveInputs(); }
     pendingValueSaves++;
     saving = saving.catch(() => {}).then(async () => {
@@ -267,8 +449,10 @@ function editValue(element) {
         const result = await api("/api/values", { id: field.id, value, revision: model.revision });
         model.revision = result.revision;
         failedValueDrafts.delete(field.id);
+        if (pendingFieldDrafts.get(id) === draft) pendingFieldDrafts.delete(id);
     }).catch((error) => {
         failedValueDrafts.set(field.id, { value, error });
+        if (pendingFieldDrafts.get(id) === draft) pendingFieldDrafts.delete(id);
         throw error;
     }).finally(() => { pendingValueSaves--; });
     saving.catch(() => {});
@@ -328,7 +512,7 @@ function saveInputs() {
     const selected = phase();
     const patch = model.selected === "__new__"
         ? { name: model.name ?? "", ...(model.userProvidesSlug ? { slug: model.slug } : {}) } : {};
-    if (selected) patch.draft = { item: model.selected, phase: selected.id, value: drafts.get(draftKey(selected)) ?? $("phase-args")?.value ?? "" };
+    if (selected) patch.draft = { item: model.selected, phase: selected.id, value: drafts.get(draftKey(selected)) ?? model.drafts[draftKey(selected)] ?? "" };
     return persist(patch);
 }
 function saveConstitutionDraft() {
@@ -352,6 +536,31 @@ async function flush() {
     if (saveFailure) throw saveFailure;
     if (failedValueDrafts.size) throw failedValueDrafts.values().next().value.error;
 }
+function phaseState(pendingLabel = () => null) {
+    const phases = workflowPhases();
+    const selected = phase();
+    const status = selected ? model?.statuses[selected.id] : null;
+    const item = model?.items.find((entry) => entry.id === model.selected);
+    const slug = item?.slug ?? (model?.selected === "__new__" ? model.slug : "");
+    const resolveOutput = (output) => slug && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
+        ? output?.replace("<slug>", slug) : output;
+    const output = selected
+        ? (model.selected === "__new__" && selected.output
+            ? resolveOutput(selected.output) : status?.output ?? resolveOutput(selected.output)) : null;
+    return { phases: phases.map(({ id, label, output, outputs }) => ({ id, label, output, outputs })),
+        current: selected ? current : -1, workflow: model?.selected ?? "__new__",
+        status: status && output !== status.output
+            ? { ...status, artifactAvailability: "unknown", artifactError: null } : status,
+        draft: selected ? drafts.get(draftKey(selected)) ?? model.drafts[draftKey(selected)] ?? "" : "",
+        output: output ?? null, otherOutputs: selected
+            ? (selected.outputs ?? []).map((template) => ({
+                template, label: resolveOutput(template),
+            })) : [],
+        slugEditable: Boolean(model?.userProvidesSlug),
+        sending: Boolean(selected && sending && sending.phase === selected.id
+            && sending.item === model.selected),
+        runLabel: selected ? pendingLabel(selected) : null };
+}
 function renderStatus() {
     function pendingLabel(step) {
         const item = step.project ? "project" : model.selected;
@@ -369,48 +578,7 @@ function renderStatus() {
             notice.hidden = !notice.textContent;
         }
     }
-    const selected = phase();
-    if (selected) {
-        const status = model.statuses[selected.id];
-        $("phase-card").querySelector(".phase-notice").textContent = status?.status ?? "Not run";
-        const item = model.items.find((entry) => entry.id === model.selected);
-        const slug = item?.slug ?? (model.selected === "__new__" ? model.slug : "");
-        const resolveOutput = (output) => slug && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
-            ? output?.replace("<slug>", slug) : output;
-        const path = model.selected === "__new__" && selected.output ? resolveOutput(selected.output)
-            : status?.output ?? resolveOutput(selected.output);
-        const browse = $("browse-output-folder");
-        browse.querySelector("code").textContent = path ?? "No declared output";
-        const unresolved = !path || path.includes("<slug>") || path === "No declared output";
-        browse.disabled = unresolved;
-        browse.title = unresolved
-            ? ($("workflow-slug") ? "Enter a workflow slug to resolve this path" : "Run the phase to resolve this path")
-            : `Open ${path.slice(0, path.lastIndexOf("/")) || "."} in file explorer`;
-        artifactAction("view-artifact", "phase-artifact-status", path !== status?.output
-            ? { ...status, output: path, artifactAvailability: "unknown", artifactError: null } : status);
-        const otherOutputs = $("phase-other-outputs");
-        if (otherOutputs) {
-            otherOutputs.replaceChildren();
-            const outputs = selected.outputs ?? [];
-            if (outputs.length) {
-                const label = document.createElement("strong");
-                label.textContent = "Outputs";
-                otherOutputs.append(label);
-                for (const template of outputs) {
-                    const link = document.createElement("button");
-                    link.type = "button";
-                    link.className = "phase-artifact-link";
-                    link.dataset.output = template;
-                    link.textContent = resolveOutput(template);
-                    otherOutputs.append(link);
-                }
-            }
-            otherOutputs.hidden = !outputs.length;
-        }
-        const run = $("run-phase");
-        run.textContent = pendingLabel(selected) ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
-        if (status?.error) message(status.error, "phase-message", true);
-    }
+    phaseControl?.update(phaseState(pendingLabel));
     if (constitution()) {
         const status = model.statuses[constitution().id];
         artifactAction("view-constitution", "constitution-artifact-status", status);
@@ -428,31 +596,8 @@ function renderStatus() {
     renderName();
     renderSlug();
 }
-function renderPhase(focusId) {
-    if (!phase()) return;
-    $("phase-card").replaceChildren($(`phase-template-${current}`).content.cloneNode(true));
-    const key = draftKey(phase());
-    $("phase-args").value = drafts.get(key) ?? model.drafts[key] ?? "";
-    steps.forEach((button, index) => {
-        button.classList.toggle("active", index === current);
-        if (index === current) button.setAttribute("aria-current", "step");
-        else button.removeAttribute("aria-current");
-    });
-    const mobileSelect = $("mobile-phase-select");
-    if (mobileSelect) {
-        mobileSelect.value = String(current);
-        const mobileNext = $("mobile-next-phase");
-        if (mobileNext) mobileNext.textContent = current + 1 < steps.length
-            ? `Next: ${steps[current + 1].dataset.phaseLabel}` : "Final phase";
-    }
-    const back = $("previous-phase"), next = $("next-phase");
-    back.disabled = current === 0;
-    next.disabled = current === steps.length - 1;
-    back.textContent = current ? `◀ ${steps[current - 1].dataset.phaseLabel}` : "◀ Back";
-    next.textContent = current + 1 < steps.length
-        ? `Next: ${steps[current + 1].dataset.phaseLabel} ▶` : "Complete";
+function renderPhase() {
     renderStatus();
-    if (focusId) $(focusId)?.focus({ preventScroll: true });
 }
 function renderSlug() {
     const input = $("workflow-slug");
@@ -551,11 +696,6 @@ async function refresh(reconcile = false) {
         model.slug = previous.slug;
         model.name = previous.name;
     }
-    const selected = phase();
-    if (selected && !model.statuses[selected.id]?.error
-        && $("phase-message")?.classList.contains("workflow-error")) {
-        message("", "phase-message");
-    }
     const project = constitution();
     if (project && !model.statuses[project.id]?.error
         && $("constitution-message")?.classList.contains("workflow-error")) {
@@ -563,19 +703,38 @@ async function refresh(reconcile = false) {
     }
     renderCollection();
     renderValues();
-    if (!previous || previous.selected !== model.selected) renderPhase();
-    else renderStatus();
-    document.querySelector('[data-canvas-page][aria-current="page"]:not([data-canvas-page="workflow"])')?.click();
+    renderPhase();
+    if (mountedPage === "workflow") {
+        try { await syncFieldMounts("workflow", $("workflow-content") ?? document,
+            "[data-workflow-slot]", "workflowSlot"); }
+        catch (error) { message(`Generated workflow could not render: ${error.message}`, "canvas-message", true); }
+    } else {
+        const root = $("generated-page");
+        const page = mountedPage;
+        if (root && renderedPageValues !== JSON.stringify(model?.pageValues?.[page] ?? {})
+            && !root.contains(document.activeElement) && !failedValueDrafts.size) {
+            document.querySelectorAll("[data-canvas-page]").forEach((button) => {
+                if (button.dataset.canvasPage === page) button.click();
+            });
+        } else if (root?.firstElementChild) {
+            try { await syncFieldMounts(page, root.firstElementChild, "[data-field-slot]", "fieldSlot"); }
+            catch (error) {
+                root.textContent = `Generated page could not render: ${error.message}`;
+                root.classList.add("workflow-error");
+                disposeFieldMounts(page);
+            }
+        }
+    }
 }
-async function selectPhase(index, focusId) {
+async function selectPhase(index) {
     if (index < 0 || index >= workflowPhases().length) {
-        message(index < 0 ? "You are at the first phase." : "You are at the last phase.", "phase-message");
+        message(index < 0 ? "You are at the first phase." : "You are at the last phase.", "canvas-message");
         return;
     }
     await flush();
     await persist({ phase: workflowPhases()[index].id });
     current = index;
-    renderPhase(focusId);
+    renderPhase();
 }
 async function selectFeature(value) {
     await flush();
@@ -607,7 +766,7 @@ async function deleteFeature(itemId) {
     await refresh();
     message(`Deleted ${item.label} and its directory.`);
 }
-async function send(step, value, target = "phase-message") {
+async function send(step, value, target = "canvas-message") {
     if (sending) { message("This request is being sent. Check chat before trying again.", target); return; }
     sending = { phase: step.id, item: step.project ? "project" : model.selected };
     renderStatus();
@@ -659,7 +818,7 @@ async function openArtifact(step, output) {
     if (!step) throw new Error("Wait for the canvas to connect, then try again.");
     viewer = { phase: step.id, itemId: step.project ? "project" : model.selected,
         ...(output !== undefined ? { output } : {}), loaded: false };
-    $("artifact-title").textContent = step.project ? "Constitution" : steps[current].dataset.phaseLabel;
+    $("artifact-title").textContent = step.project ? "Constitution" : phase().label;
     $("artifact-path").textContent = "";
     $("artifact-content").replaceChildren();
     $("artifact-viewer").showModal();
@@ -740,42 +899,35 @@ document.addEventListener("click", (event) => {
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 const pipelineRoot = $("workflow-pipeline");
 try {
-    const { mount } = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
-    if (typeof mount !== "function") throw new Error("Missing pipeline mount export");
-    const phases = JSON.parse(pipelineRoot.dataset.phases);
-    ({ steps } = mount({ root: pipelineRoot, phases,
+    const { mount, controlId, contractVersion } = await import(
+        `${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
+    if (controlId !== "workflow-phases" || contractVersion !== 1 || typeof mount !== "function") {
+        throw new Error("Incompatible phase control adapter");
+    }
+    const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
+    phaseControl = mount({ root: pipelineRoot, state: {
+        phases: initialPhases, current: initialPhases.length ? 0 : -1,
+        workflow: "__new__", status: null, draft: "",
+        output: initialPhases[0]?.output ?? null, otherOutputs: [],
+        slugEditable: Boolean($("workflow-slug")), sending: false,
+    },
         actions: {
-            select: (index, focusId) => { requireModel(); return selectPhase(index, focusId); },
+            select: (index) => { requireModel(); return selectPhase(index); },
             run: (value) => { requireModel(); return send(phase(), value); },
             view: (output) => { requireModel(); return openArtifact(phase(), output); },
             reveal: async () => {
                 requireModel();
                 await flush();
                 const result = await api("/api/reveal", { phase: phase().id, itemId: model.selected });
-                message(result.message, "phase-message");
+                message(result.message, "canvas-message");
             },
             draft: (value) => {
                 if (model) { remember(phase(), value); queueInput(); }
             },
             error: (error) => message(error.message, "canvas-message", true),
-        } }));
-    const required = [".phase-notice", "#browse-output-folder code", "#phase-args",
-        "#phase-message", "#phase-artifact-status", "#view-artifact",
-        "#run-phase", "#previous-phase", "#next-phase"];
-    const card = pipelineRoot.querySelector("#phase-card");
-    if (!Array.isArray(steps) || steps.length !== phases.length
-        || steps.some((step, index) => !(step instanceof HTMLButtonElement)
-            || !pipelineRoot.contains(step) || step.dataset.phaseIndex !== String(index)
-            || step.dataset.phaseLabel !== phases[index].label)
-            || !pipelineRoot.querySelector("#phase-navigation")
-            || !card
-            || (phases.length > 0 && required.some((selector) => !card.querySelector(selector)))
-        || phases.some((_, index) => {
-            const template = pipelineRoot.querySelector(`#phase-template-${index}`);
-            return !(template instanceof HTMLTemplateElement)
-                || required.some((selector) => !template.content.querySelector(selector));
-        })) {
-        throw new Error("Pipeline renderer did not render the required phase controls");
+        } });
+    if (typeof phaseControl?.update !== "function" || typeof phaseControl.dispose !== "function") {
+        throw new Error("Phase control adapter must return update and dispose");
     }
 } catch (error) {
     message(`Pipeline could not render: ${error.message}`, "canvas-message", true);
@@ -797,7 +949,11 @@ window.addEventListener("beforeunload", (event) => {
         event.returnValue = "";
     }
 });
-window.addEventListener("pagehide", () => events.close());
+window.addEventListener("pagehide", () => {
+    events.close();
+    phaseControl?.dispose();
+    disposeFieldMounts(mountedPage);
+});
 await refresh().catch((error) => message(error.message, "canvas-message", true));
 for (const root of document.querySelectorAll("[data-control-id]")) {
     void mountGeneratedControl(root);

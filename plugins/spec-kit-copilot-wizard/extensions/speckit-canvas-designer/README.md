@@ -29,10 +29,12 @@ individual page errors still appear as tabs once the schema loads.
 Essentials requires Canvas ID and Title from the resolved core page. Description,
 Workflow header, Allow custom slug, Header logo, and Main page logo are separate
 ordered stock contributions registered by the composed load-page command. The
-two required fields stay fixed but mount the same registered `stock.text`
-Designer adapter as optional text fields. `stock.checkbox` similarly provides
-the optional boolean editor. Their field-specific resolved rules come from approved declarations; the
-adapter validates the values at Generate. Generate packages the winning stock-text generated adapter
+two required fields use the fixed Designer identity control; their inputs are
+not mounted through the replaceable `stock.text` adapter. The Outputs page
+likewise mounts its fixed phase-artifacts control. Other Essentials fields
+continue to use registered adapters: `stock.checkbox` provides
+the optional boolean editor, and the stock-text adapter validates optional text
+at Generate. Generate packages the winning stock-text generated adapter
 for visible Description, Workflow header, or read-only text placements. Text
 fields on a page or in a contribution can opt into `"required": true`; the
 shared text validator rejects blank or whitespace-only values at Generate,
@@ -68,6 +70,16 @@ supplies an authorized URL and mount node to the packaged image adapter, which
 is shared across Header, Main, and preset placements. An absent Header logo
 retains the brand mark; a configured image with a failing adapter reports a
 visible error rather than falling back.
+
+The required generated Workflow page now declares named slots instead of
+ordering host shell regions. Designer validates and freezes its required
+`workflow.phases` placement, plus separately registered typed field placements
+targeting that page or a preset-added page. Additional Workflow slots render
+together in a host-owned contributions area; preset-added page renderers expose
+`data-field-slot` targets. Designer's own tabs, settings UI, and control model
+are unchanged. Read-only values remain the default; explicit editable
+generated values use the generated shell's existing typed value API, while
+packaged images are display-only.
 
 Workflow name appears in the generated canvas's workflow collection, before
 phase navigation, while creating a workflow. It labels the workflow there.
@@ -147,10 +159,16 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
+At Generate, Designer checks the child checkout's Specify inventory for packages
+in the Wizard handoff and freezes their installed versions alongside the original
+Wizard snapshot. Unrelated installed packages do not affect version verification.
+Version drift is reported as a warning rather than blocking generation. If
+Specify's inventory cannot be read or a package is missing, that package's
+generated version is marked `unverified` and the warning remains visible.
 Pages explicitly marked `enabled: false` are omitted even if their other fields
 are malformed; unreadable pages still show errors because their enabled state
 cannot be determined.
-A missing skill directs users to relaunch with Canvas Design v0.1.18 or the
+A missing skill directs users to relaunch with the current Canvas Design release or the
 current local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
@@ -174,7 +192,7 @@ instead of failing at provider startup. For local tests, install dependencies wi
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
 ```
 
-Canvas Design's [taxonomy, six kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
+Canvas Design's [taxonomy, kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
 define the registration and authoring surface. Required and added Designer tabs
 share the `designer.tab-definition` kind and schema; the required tabs are identified
 by their registered names. Preset fixture JSON omits `$schema` because its

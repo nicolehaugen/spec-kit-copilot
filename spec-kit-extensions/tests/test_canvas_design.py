@@ -31,22 +31,27 @@ FILES = {
     "schemas/designer.setting-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
     "schemas/generated.workflow-page-definition.schema.json",
+    "schemas/generated.phase-control-definition.schema.json",
+    "schemas/generated.phase-control-placement.schema.json",
+    "schemas/generated.field-placement.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
-    *(f"designer/tabs/{name}.json" for name in PAGE_NAMES),
-    *(f"designer/essentials-settings/{name}.json" for name in (
+    *(f"designer-host/tabs/{name}.json" for name in PAGE_NAMES),
+    *(f"designer-host/essentials-settings/{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "header-logo", "main-page-logo",
     )),
-    "controls/stock-image/control.json",
-    "controls/stock-image/designer.mjs",
-    "controls/stock-image/generated.mjs",
-    "controls/stock-text/control.json",
-    "controls/stock-text/designer.mjs",
-    "controls/stock-text/generated.mjs",
-    "controls/stock-checkbox/control.json",
-    "controls/stock-checkbox/designer.mjs",
-    "generated/pages/workflow.json",
-    "generated/pages/generated-pipeline.mjs",
+    "shared-controls/stock-image/control.json",
+    "shared-controls/stock-image/designer.mjs",
+    "shared-controls/stock-image/generated.mjs",
+    "shared-controls/stock-text/control.json",
+    "shared-controls/stock-text/designer.mjs",
+    "shared-controls/stock-text/generated.mjs",
+    "shared-controls/stock-checkbox/control.json",
+    "shared-controls/stock-checkbox/designer.mjs",
+    "generated-host/workflow/workflow.json",
+    "generated-host/workflow/generated-phase-placement.json",
+    "generated-host/phase-control/phase-control.json",
+    "generated-host/phase-control/generated-phase-adapter.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
@@ -64,7 +69,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         cls.schema = json.loads((PACKAGE / "schemas/designer.tab-definition.schema.json").read_text("utf-8"))
         cls.validator = Draft202012Validator(cls.schema)
         cls.pages = [
-            json.loads((PACKAGE / f"designer/tabs/{name}.json").read_text("utf-8"))
+            json.loads((PACKAGE / f"designer-host/tabs/{name}.json").read_text("utf-8"))
             for name in PAGE_NAMES
         ]
         cls.command = (PACKAGE / "commands/load-page.md").read_text("utf-8")
@@ -105,14 +110,16 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             [(template["name"], template["file"])
              for template in self.manifest["provides"]["templates"]],
-            [(f"designer-{page}", f"designer/tabs/{filename}.json")
+            [(f"designer-{page}", f"designer-host/tabs/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
-            + [(f"designer-essentials-{filename}", f"designer/essentials-settings/{filename}.json")
+            + [(f"designer-essentials-{filename}", f"designer-host/essentials-settings/{filename}.json")
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
-            + [("generated-workflow", "generated/pages/workflow.json"),
-               ("generated-pipeline", "generated/pages/generated-pipeline.mjs")]
-            + [(name, f"controls/stock-{control}/{filename}")
+            + [("generated-workflow", "generated-host/workflow/workflow.json"),
+               ("generated-phase-placement", "generated-host/workflow/generated-phase-placement.json"),
+               ("generated-phase-control", "generated-host/phase-control/phase-control.json"),
+               ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs")]
+            + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [
                    (f"shared-controls-{control}", "control.json"),
@@ -196,7 +203,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
             ],
         )
-        stock = [json.loads((PACKAGE / f"designer/essentials-settings/{name}.json").read_text("utf-8"))
+        stock = [json.loads((PACKAGE / f"designer-host/essentials-settings/{name}.json").read_text("utf-8"))
                  for name in ("description", "workflow-heading", "custom-slug")]
         self.assertEqual([item["order"] for item in stock], [10, 20, 30])
         self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 3)
@@ -223,13 +230,13 @@ class CanvasDesignPackageTests(unittest.TestCase):
         preset_tabs = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/tabs/*.json"))
         preset_generated_pages = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/generated/pages/*.json"))
         fixtures = {
-            "designer.tab-definition": [PACKAGE / f"designer/tabs/{name}.json" for name in PAGE_NAMES]
+            "designer.tab-definition": [PACKAGE / f"designer-host/tabs/{name}.json" for name in PAGE_NAMES]
                 + preset_tabs,
-            "designer.setting-definition": list(PACKAGE.glob("designer/essentials-settings/*.json"))
+            "designer.setting-definition": list(PACKAGE.glob("designer-host/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
             "generated.added-page-definition": preset_generated_pages,
-            "generated.workflow-page-definition": [PACKAGE / "generated/pages/workflow.json"],
-            "shared.control-definition": list(PACKAGE.glob("controls/*/control.json"))
+            "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow/workflow.json"],
+            "shared.control-definition": list(PACKAGE.glob("shared-controls/*/control.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
         }
@@ -269,6 +276,19 @@ class CanvasDesignPackageTests(unittest.TestCase):
         generated["slots"] = [{"id": "same.slot"}, {"id": "same.slot"}]
         with self.assertRaises(ValidationError):
             Draft202012Validator(schemas["generated.added-page-definition"]).validate(generated)
+        workflow = json.loads(fixtures["generated.workflow-page-definition"][0].read_text("utf-8"))
+        workflow_validator = Draft202012Validator(schemas["generated.workflow-page-definition"])
+        for slots in (
+            [{"id": "workflow.summary"}],
+            [{"id": "workflow.phases"}, {"id": "workflow.phases"}],
+            [{"id": "workflow.summary"}, {"id": "workflow.phases"}],
+        ):
+            with self.subTest(slots=slots):
+                with self.assertRaises(ValidationError):
+                    workflow_validator.validate({**workflow, "slots": slots})
+        workflow_validator.validate({**workflow, "slots": [
+            {"id": "workflow.phases"}, {"id": "workflow.summary"},
+        ]})
         value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
         validator = Draft202012Validator(schemas["generated.value-definition"])
@@ -318,7 +338,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
         )
         self.assertEqual(registrations, [
             ("generated-workflow", "generated.workflow-page-definition", "replace"),
-            ("generated-pipeline", "generated.pipeline-renderer", "replace"),
+            ("generated-phase-placement", "generated.phase-control-placement", "replace"),
+            ("generated-phase-control", "generated.phase-control-definition", "replace"),
+            ("generated-phase-adapter", "generated.phase-control-adapter", "replace"),
             ("shared-controls-text", "shared.control-definition", "replace"),
             ("designer-control-adapter-text", "designer.control-adapter", "replace"),
             ("generated-control-adapter-text", "generated.control-adapter", "replace"),
@@ -494,7 +516,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertIn('--integration copilot --integration-options="--skills"', readme)
         self.assertNotIn("--dev", readme)
         self.assertIn("does not install or open a Designer", readme)
-        self.assertIn("Compatibility\nwith a released Wizard version is not established", readme)
+        self.assertIn("extension release version alone does not establish", readme)
 
     @unittest.skipUnless(os.environ.get("CANVAS_DESIGN_ARCHIVE"), "No release ZIP supplied")
     def test_release_archive_has_exact_package_bytes(self):
@@ -567,6 +589,15 @@ class CanvasDesignPackageTests(unittest.TestCase):
             package = root / "spec-kit-extensions" / EXTENSION_ID
             package.mkdir(parents=True)
             shutil.copyfile(PACKAGE / "extension.yml", package / "extension.yml")
+            (package / "schemas").mkdir()
+            shutil.copyfile(PACKAGE / "schemas/designer.tab-definition.schema.json",
+                            package / "schemas/designer.tab-definition.schema.json")
+            designer = root / "plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer"
+            designer.mkdir(parents=True)
+            shutil.copyfile(
+                EXTENSIONS.parent / "plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/designer-contract.json",
+                designer / "designer-contract.json",
+            )
             for field, value, error in mutations:
                 with self.subTest(field=field):
                     catalog = copy.deepcopy(self.catalog)

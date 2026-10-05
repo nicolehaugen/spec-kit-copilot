@@ -5,10 +5,11 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.18** registers three JSON page templates, five ordered
+Canvas Design **0.1.19** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
-Workflow page definition and pipeline renderer, plus the
+Workflow page definition, required phase placement, phase control definition,
+and phase adapter, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -16,11 +17,13 @@ then opens the Designer with the complete resolved set.
 The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
 
-Replaceable templates are organized by host: `designer/` contains Designer
-tabs and settings, while `generated/pages/` contains the Workflow definition
-and pipeline renderer. `templates/generated-canvas/` is the static app
-scaffold; Generate copies the resolved `generated/` assets into its `pages/`
-directory, so the finished app does not depend on this extension at runtime.
+Replaceable templates are organized by host: `designer-host/` contains Designer
+tabs and settings, `generated-host/workflow/` contains the Workflow page and
+phase placement, and `generated-host/phase-control/` contains the phase control
+and adapter. `shared-controls/` contains definitions and adapters used by both
+hosts. `templates/generated-canvas/` is the static app scaffold; Generate
+copies the resolved generated-host assets into its `pages/` directory, so the
+finished app does not depend on this extension at runtime.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
@@ -30,25 +33,29 @@ directory, so the finished app does not depend on this extension at runtime.
 | `designer-essentials-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `designer-essentials-header-logo` | Essentials slot | Optional small header logo |
 | `designer-essentials-main-page-logo` | Essentials slot | Optional larger main-page logo |
-| `generated-workflow` | Generated Workflow page | Ordered, required host regions |
-| `generated-pipeline` | Generated Workflow page | Replaceable phase navigation and card presentation |
+| `generated-workflow` | Generated Workflow page | Required page metadata and named slots; host shell stays fixed |
+| `generated-phase-placement` | Generated Workflow page | Required phase control placement in `workflow.phases` |
+| `generated-phase-control` | Generated Workflow page | Phase control identity and adapter reference |
+| `generated-phase-adapter` | Generated Workflow page | Replaceable phase navigation and card presentation |
 | `shared-controls-image` | Shared control | Image value contract and paired adapter names |
 | `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
 | `generated-control-adapter-image` | Generated app | Render packaged images in authorized slots |
 | `shared-controls-text` | Shared control | String value contract and adapter names |
-| `designer-control-adapter-text` | Designer | Edit text, including required Canvas ID and Title |
+| `designer-control-adapter-text` | Designer | Edit contributed text fields |
 | `generated-control-adapter-text` | Generated app | Render visible text in authorized placements |
 | `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
 | `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
 | `designer-artifacts` | Outputs | Review fixed pipeline artifacts, add viewer links, and select the default viewer target |
 | `designer-appearance` | Appearance | Empty placeholder |
 
-The Essentials core template lives in `designer/tabs/essentials.json`; its
+The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 `designer-essentials` is the template ID used for preset resolution.
-Its required Canvas ID and Title are fixed fields that share the `stock.text`
-editor with optional text contributions; a preset cannot remove them by
-omitting an optional contribution. Field-specific length, requiredness, and
-identifier rules are shown and validated by the Designer adapter at Generate;
+Its required Canvas ID and Title are rendered by the fixed identity control,
+while optional text contributions use the registered `stock.text` adapter.
+The Outputs tab uses a separate fixed phase-artifacts control. The Designer
+checks these core declarations before displaying either page; presets can
+still contribute to the `essentials.options` slot. Identity length, requiredness,
+and identifier rules are checked at Generate;
 the generator independently guards the generated extension path. Description and
 Workflow header use the packaged stock-text adapter for their visible
 generated presentation. Authors may set `"required": true` on a text field
@@ -155,8 +162,12 @@ and additional links.
   provider accepting the resolved pages and templates in its open input.
 - A launching integration that supplies the Designer handoff.
 
-Installing this extension does not install or open a Designer. Compatibility
-with a released Wizard version is not established by this package.
+Installing this extension does not install or open a Designer. The Designer
+contract is the `schemaVersion.const` in
+`schemas/designer.tab-definition.schema.json` (currently `1`). Bump that
+schema version and coordinate with the Designer provider when changing its
+supported interface; the extension release version alone does not establish
+compatibility.
 
 ## Installation
 
@@ -171,7 +182,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.18/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.19/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -205,6 +216,18 @@ before returning the complete pages/templates input. It performs no
 installation or provider evaluation. A warning (even on exit status 0),
 missing name, resolution mismatch, or executable script collision stops the
 open.
+
+The Generate command checks the integrity and checkout binding of its frozen
+request, the canvas target, and the Wizard handoff's workflow and installed
+inventory before writing files. It includes the hosted Canvas Design selection
+when recomputing the handoff fingerprint. If only the source fingerprint
+differs, the command returns a warning and attempts generation from the intact
+frozen request; the agent reports that warning when opening the generated
+canvas. Request or checkout integrity and workflow mismatches still stop it.
+The generated `canvas-config.json` records the versions observed in the child
+checkout's Specify inventory at Generate; changed versions produce warnings
+without blocking. Unavailable package versions are marked `unverified` instead
+of being attributed to the Wizard's older inventory.
 
 Invalid registered field contributions stop the open with both names on a
 field collision; newly registered stock text/checkbox fields mount their
@@ -344,8 +367,11 @@ not the JSON document. No kind is inferred from a filename.
 | --- | --- | --- |
 | `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
-| `generated.workflow-page-definition` | Required generated Workflow layout | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
-| `generated.pipeline-renderer` | Workflow pipeline `.mjs` presentation | Module contract below |
+| `generated.workflow-page-definition` | Required generated Workflow page and slots | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `generated.phase-control-placement` | Required phase control placement | [phase placement](schemas/generated.phase-control-placement.schema.json) |
+| `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/generated.field-placement.schema.json) |
+| `generated.phase-control-definition` | Required phase control identity and adapter reference | [phase control](schemas/generated.phase-control-definition.schema.json) |
+| `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
 | `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
@@ -372,54 +398,70 @@ module under its own name as well as its referencing JSON template. The generate
 app packages the winning generated-host modules; it does not load source presets
 at runtime. Do not import another module from a renderer or provider.
 
-The required `generated-workflow` definition has `id: "workflow"`, a `pipeline`
-reference to the registered `generated.pipeline-renderer`, and an ordered
-`regions` array containing each of `collection`, `details`, `values`,
-`controls`, `pages`, `constitution`, `message`, and `pipeline` exactly once.
-The generated host renders these regions in the declared order. Presets may
-replace the whole JSON template to reorder them, but cannot remove host
-regions, invent new ones, or change the phase-dispatch rules. Regions without
-configured content render nothing. This is intentionally distinct from an
-added generated page's `renderPage` contract.
+The required `generated-workflow` page has `id: "workflow"`, title, order,
+and named slots, including the required `workflow.phases`. The generated host
+owns its header, collection, details, values, controls, page navigation,
+constitution, messages, and artifact viewer in a fixed shell. Presets may
+replace the Workflow page JSON to add slots; additional slots render together
+in one ordered contributions area. They cannot remove `workflow.phases` or
+reorder the shell. The separately registered `generated-phase-placement`
+targets `workflow.phases` and references `generated-phase-control`, keeping
+the phase navigation and card at their fixed location. The phase control definition
+has `schemaVersion: 1`, `id: "workflow-phases"`, and
+`adapter: "generated-phase-adapter"`. Designer freezes those definitions,
+the required placement, and the adapter as integrity-checked assets.
 
-The pipeline module exports `mount({ root, phases, actions })`. It owns the
-navigation and selected-phase card within `root` and returns `{ steps }`, an
-ordered array of its phase buttons. `phases` contains `{ id, label, output, outputs }`
-display data; the host supplies `actions.select(index, focusId?)`,
+Like Designer settings, separately registered generated field placements
+target a page and one of its declared slots, identify a field and display
+order, and reuse a stock control for scalar fields or a preset control for
+object fields. Custom scalar controls are not supported. Added page renderers expose
+`data-field-slot` mount points for declared field placements. Several
+placements of one field share one value; independent fields can use the
+same control adapter. Read-only is the default; an explicitly editable
+constant typed value saves through the host's existing `/api/values` endpoint.
+Computed values cannot be edited. Stock images are display-only packaged
+assets, not runtime uploads. Fixed legacy brand/intro and details bindings
+retain their current behavior.
+
+The phase adapter exports `controlId = "workflow-phases"`,
+`contractVersion = 1`, and `mount({ root, state, actions })`, returning
+`{ update(state), dispose() }`. It owns phase navigation and the selected-phase
+card within `root`. `state` supplies the phase list, current index, workflow
+identity, status, draft, output, other outputs, and sending status. The host
+supplies `actions.select(index)`,
 `actions.run(args)`, `actions.view(output?)`, `actions.reveal()`,
 `actions.draft(value)`, and `actions.error(error)`. The first four request
 host-validated operations; adapters do not call workflow endpoints directly.
-For this initial proof, the renderer must retain the host's documented
-`phase-navigation`, `phase-card`, `phase-args`, status/action IDs,
-`data-phase-index`/`data-phase-label` buttons and `phase-template-N` elements
-used for state and focus updates. The test-only vertical preset demonstrates
-replacing the module while retaining those interactions; a fully independent
-feature-control lifecycle is a later milestone. A minimal static phase list:
+The host owns dispatch safeguards, persistence, and artifacts; it never
+reaches into the adapter's DOM. An adapter renders its own controls and updates
+them in `update` when the host supplies new state. A minimal phase list:
 
 ```js
-export function mount({ root, phases, actions }) {
+export const controlId = "workflow-phases";
+export const contractVersion = 1;
+export function mount({ root, state, actions }) {
   const list = document.createElement("ol");
-  const steps = phases.map((phase, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.phaseIndex = String(index);
-    button.dataset.phaseLabel = phase.label;
-    button.textContent = phase.label;
-    button.addEventListener("click", () =>
-      Promise.resolve(actions.select(index)).catch(actions.error));
-    const item = document.createElement("li");
-    item.append(button);
-    list.append(item);
-    return button;
-  });
   root.replaceChildren(list);
-  return { steps };
+  const update = ({ phases, current }) => {
+    list.replaceChildren(...phases.map((phase, index) => {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = phase.label;
+      button.setAttribute("aria-current", current === index ? "step" : "false");
+      button.onclick = () => Promise.resolve(actions.select(index)).catch(actions.error);
+      item.append(button);
+      return item;
+    }));
+  };
+  update(state);
+  return { update, dispose() { root.replaceChildren(); } };
 }
 ```
 
-The snippet illustrates the callback shape only; a working replacement must
-also render the required phase card and status/action elements. See
-[`generated-pipeline`](generated/pages/generated-pipeline.mjs)
+The snippet illustrates the lifecycle only; a working replacement also renders
+the phase card and actions. See
+[`generated-phase-adapter`](generated-host/phase-control/generated-phase-adapter.mjs)
 for the complete stock implementation. Module imports are not packaged.
 
 `generated.added-page-renderer` exports

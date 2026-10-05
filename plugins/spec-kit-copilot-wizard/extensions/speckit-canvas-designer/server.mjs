@@ -6,7 +6,7 @@ import { readHandoff } from "./handoff.mjs";
 import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
     loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
-import { freezeGeneration } from "./generation.mjs";
+import { freezeGeneration, readCurrentInstalledVersions } from "./generation.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -33,6 +33,8 @@ const ASSETS = {
     "/": ["index.html", "text/html"],
     "/ui/styles.css": ["styles.css", "text/css"],
     "/ui/app.js": ["app.js", "text/javascript"],
+    "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
+    "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
 const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.";
@@ -201,9 +203,19 @@ export async function startShell(handoff = null, model = null, { project, worksp
                         .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));
                     return;
                 }
+                let runtimeInventory, inventoryWarning;
+                try {
+                    const observed = await readCurrentInstalledVersions(project, handoff.workflow.installed);
+                    runtimeInventory = observed.inventory;
+                    inventoryWarning = observed.warnings.length
+                        ? `${observed.warnings.join(" ")} Affected versions will be marked unverified.` : undefined;
+                } catch (error) {
+                    runtimeInventory = { presets: [], extensions: [], bundles: [] };
+                    inventoryWarning = `Could not read the installed Specify packages: ${error.message}. Generated package versions will be marked unverified.`;
+                }
                 const result = await freezeGeneration({ model: current, values: input.values,
                     outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs,
-                    handoff, project, workspace });
+                    handoff, project, workspace, runtimeInventory, inventoryWarning });
                 try {
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });
                 } catch (cause) {

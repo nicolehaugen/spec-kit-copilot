@@ -11,6 +11,7 @@
     "description": {"type": "string", "maxLength": 1000},
     "order": {"type": "integer", "minimum": -100000, "maximum": 100000},
     "enabled": {"type": "boolean"},
+    "fixedControl": {"enum": ["designer.identity", "designer.outputs"]},
     "slots": {
       "type": "array",
       "maxItems": 50,

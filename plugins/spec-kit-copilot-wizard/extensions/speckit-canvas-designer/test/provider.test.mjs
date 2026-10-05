@@ -197,7 +197,7 @@ async function projectFixture(t, workspace) {
     const specify = join(project, ".specify");
     const installed = join(specify, "extensions", "extension-canvas-design");
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url));
-    await mkdir(join(installed, "designer", "tabs"), { recursive: true });
+    await mkdir(join(installed, "designer-host", "tabs"), { recursive: true });
     await mkdir(join(installed, "schemas"), { recursive: true });
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-load-page"),
         { recursive: true });
@@ -210,19 +210,21 @@ async function projectFixture(t, workspace) {
     const pages = ["essentials", "outputs", "appearance"];
     const entries = [];
     for (const filename of pages) {
-        const path = join(installed, "designer", "tabs", `${filename}.json`);
-        await copyFile(join(source, "designer", "tabs", `${filename}.json`), path);
+        const path = join(installed, "designer-host", "tabs", `${filename}.json`);
+        await copyFile(join(source, "designer-host", "tabs", `${filename}.json`), path);
         entries.push({ name: filename === "outputs" ? "designer-artifacts" : `designer-${filename}`, path,
             kind: "designer.tab-definition", strategy: "replace" });
     }
     const scalar = [];
-    await mkdir(join(installed, "generated", "pages"), { recursive: true });
-    for (const [name, filename, kind] of [
-        ["generated-workflow", "workflow.json", "generated.workflow-page-definition"],
-        ["generated-pipeline", "generated-pipeline.mjs", "generated.pipeline-renderer"],
+    for (const [name, directory, filename, kind] of [
+        ["generated-workflow", "workflow", "workflow.json", "generated.workflow-page-definition"],
+        ["generated-phase-placement", "workflow", "generated-phase-placement.json", "generated.phase-control-placement"],
+        ["generated-phase-control", "phase-control", "phase-control.json", "generated.phase-control-definition"],
+        ["generated-phase-adapter", "phase-control", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
-        const path = join(installed, "generated", "pages", filename);
-        await copyFile(join(source, "generated", "pages", filename), path);
+        const path = join(installed, "generated-host", directory, filename);
+        await mkdir(dirname(path), { recursive: true });
+        await copyFile(join(source, "generated-host", directory, filename), path);
         scalar.push({ name, path, sourceId: "extension:extension-canvas-design",
             kind, strategy: "replace" });
     }
@@ -233,10 +235,10 @@ async function projectFixture(t, workspace) {
         ["stock-checkbox", [["shared-controls-checkbox", "control.json", "shared.control-definition"],
             ["designer-control-adapter-checkbox", "designer.mjs", "designer.control-adapter"]]],
     ]) {
-        await mkdir(join(installed, "controls", directory), { recursive: true });
+        await mkdir(join(installed, "shared-controls", directory), { recursive: true });
         for (const [name, filename, kind] of names) {
-            const path = join(installed, "controls", directory, filename);
-            await copyFile(join(source, "controls", directory, filename), path);
+            const path = join(installed, "shared-controls", directory, filename);
+            await copyFile(join(source, "shared-controls", directory, filename), path);
             scalar.push({ name, path, sourceId: "extension:extension-canvas-design",
                 kind, strategy: "replace" });
         }
@@ -251,12 +253,12 @@ async function stockTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
     const directory = join(project, ".specify", "extensions", "extension-canvas-design",
-        "designer", "essentials-settings");
+        "designer-host", "essentials-settings");
     await mkdir(directory, { recursive: true });
     const templates = [];
     for (const name of ["description", "workflow-heading", "custom-slug"]) {
         const path = join(directory, `${name}.json`);
-        await copyFile(join(source, "designer", "essentials-settings", `${name}.json`), path);
+        await copyFile(join(source, "designer-host", "essentials-settings", `${name}.json`), path);
         templates.push({ name: `designer-essentials-${name}`, path,
             sourceId: "extension:extension-canvas-design",
             kind: "designer.setting-definition", strategy: "replace" });
@@ -268,7 +270,7 @@ async function stockImageTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
     const directory = join(project, ".specify", "extensions", "extension-canvas-design",
-        "controls", "stock-image");
+        "shared-controls", "stock-image");
     await mkdir(directory, { recursive: true });
     const entries = [
         ["shared-controls-image", "control.json", "shared.control-definition"],
@@ -277,7 +279,7 @@ async function stockImageTemplates(project) {
     ];
     return Promise.all(entries.map(async ([name, filename, kind]) => {
         const path = join(directory, filename);
-        await copyFile(join(source, "controls", "stock-image", filename), path);
+        await copyFile(join(source, "shared-controls", "stock-image", filename), path);
         return { name, path, sourceId: "extension:extension-canvas-design",
             kind, strategy: "replace" };
     }));
@@ -297,7 +299,7 @@ test("stock image picker announces its format hint and upload error", async (t) 
     });
     globalThis.document = { createElement: element };
     const { mount } = await import(new URL(
-        "../../../../../spec-kit-extensions/extension-canvas-design/controls/stock-image/designer.mjs",
+        "../../../../../spec-kit-extensions/extension-canvas-design/shared-controls/stock-image/designer.mjs",
         import.meta.url));
     const root = element();
     mount({ root, field: { id: "canvas.logo", label: "Header logo",
@@ -333,27 +335,50 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     assert.equal(model.pages[0].fields[1].control, "stock.text");
     assert.equal(model.adapters["stock.text"], "designer-control-adapter-text");
     assert.equal(model.adapters["stock.checkbox"], "designer-control-adapter-checkbox");
+    const textControlFile = scalar.find((item) => item.name === "shared-controls-text").path;
+    const originalTextControl = await readFile(textControlFile, "utf8");
+    await writeFile(textControlFile, JSON.stringify({
+        ...JSON.parse(originalTextControl), id: "custom-text",
+    }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid shared control value contract or adapter references/);
+    await writeFile(textControlFile, originalTextControl);
     const workflowFile = scalar.find((item) => item.name === "generated-workflow").path;
     const originalWorkflow = await readFile(workflowFile, "utf8");
     const reordered = JSON.parse(originalWorkflow);
-    reordered.regions.reverse();
+    reordered.slots.push({ id: "workflow.summary" });
     await writeFile(workflowFile, JSON.stringify(reordered));
     const changedLayout = await loadResolvedDesignerPages(handoff, project, entries, fields);
-    assert.deepEqual(changedLayout.workflowPage.regions, reordered.regions);
-    reordered.regions[0] = reordered.regions[1];
+    assert.deepEqual(changedLayout.workflowPage.slots, reordered.slots);
+    reordered.slots[1] = reordered.slots[0];
     await writeFile(workflowFile, JSON.stringify(reordered));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /invalid Workflow page definition/);
     await writeFile(workflowFile, originalWorkflow);
-    const pipelineFile = scalar.find((item) => item.name === "generated-pipeline").path;
-    const originalPipeline = await readFile(pipelineFile, "utf8");
-    await writeFile(pipelineFile, "export function other() {}");
+    const controlFile = scalar.find((item) => item.name === "generated-phase-control").path;
+    const originalControl = await readFile(controlFile, "utf8");
+    const changedControl = JSON.parse(originalControl);
+    changedControl.adapter = "missing-adapter";
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /missing or unreferenced phase control adapter/);
+    changedControl.adapter = "generated-phase-adapter";
+    changedControl.id = "wrong-id";
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid phase control definition/);
+    await writeFile(controlFile, originalControl);
+    const adapterFile = scalar.find((item) => item.name === "generated-phase-adapter").path;
+    const originalAdapter = await readFile(adapterFile, "utf8");
+    await writeFile(adapterFile, "export function other() {}");
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /missing mount export/);
-    await writeFile(pipelineFile, originalPipeline);
+    await writeFile(adapterFile, originalAdapter);
     await assert.rejects(loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
-            || item.kind === "generated.pipeline-renderer"), verify),
+            || item.kind === "generated.phase-control-placement"
+            || item.kind === "generated.phase-control-definition"
+            || item.kind === "generated.phase-control-adapter"), verify),
         /missing shared control definition for canvas.id/);
     await assert.rejects(loadPages(handoff, project, entries,
         [...fields, ...scalar.filter((item) => item.name !== "generated-control-adapter-text")],
@@ -378,7 +403,96 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     setup.fields[0].control = "stock.checkbox";
     await writeFile(entries[0].path, JSON.stringify(setup));
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
-    assert.match(invalid.pages[0].error.reason, /duplicate or invalid field canvas.id/);
+    assert.match(invalid.pages[0].error.reason, /required fixed Designer control/);
+});
+
+test("preset field placements resolve into Workflow and added-page slots", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const fields = await stockTemplates(project);
+    const workflow = scalarFixtures.get(project).find((item) => item.name === "generated-workflow").path;
+    const page = JSON.parse(await readFile(workflow, "utf8"));
+    page.slots.push({ id: "workflow.summary" });
+    await writeFile(workflow, JSON.stringify(page));
+    const folder = join(project, ".specify", "presets", "placement-fixture");
+    await mkdir(folder, { recursive: true });
+    const extra = async (name, kind, contents, extension = "json") => {
+        const path = join(folder, `${name}.${extension}`);
+        await writeFile(path, typeof contents === "string" ? contents : JSON.stringify(contents));
+        return { name, path, kind, strategy: "replace", sourceId: "placement-fixture" };
+    };
+    const risk = new URL("../../../../../spec-kit-presets/copilot-risk-matrix-test/controls/risk-matrix/",
+        import.meta.url);
+    const riskSchema = { type: "object", properties: {
+        impact: ["low", "medium", "high"], likelihood: ["low", "medium", "high"],
+    } };
+    const templates = [...fields,
+        await extra("billing-view", "generated.added-page-definition", {
+            schemaVersion: 1, id: "billing-view", title: "Billing", order: 20,
+            renderer: "billing-renderer", slots: [{ id: "billing.summary" }],
+        }),
+        await extra("billing-renderer", "generated.added-page-renderer",
+            'export function renderPage({root}) { root.innerHTML = \'<div data-field-slot="billing.summary"></div>\'; }',
+            "mjs"),
+        await extra("workflow-description", "generated.field-placement", {
+            schemaVersion: 1, id: "workflow-description", page: "workflow",
+            slot: "workflow.summary", field: "canvas.description", order: 10,
+        }),
+        await extra("billing-description", "generated.field-placement", {
+            schemaVersion: 1, id: "billing-description", page: "billing-view",
+            slot: "billing.summary", field: "canvas.description", order: 10,
+        }),
+        await extra("canvas-control-risk-matrix", "shared.control-definition",
+            await readFile(new URL("control.json", risk), "utf8")),
+        await extra("canvas-control-risk-matrix-designer", "designer.control-adapter",
+            await readFile(new URL("designer.mjs", risk), "utf8"), "mjs"),
+        await extra("canvas-control-risk-matrix-generated", "generated.control-adapter",
+            await readFile(new URL("generated.mjs", risk), "utf8"), "mjs"),
+        ...await Promise.all(["risk.first", "risk.second"].map((id) => extra(
+            `value-${id.replace(".", "-")}`, "generated.value-definition", {
+                schemaVersion: 1, id, label: id, schema: riskSchema,
+                source: { kind: "constant", value: { impact: "low", likelihood: "high" } },
+                presentation: id === "risk.first" ? "stock.editable" : "stock.readonly",
+            }))),
+        ...await Promise.all(["risk.first", "risk.second"].map((id, order) => extra(
+            `placement-${id.replace(".", "-")}`, "generated.field-placement", {
+                schemaVersion: 1, id: `placement-${id.replace(".", "-")}`,
+                page: "workflow", slot: "workflow.summary", field: id,
+                order: order + 20, control: "risk-matrix",
+            }))),
+    ];
+    const registration = () => ({ kind: "template", stack: [{
+        active: true, sourceId: "placement-fixture", layer: "preset", strategy: "replace",
+    }] });
+    const model = await loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+    assert.deepEqual(model.fieldPlacements.map(({ page: id, field }) => [id, field]),
+        [["billing-view", "canvas.description"], ["workflow", "canvas.description"],
+            ["workflow", "risk.first"], ["workflow", "risk.second"]]);
+    const values = { ...model.values, "canvas.id": "placed-canvas",
+        "canvas.displayName": "Placed Canvas", "canvas.description": "One shared value" };
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, prepared.target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.fieldPlacements.filter((item) => item.field === "canvas.description")
+        .map(({ page: id, field, value }) => [id, field, value]),
+    [["billing-view", "canvas.description", "One shared value"],
+        ["workflow", "canvas.description", "One shared value"]]);
+    assert.equal(config.fieldPlacements.filter((item) => item.adapter === "canvas-control-risk-matrix-generated")
+        .length, 2);
+    const portable = join(workspace, "portable-canvas");
+    await cp(join(project, prepared.target), portable, { recursive: true });
+    await rm(folder, { recursive: true });
+    const { readConfig: readPortable } = await import(pathToFileURL(join(portable, "server.mjs")).href);
+    assert.equal(readPortable().fieldPlacements.length, 4);
+    await writeFile(join(portable, "controls", "canvas-control-risk-matrix-generated.mjs"),
+        "export function mount() {}");
+    assert.throws(readPortable, /Packaged placement control/);
 });
 
 test("custom text requiredness is field-specific at Generate while Save keeps drafts", async (t) => {
@@ -453,9 +567,10 @@ test("Generate uses approved adapter validation and still guards extension paths
     const adapter = scalarFixtures.get(project).find((item) =>
         item.name === "designer-control-adapter-text");
     const original = await readFile(adapter.path, "utf8");
-    const load = () => loadResolvedDesignerPages(handoff, project, entries);
+    const templates = await stockTemplates(project);
+    const load = () => loadResolvedDesignerPages(handoff, project, entries, templates);
     const values = { ...(await load()).values, "canvas.id": "valid-canvas",
-        "canvas.displayName": "Valid Canvas" };
+        "canvas.displayName": "Valid Canvas", "canvas.description": "Description" };
     const replaceValidator = async (body) => {
         await writeFile(adapter.path, original.replace(
             "export function validate(value, field) {",
@@ -464,13 +579,13 @@ test("Generate uses approved adapter validation and still guards extension paths
     };
     let model = await replaceValidator("return false;");
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
-        /Invalid Canvas ID \(canvas.id\)/);
+        /Invalid Description \(canvas.description\)/);
     model = await replaceValidator('throw new Error("validator broke");');
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
-        /Canvas ID \(canvas.id\) validator failed: validator broke/);
+        /Description \(canvas.description\) validator failed: validator broke/);
     model = await replaceValidator('return "yes";');
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
-        /Canvas ID \(canvas.id\) validator must return a boolean/);
+        /Description \(canvas.description\) validator must return a boolean/);
     model = await replaceValidator("return true;");
     await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.id": "../escape" },
         handoff, project, workspace }), /Invalid Designer setting: canvas.id/);
@@ -488,7 +603,7 @@ test("stock image requires one compatible control definition and paired self-con
     const fieldPath = join(project, ".specify", "extensions", "extension-canvas-design",
         "designer", "essentials-settings", "header-logo.json");
     await mkdir(dirname(fieldPath), { recursive: true });
-    await copyFile(join(source, "designer", "essentials-settings", "header-logo.json"), fieldPath);
+    await copyFile(join(source, "designer-host", "essentials-settings", "header-logo.json"), fieldPath);
     const fields = [{ name: "designer-essentials-header-logo", path: fieldPath,
         sourceId: "extension:extension-canvas-design", kind: "designer.setting-definition", strategy: "replace" }];
     const adapters = await stockImageTemplates(project);
@@ -520,7 +635,7 @@ test("stock image requires one compatible control definition and paired self-con
     const originalControl = await readFile(control.path, "utf8");
     const duplicate = { ...control, name: "shared-controls-image-copy",
         path: join(project, ".specify", "extensions", "extension-canvas-design",
-            "controls", "stock-image", "copy.json") };
+            "shared-controls", "stock-image", "copy.json") };
     await copyFile(control.path, duplicate.path);
     await assert.rejects(load([...templates, duplicate]),
         /unreferenced or duplicate control definition/);
@@ -559,6 +674,23 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
         { revision: 0, modelRevision: full.revision, values });
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, saved)).values, values);
     const prepared = await freezeGeneration({ model: saved, values, handoff, project, workspace });
+    const phaseRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(Object.keys(phaseRequest.workflowPage).sort(),
+        ["assets", "id", "order", "slots", "title"]);
+    assert.equal(phaseRequest.workflowPage.id, "workflow");
+    assert.equal(phaseRequest.phasePlacement.control, "generated-phase-control");
+    assert.equal(phaseRequest.phasePlacement.slot, "workflow.phases");
+    assert.deepEqual(phaseRequest.workflowPage.assets.map(({ name, kind }) => [name, kind]), [
+        ["generated-workflow", "generated.workflow-page-definition"],
+        ["generated-phase-control", "generated.phase-control-definition"],
+        ["generated-phase-adapter", "generated.phase-control-adapter"],
+    ]);
+    for (const asset of phaseRequest.workflowPage.assets) {
+        assert.deepEqual(Object.keys(asset).sort(), ["content", "hash", "kind", "name", "sourceId"]);
+        assert.equal(createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex"),
+            asset.hash);
+    }
     const { materialize } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs",
         import.meta.url));
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
@@ -607,6 +739,19 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     assert.doesNotMatch(defaultHtml, /id="workflow-slug"/);
     assert.equal(await readFile(join(project, next.target, "ui", "runtime.css"), "utf8"),
         await readFile(join(project, prepared.target, "ui", "runtime.css"), "utf8"));
+    const originalPages = await Promise.all(entries.slice(0, 2)
+        .map((entry) => readFile(entry.path, "utf8")));
+    for (const [index, contents] of originalPages.entries()) {
+        const page = JSON.parse(contents);
+        delete page.fixedControl;
+        await writeFile(entries[index].path, JSON.stringify(page));
+    }
+    const legacyPages = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.equal(legacyPages.pages[0].fixedControl, "designer.identity");
+    assert.equal(legacyPages.pages[1].fixedControl, "designer.outputs");
+    for (const [index, contents] of originalPages.entries()) {
+        await writeFile(entries[index].path, contents);
+    }
     const withoutSlug = await loadResolvedDesignerPages(handoff, project, entries, templates.slice(0, 2));
     assert.equal(Object.hasOwn(withoutSlug.values, "workflowSlug.userProvided"), false);
     await writeFile(templates[0].path, JSON.stringify({
@@ -627,10 +772,11 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     broken.fields.push({ id: "billing.required", label: "Required", type: "boolean" });
     await writeFile(entries[1].path, JSON.stringify(broken));
     const incomplete = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.match(incomplete.pages[1].error.reason, /required fixed Designer control/);
     await assert.rejects(freezeGeneration({ model: incomplete,
-        values: { ...incomplete.values, ...minimum, "billing.required": "not a boolean" },
+        values: { ...incomplete.values, ...minimum },
         handoff, project, workspace }),
-    /Invalid Designer setting: billing.required/);
+    /Cannot generate while designer-artifacts is invalid/);
     await writeFile(entries[1].path, "{invalid");
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
     assert.ok(invalid.pages[1].error);
@@ -642,7 +788,7 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     const missingIdentity = await loadResolvedDesignerPages(handoff, project, entries);
     await assert.rejects(freezeGeneration({ model: missingIdentity,
         values: { ...missingIdentity.values, "canvas.id": "other" },
-        handoff, project, workspace }), /Canvas ID and Title/);
+        handoff, project, workspace }), /Essentials must load with Canvas ID and Title/);
 });
 
 test("stock Logo validates, persists, freezes and packages a portable header image with fallback", async (t) => {
@@ -659,8 +805,8 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     const mainPath = join(project, ".specify", "extensions", "extension-canvas-design",
         "designer", "essentials-settings", "main-page-logo.json");
     await mkdir(dirname(path), { recursive: true });
-    await copyFile(join(source, "designer", "essentials-settings", "header-logo.json"), path);
-    await copyFile(join(source, "designer", "essentials-settings", "main-page-logo.json"), mainPath);
+    await copyFile(join(source, "designer-host", "essentials-settings", "header-logo.json"), path);
+    await copyFile(join(source, "designer-host", "essentials-settings", "main-page-logo.json"), mainPath);
     const templates = [...[path, mainPath].map((file, index) => ({
         name: index ? "designer-essentials-main-page-logo" : "designer-essentials-header-logo", path: file,
         sourceId: "extension:extension-canvas-design", kind: "designer.setting-definition", strategy: "replace",
@@ -1377,9 +1523,9 @@ test("token-gated Save endpoint reports errors without losing the current values
     const handoff = validHandoff();
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
-    const changedPage = JSON.parse(await readFile(entries[1].path, "utf8"));
+    const changedPage = JSON.parse(await readFile(entries[0].path, "utf8"));
     changedPage.fields.push({ id: "changed", label: "Changed" });
-    await writeFile(entries[1].path, JSON.stringify(changedPage));
+    await writeFile(entries[0].path, JSON.stringify(changedPage));
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries));
     const shell = await startShell(handoff, model, { project, workspace });
@@ -1421,7 +1567,8 @@ test("Save accepts a bounded request and rejects one byte over the limit", async
     const handoff = validHandoff("a".repeat(128));
     const folder = await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
-    for (const [index, entry] of entries.slice(0, 3).entries()) {
+    for (const index of [0, 2]) {
+        const entry = entries[index];
         const page = JSON.parse(await readFile(entry.path, "utf8"));
         while (page.fields.length < 100) {
             const id = `custom.${index}.${page.fields.length}`;
@@ -1430,7 +1577,7 @@ test("Save accepts a bounded request and rejects one byte over the limit", async
         await writeFile(entry.path, JSON.stringify(page));
     }
     const model = await loadResolvedDesignerPages(handoff, project, entries);
-    assert.equal(Object.keys(model.constraints).length, 300);
+    assert.equal(Object.keys(model.constraints).length, 200);
     const values = { ...model.values, "canvas.id": "example", "canvas.displayName": "Example" };
     const payload = { revision: 0, modelRevision: model.revision, values };
     let remaining = SAVE_REQUEST_LIMIT - Buffer.byteLength(JSON.stringify(payload));
@@ -1539,11 +1686,11 @@ test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
-    const page = JSON.parse(await readFile(entries[1].path, "utf8"));
+    const page = JSON.parse(await readFile(entries[0].path, "utf8"));
     for (let index = 0; index < 20; index++) {
         page.fields.push({ id: `custom.${index}`, label: `Custom ${index}` });
     }
-    await writeFile(entries[1].path, JSON.stringify(page));
+    await writeFile(entries[0].path, JSON.stringify(page));
     const model = await loadResolvedDesignerPages(handoff, project, entries);
     const values = { ...model.values, "canvas.id": "large-canvas",
         "canvas.displayName": "Large Canvas" };
@@ -1641,11 +1788,11 @@ test("reads the complete effective page set from the child checkout without a sn
     const override = join(project, ".specify", "presets", "override.json");
     await mkdir(join(project, ".specify", "presets"));
     const changed = JSON.parse(await readFile(entries[0].path, "utf8"));
-    changed.fields[1].label = "Custom title";
+    changed.title = "Custom Essentials";
     await writeFile(override, JSON.stringify(changed));
     const effective = [{ ...entries[0], path: override }, ...entries.slice(1)];
     const model = await loadResolvedDesignerPages(handoff, project, effective);
-    assert.equal(model.pages[0].fields[1].label, "Custom title");
+    assert.equal(model.pages[0].title, "Custom Essentials");
     assert.equal(model.pages[0].provenance.path, override);
     assert.equal((await loadResolvedDesignerPages(handoff, project, effective)).revision, model.revision);
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries.slice(1)),
@@ -3163,7 +3310,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             join(shared, file));
     }
     await mkdir(join(extension, "ui"));
-    for (const file of ["index.html", "app.js", "styles.css"]) {
+    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
     const { project, entries } = await projectFixture(t, workspace);
@@ -3201,7 +3348,9 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.equal(canvas.inputSchema.properties.templates.maxItems, 100);
     assert.deepEqual(canvas.inputSchema.properties.templates.items.properties.kind.enum,
         ["designer.setting-definition", "generated.workflow-page-definition",
-            "generated.pipeline-renderer", "generated.added-page-definition",
+            "generated.phase-control-definition", "generated.phase-control-adapter",
+            "generated.phase-control-placement", "generated.field-placement",
+            "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",
             "designer.control-adapter", "generated.control-adapter",
             "generated.value-definition", "generated.computed-value-provider"]);

@@ -271,9 +271,13 @@ addition to) the hosted registry entry:
   installed bundles use a matching catalog ID/name and version; an explicitly
   selected bundle disambiguates matching catalog sources. A missing or
   ambiguous match blocks launch rather than guessing a source.
-  Missing or ambiguous sources, version mismatches, and sources that
-  change before dispatch block launch instead of guessing. It installs
-  remaining standalone extensions (including local overrides), then
+  Missing or ambiguous sources and sources that change before dispatch
+  block launch instead of guessing. Child package version drift is reported
+  as a warning, while mismatched package identity or source still blocks
+  launch. Hosted Canvas Design download URLs are quoted as single shell
+  arguments in both install instructions, including the post-bundle restore.
+  It installs remaining standalone extensions (including local
+  overrides), then
   standalone presets (including local overrides).
   This ensures bundled and standalone preset command additions have the base
   available. It stops on composition warnings even if Specify exits
@@ -281,18 +285,36 @@ addition to) the hosted registry entry:
   preset page/template names before opening Designer. This ordering applies
   only to Designer launch, not the Wizard's Catalogs install actions or a
   generated canvas opened independently as a standard plugin.
-- Before installing, the child runs a read-only preflight that checks the
+- Before installing, the child prepares the session-root handoff: it accepts
+  the exact launch-hashed bytes or strips one trailing LF/CRLF only when the
+  remaining bytes match the launch hash. Other changes fail without rewriting
+  the file. The subsequent read-only preflight checks the
   session-root handoff bytes against the hash in the launch prompt, as well as
   Specify CLI version, project setup, and approved local paths and manifest
-  IDs. This exact-byte check applies at preflight only; later `verify-local`
-  calls validate the handoff but do not compare its bytes to that launch hash.
+  IDs. The child writes the exact UTF-8 JSON from the prompt without a
+  trailing newline or BOM and checks its hash before preflight. This exact-byte
+  check applies at preflight only; later `verify-local` calls validate the
+  handoff but do not compare its bytes to that launch hash.
   After local installation and later overrides, the child checks the installed
   manifest ID and Specify's local inventory entry (ID and local source kind);
   it does not pin a local development version.
   Local development sources remain mutable; their file contents are not
-  compared with a preflight snapshot. The hosted Canvas Design requirement
-  remains v0.1.7; an approved local source uses its own manifest version and
-  composed capabilities instead.
+  compared with a preflight snapshot. The hosted Canvas Design version and
+  download URL are frozen from the approved catalog at launch. The child warns
+  if the installed version differs but still verifies the installed ID,
+  inventory source kind, manifest/inventory agreement, and Designer schema
+  contract. Specify reports a package installed from an approved `--from`
+  download URL as `source.kind: "local"`; this does not mean it was installed
+  as a local development override. The CLI inventory does not preserve the
+  download URL, so the child uses the frozen URL for installation and restores
+  it after bundles before verifying the base again.
+  For hosted Canvas Design, `verify-base` also requires the installed Workflow,
+  phase-placement, phase-control, and phase-adapter template registrations and
+  files; a compatible schema contract alone is insufficient. If they are
+  missing, launch stops before Designer opens and directs the user to an
+  approved local-source override instead of treating the hosted package as ready.
+  An approved local source may have a different version but must declare a
+  compatible Designer tab schema version.
 - Newer Canvas Design packages run a read-only verifier over the **generated,
   composed** load-page skill and Specify's per-name resolution/stack metadata.
   It produces the complete pages/templates input only when all registrations
@@ -331,7 +353,7 @@ flow recognize it.
   `speckit-cli-setup`).
 - The `spec-kit-copilot` core skills plugin installed — the wizard
   dispatches to its skills by name.
-- Node.js runtime (bundled with the Copilot App). Wizard setup installs
+- Node.js 22 or newer (bundled with the Copilot App). Wizard setup installs
   `js-yaml` for YAML manifests and `es-module-lexer` for the sibling
   Designer's generated-renderer validation when either is missing.
 

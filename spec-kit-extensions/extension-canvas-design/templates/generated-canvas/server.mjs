@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
 import { validControlValue } from "./control-contract.mjs";
@@ -69,12 +70,14 @@ function validGeneratedPages(pages) {
     return pages === undefined || (Array.isArray(pages) && pages.length <= 30
         && new Set(pages.map((page) => page?.id)).size === pages.length
         && pages.every((page) => page && typeof page === "object" && !Array.isArray(page)
-            && Object.keys(page).every((key) => ["id", "renderer", "title", "values", "slots"].includes(key))
+            && Object.keys(page).every((key) => ["id", "renderer", "title", "order", "values", "slots"].includes(key))
             && typeof page.id === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             && page.id !== RESERVED_GENERATED_PAGE_ID && !isWindowsDeviceName(page.id)
             && typeof page.renderer === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
             && !isWindowsDeviceName(page.renderer)
             && typeof page.title === "string" && !!page.title.trim() && page.title.length <= 120
+            && (page.order === undefined || Number.isInteger(page.order)
+                && page.order >= -100000 && page.order <= 100000)
             && (page.values === undefined || Array.isArray(page.values)
                 && page.values.length <= 100 && new Set(page.values).size === page.values.length
                 && page.values.every((id) => typeof id === "string"
@@ -98,6 +101,55 @@ function validGeneratedControls(controls) {
             && typeof item.label === "string" && !!item.label && item.label.length <= 120
             && item.slot === "details.content"
             && validControlValue(item.value, { type: "object", properties: item.properties })));
+}
+
+function validFieldPlacements(config) {
+    const placements = config.fieldPlacements ?? [];
+    if (!Array.isArray(placements) || placements.length > 100
+        || new Set(placements.map((item) => item?.id)).size !== placements.length
+        || new Set(placements.map((item) =>
+            `${item?.page}:${item?.slot}:${item?.field}`)).size !== placements.length) return false;
+    return placements.every((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)
+            || Object.keys(item).some((key) => !["id", "page", "slot", "field", "order",
+                "control", "label", "schema", "editable", "value", "asset", "adapter", "hash",
+                "adapterHash", "definition", "definitionHash"].includes(key))
+            || typeof item.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(item.id)
+            || !/^[a-f0-9]{64}$/.test(item.hash)
+            || typeof item.field !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.field)
+            || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+            || !Number.isInteger(item.order) || item.order < -100000 || item.order > 100000
+            || !item.schema || !["string", "boolean", "object", "image"].includes(item.schema.type)
+            || typeof item.editable !== "boolean" || item.editable && item.value !== undefined
+            || item.slot === "workflow.phases"
+            || !(item.page === "workflow" ? config.workflowPage.slots
+                : config.generatedPages?.find((page) => page.id === item.page)?.slots)
+                ?.some((slot) => slot.id === item.slot)) return false;
+        const value = config.valueSources?.find((source) => source.id === item.field);
+        if (value && (value.label !== item.label || JSON.stringify(value.schema) !== JSON.stringify(item.schema)
+            || item.editable !== (value.presentation === "stock.editable")
+            || value.presentation === "processing-only" || item.value !== undefined)) return false;
+        if (item.schema.type === "image") {
+            return item.control === "stock.image" && !item.editable
+                && (item.asset === undefined || ["image/png", "image/jpeg", "image/gif", "image/webp"]
+                    .includes(item.asset.mime)
+                    && /^[a-z0-9-]+\.(?:png|jpg|gif|webp)$/.test(item.asset.file)
+                    && validImageAsset(item.asset, item.asset.file.split(".")[0]));
+        }
+        if (!value && (item.value === undefined || item.editable)) return false;
+        if (item.schema.type === "string" || item.schema.type === "boolean") {
+            return item.control === (item.schema.type === "string" ? "stock.text" : "stock.checkbox")
+                && item.adapter === undefined
+                && (value || typeof item.value === item.schema.type);
+        }
+        return item.schema.type === "object" && typeof item.adapter === "string"
+            && /^[a-z][a-z0-9-]{0,79}$/.test(item.adapter)
+            && /^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+            && /^[a-f0-9]{64}$/.test(item.adapterHash)
+            && typeof item.definition === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(item.definition)
+            && /^[a-f0-9]{64}$/.test(item.definitionHash)
+            && (value || validControlValue(item.value, item.schema));
+    });
 }
 
 function validRuntimeConfig(config) {
@@ -141,25 +193,33 @@ export function readConfig() {
                             || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
                             || typeof field.section.title !== "string"
                             || !field.section.title.trim() || field.section.title.length > 120)))))
-        || !config.workflowPage || !Array.isArray(config.workflowPage.regions)
-        || config.workflowPage.regions.length !== WORKFLOW_REGIONS.length
-        || new Set(config.workflowPage.regions).size !== WORKFLOW_REGIONS.length
-        || config.workflowPage.regions.some((region) => !WORKFLOW_REGIONS.includes(region))
-        || !/^[a-z][a-z0-9-]{0,79}$/.test(config.workflowPage.pipeline)
+        || !config.workflowPage || typeof config.workflowPage.title !== "string"
+        || !config.workflowPage.title.trim() || config.workflowPage.title.length > 120
+        || config.workflowPage.order !== 0
+        || !Array.isArray(config.workflowPage.slots) || config.workflowPage.slots.length > 30
+        || !config.workflowPage.slots.some((slot) => slot?.id === "workflow.phases")
+        || new Set(config.workflowPage.slots.map((slot) => slot?.id)).size !== config.workflowPage.slots.length
+        || config.workflowPage.slots.some((slot) => !slot || Object.keys(slot).join() !== "id"
+            || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))
+        || config.workflowPage.phaseControl !== "generated-phase-control"
+        || config.workflowPage.adapter !== "generated-phase-adapter"
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.hash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.definitionHash)
-        || Object.keys(config.workflowPage).sort().join() !== "definitionHash,hash,pipeline,regions"
+        || !/^[a-f0-9]{64}$/.test(config.workflowPage.controlHash)
+        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,order,phaseControl,slots,title"
         || (config.generatedPages !== undefined
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
                 || config.generatedPages.some((page) => !page || typeof page !== "object"
                             || Array.isArray(page) || Object.keys(page).some((key) =>
-                                !["id", "renderer", "title", "values", "slots"].includes(key))
+                                !["id", "renderer", "title", "order", "values", "slots"].includes(key))
                             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
                             || page.id === RESERVED_GENERATED_PAGE_ID
                             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
-                            || page.renderer === config.workflowPage.pipeline
+                            || page.renderer === config.workflowPage.adapter
                             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
+                            || (page.order !== undefined && (!Number.isInteger(page.order)
+                                || page.order < -100000 || page.order > 100000))
                             || (page.slots !== undefined && (!Array.isArray(page.slots)
                                 || page.slots.length > 30
                                 || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
@@ -214,7 +274,8 @@ export function readConfig() {
             || !/^[a-f0-9]{64}$/.test(config.imageControl.hash)
             || !/^[a-f0-9]{64}$/.test(config.imageControl.definitionHash)))
         || (!config.imageControl && !!(config.brandAsset || config.mainPageAsset
-            || config.generatedPageAssets?.length))
+            || config.generatedPageAssets?.length
+            || config.fieldPlacements?.some((item) => item.asset)))
         || (config.imageControl && config.generatedControls?.some((item) =>
             item.adapter === config.imageControl.adapter))
         || (config.textControl !== undefined && (!config.textControl
@@ -248,6 +309,7 @@ export function readConfig() {
         || !validGeneratedPages(config.generatedPages)
         || !validReadOnlyFields(config.readOnlyFields)
         || !validGeneratedControls(config.generatedControls)
+        || !validFieldPlacements(config)
         || !validRuntimeConfig(config)) {
         throw new Error("Invalid generated canvas configuration");
     }
@@ -257,6 +319,12 @@ export function readConfig() {
     if (config.imageControl) readImageControl(config.imageControl);
     if (config.textControl) readTextControl(config.textControl);
     readWorkflowPage(config.workflowPage);
+    readPhasePlacement(config.phasePlacement, config.workflowPage);
+    for (const item of config.fieldPlacements ?? []) {
+        readFieldPlacement(item);
+        if (item.adapter) readPlacementControl(item);
+        if (item.asset) readImageAsset(item.asset);
+    }
     const sections = new Map();
     for (const { section } of config.readOnlyFields ?? []) {
         if (!section) continue;
@@ -270,21 +338,73 @@ export function readConfig() {
     return config;
 }
 
+function readPhasePlacement(placement, page) {
+    if (!placement || Object.keys(placement).sort().join() !== "control,hash,id,page,slot"
+        || placement.id !== "generated-phase-placement" || placement.page !== "workflow"
+        || placement.slot !== "workflow.phases" || placement.control !== page.phaseControl
+        || !/^[a-f0-9]{64}$/.test(placement.hash)) {
+        throw new Error("Invalid required phase placement");
+    }
+    const bytes = readPackagedFile(new URL("./pages/generated-phase-placement.json", import.meta.url));
+    const { $schema, ...definition } = JSON.parse(bytes);
+    if (createHash("sha256").update(bytes).digest("hex") !== placement.hash
+        || !isDeepStrictEqual(definition, { schemaVersion: 1,
+            id: placement.id, page: placement.page, slot: placement.slot, control: placement.control })) {
+        throw new Error("Packaged phase placement differs from its frozen contract");
+    }
+}
+
+function readFieldPlacement(placement) {
+    const bytes = readPackagedFile(new URL(`./pages/${placement.id}.json`, import.meta.url));
+    const { $schema, ...definition } = JSON.parse(bytes);
+    if (createHash("sha256").update(bytes).digest("hex") !== placement.hash
+        || !isDeepStrictEqual(definition, { schemaVersion: 1,
+            id: placement.id, page: placement.page, slot: placement.slot,
+            field: placement.field, order: placement.order,
+            ...(definition.control === undefined ? {} : { control: placement.control }) })) {
+        throw new Error(`Packaged field placement ${placement.id} differs from its frozen contract`);
+    }
+}
+
+function readPlacementControl(item) {
+    const bytes = readPackagedFile(new URL(`./controls/${item.adapter}.mjs`, import.meta.url));
+    const definition = readPackagedFile(new URL(`./controls/${item.definition}.json`, import.meta.url));
+    const { $schema, ...document } = JSON.parse(definition);
+    if (createHash("sha256").update(bytes).digest("hex") !== item.adapterHash
+        || createHash("sha256").update(definition).digest("hex") !== item.definitionHash
+        || document.id !== item.control || document.adapters?.generated !== item.adapter
+        || !isDeepStrictEqual(document.value, item.schema)) {
+        throw new Error(`Packaged placement control ${item.control} differs from its frozen contract`);
+    }
+    return bytes;
+}
+
 function readWorkflowPage(page) {
     const definition = readPackagedFile(new URL("./pages/workflow.json", import.meta.url));
     if (createHash("sha256").update(definition).digest("hex") !== page.definitionHash) {
         throw new Error("Packaged Workflow page definition does not match its frozen hash");
     }
     const parsed = JSON.parse(definition);
-    if (parsed.schemaVersion !== 1 || parsed.id !== "workflow" || parsed.pipeline !== page.pipeline
-        || Object.keys(parsed).filter((key) => key !== "$schema").sort().join() !== "id,pipeline,regions,schemaVersion"
-        || JSON.stringify(parsed.regions) !== JSON.stringify(page.regions)) {
+    if (parsed.schemaVersion !== 1 || parsed.id !== "workflow"
+        || Object.keys(parsed).filter((key) => key !== "$schema").sort().join() !== "id,order,schemaVersion,slots,title"
+        || parsed.title !== page.title || parsed.order !== page.order
+        || JSON.stringify(parsed.slots) !== JSON.stringify(page.slots)) {
         throw new Error("Packaged Workflow page definition differs from its frozen contract");
     }
-    const bytes = readPackagedFile(new URL(`./pages/${page.pipeline}.mjs`, import.meta.url));
+    const control = readPackagedFile(new URL("./pages/phase-control.json", import.meta.url));
+    if (createHash("sha256").update(control).digest("hex") !== page.controlHash) {
+        throw new Error("Packaged phase control definition does not match its frozen hash");
+    }
+    const registration = JSON.parse(control);
+    if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
+        || registration.adapter !== page.adapter
+        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,schemaVersion") {
+        throw new Error("Packaged phase control definition differs from its frozen contract");
+    }
+    const bytes = readPackagedFile(new URL(`./pages/${page.adapter}.mjs`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
         || createHash("sha256").update(bytes).digest("hex") !== page.hash) {
-        throw new Error("Packaged pipeline renderer does not match its frozen hash");
+        throw new Error("Packaged phase control adapter does not match its frozen hash");
     }
     return bytes;
 }
@@ -369,12 +489,6 @@ function readTextControl(control) {
     }
     return bytes;
 }
-function phaseLabel(phase) {
-    if (phase.replace(/^speckit\./, "") === "taskstoissues") return "Create issues";
-    return phase.replace(/^speckit\./, "").split(/[._-]/)
-        .map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
-}
-
 export function renderHtml(config, token = "") {
     const { canvas } = config;
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
@@ -422,8 +536,9 @@ export function renderHtml(config, token = "") {
                     data-module="/controls/${escapeHtml(adapter)}.mjs"
                     data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("") ?? "",
         pages: config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
-            <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">Workflow</button>
-            ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
+            <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">${escapeHtml(config.workflowPage.title)}</button>
+            ${config.generatedPages.map(({ id, title }) =>
+                `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
         </nav>
         <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
             data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>` : "",
@@ -433,11 +548,14 @@ export function renderHtml(config, token = "") {
             <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create / update</button></div></div>
         </details>` : "",
         message: '<p id="canvas-message" role="status"></p>',
-        pipeline: `<div id="workflow-pipeline" data-module="/pages/${escapeHtml(config.workflowPage.pipeline)}.mjs"
+        pipeline: `<div id="workflow-pipeline" data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
             data-phases="${escapeHtml(JSON.stringify(phaseContract(config).filter((step) => !step.project)
-                .map((step) => ({ id: step.id, label: phaseLabel(step.id), output: step.output,
+                .map((step) => ({ id: step.id, label: step.label, output: step.output,
                     outputs: step.outputs }))))}"></div>`,
     };
+    const workflowContributions = config.workflowPage.slots.filter(({ id }) => id !== "workflow.phases"
+        && config.fieldPlacements?.some((item) => item.page === "workflow" && item.slot === id))
+        .map(({ id }) => `<section class="phase-card" data-workflow-slot="${escapeHtml(id)}"></section>`).join("");
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -452,8 +570,9 @@ export function renderHtml(config, token = "") {
 <main class="app-body workflow-surface">
     ${config.generatedPages?.length ? regions.pages : ""}
     ${config.generatedPages?.length ? '<div id="workflow-content" class="workflow-content">' : ""}
-    ${config.workflowPage.regions.filter((region) => !config.generatedPages?.length
-        || (region !== "pages" && region !== "message")).map((region) => regions[region]).join("")}
+    ${WORKFLOW_REGIONS.filter((region) => !config.generatedPages?.length
+        || (region !== "pages" && region !== "message")).map((region) =>
+        regions[region] + (region === "pipeline" ? workflowContributions : "")).join("")}
     ${config.generatedPages?.length ? `</div>${regions.message}` : ""}
     ${config.generatedPages?.map(({ id, renderer, slots, values }) =>
         `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"
@@ -466,9 +585,13 @@ export function renderHtml(config, token = "") {
     ${config.imageControl ? `<span hidden id="stock-image-registration"
         data-module="/controls/${escapeHtml(config.imageControl.adapter)}.mjs"
         data-assets="${escapeHtml(JSON.stringify([config.brandAsset, config.mainPageAsset,
-            ...(config.generatedPageAssets ?? [])].filter(Boolean).map((asset) => asset.file)))}"></span>` : ""}
+            ...(config.generatedPageAssets ?? []),
+            ...(config.fieldPlacements ?? []).map((item) => item.asset)].filter(Boolean)
+            .map((asset) => asset.file)))}"></span>` : ""}
     ${config.textControl ? `<span hidden id="stock-text-registration"
         data-module="/controls/${escapeHtml(config.textControl.adapter)}.mjs"></span>` : ""}
+    <span hidden id="generated-field-placements"
+        data-placements="${escapeHtml(JSON.stringify(config.fieldPlacements ?? []))}"></span>
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
 <dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title"><h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2><p>This permanently deletes the selected workflow directory and everything in it:</p><p><code id="delete-workflow-directory"></code></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow" type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow" type="button">Delete workflow</button></footer></dialog>
@@ -504,7 +627,8 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 return;
             }
             const imageAsset = [config.brandAsset, config.mainPageAsset,
-                ...(config.generatedPageAssets ?? [])]
+                ...(config.generatedPageAssets ?? []),
+                ...(config.fieldPlacements ?? []).map((item) => item.asset).filter(Boolean)]
                 .find((asset) => asset && url.pathname === `/assets/${asset.file}`);
             if (request.method === "GET" && imageAsset) {
                 const bytes = readImageAsset(imageAsset);
@@ -515,9 +639,9 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             }
             const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
             if (request.method === "GET" && moduleName
-                && (config.workflowPage.pipeline === moduleName
+                && (config.workflowPage.adapter === moduleName
                     || config.generatedPages?.some((page) => page.renderer === moduleName))) {
-                const module = config.workflowPage.pipeline === moduleName
+                const module = config.workflowPage.adapter === moduleName
                     ? readWorkflowPage(config.workflowPage)
                     : readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }).end(module);
@@ -527,12 +651,15 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && controlName
                 && (config.generatedControls?.some((item) => item.adapter === controlName)
                     || config.imageControl?.adapter === controlName
-                    || config.textControl?.adapter === controlName)) {
+                    || config.textControl?.adapter === controlName
+                    || config.fieldPlacements?.some((item) => item.adapter === controlName))) {
                 const module = config.imageControl?.adapter === controlName
                     ? readImageControl(config.imageControl)
                     : config.textControl?.adapter === controlName
                         ? readTextControl(config.textControl)
-                        : readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url));
+                        : config.fieldPlacements?.find((item) => item.adapter === controlName)
+                            ? readPlacementControl(config.fieldPlacements.find((item) => item.adapter === controlName))
+                            : readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
                     .end(module);
                 return;

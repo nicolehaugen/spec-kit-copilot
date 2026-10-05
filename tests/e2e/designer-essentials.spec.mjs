@@ -4,10 +4,10 @@ import { test, expect } from "./playwright.mjs";
 const ui = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/ui/",
     import.meta.url);
 const extension = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
-const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design/controls/",
+const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design/shared-controls/",
     import.meta.url);
 
-async function openDesigner(page, fields, extraPage) {
+async function openDesigner(page, fields, extraPage, warnings = []) {
     const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
         JSON.parse(await readFile(new URL(`${name}/control.json`, stockControls), "utf8"))));
     const constraints = {
@@ -53,13 +53,14 @@ async function openDesigner(page, fields, extraPage) {
                         ? "Cost code (billing.costCode)" : null;
             await route.fulfill(invalid
                 ? { status: 400, json: { error: `Invalid ${invalid}` } }
-                : { status: 202, json: { target: ".github/extensions/test/" } });
+                : { status: 202, json: { target: ".github/extensions/test/", warnings } });
         } else if (path === "/adapters/designer-control-adapter-text.mjs"
             || path === "/adapters/designer-control-adapter-checkbox.mjs") {
             const name = path.includes("checkbox") ? "stock-checkbox" : "stock-text";
-            await route.fulfill({ body: await readFile(new URL(`controls/${name}/designer.mjs`, extension)),
+            await route.fulfill({ body: await readFile(new URL(`shared-controls/${name}/designer.mjs`, extension)),
                 contentType: "text/javascript" });
-        } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css") {
+        } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css"
+            || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js") {
             const file = path === "/" ? "index.html" : path.slice(4);
             await route.fulfill({ body: await readFile(new URL(file, ui)), contentType:
                 file.endsWith(".html") ? "text/html" : file.endsWith(".css")
@@ -76,6 +77,17 @@ const core = [{ id: "canvas.id", label: "Canvas ID" },
 const stock = [{ id: "canvas.description", label: "Description" },
     { id: "canvas.workflowListName", label: "Workflow header" },
     { id: "workflowSlug.userProvided", label: "Allow custom slug", type: "boolean" }];
+
+test("Generate remains queued and displays installed-version warnings", async ({ page }) => {
+    const requests = await openDesigner(page, core, undefined,
+        ["presets copilot-sub-agents: Wizard version 1.0.0, installed version unverified."]);
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("stock-canvas");
+    await page.getByRole("textbox", { name: /Title/ }).fill("Stock Canvas");
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await expect(page.locator("#action-message"))
+        .toContainText("Warning: presets copilot-sub-agents: Wizard version 1.0.0, installed version unverified.");
+    expect(requests).toHaveLength(1);
+});
 
 test("stock Essentials keep five ordered controls and Generate submits all enabled values", async ({ page }) => {
     const requests = await openDesigner(page, [...core, ...stock]);
