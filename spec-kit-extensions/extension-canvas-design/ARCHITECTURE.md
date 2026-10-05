@@ -291,10 +291,15 @@ spec-kit-extensions/extension-canvas-design/
   extension.yml
   commands/load-page.md
   commands/generate.md
-  designer/tabs/essentials.json        required identity fields and an optional-field slot
-  designer/tabs/artifacts.json         currently empty placeholder
-  designer/tabs/appearance.json        currently empty placeholder
-  designer/essentials-settings/*.json  optional Essentials fields
+  designer-host/tabs/essentials.json        required identity fields and an optional-field slot
+  designer-host/tabs/artifacts.json         currently empty placeholder
+  designer-host/tabs/appearance.json        currently empty placeholder
+  designer-host/essentials-settings/*.json  optional Essentials fields
+  generated-host/workflow/workflow.json      required Workflow page definition
+  generated-host/workflow/generated-phase-placement.json  phase control placement
+  generated-host/phase-control/phase-control.json  phase control identity
+  generated-host/phase-control/generated-phase-adapter.mjs  phase UI adapter
+  shared-controls/stock-{text,checkbox,image}/  cross-host definitions and adapters
   schemas/designer.tab-definition.schema.json  currently string/boolean fields
   scripts/generate.mjs
   templates/generated-canvas/
@@ -317,18 +322,18 @@ spec-kit-extensions/extension-canvas-design/
   commands/
     load-page.md
     generate.md
-  designer/tabs/
+  designer-host/tabs/
     essentials.json                    core ID/name fields; optional-field slot
     artifacts.json                     phase-output review slot
     appearance.json                    palette/theme slot
-  designer/essentials-settings/
+  designer-host/essentials-settings/
     stock-essentials.json              optional Essentials fields
-  designer/settings/
+  designer-host/settings/
     stock-artifacts.json               Artifacts page control registration
     stock-appearance.json              Appearance page control registration
-  generated/
+  generated-host/
     stock-generated.json               proposed generated-host features
-  controls/
+  shared-controls/
     phase-outputs/
       control.json
       designer.mjs                     structured Artifacts editor
@@ -587,16 +592,16 @@ provides:
       description: Materialize the validated frozen canvas app.
   templates:
     - name: designer-essentials
-      file: designer/tabs/essentials.json
+      file: designer-host/tabs/essentials.json
       description: Required canvas identity fields and Essentials slot.
     - name: designer-artifacts
-      file: designer/tabs/artifacts.json
+      file: designer-host/tabs/artifacts.json
       description: Artifacts page and phase-output review slot.
     - name: designer-appearance
-      file: designer/tabs/appearance.json
+      file: designer-host/tabs/appearance.json
       description: Appearance page and palette slot.
     - name: canvas-contributions-stock-essentials
-      file: designer/essentials-settings/stock-essentials.json
+      file: designer-host/essentials-settings/stock-essentials.json
       description: Optional stock Essentials fields.
     - name: canvas-contributions-stock-artifacts
       file: designer/settings/stock-artifacts.json

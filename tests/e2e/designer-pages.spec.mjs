@@ -13,8 +13,8 @@ import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/exte
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
 import { renderHtml } from "../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs";
 
-const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer/tabs/", import.meta.url);
-const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer/essentials-settings/", import.meta.url);
+const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/tabs/", import.meta.url);
+const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/", import.meta.url);
 const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
@@ -95,7 +95,7 @@ async function prepareScalarAdapters(project, state) {
     }
     state.controls = [...(state.controls ?? []),
         ...await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
-            JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extensionRoot), "utf8"))))];
+            JSON.parse(await readFile(new URL(`shared-controls/${name}/control.json`, extensionRoot), "utf8"))))];
     state.adapters = { ...state.adapters, "stock.text": "designer-control-adapter-text",
         "stock.checkbox": "designer-control-adapter-checkbox" };
     state.templates ??= [];
@@ -107,7 +107,7 @@ async function prepareScalarAdapters(project, state) {
             "controls", file, "designer.mjs");
         await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
             "controls", file), { recursive: true });
-        await copyFile(new URL(`controls/${file}/designer.mjs`, extensionRoot), path);
+        await copyFile(new URL(`shared-controls/${file}/designer.mjs`, extensionRoot), path);
         const bytes = await readFile(path);
         state.templates.push({ name, path,
             hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.control-adapter" });
@@ -131,7 +131,7 @@ async function startPreparedShell(state) {
                 "controls", "stock-image", "designer.mjs");
             await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
                 "controls", "stock-image"), { recursive: true });
-            await copyFile(new URL("controls/stock-image/designer.mjs", extensionRoot), path);
+            await copyFile(new URL("shared-controls/stock-image/designer.mjs", extensionRoot), path);
             const bytes = await readFile(path);
             state.templates.push({ name: "designer-control-adapter-image", path,
                 hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.control-adapter" });
@@ -167,7 +167,7 @@ test("Main page Logo upload explains rejection beside the picker and clears on r
         mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
     state.values[field.id] = "";
     state.controls = [JSON.parse(await readFile(
-        new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
+        new URL("shared-controls/stock-image/control.json", extensionRoot), "utf8"))];
     state.adapters = { "stock.image": "designer-control-adapter-image" };
     const shell = await startPreparedShell(state);
     try {
@@ -243,7 +243,7 @@ test("pending or failed image selection blocks actions until completion or cance
         mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
     state.values[field.id] = "";
     state.controls = [JSON.parse(await readFile(
-        new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
+        new URL("shared-controls/stock-image/control.json", extensionRoot), "utf8"))];
     state.adapters = { "stock.image": "designer-control-adapter-image" };
     const shell = await startPreparedShell(state);
     try {
@@ -285,7 +285,7 @@ test("configured image reports an incompatible Designer adapter beside its field
         mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
     state.values[field.id] = "";
     state.controls = [JSON.parse(await readFile(
-        new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
+        new URL("shared-controls/stock-image/control.json", extensionRoot), "utf8"))];
     state.adapters = { "stock.image": "designer-control-adapter-image" };
     const shell = await startPreparedShell(state);
     try {

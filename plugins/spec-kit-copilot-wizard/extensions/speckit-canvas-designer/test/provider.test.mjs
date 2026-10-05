@@ -72,7 +72,7 @@ async function projectFixture(t, workspace) {
     const specify = join(project, ".specify");
     const installed = join(specify, "extensions", "extension-canvas-design");
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url));
-    await mkdir(join(installed, "designer", "tabs"), { recursive: true });
+    await mkdir(join(installed, "designer-host", "tabs"), { recursive: true });
     await mkdir(join(installed, "schemas"), { recursive: true });
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-load-page"),
         { recursive: true });
@@ -85,21 +85,21 @@ async function projectFixture(t, workspace) {
     const pages = ["essentials", "artifacts", "appearance"];
     const entries = [];
     for (const filename of pages) {
-        const path = join(installed, "designer", "tabs", `${filename}.json`);
-        await copyFile(join(source, "designer", "tabs", `${filename}.json`), path);
+        const path = join(installed, "designer-host", "tabs", `${filename}.json`);
+        await copyFile(join(source, "designer-host", "tabs", `${filename}.json`), path);
         entries.push({ name: `designer-${filename}`, path,
             kind: "designer.tab-definition", strategy: "replace" });
     }
     const scalar = [];
-    await mkdir(join(installed, "generated", "pages"), { recursive: true });
-    for (const [name, filename, kind] of [
-        ["generated-workflow", "workflow.json", "generated.workflow-page-definition"],
-        ["generated-phase-placement", "generated-phase-placement.json", "generated.phase-control-placement"],
-        ["generated-phase-control", "phase-control.json", "generated.phase-control-definition"],
-        ["generated-phase-adapter", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
+    for (const [name, directory, filename, kind] of [
+        ["generated-workflow", "workflow", "workflow.json", "generated.workflow-page-definition"],
+        ["generated-phase-placement", "workflow", "generated-phase-placement.json", "generated.phase-control-placement"],
+        ["generated-phase-control", "phase-control", "phase-control.json", "generated.phase-control-definition"],
+        ["generated-phase-adapter", "phase-control", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
-        const path = join(installed, "generated", "pages", filename);
-        await copyFile(join(source, "generated", "pages", filename), path);
+        const path = join(installed, "generated-host", directory, filename);
+        await mkdir(dirname(path), { recursive: true });
+        await copyFile(join(source, "generated-host", directory, filename), path);
         scalar.push({ name, path, sourceId: "extension:extension-canvas-design",
             kind, strategy: "replace" });
     }
@@ -110,10 +110,10 @@ async function projectFixture(t, workspace) {
         ["stock-checkbox", [["shared-controls-checkbox", "control.json", "shared.control-definition"],
             ["designer-control-adapter-checkbox", "designer.mjs", "designer.control-adapter"]]],
     ]) {
-        await mkdir(join(installed, "controls", directory), { recursive: true });
+        await mkdir(join(installed, "shared-controls", directory), { recursive: true });
         for (const [name, filename, kind] of names) {
-            const path = join(installed, "controls", directory, filename);
-            await copyFile(join(source, "controls", directory, filename), path);
+            const path = join(installed, "shared-controls", directory, filename);
+            await copyFile(join(source, "shared-controls", directory, filename), path);
             scalar.push({ name, path, sourceId: "extension:extension-canvas-design",
                 kind, strategy: "replace" });
         }
@@ -128,12 +128,12 @@ async function stockTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
     const directory = join(project, ".specify", "extensions", "extension-canvas-design",
-        "designer", "essentials-settings");
+        "designer-host", "essentials-settings");
     await mkdir(directory, { recursive: true });
     const templates = [];
     for (const name of ["description", "workflow-heading", "custom-slug"]) {
         const path = join(directory, `${name}.json`);
-        await copyFile(join(source, "designer", "essentials-settings", `${name}.json`), path);
+        await copyFile(join(source, "designer-host", "essentials-settings", `${name}.json`), path);
         templates.push({ name: `designer-essentials-${name}`, path,
             sourceId: "extension:extension-canvas-design",
             kind: "designer.setting-definition", strategy: "replace" });
@@ -145,7 +145,7 @@ async function stockImageTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
     const directory = join(project, ".specify", "extensions", "extension-canvas-design",
-        "controls", "stock-image");
+        "shared-controls", "stock-image");
     await mkdir(directory, { recursive: true });
     const entries = [
         ["shared-controls-image", "control.json", "shared.control-definition"],
@@ -154,7 +154,7 @@ async function stockImageTemplates(project) {
     ];
     return Promise.all(entries.map(async ([name, filename, kind]) => {
         const path = join(directory, filename);
-        await copyFile(join(source, "controls", "stock-image", filename), path);
+        await copyFile(join(source, "shared-controls", "stock-image", filename), path);
         return { name, path, sourceId: "extension:extension-canvas-design",
             kind, strategy: "replace" };
     }));
@@ -174,7 +174,7 @@ test("stock image picker announces its format hint and upload error", async (t) 
     });
     globalThis.document = { createElement: element };
     const { mount } = await import(new URL(
-        "../../../../../spec-kit-extensions/extension-canvas-design/controls/stock-image/designer.mjs",
+        "../../../../../spec-kit-extensions/extension-canvas-design/shared-controls/stock-image/designer.mjs",
         import.meta.url));
     const root = element();
     mount({ root, field: { id: "canvas.logo", label: "Header logo",
@@ -469,7 +469,7 @@ test("stock image requires one compatible control definition and paired self-con
     const fieldPath = join(project, ".specify", "extensions", "extension-canvas-design",
         "designer", "essentials-settings", "header-logo.json");
     await mkdir(dirname(fieldPath), { recursive: true });
-    await copyFile(join(source, "designer", "essentials-settings", "header-logo.json"), fieldPath);
+    await copyFile(join(source, "designer-host", "essentials-settings", "header-logo.json"), fieldPath);
     const fields = [{ name: "designer-essentials-header-logo", path: fieldPath,
         sourceId: "extension:extension-canvas-design", kind: "designer.setting-definition", strategy: "replace" }];
     const adapters = await stockImageTemplates(project);
@@ -501,7 +501,7 @@ test("stock image requires one compatible control definition and paired self-con
     const originalControl = await readFile(control.path, "utf8");
     const duplicate = { ...control, name: "shared-controls-image-copy",
         path: join(project, ".specify", "extensions", "extension-canvas-design",
-            "controls", "stock-image", "copy.json") };
+            "shared-controls", "stock-image", "copy.json") };
     await copyFile(control.path, duplicate.path);
     await assert.rejects(load([...templates, duplicate]),
         /unreferenced or duplicate control definition/);
@@ -657,8 +657,8 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     const mainPath = join(project, ".specify", "extensions", "extension-canvas-design",
         "designer", "essentials-settings", "main-page-logo.json");
     await mkdir(dirname(path), { recursive: true });
-    await copyFile(join(source, "designer", "essentials-settings", "header-logo.json"), path);
-    await copyFile(join(source, "designer", "essentials-settings", "main-page-logo.json"), mainPath);
+    await copyFile(join(source, "designer-host", "essentials-settings", "header-logo.json"), path);
+    await copyFile(join(source, "designer-host", "essentials-settings", "main-page-logo.json"), mainPath);
     const templates = [...[path, mainPath].map((file, index) => ({
         name: index ? "designer-essentials-main-page-logo" : "designer-essentials-header-logo", path: file,
         sourceId: "extension:extension-canvas-design", kind: "designer.setting-definition", strategy: "replace",

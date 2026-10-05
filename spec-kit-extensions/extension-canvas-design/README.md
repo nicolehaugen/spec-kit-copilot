@@ -17,11 +17,13 @@ then opens the Designer with the complete resolved set.
 The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
 
-Replaceable templates are organized by host: `designer/` contains Designer
-tabs and settings, while `generated/pages/` contains Workflow page and phase
-control definitions, placements, and the phase adapter. `templates/generated-canvas/` is the static app
-scaffold; Generate copies the resolved `generated/` assets into its `pages/`
-directory, so the finished app does not depend on this extension at runtime.
+Replaceable templates are organized by host: `designer-host/` contains Designer
+tabs and settings, `generated-host/workflow/` contains the Workflow page and
+phase placement, and `generated-host/phase-control/` contains the phase control
+and adapter. `shared-controls/` contains definitions and adapters used by both
+hosts. `templates/generated-canvas/` is the static app scaffold; Generate
+copies the resolved generated-host assets into its `pages/` directory, so the
+finished app does not depend on this extension at runtime.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
@@ -46,7 +48,7 @@ directory, so the finished app does not depend on this extension at runtime.
 | `designer-artifacts` | Artifacts | Empty placeholder |
 | `designer-appearance` | Appearance | Empty placeholder |
 
-The Essentials core template lives in `designer/tabs/essentials.json`; its
+The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 `designer-essentials` is the template ID used for preset resolution.
 Its required Canvas ID and Title are fixed fields that share the `stock.text`
 editor with optional text contributions; a preset cannot remove them by
@@ -431,7 +433,7 @@ export function mount({ root, state, actions }) {
 
 The snippet illustrates the lifecycle only; a working replacement also renders
 the phase card and actions. See
-[`generated-phase-adapter`](generated/pages/generated-phase-adapter.mjs)
+[`generated-phase-adapter`](generated-host/phase-control/generated-phase-adapter.mjs)
 for the complete stock implementation. Module imports are not packaged.
 
 `generated.added-page-renderer` exports

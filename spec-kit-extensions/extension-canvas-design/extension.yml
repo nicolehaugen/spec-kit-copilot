@@ -24,74 +24,74 @@ provides:
   templates:
     # designer.tab-definition: required Designer tabs
     - name: designer-essentials
-      file: designer/tabs/essentials.json
+      file: designer-host/tabs/essentials.json
       description: Essentials fields for canvas identity and workflow naming.
     - name: designer-artifacts
-      file: designer/tabs/artifacts.json
+      file: designer-host/tabs/artifacts.json
       description: Artifacts settings placeholder.
     - name: designer-appearance
-      file: designer/tabs/appearance.json
+      file: designer-host/tabs/appearance.json
       description: Appearance settings placeholder.
 
     # designer.setting-definition: fields placed in Designer tab slots
     - name: designer-essentials-description
-      file: designer/essentials-settings/description.json
+      file: designer-host/essentials-settings/description.json
       description: Optional Essentials collection description.
     - name: designer-essentials-workflow-heading
-      file: designer/essentials-settings/workflow-heading.json
+      file: designer-host/essentials-settings/workflow-heading.json
       description: Optional Essentials workflow heading.
     - name: designer-essentials-custom-slug
-      file: designer/essentials-settings/custom-slug.json
+      file: designer-host/essentials-settings/custom-slug.json
       description: Optional Essentials custom slug option.
     - name: designer-essentials-header-logo
-      file: designer/essentials-settings/header-logo.json
+      file: designer-host/essentials-settings/header-logo.json
       description: Optional image asset for the generated canvas header.
     - name: designer-essentials-main-page-logo
-      file: designer/essentials-settings/main-page-logo.json
+      file: designer-host/essentials-settings/main-page-logo.json
       description: Optional independent larger logo for the generated workflow page.
 
     # Workflow page and its required phase-control placement.
     - name: generated-workflow
-      file: generated/pages/workflow.json
+      file: generated-host/workflow/workflow.json
       description: Required Workflow page definition and declared contribution slots.
     - name: generated-phase-placement
-      file: generated/pages/generated-phase-placement.json
+      file: generated-host/workflow/generated-phase-placement.json
       description: Required Workflow phase-control placement.
     - name: generated-phase-control
-      file: generated/pages/phase-control.json
+      file: generated-host/phase-control/phase-control.json
       description: Workflow phase control identity and adapter reference.
     - name: generated-phase-adapter
-      file: generated/pages/generated-phase-adapter.mjs
+      file: generated-host/phase-control/generated-phase-adapter.mjs
       description: Workflow phase navigation and card adapter.
 
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image
-      file: controls/stock-image/control.json
+      file: shared-controls/stock-image/control.json
       description: Image value type, size and MIME limits, and adapter registrations.
     - name: designer-control-adapter-image
-      file: controls/stock-image/designer.mjs
+      file: shared-controls/stock-image/designer.mjs
       description: Image upload, preview, replacement, and removal in Designer.
     - name: generated-control-adapter-image
-      file: controls/stock-image/generated.mjs
+      file: shared-controls/stock-image/generated.mjs
       description: Image rendering in generated canvases.
 
     # Text control: define string values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-text
-      file: controls/stock-text/control.json
+      file: shared-controls/stock-text/control.json
       description: String value type and adapter registrations.
     - name: designer-control-adapter-text
-      file: controls/stock-text/designer.mjs
+      file: shared-controls/stock-text/designer.mjs
       description: Text editing in Designer.
     - name: generated-control-adapter-text
-      file: controls/stock-text/generated.mjs
+      file: shared-controls/stock-text/generated.mjs
       description: Text rendering in generated canvases.
 
     # Checkbox control: define boolean values and edit them in Designer.
     - name: shared-controls-checkbox
-      file: controls/stock-checkbox/control.json
+      file: shared-controls/stock-checkbox/control.json
       description: Boolean value type and Designer adapter registration.
     - name: designer-control-adapter-checkbox
-      file: controls/stock-checkbox/designer.mjs
+      file: shared-controls/stock-checkbox/designer.mjs
       description: Boolean editing in Designer.
 
 tags:

@@ -29,11 +29,11 @@ async function fixture(t) {
     await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
     const templates = [];
     for (const [name, kind, file] of [
-        ["shared-controls-text", "shared.control-definition", "controls/stock-text/control.json"],
-        ["designer-control-adapter-text", "designer.control-adapter", "controls/stock-text/designer.mjs"],
-        ["generated-control-adapter-text", "generated.control-adapter", "controls/stock-text/generated.mjs"],
-        ["shared-controls-checkbox", "shared.control-definition", "controls/stock-checkbox/control.json"],
-        ["designer-control-adapter-checkbox", "designer.control-adapter", "controls/stock-checkbox/designer.mjs"],
+        ["shared-controls-text", "shared.control-definition", "shared-controls/stock-text/control.json"],
+        ["designer-control-adapter-text", "designer.control-adapter", "shared-controls/stock-text/designer.mjs"],
+        ["generated-control-adapter-text", "generated.control-adapter", "shared-controls/stock-text/generated.mjs"],
+        ["shared-controls-checkbox", "shared.control-definition", "shared-controls/stock-checkbox/control.json"],
+        ["designer-control-adapter-checkbox", "designer.control-adapter", "shared-controls/stock-checkbox/designer.mjs"],
     ]) {
         const bytes = await readFile(new URL(file, source));
         const path = join(project, ".specify", "templates",
@@ -252,7 +252,7 @@ test("stock.readonly text resolves the winning shared definition by control ID",
 
 test("packaged stock.text adapter receives string values and host-owned presentation context", async () => {
     const { mount, controlId, valueContract } = await import(
-        new URL("../extension-canvas-design/controls/stock-text/generated.mjs", import.meta.url));
+        new URL("../extension-canvas-design/shared-controls/stock-text/generated.mjs", import.meta.url));
     assert.equal(controlId, "stock.text");
     assert.deepEqual(valueContract, { type: "string" });
     const previous = globalThis.document;

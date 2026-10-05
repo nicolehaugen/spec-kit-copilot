@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import * as stock from "../extension-canvas-design/generated/pages/generated-phase-adapter.mjs";
+import * as stock from "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs";
 import * as vertical from "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/phase-adapter.mjs";
 import { phaseControlDom } from "./phase_control_dom_fixture.mjs";
 

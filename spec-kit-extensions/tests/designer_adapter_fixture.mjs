@@ -11,13 +11,13 @@ export async function addDesignerAdapterFixture(project, model) {
     const kinds = new Set(Object.values(model.constraints).map(({ type }) =>
         type === "image" ? "image" : type === "boolean" ? "checkbox" : "text"));
     for (const kind of kinds) {
-        const definition = JSON.parse(await readFile(new URL(`controls/stock-${kind}/control.json`, source)));
+        const definition = JSON.parse(await readFile(new URL(`shared-controls/stock-${kind}/control.json`, source)));
         const existing = model.controls.find((item) => item.id === definition.id);
         if (existing) Object.assign(existing, { ...definition, adapters: { ...definition.adapters, ...existing.adapters } });
         else model.controls.push(definition);
         const name = definition.adapters.designer;
         model.adapters[definition.id] = name;
-        const bytes = await readFile(new URL(`controls/stock-${kind}/designer.mjs`, source));
+        const bytes = await readFile(new URL(`shared-controls/stock-${kind}/designer.mjs`, source));
         const path = join(project, ".specify", "templates", `${name}.mjs`);
         await mkdir(join(project, ".specify", "templates"), { recursive: true });
         await writeFile(path, bytes);

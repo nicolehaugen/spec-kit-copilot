@@ -710,10 +710,10 @@ test("frozen named values reject tampered modules and package independently of t
 });
 
 test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
-    const page = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/tabs/essentials.json", import.meta.url)));
+    const page = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/tabs/essentials.json", import.meta.url)));
     assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
-    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/essentials-settings/workflow-heading.json", import.meta.url)));
-    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/designer/essentials-settings/custom-slug.json", import.meta.url)));
+    const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/essentials-settings/workflow-heading.json", import.meta.url)));
+    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/essentials-settings/custom-slug.json", import.meta.url)));
     assert.deepEqual(slug.field, {
         id: "workflowSlug.userProvided", type: "boolean", control: "stock.checkbox", default: false, label: "Allow custom slug",
         description: "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.",

@@ -36,22 +36,22 @@ FILES = {
     "schemas/generated.field-placement.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
-    *(f"designer/tabs/{name}.json" for name in PAGE_NAMES),
-    *(f"designer/essentials-settings/{name}.json" for name in (
+    *(f"designer-host/tabs/{name}.json" for name in PAGE_NAMES),
+    *(f"designer-host/essentials-settings/{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "header-logo", "main-page-logo",
     )),
-    "controls/stock-image/control.json",
-    "controls/stock-image/designer.mjs",
-    "controls/stock-image/generated.mjs",
-    "controls/stock-text/control.json",
-    "controls/stock-text/designer.mjs",
-    "controls/stock-text/generated.mjs",
-    "controls/stock-checkbox/control.json",
-    "controls/stock-checkbox/designer.mjs",
-    "generated/pages/workflow.json",
-    "generated/pages/generated-phase-placement.json",
-    "generated/pages/phase-control.json",
-    "generated/pages/generated-phase-adapter.mjs",
+    "shared-controls/stock-image/control.json",
+    "shared-controls/stock-image/designer.mjs",
+    "shared-controls/stock-image/generated.mjs",
+    "shared-controls/stock-text/control.json",
+    "shared-controls/stock-text/designer.mjs",
+    "shared-controls/stock-text/generated.mjs",
+    "shared-controls/stock-checkbox/control.json",
+    "shared-controls/stock-checkbox/designer.mjs",
+    "generated-host/workflow/workflow.json",
+    "generated-host/workflow/generated-phase-placement.json",
+    "generated-host/phase-control/phase-control.json",
+    "generated-host/phase-control/generated-phase-adapter.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
@@ -69,7 +69,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         cls.schema = json.loads((PACKAGE / "schemas/designer.tab-definition.schema.json").read_text("utf-8"))
         cls.validator = Draft202012Validator(cls.schema)
         cls.pages = [
-            json.loads((PACKAGE / f"designer/tabs/{name}.json").read_text("utf-8"))
+            json.loads((PACKAGE / f"designer-host/tabs/{name}.json").read_text("utf-8"))
             for name in PAGE_NAMES
         ]
         cls.command = (PACKAGE / "commands/load-page.md").read_text("utf-8")
@@ -110,16 +110,16 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             [(template["name"], template["file"])
              for template in self.manifest["provides"]["templates"]],
-            [(f"designer-{page}", f"designer/tabs/{filename}.json")
+            [(f"designer-{page}", f"designer-host/tabs/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
-            + [(f"designer-essentials-{filename}", f"designer/essentials-settings/{filename}.json")
+            + [(f"designer-essentials-{filename}", f"designer-host/essentials-settings/{filename}.json")
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
-            + [("generated-workflow", "generated/pages/workflow.json"),
-               ("generated-phase-placement", "generated/pages/generated-phase-placement.json"),
-               ("generated-phase-control", "generated/pages/phase-control.json"),
-               ("generated-phase-adapter", "generated/pages/generated-phase-adapter.mjs")]
-            + [(name, f"controls/stock-{control}/{filename}")
+            + [("generated-workflow", "generated-host/workflow/workflow.json"),
+               ("generated-phase-placement", "generated-host/workflow/generated-phase-placement.json"),
+               ("generated-phase-control", "generated-host/phase-control/phase-control.json"),
+               ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs")]
+            + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [
                    (f"shared-controls-{control}", "control.json"),
@@ -203,7 +203,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
             ],
         )
-        stock = [json.loads((PACKAGE / f"designer/essentials-settings/{name}.json").read_text("utf-8"))
+        stock = [json.loads((PACKAGE / f"designer-host/essentials-settings/{name}.json").read_text("utf-8"))
                  for name in ("description", "workflow-heading", "custom-slug")]
         self.assertEqual([item["order"] for item in stock], [10, 20, 30])
         self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 3)
@@ -230,13 +230,13 @@ class CanvasDesignPackageTests(unittest.TestCase):
         preset_tabs = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/tabs/*.json"))
         preset_generated_pages = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/generated/pages/*.json"))
         fixtures = {
-            "designer.tab-definition": [PACKAGE / f"designer/tabs/{name}.json" for name in PAGE_NAMES]
+            "designer.tab-definition": [PACKAGE / f"designer-host/tabs/{name}.json" for name in PAGE_NAMES]
                 + preset_tabs,
-            "designer.setting-definition": list(PACKAGE.glob("designer/essentials-settings/*.json"))
+            "designer.setting-definition": list(PACKAGE.glob("designer-host/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
             "generated.added-page-definition": preset_generated_pages,
-            "generated.workflow-page-definition": [PACKAGE / "generated/pages/workflow.json"],
-            "shared.control-definition": list(PACKAGE.glob("controls/*/control.json"))
+            "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow/workflow.json"],
+            "shared.control-definition": list(PACKAGE.glob("shared-controls/*/control.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
         }

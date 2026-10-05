@@ -34,8 +34,8 @@ async function setup(t, selected = [logo, logo, logo]) {
     await mkdir(handoffFolder, { recursive: true });
     await writeFile(join(handoffFolder, "handoff.json"), JSON.stringify(handoff));
     const names = [
-        ["shared-controls-image", "shared.control-definition", "controls/stock-image/control.json"],
-        ["generated-control-adapter-image", "generated.control-adapter", "controls/stock-image/generated.mjs"],
+        ["shared-controls-image", "shared.control-definition", "shared-controls/stock-image/control.json"],
+        ["generated-control-adapter-image", "generated.control-adapter", "shared-controls/stock-image/generated.mjs"],
     ];
     const templates = [];
     for (const [name, kind, file] of names) {
@@ -154,7 +154,7 @@ test("ten maximum-size images fit Designer Save and the frozen generation reques
 });
 
 test("image controls label removal and keep independent uploads busy until each finishes", async () => {
-    const { mount } = await import(new URL("controls/stock-image/designer.mjs", source));
+    const { mount } = await import(new URL("shared-controls/stock-image/designer.mjs", source));
     const previousDocument = globalThis.document;
     const previousImage = globalThis.Image;
     const element = (tag) => ({
@@ -235,7 +235,7 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
     assert.deepEqual((await readdir(join(sdk, "controls"))).sort(),
         ["generated-control-adapter-image.mjs", "shared-controls-image.json"]);
     assert.equal(await readFile(packaged, "utf8"),
-        await readFile(new URL("controls/stock-image/generated.mjs", source), "utf8"));
+        await readFile(new URL("shared-controls/stock-image/generated.mjs", source), "utf8"));
     const routes = createWorkflowRoutes(config, { token: "secret", runtime: null });
     const server = createServer(routes.handle);
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -256,7 +256,7 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
     await writeFile(packaged, "export const controlId = 'tampered';");
     assert.throws(() => readConfig(), /adapter does not match its frozen hash/);
     assert.equal((await fetch(`${url}/controls/generated-control-adapter-image.mjs?token=secret`)).status, 500);
-    await writeFile(packaged, await readFile(new URL("controls/stock-image/generated.mjs", source)));
+    await writeFile(packaged, await readFile(new URL("shared-controls/stock-image/generated.mjs", source)));
     await writeFile(join(sdk, "assets", "logo.png"), Buffer.alloc(32 * 1024 + 1));
     assert.throws(() => readConfig(), /regular file under 32 KiB/);
     await writeFile(join(sdk, "assets", "logo.png"), "tampered");
@@ -350,9 +350,9 @@ test("missing Logo keeps diamond; frozen image and adapter tampering fail before
 
 test("the shared image adapter mounts only its authorized presentation; gallery slots remain host-owned", async () => {
     const { mount, controlId, valueContract } = await import(
-        new URL("../extension-canvas-design/controls/stock-image/generated.mjs", import.meta.url));
+        new URL("../extension-canvas-design/shared-controls/stock-image/generated.mjs", import.meta.url));
     const definition = JSON.parse(await readFile(new URL(
-        "../extension-canvas-design/controls/stock-image/control.json", import.meta.url)));
+        "../extension-canvas-design/shared-controls/stock-image/control.json", import.meta.url)));
     assert.equal(controlId, definition.id);
     assert.equal(definition.adapters.generated, "generated-control-adapter-image");
     assert.deepEqual(valueContract, definition.value);
