@@ -9,9 +9,6 @@ export function resolveRuntimeInstallLocators(installed, catalog, localSelection
         for (const item of installed[kind]) {
             const local = localSelections?.[kind]?.find((entry) => entry.id === item.id);
             if (local) {
-                if (local.version !== item.version) {
-                    throw new Error(`Local ${kind} ${item.id} version differs from the installed version`);
-                }
                 locators[kind].push({ installedId: item.id, source: "local", path: local.path });
                 continue;
             }

@@ -4,7 +4,7 @@ preset:
   id: "copilot-canvas-design-test"
   name: "Copilot Canvas Design Test"
   version: "0.1.0"
-  description: "Test-only Copilot Designer page with a stock field contribution."
+  description: "Test-only Copilot Designer page with stock text and checkbox contributions."
   author: "spec-kit-copilot"
   license: "MIT"
 
@@ -28,6 +28,11 @@ provides:
       name: "canvas-contribution-pr1-test"
       file: "designer/settings/pr1-test.json"
       description: "Stock text field for the test page."
+      strategy: "replace"
+    - type: "template"
+      name: "canvas-contribution-pr1-toggle"
+      file: "contributions/pr1-toggle.json"
+      description: "Stock checkbox field for the test page."
       strategy: "replace"
 
 tags:

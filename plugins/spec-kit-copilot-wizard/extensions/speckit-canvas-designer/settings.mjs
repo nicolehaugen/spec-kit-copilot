@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
+import { isWindowsDeviceName } from "./pages.mjs";
 
 export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
@@ -16,13 +17,15 @@ export function validateValues(values, constraints) {
     }
     for (const [key, rule] of Object.entries(constraints)) {
         const value = values[key];
-        if (rule.type === "boolean" ? typeof value !== "boolean"
+        const invalidType = rule.type === "boolean" ? typeof value !== "boolean"
             : rule.type === "string" ? typeof value !== "string"
                 : rule.type === "image" ? typeof value !== "string"
                     || value.length > Math.ceil(rule.maxBytes / 3) * 4 + 64
                     : rule.type === "object" ? value !== null
                         && (typeof value !== "object" || Array.isArray(value))
-                        : true) {
+                        : true;
+        if (invalidType || key === "canvas.id" && typeof value === "string"
+            && (/[/\\]/.test(value) || isWindowsDeviceName(value))) {
             throw new Error(`Invalid Designer setting: ${key}`);
         }
     }

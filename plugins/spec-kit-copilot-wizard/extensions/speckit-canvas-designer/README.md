@@ -69,10 +69,10 @@ is shared across Header, Main, and preset placements. An absent Header logo
 retains the brand mark; a configured image with a failing adapter reports a
 visible error rather than falling back.
 
-Workflow name appears after Phase input in the generated canvas's first
-workflow-creation phase and labels the workflow there. Essentials' default-off
-Allow custom slug setting controls whether an optional Workflow slug
-field appears below it. The slug previews the View target directory; the created
+Workflow name appears in the generated canvas's workflow collection, before
+phase navigation, while creating a workflow. It labels the workflow there.
+Essentials' default-off Allow custom slug setting controls whether an optional
+Workflow slug field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
 Artifacts and Appearance are empty by default. Save persists bounded, structurally
 valid drafts, including incomplete field values, to `settings.json`
@@ -85,7 +85,10 @@ in their declared Designer page slot and are saved alongside required values. A 
 export `mount`, `controlId`, and a matching `valueContract`; Designer adapters also
 export pure `validate(value, field): boolean` and return an `isReady()` handle from
 `mount({ root, field, value, onChange })`. Each adapter belongs
-to one control definition; multiple fields may reuse that control. The Designer
+to one control definition; multiple fields may reuse that control. Fields
+resolve their unique `shared.control-definition` by the field's `control` ID.
+An optional `requires` entry must name that same definition; Generate packages
+the resolved, validated definition and its paired adapter. The Designer
 mount receives the field, draft value, and change callback; the generated
 mount receives the frozen value and displays it read-only in the declared
 `details.content` slot. Missing, wrong-kind, non-replace, or multiply owned
@@ -95,9 +98,14 @@ and replace-only renderer add a page only to the generated app, not Designer's
 tabs. The provider verifies the executable Specify template stack (and rejects
 native script registrations), checks module syntax and declared exports without executing
 the bytes in Node, and rechecks Designer adapters before serving captured bytes.
-Changed assets require reopening Designer. The browser reports non-function
+Changed assets require reopening Designer. The Designer document's CSP allows
+same-origin scripts, API calls, and styles, plus same-origin images and data-URL
+previews for stock-image controls, but blocks ordinary cross-origin
+requests from adapters; it does not sandbox approved adapter code.
+The browser reports non-function
 `mount` exports, incompatible `controlId` or `valueContract` exports, and mount
-failures beside the affected control. It validates the page/renderer pair and freezes
+failures beside the affected control. Callbacks from controls removed during a
+tab change cannot overwrite the current draft. It validates the page/renderer pair and freezes
 their bytes for packaging without the originating preset. Module dependencies
 in generated renderers are rejected because only the renderer is packaged.
 Registered `generated.value-definition` JSON templates join the same field-ID collision
@@ -106,9 +114,12 @@ Constants may be read-only, runtime-editable, or processing-only; computed value
 may be read-only or processing-only, never runtime-editable. A computed value must
 have its own replace-only `generated.computed-value-provider` `.mjs` registration with a direct
 `export function provideValue` or `export const provideValue` declaration
-(named re-exports are unsupported). Designer validates the actual declaration
-and checks that the transformed script parses,
-but does not execute providers; Generate confirms each resolved provider's
+(`export { provideValue }` and imports are unsupported). The function receives
+`{ workflow: { id, slug, label } }` for the selected workflow and must return
+a synchronous, JSON-serializable value matching the definition's typed schema.
+Async functions and non-function exports fail visibly during generated-canvas
+refresh; Designer checks syntax but does not execute providers. Generate
+confirms each resolved provider's
 name, source and hash before freezing its bytes for packaging. Changes since
 Designer opened require reopening and reconfirming. Generated pages may declare
 the IDs they consume in `values`. The packaged app rejects changed provider
@@ -123,8 +134,11 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-A missing skill shows how to relaunch with Canvas Design v0.1.18 or the current
-local source, before any generation request is prepared. Healthy pages remain
+Pages explicitly marked `enabled: false` are omitted even if their other fields
+are malformed; unreadable pages still show errors because their enabled state
+cannot be determined.
+A missing skill directs users to relaunch with Canvas Design v0.1.18 or the
+current local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
 no Canvas ID or Title values, so Generate remains unavailable. Tab changes display the in-memory model without re-resolving

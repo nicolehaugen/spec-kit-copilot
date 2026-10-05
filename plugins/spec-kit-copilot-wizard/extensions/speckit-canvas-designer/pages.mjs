@@ -5,6 +5,8 @@ import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Script } from "node:vm";
 import { fingerprint } from "./handoff.mjs";
+import { validControlContract } from "./control-contract.mjs";
+import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
 const REQUIRED_PAGES = ["designer-essentials", "designer-artifacts",
@@ -21,11 +23,15 @@ function schemaMetadata(document, name) {
 }
 // The generated shell uses "workflow" for its built-in page navigation.
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+export const isWindowsDeviceName = (name) =>
+    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
 const RULES = {
-    "canvas.id": { type: "string", minLength: 1, maxLength: 100, pattern: "^[a-z0-9][a-z0-9-]*$", required: true },
+    "canvas.id": { type: "string", minLength: 1, maxLength: 100,
+        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$",
+        required: true },
     "canvas.displayName": { type: "string", minLength: 1, maxLength: 120, required: true },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -143,6 +149,7 @@ function buildModel(entries, schema) {
                 error: { name, path, reason: reason.slice(0, ERROR_LIMIT) } });
         };
         if (error) { fail(error); continue; }
+        if (document?.enabled === false) continue;
         try {
             checkSchema(document, schema, name);
             if (document.id !== name) throw new Error(`${name}: page id does not match template name`);
@@ -157,7 +164,7 @@ function buildModel(entries, schema) {
                     throw new Error(`${name}: duplicate or invalid field ${field.id}`);
                 }
                 ids.add(field.id);
-                if (document.enabled !== false && fieldOrigins.has(field.id)) {
+                if (fieldOrigins.has(field.id)) {
                     throw new ContributionCollisionError(`${name}: duplicate enabled field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
                 }
             }
@@ -174,7 +181,6 @@ function buildModel(entries, schema) {
             fail(cause.message);
             continue;
         }
-        if (document.enabled === false) continue;
         for (const field of document.fields) {
             const type = field.type ?? "string";
             constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
@@ -194,7 +200,7 @@ function buildModel(entries, schema) {
 
 function validateContribution(document, name, slots, fieldOrigins) {
     schemaMetadata(document, name);
-    const keys = ["schemaVersion", "id", "host", "slot", "order", "field",
+    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires",
         "generatedBinding"];
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).some((key) => !keys.includes(key))
@@ -230,6 +236,12 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || (Object.hasOwn(field, "default")
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
+    }
+    if (document.requires !== undefined
+        && (!Array.isArray(document.requires)
+            || document.requires.length !== 1
+            || typeof document.requires[0] !== "string")) {
+        throw new Error(`${name}: requires must name exactly one control definition template`);
     }
     const binding = document.generatedBinding;
     if (field.type === "image" && binding === undefined) {
@@ -286,7 +298,7 @@ function validateControl(document, name) {
         || document.schemaVersion !== 1
         || (image ? document.id !== "stock.image"
             : scalar ? document.id !== (checkbox ? "stock.checkbox" : "stock.text")
-                : !PAGE_PATTERN.test(document.id))
+                : !PAGE_PATTERN.test(document.id) || isWindowsDeviceName(document.id))
         || !document.value || (image
             ? Object.keys(document.value).sort().join() !== "maxBytes,mimeTypes,type"
                 || document.value.maxBytes !== 32 * 1024
@@ -295,17 +307,9 @@ function validateControl(document, name) {
             : scalar
                 ? Object.keys(document.value).sort().join() !== "type"
                     || document.value.type !== (checkbox ? "boolean" : "string")
-            : Object.keys(document.value).sort().join() !== "properties,type"
-                || document.value.type !== "object"
-                || !properties || typeof properties !== "object" || Array.isArray(properties)
-                || !Object.keys(properties).length || Object.keys(properties).length > 10
-                || Object.entries(properties).some(([key, allowed]) =>
-                    !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
-                    || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
-                    || new Set(allowed).size !== allowed.length
-                    || allowed.some((value) => typeof value !== "string" || !value || value.length > 80)))
-        || !document.adapters
-        || Object.keys(document.adapters).sort().join() !== (checkbox ? "designer" : "designer,generated")
+                : !validControlContract(document.value))
+        || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
+            && !(checkbox && Object.keys(document.adapters).sort().join() === "designer")
         || !PAGE_PATTERN.test(document.adapters.designer)
         || (!checkbox && !PAGE_PATTERN.test(document.adapters.generated))) {
         throw new Error(`${name}: invalid shared control value contract or adapter references`);
@@ -317,10 +321,11 @@ function validateGeneratedPage(document, name) {
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
         || document.schemaVersion !== 1 || document.id !== name
-        || document.id === RESERVED_GENERATED_PAGE_ID
+        || document.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(document.id)
         || typeof document.title !== "string" || !document.title.trim()
         || document.title.length > 120 || typeof document.renderer !== "string"
         || !PAGE_PATTERN.test(document.renderer)
+        || isWindowsDeviceName(document.renderer)
         || (document.values !== undefined && (!Array.isArray(document.values)
             || document.values.length > 100 || new Set(document.values).size !== document.values.length
             || document.values.some((id) => typeof id !== "string"
@@ -343,6 +348,7 @@ function validateWorkflowPage(document, name) {
         || contractKeys(document).sort().join() !== "id,pipeline,regions,schemaVersion"
         || document.schemaVersion !== 1 || document.id !== "workflow" || name !== "generated-workflow"
         || typeof document.pipeline !== "string" || !PAGE_PATTERN.test(document.pipeline)
+        || isWindowsDeviceName(document.pipeline)
         || !Array.isArray(document.regions) || document.regions.length !== WORKFLOW_REGIONS.length
         || new Set(document.regions).size !== WORKFLOW_REGIONS.length
         || document.regions.some((region) => !WORKFLOW_REGIONS.includes(region))) {
@@ -378,7 +384,7 @@ function validateValueSource(document, name, fieldOrigins) {
         || !source || typeof source !== "object" || Array.isArray(source)
         || !(source.kind === "constant" && Object.keys(source).sort().join() === "kind,value"
             || source.kind === "computed" && Object.keys(source).sort().join() === "kind,module"
-                && PAGE_PATTERN.test(source.module))
+                && PAGE_PATTERN.test(source.module) && !isWindowsDeviceName(source.module))
         || !["stock.readonly", "stock.editable", "processing-only"].includes(document.presentation)
         || (source.kind === "computed" && document.presentation === "stock.editable")
         || (section !== undefined && (!section || typeof section !== "object"
@@ -403,16 +409,17 @@ function validateValueSource(document, name, fieldOrigins) {
     fieldOrigins.set(document.id, name);
 }
 
-function executableRegistration(project, name) {
+async function executableRegistration(project, name) {
+    const options = await specifySpawnOptions(project, { encoding: "utf8", maxBuffer: 128 * 1024 });
     const result = spawnSync("specify", ["artifact", "info", `template:${name}`, "--json"],
-        { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+        options);
     if (result.error || result.status !== 0) {
         throw new Error(`${name}: cannot verify replace-only Specify template registration: ${result.stderr || result.error || result.stdout}`);
     }
     try {
         const info = JSON.parse(result.stdout);
         const script = spawnSync("specify", ["artifact", "info", `script:${name}`, "--json"],
-            { cwd: project, encoding: "utf8", maxBuffer: 128 * 1024 });
+            options);
         if (script.error || ![0, 1].includes(script.status)) {
             throw new Error(`${name}: cannot verify native script registration: ${script.stderr || script.error}`);
         }
@@ -439,6 +446,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     if (!Array.isArray(templates) || templates.length > 100) {
         throw new Error("Invalid Canvas Design template inventory");
     }
+    if (templates.filter((item) => item?.kind === "generated.added-page-definition").length > 30) {
+        throw new Error("Designer supports at most 30 generated pages");
+    }
     const names = new Set(pageNames);
     const loaded = [];
     const slots = new Map();
@@ -456,6 +466,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (!item || typeof item !== "object" || Array.isArray(item)
             || Object.keys(item).some((key) => !["name", "path", "sourceId", "kind", "strategy"].includes(key))
             || typeof item.name !== "string" || !PAGE_PATTERN.test(item.name)
+            || isWindowsDeviceName(item.name)
             || names.has(item.name) || typeof item.path !== "string"
             || !item.path || item.path.length > 4096 || /[\x00-\x1f\x7f]/.test(item.path)
             || typeof item.sourceId !== "string"
@@ -489,7 +500,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             validateValueSource(document, item.name, fieldOrigins);
         }
         if (item.kind !== "designer.setting-definition") {
-            const info = registration(dirname(specify), item.name);
+            const info = await registration(dirname(specify), item.name);
             const layers = info?.stack;
             const winner = layers?.find((layer) => layer.active);
             const sourceLayer = item.sourceId === "project" ? "project"
@@ -546,7 +557,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                     throw new Error(`${item.name}: Designer adapter is missing validate export`);
                 }
                 if (item.kind === "generated.computed-value-provider") {
-                    const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:function|const)\s+provideValue\b/g)];
+                    const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:(?:async\s+)?function|const)\s+provideValue\b/g)];
                     if (exports.length !== 1 || declarations.length !== 1
                         || declarations[0].index + declarations[0][0].lastIndexOf("provideValue")
                             !== exports[0].s) {
@@ -555,7 +566,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                     const body = document.replace(
                         /(^|\n)\s*export\s+(?=(?:async\s+)?function\s+provideValue\b|const\s+provideValue\b)/g, "$1");
                     try {
-                        new Script(`"use strict"; const workflow = null;\n${body}\nprovideValue({ workflow });`);
+                        new Script(`"use strict"; const workflow = null;\nconst provide = (() => {\n${body}\n`
+                            + "return provideValue;\n})();\n"
+                            + "if (typeof provide !== 'function') throw new Error('provideValue must be a function');\n"
+                            + "const result = provide({ workflow });\n"
+                            + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
+                            + "JSON.stringify(result);");
                     } catch (error) {
                         throw new Error(`${item.name}: value provider cannot run as a generated script: ${error.message}`,
                             { cause: error });
@@ -676,8 +692,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
     }
     for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition")) {
-        if (!controls.some((control) => control.document.id === entry.document.field.control
-            && control.document.value.type === entry.document.field.type)) {
+        const { field, requires } = entry.document;
+        const control = controls.find((item) => item.document.id === field.control);
+        if (!control || control.document.id !== field.control
+            || control.document.value.type !== field.type
+            || (requires && control.name !== requires[0])) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
         }
     }
@@ -818,7 +837,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
     model.valueSources = loaded.filter((entry) => entry.kind === "generated.value-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
-    model.controls = controls.map(({ document }) => document);
+    model.controls = controls.map(({ name, document }) => ({ ...document, template: name }));
     model.adapters = Object.fromEntries(controls.map(({ document }) =>
         [document.id, document.adapters.designer]));
     for (const page of model.pages) {
@@ -848,8 +867,12 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     }
     model.templates = loaded.map(({ name, path, hash, sourceId, kind, strategy }) =>
         ({ name, path, hash, sourceId, kind, strategy }));
-    return { ...model, revision: fingerprint({
+    const result = { ...model, revision: fingerprint({
         handoffId: handoff.handoffId, sourceFingerprint: handoff.sourceFingerprint, checkout, entries,
         templates: loaded,
     }) };
+    if (Buffer.byteLength(JSON.stringify(result)) > MODEL_LIMIT) {
+        throw new Error("Designer page model exceeds its size limit");
+    }
+    return result;
 }

@@ -2,14 +2,14 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { readFrozenAsset } from "./pages.mjs";
+import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
-const REQUEST_LIMIT = 2 * 1024 * 1024;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "designer-essentials");
@@ -21,6 +21,10 @@ export function validateEssentials(model, values) {
     if (failed) {
         throw new Error(`Cannot generate while ${failed.page} is invalid: ${failed.error.reason}`);
     }
+    if (typeof values?.["canvas.id"] === "string"
+        && (reserved.has(values["canvas.id"]) || isWindowsDeviceName(values["canvas.id"]))) {
+        throw new Error("Canvas ID (canvas.id) must be non-reserved");
+    }
     validateValues(values, model.constraints);
     const result = { ...values };
     for (const id of required) {
@@ -28,6 +32,10 @@ export function validateEssentials(model, values) {
     }
     for (const id of ["canvas.description", "canvas.workflowListName"]) {
         if (Object.hasOwn(result, id)) result[id] = result[id].trim();
+    }
+    if (!result["canvas.id"] || !result["canvas.displayName"]
+        || reserved.has(result["canvas.id"]) || isWindowsDeviceName(result["canvas.id"])) {
+        throw new Error("Canvas ID and Title must be valid and non-reserved");
     }
     return result;
 }
@@ -69,15 +77,10 @@ async function validateAdapterValues(model, values, project) {
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
     await validateAdapterValues(model, essentials, project);
-    if (!canvasIdPattern.test(essentials["canvas.id"]) || reserved.has(essentials["canvas.id"])) {
+    if (!canvasIdPattern.test(essentials["canvas.id"])
+        || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {
         throw new Error("Invalid frozen Canvas ID for generated extension path");
     }
-    const generatedFields = (model.contributions ?? [])
-        .filter((item) => item.generatedBinding?.presentation === "stock.readonly"
-            && !["canvas.description", "canvas.workflowListName"].includes(item.field.id))
-        .map((item) => ({ id: item.field.id, label: item.field.label,
-            maxLength: model.constraints[item.field.id].maxLength,
-            ...(item.generatedBinding.section ? { section: item.generatedBinding.section } : {}) }));
     const textContributions = (model.contributions ?? []).filter((item) =>
         item.field.control === "stock.text"
         && (item.generatedBinding?.presentation === "text"
@@ -206,13 +209,49 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             ...(value.section ? { section: value.section } : {}),
             assets: await Promise.all([definition, ...(provider ? [provider] : [])].map(asset)) });
     }
+    const generatedFields = [];
     const generatedControls = [];
-    for (const contribution of controlContributions) {
-        const { control, definition, adapter } = await generatedControl(contribution.field.control);
-        generatedControls.push({ id: contribution.field.id, label: contribution.field.label,
-            control: control.id, slot: contribution.generatedBinding.slot,
-            value: values[contribution.field.id],
-            assets: await Promise.all([definition, adapter].map(asset)) });
+    const controlAssets = new Map();
+    for (const contribution of model.contributions ?? []) {
+        const binding = contribution.generatedBinding;
+        if (!binding) continue;
+        const { id, label } = contribution.field;
+        const rule = model.constraints[id];
+        if (binding.presentation === "stock.readonly") {
+            if (["canvas.description", "canvas.workflowListName"].includes(id)) continue;
+            if (rule?.type !== "string") {
+                throw new Error(`${id}: generated stock field requires a string constraint`);
+            }
+            generatedFields.push({ id, label, maxLength: rule.maxLength,
+                ...(binding.section ? { section: binding.section } : {}) });
+            continue;
+        }
+        if (binding.presentation === "text" || binding.presentation === "asset") continue;
+        if (binding.presentation !== "control" || rule?.type !== "object") {
+            throw new Error(`${id}: incompatible generated binding`);
+        }
+        if (generatedControls.length >= 30) {
+            throw new Error("Generated controls exceed the 30-control limit");
+        }
+        const control = model.controls.find((entry) => entry.id === contribution.field.control);
+        if (!control) throw new Error(`${contribution.name}: missing shared control`);
+        const definition = model.templates.find((entry) => entry.name === control.template
+            && entry.kind === "shared.control-definition");
+        if (!definition || (contribution.requires !== undefined
+            && (contribution.requires.length !== 1
+                || contribution.requires[0] !== definition.name))) {
+            throw new Error(`${contribution.name}: missing matching shared control definition`);
+        }
+        if (!controlAssets.has(control.id)) {
+            const paired = await generatedControl(control.id);
+            if (paired.definition.name !== definition.name) {
+                throw new Error(`${contribution.name}: mismatched shared control definition`);
+            }
+            controlAssets.set(control.id, { control: control.id,
+                assets: await Promise.all([paired.definition, paired.adapter].map(asset)) });
+        }
+        generatedControls.push({ id, label, control: control.id, slot: binding.slot,
+            value: essentials[id] });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
@@ -226,7 +265,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     const request = {
         schemaVersion: 1, requestId, handoffId: handoff.handoffId,
         project: checkout, target: `.github/extensions/${essentials["canvas.id"]}/`,
-        sourceFingerprint: handoff.sourceFingerprint, settingsRevision: model.revision,
+        sourceFingerprint: handoff.sourceFingerprint, settingsRevision: model.settingsRevision,
         canvas: { id: essentials["canvas.id"], displayName: essentials["canvas.displayName"],
             description: essentials["canvas.description"] || "Spec Kit workflow canvas.",
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
@@ -242,12 +281,13 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedImageControl ? { generatedImageControl } : {}),
         ...(generatedTextControl ? { generatedTextControl, generatedTextPlacements } : {}),
         ...(valueSources.length ? { valueSources } : {}),
+        ...(controlAssets.size ? { controlAssets: [...controlAssets.values()] } : {}),
     };
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");
     const serialized = JSON.stringify(request);
     if (Buffer.byteLength(serialized) > REQUEST_LIMIT) {
-        throw new Error("Frozen generation request exceeds 2 MiB");
+        throw new Error("Frozen generation request exceeds 4 MiB");
     }
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", requestId);

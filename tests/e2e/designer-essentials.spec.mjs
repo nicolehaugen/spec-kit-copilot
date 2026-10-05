@@ -4,11 +4,15 @@ import { test, expect } from "./playwright.mjs";
 const ui = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/ui/",
     import.meta.url);
 const extension = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
+const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design/controls/",
+    import.meta.url);
 
 async function openDesigner(page, fields, extraPage) {
+    const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
+        JSON.parse(await readFile(new URL(`${name}/control.json`, stockControls), "utf8"))));
     const constraints = {
         "canvas.id": { type: "string", minLength: 1, maxLength: 100,
-            pattern: "^[a-z0-9][a-z0-9-]*$" },
+            pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
         "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
         "canvas.description": { type: "string", maxLength: 240 },
         "canvas.workflowListName": { type: "string", maxLength: 80 },
@@ -19,8 +23,6 @@ async function openDesigner(page, fields, extraPage) {
         "canvas.description": "", "canvas.workflowListName": "",
         "workflowSlug.userProvided": false, "billing.costCode": "" };
     const ids = [...fields, ...(extraPage?.fields ?? [])].map((field) => field.id);
-    const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
-        JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extension), "utf8"))));
     for (const field of [...fields, ...(extraPage?.fields ?? [])]) {
         field.validation = { ...constraints[field.id],
             ...(field.id === "canvas.id" ? { forbiddenValues: [
@@ -44,7 +46,7 @@ async function openDesigner(page, fields, extraPage) {
         } else if (path === "/api/generate") {
             const request = route.request().postDataJSON();
             requests.push(request);
-            const invalid = !/^[a-z0-9][a-z0-9-]*$/.test(request.values["canvas.id"])
+            const invalid = !/^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$/.test(request.values["canvas.id"])
                 ? "Canvas ID (canvas.id)"
                 : !request.values["canvas.displayName"]?.trim() ? "Title (canvas.displayName)"
                     : request.values["billing.costCode"]?.length > 64

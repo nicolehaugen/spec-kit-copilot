@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir, realpath, lstat, rm } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { posix } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
 import { createContext, runInContext } from "node:vm";
-import { UserError, confined, readBounded, directories, atomicJson, safePath, slugPattern } from "./files.mjs";
+import { UserError, confined, readBounded, readBoundedBytes, directories, atomicJson, safePath, slugPattern,
+    deleteConfinedDirectory } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 
@@ -19,9 +20,11 @@ if (!isMainThread && workerData?.canvasValueProvider) {
         const context = createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false } });
         const serialized = runInContext(
             `"use strict"; const workflow = Object.freeze(JSON.parse(${JSON.stringify(JSON.stringify(workflow))}));\n`
+            + "const provide = (() => {\n"
             + `${body}\n`
-            + "if (typeof provideValue !== 'function') throw new Error('Missing provideValue export');\n"
-            + "const result = provideValue({ workflow });\n"
+            + "return provideValue;\n})();\n"
+            + "if (typeof provide !== 'function') throw new Error('provideValue must be a function');\n"
+            + "const result = provide({ workflow });\n"
             + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
             + "JSON.stringify(result);",
             context, { timeout: 300 });
@@ -34,11 +37,12 @@ if (!isMainThread && workerData?.canvasValueProvider) {
 
 async function evaluateProvider(module, hash, workflow, deadline) {
     if (performance.now() >= deadline) throw new UserError(PROVIDER_REFRESH_ERROR);
-    const source = await readBounded(fileURLToPath(new URL(".", import.meta.url)),
+    const bytes = await readBoundedBytes(fileURLToPath(new URL(".", import.meta.url)),
         `providers/${module}.mjs`, 32 * 1024);
-    if (createHash("sha256").update(source).digest("hex") !== hash) {
+    if (createHash("sha256").update(bytes).digest("hex") !== hash) {
         throw new UserError(`Packaged provider ${module} changed; restore the generated canvas files.`);
     }
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const remaining = Math.ceil(deadline - performance.now());
     if (remaining <= 0) throw new UserError(PROVIDER_REFRESH_ERROR);
     return new Promise((resolve, reject) => {
@@ -144,19 +148,19 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
-    async function items() {
+    async function items(view = state) {
         const found = [];
         for (const root of roots) {
             if (root.includes("<") || root.startsWith(".git")) continue;
             for (const slug of await directories(cwd, root)) {
                 const id = `${root}/${slug}`;
-                found.push({ id, slug, label: state.names?.[id] || slug });
+                found.push({ id, slug, label: view.names?.[id] || slug });
             }
         }
         return found;
     }
-    function runFor(step, item) {
-        return state.runs.findLast((run) => run.phase === step.id && run.item === (step.project ? "project" : item));
+    function runFor(step, item, view = state) {
+        return view.runs.findLast((run) => run.phase === step.id && run.item === (step.project ? "project" : item));
     }
     function authorizeReport(step, path, item) {
         safePath(path);
@@ -182,14 +186,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
         }
     }
-    async function outputPath(step, item) {
-        const run = runFor(step, item);
+    async function outputPath(step, item, view = state, entries) {
+        const run = runFor(step, item, view);
         if (!step.configuredArtifacts && run?.artifact) { authorizeReport(step, run.artifact, run.item); return run.artifact; }
         if (!step.output) return null;
         let path = step.output;
         if (path.includes("<slug>")) {
-            const selected = (await items()).find((entry) => entry.id === item);
-            const slug = selected?.slug ?? (item === "__new__" && config.userProvidesSlug && validSlug(state.slug) ? state.slug : null);
+            const selected = (entries ?? await items(view)).find((entry) => entry.id === item);
+            const slug = selected?.slug ?? (item === "__new__" && config.userProvidesSlug && validSlug(view.slug) ? view.slug : null);
             if (!slug) return null;
             path = path.replace("<slug>", slug);
             if (selected && !path.startsWith(`${selected.id}/`)) throw new UserError("This phase output belongs to a different workflow.");
@@ -226,10 +230,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
     }
     async function snapshot() {
-        const entries = await items();
-        const item = state.selected;
+        const view = structuredClone(state);
+        const entries = await items(view);
+        const item = view.selected;
         const selectedWorkflow = item === "__new__" ? null : entries.find((entry) => entry.id === item);
-        const visibleValues = [], pageValues = {}, valueErrors = {};
+        const visibleValues = [], pageValues = Object.create(null), valueErrors = {};
         const providerDeadline = performance.now() + PROVIDER_REFRESH_LIMIT_MS;
         let reportedDeadline = false;
         for (const field of valueFields) {
@@ -242,11 +247,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                         label: selectedWorkflow.label,
                     }, providerDeadline);
                 } else if (field.presentation === "stock.editable") {
-                    value = Object.hasOwn(state.values ?? {}, field.id) ? state.values[field.id] : field.source.value;
+                    value = Object.hasOwn(view.values ?? {}, field.id) ? view.values[field.id] : field.source.value;
                 } else value = field.source.value;
                 value = validateValue(field.schema, value, field.id);
             } catch (error) {
-                valueErrors[field.id] = error instanceof UserError
+                const contractError = field.source.kind === "computed"
+                    && (error.message === "provideValue must be a function"
+                        || error.message === "Async providers are not supported");
+                valueErrors[field.id] = error instanceof UserError || contractError
                     ? error.message : `Value ${field.label} could not be evaluated or failed validation.`;
                 if (error.message !== PROVIDER_REFRESH_ERROR || !reportedDeadline) {
                     await diagnostic(`Generated canvas value ${field.id} failed: ${error.message}`);
@@ -265,10 +273,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
         const statuses = {};
         for (const step of phases) {
-            const run = runFor(step, item);
+            const run = runFor(step, item, view);
             let output = null, artifactError = null, artifactAvailability = "unknown";
             try {
-                output = await outputPath(step, item);
+                output = await outputPath(step, item, view, entries);
                 if (output) {
                     const info = await lstat(await confined(cwd, output));
                     if (!info.isFile()) throw new UserError("The artifact path is not a regular file.");
@@ -287,7 +295,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
-        return { ...structuredClone(state), userProvidesSlug: config.userProvidesSlug,
+        return { ...view, userProvidesSlug: config.userProvidesSlug,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             phases, items: entries, statuses, valueFields: visibleValues, pageValues, valueErrors };
     }
@@ -426,15 +434,17 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     }
     async function reportSlug(input, instanceId) {
         const run = reportingRun(input, instanceId);
-        if (phaseFor(run.phase).project || run.item !== "__new__") throw new UserError("Only a new workflow can report a directory slug.");
+        if (phaseFor(run.phase).project || (run.item !== "__new__" && !run.confirmedSlug)) throw new UserError("Only a new workflow can report a directory slug.");
         if (!validSlug(input.slug)) throw new UserError("Use a workflow slug with lowercase letters, numbers, and single hyphens, not a reserved filename.");
         if (run.confirmedSlug && run.slug !== input.slug) throw new UserError("This run already reported a different workflow directory.");
         if (run.before.some((item) => item.split("/").at(-1) === input.slug)) throw new UserError("That workflow already exists. Select it instead of creating a new workflow.");
-        const created = (await items()).find((item) => item.slug === input.slug && !run.before.includes(item.id));
+        const created = (await items()).find((item) => item.slug === input.slug
+            && !run.before.includes(item.id) && (run.item === "__new__" || run.item === item.id));
         if (!created) throw new UserError("The reported workflow directory does not exist yet. Create it before reporting its name.");
         await update((next) => {
             Object.assign(next.runs.find((entry) => entry.runId === run.runId),
-                { slug: input.slug, confirmedSlug: true });
+                { item: created.id, slug: input.slug, confirmedSlug: true });
+            next.drafts[JSON.stringify([created.id, run.phase])] = run.args;
             if (run.name) (next.names ??= {})[created.id] = run.name;
             if (next.selected === "__new__") {
                 next.selected = created.id;
@@ -539,27 +549,11 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
             if (state.runs.some((run) => (run.item === item.id
-                || (run.item === "__new__" && run.slug === item.slug && run.confirmedSlug))
+                || (run.item === "__new__" && !run.before.includes(item.id)))
                 && !["Completed", "Failed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
-            const target = await confined(cwd, item.id);
-            if (!(await lstat(target)).isDirectory()) throw new UserError("Workflow directory is unavailable.", 404);
-            let entries = 0;
-            async function inspect(path, depth) {
-                if (depth > 16) throw new UserError("Workflow directory is too deep to delete safely.");
-                for (const entry of await readdir(await confined(cwd, path), { withFileTypes: true })) {
-                    if (++entries > 20000) throw new UserError("Workflow directory is too large to delete safely.");
-                    const child = `${path}/${entry.name}`;
-                    if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
-                        throw new UserError("Workflow directory contains a link or unsupported file. Remove it manually before deleting.");
-                    }
-                    await confined(cwd, child);
-                    if (entry.isDirectory()) await inspect(child, depth + 1);
-                }
-            }
-            await inspect(item.id, 0);
-            await rm(target, { recursive: true });
+            await deleteConfinedDirectory(cwd, item.id);
             removed = true;
             await update((next) => {
                 next.runs = next.runs.filter((run) => run.item !== item.id

@@ -10,6 +10,9 @@ Designer. There is no separate Designer tab: the field is placed in
 `essentials.options`, and its explicit `generatedBinding` places the
 generated control in `details.content`. A missing or invalid adapter must
 not fall back to stock text.
+The real Specify/browser regression installs a disposable copy of this preset
+with `--dev` before mutating resolved adapters; a development symlink must
+never point those destructive checks back into this checked-in fixture.
 
 The `risk-matrix` control defines the frozen `risk.rating` value:
 `{impact, likelihood}`, where both properties are required, no others are

@@ -26,6 +26,7 @@ FILES = {
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
+    "scripts/verify-launch.mjs",
     "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
@@ -47,7 +48,7 @@ FILES = {
     "generated/pages/workflow.json",
     "generated/pages/generated-pipeline.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
-        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "files.mjs",
+        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
         "ui/page-assets.mjs",
@@ -191,7 +192,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             self.pages[0]["fields"],
             [
-                {"id": "canvas.id", "label": "Canvas ID", "control": "stock.text", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs cannot be used."},
+                {"id": "canvas.id", "label": "Canvas ID", "control": "stock.text", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used."},
                 {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
             ],
         )

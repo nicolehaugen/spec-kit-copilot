@@ -143,7 +143,7 @@ for (const [scenario, missing] of [
 }
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
-    generatedPages, generatedControls) {
+    generatedPages, readOnlyFields, generatedControls, valueSources) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug, workflowPage,
@@ -160,7 +160,9 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         phaseArtifacts: {},
         installed: { presets: [], extensions: [], bundles: [] },
         ...(generatedPages ? { generatedPages } : {}),
+        ...(readOnlyFields ? { readOnlyFields } : {}),
         ...(generatedControls ? { generatedControls } : {}),
+        ...(valueSources ? { valueSources } : {}),
     };
     let runtime, routes, server, sdkRoot;
     try {
@@ -186,6 +188,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         return {
             url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
             root,
+            runtime,
+            broadcast: () => routes.broadcast(),
             close: async () => {
                 routes.close();
                 runtime.close();
@@ -210,6 +214,233 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
     }
 }
 
+function sampleValueSources() {
+    const section = { id: "demo", title: "Demo values" };
+    return [
+        { id: "demo.heading", label: "Heading", section,
+            schema: { type: "string", maxLength: 80 },
+            source: { kind: "constant", value: "Read-only heading" },
+            presentation: "stock.readonly" },
+        { id: "demo.note", label: "Note", section,
+            schema: { type: "string", maxLength: 80 },
+            source: { kind: "constant", value: "Initial note" },
+            presentation: "stock.editable" },
+        { id: "demo.enabled", label: "Enabled", section,
+            schema: { type: "boolean" },
+            source: { kind: "constant", value: true },
+            presentation: "stock.editable" },
+        { id: "demo.choice", label: "Choice", section,
+            schema: { type: "object", properties: { level: ["one", "two"] } },
+            source: { kind: "constant", value: { level: "one" } },
+            presentation: "stock.editable" },
+        { id: "demo.processing", label: "Processing only",
+            schema: { type: "string", maxLength: 80 },
+            source: { kind: "constant", value: "Not displayed" },
+            presentation: "processing-only" },
+    ];
+}
+
+test("generated value editors render typed controls without exposing processing-only values", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sampleValueSources());
+    try {
+        await page.goto(canvas.url);
+        const values = page.locator("#canvas-values");
+        await expect(values).toBeVisible();
+        await expect(values.getByRole("heading", { name: "Demo values" })).toBeVisible();
+        await expect(values.locator('[data-field-id="demo.heading"]')).toHaveText("Read-only heading");
+        await expect(values.locator('[data-edit-value="demo.heading"]')).toHaveCount(0);
+        await expect(values.locator('[data-edit-value="demo.note"] input'))
+            .toHaveValue("Initial note");
+        await expect(values.locator('[data-edit-value="demo.note"] input'))
+            .toHaveAttribute("maxlength", "80");
+        await expect(values.locator('[data-edit-value="demo.enabled"] input[type="checkbox"]'))
+            .toBeChecked();
+        await expect(values.locator('[data-edit-value="demo.choice"] select[data-property="level"]'))
+            .toHaveValue("one");
+        await expect(values.locator('[data-edit-value="demo.choice"] option')).toHaveText(["one", "two"]);
+        await expect(values.getByText("Processing only")).toHaveCount(0);
+        await expect(values.getByText("Not displayed")).toHaveCount(0);
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("object value properties have distinct accessible names across values", async ({ page }) => {
+    const sources = sampleValueSources();
+    sources.push({ id: "demo.priority", label: "Priority",
+        schema: { type: "object", properties: { level: ["one", "two"] } },
+        source: { kind: "constant", value: { level: "two" } },
+        presentation: "stock.editable" });
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sources);
+    try {
+        await page.goto(canvas.url);
+        await expect(page.getByRole("combobox", { name: "Choice: level" })).toHaveValue("one");
+        await expect(page.getByRole("combobox", { name: "Priority: level" })).toHaveValue("two");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("generated value editors save typed changes canvas-wide and retain failed edits", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sampleValueSources());
+    let otherPanel;
+    try {
+        await mkdir(join(canvas.root, "specs", "first"), { recursive: true });
+        await mkdir(join(canvas.root, "specs", "second"), { recursive: true });
+        await page.goto(canvas.url);
+        const note = page.locator('[data-edit-value="demo.note"] input');
+        const enabled = page.locator('[data-edit-value="demo.enabled"] input');
+        const choice = page.locator('[data-edit-value="demo.choice"] select[data-property="level"]');
+
+        const textSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.note");
+        await note.fill("Saved across workflows");
+        await note.press("Tab");
+        expect((await textSave).status()).toBe(200);
+        await expect(note).toHaveValue("Saved across workflows");
+
+        const booleanSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.enabled");
+        await enabled.uncheck();
+        expect((await booleanSave).status()).toBe(200);
+        await expect(enabled).not.toBeChecked();
+
+        const objectSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.choice");
+        await choice.selectOption("two");
+        expect((await objectSave).status()).toBe(200);
+        await expect(choice).toHaveValue("two");
+        await page.reload();
+        await expect(note).toHaveValue("Saved across workflows");
+        await expect(enabled).not.toBeChecked();
+        await expect(choice).toHaveValue("two");
+
+        for (const workflow of ["first", "second"]) {
+            await page.getByRole("button", { name: workflow, exact: true }).click();
+            await expect(note).toHaveValue("Saved across workflows");
+            await expect(enabled).not.toBeChecked();
+            await expect(choice).toHaveValue("two");
+        }
+
+        await page.route("**/api/values", async (route) => {
+            if (route.request().postDataJSON().value === "Unsaved draft") {
+                await route.fulfill({ status: 409, contentType: "application/json",
+                    body: JSON.stringify({ error: "Canvas state changed in another panel. Refresh before saving." }) });
+            } else await route.continue();
+        });
+        const rejectedSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().value === "Unsaved draft");
+        await note.fill("Unsaved draft");
+        await note.press("Tab");
+        expect((await rejectedSave).status()).toBe(409);
+        await expect(page.locator("#canvas-message")).toContainText("Value could not be saved");
+        await expect(note).toHaveValue("Unsaved draft");
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(true);
+        otherPanel = await page.context().newPage();
+        await otherPanel.goto(canvas.url);
+        await page.locator("#refresh-state").focus();
+        await expect(page.locator("#connection-status")).toHaveText("Live");
+        const externalSave = otherPanel.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().id === "demo.enabled");
+        await otherPanel.locator('[data-edit-value="demo.enabled"] input').check();
+        expect((await externalSave).status()).toBe(200);
+        const refreshed = page.waitForResponse((response) =>
+            response.url().includes("/api/state") && response.request().method() === "GET");
+        canvas.broadcast();
+        expect((await refreshed).status()).toBe(200);
+        await expect(enabled).toBeChecked();
+        await expect(note).toHaveValue("Unsaved draft");
+        const separateSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().id === "demo.enabled");
+        await enabled.uncheck();
+        expect((await separateSave).status()).toBe(200);
+        await expect(note).toHaveValue("Unsaved draft");
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(true);
+        const retry = page.waitForResponse((response) =>
+            response.url().includes("/api/values")
+            && response.request().postDataJSON().value === "Recovered edit");
+        await note.fill("Recovered edit");
+        await note.press("Tab");
+        expect((await retry).status()).toBe(200);
+        await expect(note).toHaveValue("Recovered edit");
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(false);
+    } finally {
+        await otherPanel?.close();
+        await canvas.close();
+    }
+});
+
+test("generated value edits serialize revisions and block navigation while saving", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined, sampleValueSources());
+    let releaseFirst;
+    try {
+        await mkdir(join(canvas.root, "specs", "first"), { recursive: true });
+        let firstStarted;
+        const started = new Promise((resolve) => { firstStarted = resolve; });
+        const held = new Promise((resolve) => { releaseFirst = resolve; });
+        const requests = [];
+        await page.route("**/api/values", async (route) => {
+            const input = route.request().postDataJSON();
+            requests.push(input);
+            if (input.id === "demo.note") {
+                firstStarted();
+                await held;
+            }
+            await route.continue();
+        });
+        await page.goto(canvas.url);
+        const firstSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.note");
+        await page.locator('[data-edit-value="demo.note"] input').fill("First edit");
+        await page.locator('[data-edit-value="demo.note"] input').press("Tab");
+        await started;
+        const secondSave = page.waitForResponse((response) =>
+            response.url().includes("/api/values") && response.request().postDataJSON().id === "demo.enabled");
+        await page.locator('[data-edit-value="demo.enabled"] input').uncheck();
+        await page.getByRole("button", { name: "first", exact: true }).click();
+        expect(requests).toHaveLength(1);
+        await expect(page.locator("#workflow-identity")).toBeVisible();
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(true);
+        releaseFirst();
+        expect((await firstSave).status()).toBe(200);
+        expect((await secondSave).status()).toBe(200);
+        await expect(page.locator("#workflow-list .instance-row.active")).toContainText("first");
+        expect(requests.map(({ id, revision }) => [id, revision])).toEqual([
+            ["demo.note", requests[0].revision],
+            ["demo.enabled", requests[0].revision + 1],
+        ]);
+        expect(await page.evaluate(() => {
+            const event = new Event("beforeunload", { cancelable: true });
+            window.dispatchEvent(event);
+            return event.defaultPrevented;
+        })).toBe(false);
+        await expect(page.locator('[data-edit-value="demo.note"] input')).toHaveValue("First edit");
+        await expect(page.locator('[data-edit-value="demo.enabled"] input')).not.toBeChecked();
+    } finally {
+        releaseFirst?.();
+        await canvas.close();
+    }
+});
+
 test("slow control mount leaves other controls and the workflow shell interactive", async ({ page }) => {
     const control = (id) => ({
         id, label: id, control: id, adapter: id, slot: "details.content",
@@ -217,7 +448,7 @@ test("slow control mount leaves other controls and the workflow shell interactiv
     });
     const canvas = await openGeneratedCanvas(false, ["specify"],
         [{ id: "extra", title: "Extra", renderer: "extra" }],
-        ["slow", "broken"].map(control));
+        undefined, ["slow", "broken"].map(control));
     try {
         await page.route("**/controls/slow.mjs*", (route) => route.fulfill({
             contentType: "text/javascript",
@@ -247,7 +478,51 @@ test("slow control mount leaves other controls and the workflow shell interactiv
             priorTheme === "dark" ? "light" : "dark");
         await page.locator('[data-canvas-page="extra"]').click();
         await expect(page.locator("#generated-page")).toHaveText("Extra is available");
+        await expect(page.locator('section[aria-label="slow"]')).toBeHidden();
         await expect(page.locator('[data-control-id="slow"]')).not.toHaveAttribute("role", "alert");
+        await page.locator('[data-canvas-page="workflow"]').click();
+        await expect(page.locator('section[aria-label="slow"]')).toBeVisible();
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("generated page hides all Workflow content and restores it on return", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"],
+        [{ id: "overview", title: "Overview", renderer: "overview" }],
+        [{ id: "billing.costCode", label: "Cost code", value: "CC-481" }]);
+    try {
+        await page.route("**/pages/overview.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript",
+            body: 'export function renderPage({ root }) { root.textContent = "Overview"; }',
+        }));
+        await page.goto(canvas.url);
+        await page.locator("#workflow-name").fill("Draft workflow");
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+
+        await page.locator('[data-canvas-page="overview"]').click();
+        await expect(page.locator("#generated-page")).toHaveText("Overview");
+        await expect(page.locator("#workflow-content")).toBeHidden();
+        for (const selector of ["#instance-collection", '[data-field-id="billing.costCode"]',
+            "#constitution-card", "#phase-navigation", "#phase-card"]) {
+            await expect(page.locator(selector)).toBeHidden();
+        }
+        await expect(page.locator("#refresh-state")).toBeVisible();
+        await expect(page.locator('[data-canvas-page="workflow"]')).toBeVisible();
+
+        await page.locator('[data-canvas-page="workflow"]').click();
+        await expect(page.locator("#generated-page")).toBeHidden();
+        await expect(page.locator("#workflow-content")).toBeVisible();
+        await expect(page.locator("#instance-collection")).toBeVisible();
+        await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
+        await expect(page.locator("#constitution-card")).toBeVisible();
+        await expect(page.locator("#phase-navigation")).toBeVisible();
+        await expect(page.locator("#phase-card")).toBeVisible();
+        await expect(page.locator("#workflow-name")).toHaveValue("Draft workflow");
     } finally {
         await canvas.close();
     }
@@ -294,6 +569,36 @@ test("generated page selection ignores stale imports and async renderers", async
     }
 });
 
+test("new workflow run follows its confirmed slug and blocks deletion while active", async () => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        const run = await canvas.runtime.run({ phase: "specify", itemId: "__new__", args: "Feature" }, "slug-test");
+        await mkdir(join(canvas.root, "specs", "new-feature"), { recursive: true });
+        const before = await canvas.runtime.snapshot();
+        await expect(canvas.runtime.deleteWorkflow({
+            itemId: "specs/new-feature", confirmation: "new-feature", revision: before.revision,
+        })).rejects.toThrow(/unfinished phase/);
+        await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
+        await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
+        const after = await canvas.runtime.snapshot();
+        expect(after.selected).toBe("specs/new-feature");
+        expect(after.statuses.specify.status).toBe("Request sent");
+        await expect(canvas.runtime.deleteWorkflow({
+            itemId: "specs/new-feature", confirmation: "new-feature", revision: after.revision,
+        })).rejects.toThrow(/unfinished phase/);
+        await writeFile(join(canvas.root, "specs", "new-feature", "spec.md"), "# Feature\n");
+        await canvas.runtime.report({
+            phaseRunId: run.runId, path: "specs/new-feature/spec.md",
+        }, "slug-test");
+        expect((await canvas.runtime.snapshot()).statuses.specify.status).toBe("Request sent");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("enabled slug previews the View target folder and persists across phases", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true);
     try {
@@ -315,6 +620,76 @@ test("enabled slug previews the View target folder and persists across phases", 
         await page.locator('[data-phase-index="0"]').click();
         await expect(page.locator("#workflow-name")).toHaveValue("Customer dashboard");
         await expect(page.locator("#workflow-slug")).toHaveValue("sample-feature");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("failed autosave retains workflow identity through SSE and Refresh for retry", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(true);
+    let rejectSaves = true;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST" && rejectSaves) {
+                return route.fulfill({ status: 503, contentType: "application/json",
+                    body: JSON.stringify({ error: "Temporary save failure" }) });
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await expect(page.locator("#workflow-empty")).toBeVisible();
+        await page.locator("#workflow-name").fill("Unsaved workflow");
+        await page.locator("#workflow-slug").fill("unsaved-slug");
+        await page.locator("#phase-args").focus();
+        await expect(page.locator("#canvas-message")).toContainText("Your draft is retained");
+        await mkdir(join(canvas.root, "specs", "other-workflow"), { recursive: true });
+        canvas.broadcast();
+        await expect(page.locator("#workflow-count")).toHaveText("(1)");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toContainText("Temporary save failure");
+        await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
+        await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
+        rejectSaves = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        const saved = await canvas.runtime.snapshot();
+        expect(saved.name).toBe("Unsaved workflow");
+        expect(saved.slug).toBe("unsaved-slug");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("failed New selection replays its selection with identity on Refresh", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(true);
+    const saves = [];
+    let rejectNew = true;
+    try {
+        await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                const patch = JSON.parse(route.request().postData());
+                saves.push(patch);
+                if (rejectNew && patch.selected === "__new__") {
+                    return route.fulfill({ status: 503, contentType: "application/json",
+                        body: JSON.stringify({ error: "Temporary selection failure" }) });
+                }
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await page.getByRole("button", { name: "existing", exact: true }).click();
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("specs/existing");
+        await page.locator("#new-workflow").click();
+        await expect(page.locator("#canvas-message")).toContainText("Temporary selection failure");
+        rejectNew = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect(saves.at(-1)).toMatchObject({ selected: "__new__", name: "", slug: "" });
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("__new__");
+        await expect(page.locator("#workflow-name")).toBeVisible();
     } finally {
         await canvas.close();
     }
@@ -385,6 +760,124 @@ test("sending a phase keeps the navigation free of run states and clears the dis
     }
 });
 
+test("refresh clears resolved phase and Constitution errors", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    let phaseError = true;
+    const withStatus = async (route) => {
+        const response = await route.fetch();
+        const state = await response.json();
+        state.statuses.specify.error = phaseError ? "Phase failed" : null;
+        await route.fulfill({ response, json: state });
+    };
+    try {
+        await page.route("**/api/state", withStatus);
+        await page.route("**/api/refresh", withStatus);
+        await page.goto(canvas.url);
+        await expect(page.locator("#phase-message")).toHaveText("Phase failed");
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-message")).toHaveText("Phase failed");
+        phaseError = false;
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-message")).toBeEmpty();
+
+        await page.route("**/api/run", (route) => route.fulfill({
+            status: 503, contentType: "application/json",
+            body: JSON.stringify({ error: "Constitution could not be sent" }),
+        }));
+        await page.locator("#run-constitution").click();
+        await page.locator("#send-constitution").click();
+        await expect(page.locator("#constitution-message")).toHaveText("Constitution could not be sent");
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await page.locator("#run-constitution").click();
+        await expect(page.locator("#constitution-message")).toBeEmpty();
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("a later successful save does not hide a failed phase draft", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    const saves = [];
+    let failPhase = true;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                const patch = JSON.parse(route.request().postData());
+                saves.push(patch);
+                if (failPhase && patch.draft?.phase === "specify") {
+                    failPhase = false;
+                    return route.fulfill({ status: 503, contentType: "application/json",
+                        body: JSON.stringify({ error: "Phase draft save failed" }) });
+                }
+            }
+            return route.continue();
+        });
+        await page.goto(canvas.url);
+        await expect(page.locator("#workflow-empty")).toBeVisible();
+        await page.locator("#phase-args").fill("Keep this draft");
+        await expect(page.locator("#canvas-message")).toContainText("Phase draft save failed");
+        await page.locator("#run-constitution").click();
+        await page.locator("#constitution-args").fill("Constitution guidance");
+        await expect.poll(() => saves.some((patch) => patch.draft?.phase === "constitution")).toBe(true);
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["__new__", "specify"])]).toBeUndefined();
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["__new__", "specify"])])
+            .toBe("Keep this draft");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("Constitution guidance saves once after typing and flushes before sending", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["constitution", "specify"]);
+    const saves = [];
+    let draftBeforeRun;
+    let rejectDraft = false;
+    try {
+        await page.route("**/api/state", (route) => {
+            if (route.request().method() === "POST") {
+                saves.push(JSON.parse(route.request().postData()));
+                if (rejectDraft) return route.fulfill({ status: 503, contentType: "application/json",
+                    body: JSON.stringify({ error: "Temporary draft failure" }) });
+            }
+            return route.continue();
+        });
+        await page.route("**/api/run", async (route) => {
+            draftBeforeRun = (await canvas.runtime.snapshot())
+                .drafts[JSON.stringify(["project", "constitution"])];
+            await route.fulfill({ status: 503, contentType: "application/json",
+                body: JSON.stringify({ error: "Test dispatch stopped" }) });
+        });
+        await page.goto(canvas.url);
+        await page.locator("#run-constitution").click();
+        await page.locator("#constitution-args").pressSequentially("first draft", { delay: 10 });
+        await expect.poll(() => saves.length).toBe(1);
+        expect(saves[0].draft).toEqual({
+            item: "project", phase: "constitution", value: "first draft",
+        });
+        await page.locator("#constitution-args").fill("latest draft");
+        await page.locator("#send-constitution").click();
+        await expect(page.locator("#constitution-message")).toHaveText("Test dispatch stopped");
+        expect(saves).toHaveLength(2);
+        expect(saves[1].draft.value).toBe("latest draft");
+        expect(draftBeforeRun).toBe("latest draft");
+        rejectDraft = true;
+        await page.locator("#constitution-args").fill("retry draft");
+        await expect(page.locator("#canvas-message")).toContainText("Temporary draft failure");
+        rejectDraft = false;
+        await page.locator("#cancel-constitution").click();
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["project", "constitution"])])
+            .toBe("retry draft");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("one workflow header, compact constitution and legible narrow phase navigation", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true,
         ["constitution", "specify", "clarify", "plan", "tasks", "taskstoissues", "analyze", "checklist", "implement"]);
@@ -436,7 +929,9 @@ test("artifact viewer matches the Wizard full-page layout and returns to the can
     const canvas = await openGeneratedCanvas(false);
     try {
         await mkdir(join(canvas.root, "specs", "sample-feature"), { recursive: true });
-        await writeFile(join(canvas.root, "specs", "sample-feature", "spec.md"), "# Sample feature\n\nDetails.");
+        const artifact = join(canvas.root, "specs", "sample-feature", "spec.md");
+        await writeFile(artifact,
+            "# Sample feature\n\nDetails. <!-- hidden -->\n\n```html\n<!-- important -->\n<div>Example</div>\n```\n");
         await page.goto(canvas.url);
         await page.getByRole("button", { name: "sample-feature", exact: true }).click();
         await expect(page.locator("#view-artifact")).toBeVisible();
@@ -446,6 +941,14 @@ test("artifact viewer matches the Wizard full-page layout and returns to the can
         await expect(viewer.locator("#artifact-title")).toHaveText("Specify");
         await expect(viewer.locator("#artifact-path")).toHaveText("specs/sample-feature/spec.md");
         await expect(viewer.locator("#artifact-content h1")).toHaveText("Sample feature");
+        await expect(viewer.locator("#artifact-content")).not.toContainText("hidden");
+        await expect(viewer.locator("#artifact-content pre code"))
+            .toHaveText("<!-- important -->\n<div>Example</div>");
+        await writeFile(artifact, "");
+        canvas.broadcast();
+        await expect(viewer.locator("#artifact-message"))
+            .toHaveText("Artifact is empty or still being written. Refresh to try again.");
+        await expect(viewer.locator("#artifact-content")).toBeEmpty();
         await expect(viewer.getByRole("button", { name: "Refresh" })).toHaveCount(0);
         expect(await viewer.evaluate((element) => {
             const bounds = element.getBoundingClientRect();

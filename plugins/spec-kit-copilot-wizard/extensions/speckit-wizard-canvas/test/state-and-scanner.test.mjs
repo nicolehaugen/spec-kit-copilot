@@ -1343,6 +1343,26 @@ test("scanWorkspace keeps entries that match installed extension commands, prune
     assert.equal(scan.phases["commands/speckit.assess.research"], undefined);
 });
 
+test("scanWorkspace preserves legacy preset cache entries while their skills exist", async () => {
+    const legacy = { writesTo: "specs/<slug>/review.md", source: "manual",
+        description: "Review the plan", argsHint: "Focus area" };
+    const fs = makeFs({
+        "/proj/.specify": "__DIR__",
+        "/proj/.github/skills/speckit-review/SKILL.md": "# Review",
+        "/proj/.speckit-wizard/artifact-targets.json": JSON.stringify({
+            version: 1, entries: {
+                "commands/speckit.review": legacy,
+                "commands/speckit.orphan": { writesTo: "specs/<slug>/orphan.md" },
+            },
+        }),
+    });
+    const scan = await scanWorkspace("/proj", fs);
+    assert.equal(scan.phases["commands/speckit.review"]?.artifactPath, legacy.writesTo);
+    assert.deepEqual(JSON.parse(fs._store.get("/proj/.speckit-wizard/artifact-targets.json")).entries,
+        { "commands/speckit.review": legacy });
+    assert.equal(scan.phases["commands/speckit.orphan"], undefined);
+});
+
 test("scanWorkspace: empty workspace (no extensions, no cache) doesn't create phase entries or errors", async () => {
     // The "first launch, nothing installed" case — a canary for the trigger
     // timing. Nothing to hydrate, nothing to prune, no warnings.

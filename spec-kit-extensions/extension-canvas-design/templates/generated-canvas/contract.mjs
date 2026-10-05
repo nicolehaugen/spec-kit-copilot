@@ -1,4 +1,4 @@
-import { safePath, UserError } from "./files.mjs";
+import { isWindowsDeviceName, safePath, UserError } from "./files.mjs";
 
 const outputs = {
     constitution: ".specify/memory/constitution.md",
@@ -125,6 +125,7 @@ export function valueContract(config) {
         if (source.kind === "computed") {
             if (Object.keys(source).sort().join() !== "hash,kind,module"
                 || typeof source.module !== "string" || !moduleId.test(source.module)
+                || isWindowsDeviceName(source.module)
                 || typeof source.hash !== "string" || !/^[a-f0-9]{64}$/.test(source.hash)
                 || field.presentation === "stock.editable") {
                 throw new UserError(`Invalid value provider for ${field.id}.`);

@@ -2,8 +2,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { UserError } from "./files.mjs";
+import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
+import { validControlValue } from "./control-contract.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
@@ -45,9 +46,78 @@ function readOnlySections(fields, textPlacements = []) {
                 item.id === id && item.slot === "details.content") ? ` data-stock-text="details.content" data-text-label="${escapeHtml(label)}"` : ""}>${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
 }
 
+function validReadOnlyFields(fields) {
+    return fields === undefined || (Array.isArray(fields) && fields.length <= 100
+        && new Set(fields.map((field) => field?.id)).size === fields.length
+        && fields.every((field) => field && typeof field === "object"
+            && !Array.isArray(field)
+            && Object.keys(field).every((key) => ["id", "label", "value", "section"].includes(key))
+            && typeof field.id === "string"
+            && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
+            && typeof field.label === "string" && !!field.label && field.label.length <= 120
+            && typeof field.value === "string" && field.value.length <= 1000
+            && (field.section === undefined || (field.section
+                && typeof field.section === "object" && !Array.isArray(field.section)
+                && Object.keys(field.section).sort().join() === "id,title"
+                && typeof field.section.id === "string"
+                && /^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
+                && typeof field.section.title === "string"
+                && !!field.section.title.trim() && field.section.title.length <= 120))));
+}
+
+function validGeneratedPages(pages) {
+    return pages === undefined || (Array.isArray(pages) && pages.length <= 30
+        && new Set(pages.map((page) => page?.id)).size === pages.length
+        && pages.every((page) => page && typeof page === "object" && !Array.isArray(page)
+            && Object.keys(page).every((key) => ["id", "renderer", "title", "values", "slots"].includes(key))
+            && typeof page.id === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.id)
+            && page.id !== RESERVED_GENERATED_PAGE_ID && !isWindowsDeviceName(page.id)
+            && typeof page.renderer === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+            && !isWindowsDeviceName(page.renderer)
+            && typeof page.title === "string" && !!page.title.trim() && page.title.length <= 120
+            && (page.values === undefined || Array.isArray(page.values)
+                && page.values.length <= 100 && new Set(page.values).size === page.values.length
+                && page.values.every((id) => typeof id === "string"
+                    && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id)))
+            && (page.slots === undefined || Array.isArray(page.slots)
+                && page.slots.length <= 30
+                && new Set(page.slots.map((slot) => slot?.id)).size === page.slots.length
+                && page.slots.every((slot) => slot && typeof slot === "object"
+                    && !Array.isArray(slot) && Object.keys(slot).join() === "id"
+                    && typeof slot.id === "string" && /^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)))));
+}
+
+function validGeneratedControls(controls) {
+    return controls === undefined || (Array.isArray(controls) && controls.length <= 30
+        && new Set(controls.map((item) => item?.id)).size === controls.length
+        && controls.every((item) => item && typeof item === "object" && !Array.isArray(item)
+            && Object.keys(item).sort().join() === "adapter,control,id,label,properties,slot,value"
+            && typeof item.id === "string" && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+            && typeof item.adapter === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(item.adapter)
+            && typeof item.control === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+            && typeof item.label === "string" && !!item.label && item.label.length <= 120
+            && item.slot === "details.content"
+            && validControlValue(item.value, { type: "object", properties: item.properties })));
+}
+
+function validRuntimeConfig(config) {
+    return config.phaseOutputs && typeof config.phaseOutputs === "object"
+        && !Array.isArray(config.phaseOutputs)
+        && Object.values(config.phaseOutputs).every((output) => output
+            && typeof output.expectsArtifact === "boolean"
+            && (output.outputPath === null || typeof output.outputPath === "string"))
+        && (config.theme === undefined || ["light", "dark"].includes(config.theme))
+        && config.installed && ["presets", "extensions", "bundles"].every((kind) =>
+            Array.isArray(config.installed[kind]) && config.installed[kind].every((item) =>
+                item && typeof item === "object" && !Array.isArray(item)
+                && typeof item.id === "string" && typeof item.version === "string"));
+}
+
 export function readConfig() {
     const config = JSON.parse(readFileSync(new URL("./canvas-config.json", import.meta.url), "utf8"));
-    if (config.schemaVersion !== 1 || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(config.canvas?.id)
+    if (!config || typeof config !== "object" || Array.isArray(config)
+        || config.schemaVersion !== 1 || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(config.canvas?.id)
+        || isWindowsDeviceName(config.canvas.id)
         || ["displayName", "description", "workflowListName"].some((key) =>
             typeof config.canvas[key] !== "string" || !config.canvas[key].trim())
         || !Array.isArray(config.phases) || !config.phases.length
@@ -175,9 +245,10 @@ export function readConfig() {
             item.adapter === config.textControl.adapter)
             || config.imageControl?.adapter === config.textControl.adapter))
         || (config.theme !== undefined && !["light", "dark"].includes(config.theme))
-        || !config.installed || ["presets", "extensions", "bundles"].some((kind) =>
-            !Array.isArray(config.installed[kind]) || config.installed[kind].some((item) =>
-                typeof item.id !== "string" || typeof item.version !== "string"))) {
+        || !validGeneratedPages(config.generatedPages)
+        || !validReadOnlyFields(config.readOnlyFields)
+        || !validGeneratedControls(config.generatedControls)
+        || !validRuntimeConfig(config)) {
         throw new Error("Invalid generated canvas configuration");
     }
     for (const asset of [config.brandAsset, config.mainPageAsset, ...(config.generatedPageAssets ?? [])]) {
@@ -355,8 +426,7 @@ export function renderHtml(config, token = "") {
             ${config.generatedPages.map(({ id, title }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
         </nav>
         <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
-            data-canvas-title="${escapeHtml(canvas.displayName)}"
-            data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? []).map(({ id, value }) => [id, value]))))}" hidden></section>` : "",
+            data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>` : "",
         constitution: hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
             <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
             <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
@@ -379,9 +449,16 @@ export function renderHtml(config, token = "") {
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
 <main class="app-body workflow-surface">
-    ${config.workflowPage.regions.map((region) => regions[region]).join("")}
-    ${config.generatedPages?.map(({ id, renderer, slots }) =>
+    ${config.generatedPages?.length ? regions.pages : ""}
+    ${config.generatedPages?.length ? '<div id="workflow-content" class="workflow-content">' : ""}
+    ${config.workflowPage.regions.filter((region) => !config.generatedPages?.length
+        || (region !== "pages" && region !== "message")).map((region) => regions[region]).join("")}
+    ${config.generatedPages?.length ? `</div>${regions.message}` : ""}
+    ${config.generatedPages?.map(({ id, renderer, slots, values }) =>
         `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"
+            data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? [])
+                .filter((field) => values?.includes(field.id))
+                .map(({ id, value }) => [id, value]))))}"
             data-asset-slots="${escapeHtml(JSON.stringify(slots ?? []))}"
             data-assets="${escapeHtml(JSON.stringify((config.generatedPageAssets ?? [])
                 .filter((asset) => asset.page === id)))}"></span>`).join("") ?? ""}
