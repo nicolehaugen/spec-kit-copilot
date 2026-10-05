@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.18** registers three JSON page templates, five ordered
+Canvas Design **0.1.19** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition and pipeline renderer, plus the
@@ -146,8 +146,12 @@ separate Refresh button.
   provider accepting the resolved pages and templates in its open input.
 - A launching integration that supplies the Designer handoff.
 
-Installing this extension does not install or open a Designer. Compatibility
-with a released Wizard version is not established by this package.
+Installing this extension does not install or open a Designer. The Designer
+contract is the `schemaVersion.const` in
+`schemas/designer.tab-definition.schema.json` (currently `1`). Bump that
+schema version and coordinate with the Designer provider when changing its
+supported interface; the extension release version alone does not establish
+compatibility.
 
 ## Installation
 
@@ -162,7 +166,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.18/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.19/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -196,6 +200,18 @@ before returning the complete pages/templates input. It performs no
 installation or provider evaluation. A warning (even on exit status 0),
 missing name, resolution mismatch, or executable script collision stops the
 open.
+
+The Generate command checks the integrity and checkout binding of its frozen
+request, the canvas target, and the Wizard handoff's workflow and installed
+inventory before writing files. It includes the hosted Canvas Design selection
+when recomputing the handoff fingerprint. If only the source fingerprint
+differs, the command returns a warning and attempts generation from the intact
+frozen request; the agent reports that warning when opening the generated
+canvas. Request or checkout integrity and workflow mismatches still stop it.
+The generated `canvas-config.json` records the versions observed in the child
+checkout's Specify inventory at Generate; changed versions produce warnings
+without blocking. Unavailable package versions are marked `unverified` instead
+of being attributed to the Wizard's older inventory.
 
 Invalid registered field contributions stop the open with both names on a
 field collision; newly registered stock text/checkbox fields mount their

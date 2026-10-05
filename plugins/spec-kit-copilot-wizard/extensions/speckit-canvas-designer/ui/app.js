@@ -62,6 +62,10 @@ generate.addEventListener("click", async () => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);
         status.textContent = `Generation queued: ${result.target}`;
+        if (result.warnings?.length) {
+            messageBox.textContent = `Warning: ${result.warnings.join(" ")}`;
+            messageBox.hidden = false;
+        }
         queued = true;
     } catch (error) {
         showFieldError(error.message);

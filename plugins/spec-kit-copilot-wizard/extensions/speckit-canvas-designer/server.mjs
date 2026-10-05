@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
-import { freezeGeneration } from "./generation.mjs";
+import { freezeGeneration, readCurrentInstalledVersions } from "./generation.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -193,7 +193,18 @@ export async function startShell(handoff = null, model = null, { project, worksp
                         .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));
                     return;
                 }
-                const result = await freezeGeneration({ model: current, values: input.values, handoff, project, workspace });
+                let runtimeInventory, inventoryWarning;
+                try {
+                    const observed = await readCurrentInstalledVersions(project, handoff.workflow.installed);
+                    runtimeInventory = observed.inventory;
+                    inventoryWarning = observed.warnings.length
+                        ? `${observed.warnings.join(" ")} Affected versions will be marked unverified.` : undefined;
+                } catch (error) {
+                    runtimeInventory = { presets: [], extensions: [], bundles: [] };
+                    inventoryWarning = `Could not read the installed Specify packages: ${error.message}. Generated package versions will be marked unverified.`;
+                }
+                const result = await freezeGeneration({ model: current, values: input.values,
+                    handoff, project, workspace, runtimeInventory, inventoryWarning });
                 try {
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });
                 } catch (cause) {

@@ -275,3 +275,24 @@ export async function validateLocalSource(kind, rawPath, openFile = open) {
     const resolvedKind = auto ? await detectLocalKind(canonical) : kind;
     return validateManifest(resolvedKind, canonical, openFile);
 }
+
+export async function readDesignerContract(path) {
+    const canonical = await realpath(path);
+    const schemas = join(canonical, "schemas");
+    const directory = await lstat(schemas);
+    if (!directory.isDirectory() || directory.isSymbolicLink()
+        || await realpath(schemas) !== schemas) {
+        throw new Error("Canvas Design schemas must be a real directory in the local package");
+    }
+    const file = "designer.tab-definition.schema.json";
+    const text = await readBoundedManifest(join(schemas, file),
+        { file }, schemas);
+    let contract;
+    try { contract = JSON.parse(text); }
+    catch { throw new Error("Invalid Canvas Design Designer tab schema"); }
+    const version = contract?.properties?.schemaVersion?.const;
+    if (!Number.isSafeInteger(version) || version < 1) {
+        throw new Error("Invalid Canvas Design Designer tab schema version");
+    }
+    return version;
+}
