@@ -26,6 +26,9 @@ packages or run workflow phases.
    with runtime package IDs, versions, and priorities but no install-source
    paths or URLs, then validates the extension. The full install locators stay
    in the session-scoped handoff and request. It never overwrites an existing target.
+   A source-fingerprint difference is reported in the command's `warnings`
+   output; report it to the user, but proceed with the intact frozen request
+   when checkout, target, workflow, and installed inventory checks pass.
    On failure, report the error unchanged and leave any partial target for
    inspection; do not create an alternative implementation or retry.
 4. After successful validation, call `extensions_reload`, inspect the project

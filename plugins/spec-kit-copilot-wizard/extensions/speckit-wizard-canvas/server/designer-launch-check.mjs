@@ -93,8 +93,8 @@ export async function verifyHostedCanvasDesign(project, handoff, run = exec) {
     const child = await realpath(project);
     const path = join(child, ".specify", "extensions", "extension-canvas-design");
     const installed = await validateLocalSource("extensions", path);
-    if (installed.id !== "extension-canvas-design" || installed.version !== base.version) {
-        throw new Error("Installed Canvas Design version differs from the approved catalog.");
+    if (installed.id !== "extension-canvas-design") {
+        throw new Error("Installed Canvas Design ID differs from the approved catalog.");
     }
     const contract = await readDesignerContract(path);
     if (!designerCompatibility.supportedVersions.includes(contract)) {
@@ -104,10 +104,15 @@ export async function verifyHostedCanvasDesign(project, handoff, run = exec) {
         ["extension", "list", "--json"],
         await specifySpawnOptions(child, { timeout: 10000, maxBuffer: 128 * 1024 }));
     const entry = JSON.parse(stdout).find((item) => item.id === installed.id);
-    if (entry?.version !== base.version || entry.source?.kind !== "catalog") {
-        throw new Error("Installed Canvas Design version or catalog source differs from the approved handoff.");
+    if (entry?.id !== installed.id || !["local", "catalog"].includes(entry.source?.kind)) {
+        throw new Error("Installed Canvas Design source or ID differs from the approved handoff.");
     }
-    return { id: installed.id, version: installed.version, designerContract: contract };
+    if (entry.version !== installed.version) {
+        throw new Error("Installed Canvas Design manifest and inventory versions disagree.");
+    }
+    return { id: installed.id, version: installed.version, designerContract: contract,
+        warnings: installed.version === base.version ? [] :
+            [`Canvas Design version drift: approved ${base.version}, installed ${installed.version}.`] };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -120,7 +125,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
                     rest[0], rest[1])
                 : mode === "verify-base"
                     ? await verifyHostedCanvasDesign(project, await readHandoff(root, handoffId))
-                : (() => { throw new Error("Expected preflight or verify-local mode."); })();
+                : (() => { throw new Error("Expected preflight, verify-local, or verify-base mode."); })();
         console.log(JSON.stringify(result));
     } catch (error) {
         console.error(`Designer launch verification failed: ${error.message}`);

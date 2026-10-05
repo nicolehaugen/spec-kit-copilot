@@ -826,6 +826,28 @@ test("local development selections remain bound to the frozen handoff at publica
     const config = JSON.parse(await readFile(join(project, ".github", "extensions",
         "my-workflow", "canvas-config.json"), "utf8"));
     assert.deepEqual(config.installed.presets, [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }]);
+
+    const hosted = { ...handoff, canvasDesign: {
+        version: "0.1.18", downloadUrl: "https://example.org/extension-canvas-design.zip",
+    } };
+    hosted.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: hosted.workflow, selections: hosted.selections,
+        canvasDesign: hosted.canvasDesign,
+    })).digest("hex");
+    const another = await fixture(t, hosted);
+    const result = await materialize(another.project, another.workspace,
+        hosted.handoffId, another.prepared.requestId);
+    assert.deepEqual(result.warnings, []);
+
+    const drifted = await fixture(t, hosted);
+    const path = join(drifted.workspace, "speckit-canvas-designer", "handoffs",
+        hosted.handoffId, "handoff.json");
+    await writeFile(path, JSON.stringify({ ...hosted,
+        selections: { ...hosted.selections, presets: [{ id: "changed" }] } }));
+    const warned = await materialize(drifted.project, drifted.workspace,
+        hosted.handoffId, drifted.prepared.requestId);
+    assert.match(warned.warnings[0], /fingerprint differs/);
+    assert.equal(warned.canvasId, "my-workflow");
 });
 
 test("generated config excludes session-only installed package locators", async (t) => {

@@ -1,5 +1,6 @@
 import { test, expect } from "./playwright.mjs";
 import { fileURLToPath } from "node:url";
+import { validateLocalSource } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server/designer-local-sources.mjs";
 
 // A real, valid preset directory in this repo — used to exercise the
 // "Local development" add flow against an actual manifest on disk, matching
@@ -11,6 +12,14 @@ const LOCAL_PRESET_PATH = fileURLToPath(
 const LOCAL_CANVAS_DESIGN_PATH = fileURLToPath(
     new URL("../../spec-kit-extensions/extension-canvas-design", import.meta.url),
 ).replace(/[\\/]$/, "");
+const localPreset = await validateLocalSource("presets", LOCAL_PRESET_PATH);
+const localCanvasDesign = await validateLocalSource("extensions", LOCAL_CANVAS_DESIGN_PATH);
+
+async function expectQueuedLaunch(response) {
+    const body = await response.json();
+    expect(response.status(), JSON.stringify(body)).toBe(202);
+    expect(body).toEqual({ queued: true });
+}
 
 test.beforeEach(async ({ page }) => {
     await page.goto("/?token=e2e-token");
@@ -99,7 +108,7 @@ test("confirms community selection and checks only listed design bundle members"
     await preset.uncheck();
     await expect(preset).not.toBeChecked();
     await dialog.getByRole("tab", { name: "Extensions" }).click();
-    await expect(dialog.getByRole("checkbox", { name: /Design extension/ })).toBeChecked();
+    await expect(dialog.getByRole("checkbox", { name: /^Design extension\b/ })).toBeChecked();
     await expect(dialog.getByText("Unlisted extension")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: /Launch designer/ })).toBeEnabled();
     expect(writes).toEqual([]);
@@ -112,7 +121,7 @@ test("community presets and extensions retain their selection warnings", async (
         ["Extensions", "Design extension", "extension"],
     ]) {
         await dialog.getByRole("tab", { name: tab }).click();
-        const choice = dialog.getByRole("checkbox", { name });
+        const choice = dialog.getByRole("checkbox", { name: new RegExp(`^${name}\\b`) });
         await choice.check();
         const warning = page.getByRole("dialog", { name: `Select community ${kind}?` });
         await expect(warning.getByText(/not reviewed, audited, or endorsed/)).toBeVisible();
@@ -133,10 +142,11 @@ test("launch queues a session and closes the dialog", async ({ page }) => {
         response.url().includes("/api/designer/launch") && response.request().method() === "POST");
     await dialog.getByRole("button", { name: "Launch designer" }).click();
     const response = await responsePromise;
-    expect(response.status()).toBe(202);
-    expect(await response.json()).toEqual({ queued: true });
+    await expectQueuedLaunch(response);
     expect(response.request().postDataJSON()).toMatchObject({
-        selections: { presets: [], extensions: [], bundles: [] },
+        selections: { presets: [], extensions: [{
+            id: localCanvasDesign.id, source: "copilot", approved: true,
+        }], bundles: [] },
         catalogFingerprint: "e2e-catalog",
     });
 
@@ -203,8 +213,8 @@ test("adds a local preset via typed absolute path, checks it in automatically, a
     await localSection.locator("[data-designer-local-add]").click();
     const localItem = localSection.locator(".designer-local-item");
     await expect(localItem).toHaveCount(1);
-    await expect(localItem.getByText("Copilot Sub-Agent Delegation")).toBeVisible();
-    await expect(localItem.getByText("copilot-sub-agents · v1.0.0")).toBeVisible();
+    await expect(localItem.getByText(localPreset.name)).toBeVisible();
+    await expect(localItem.getByText(`${localPreset.id} · v${localPreset.version}`)).toBeVisible();
     await expect(localItem.getByText("Preset", { exact: true })).toBeVisible();
     await expect(localItem.getByRole("checkbox")).toBeChecked();
 
@@ -212,6 +222,7 @@ test("adds a local preset via typed absolute path, checks it in automatically, a
         response.url().includes("/api/designer/launch") && response.request().method() === "POST");
     await dialog.getByRole("button", { name: "Launch designer" }).click();
     const response = await responsePromise;
+    await expectQueuedLaunch(response);
     expect(response.request().postDataJSON()).toMatchObject({
         localSelections: { presets: [{ id: "copilot-sub-agents", path: LOCAL_PRESET_PATH }] },
     });
@@ -223,14 +234,16 @@ test("checked worktree Canvas Design extension is included in the launch request
     await localSection.locator("summary").click();
     await localSection.locator("[data-designer-local-path]").fill(LOCAL_CANVAS_DESIGN_PATH);
     await localSection.locator("[data-designer-local-add]").click();
-    await expect(localSection.locator(".designer-local-item")).toContainText("extension-canvas-design · v0.1.18");
+    await expect(localSection.locator(".designer-local-item"))
+        .toContainText(`${localCanvasDesign.id} · v${localCanvasDesign.version}`);
     await expect(localSection.locator(".designer-local-item .designer-choice"))
-        .toHaveAttribute("title", "Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.");
+        .toHaveAttribute("title", localCanvasDesign.description);
     await expect(localSection.locator(".designer-local-item").getByRole("checkbox")).toBeChecked();
     const responsePromise = page.waitForResponse((response) =>
         response.url().includes("/api/designer/launch") && response.request().method() === "POST");
     await dialog.getByRole("button", { name: "Launch designer" }).click();
     const response = await responsePromise;
+    await expectQueuedLaunch(response);
     expect(response.request().postDataJSON().localSelections).toEqual({
         extensions: [{ id: "extension-canvas-design", path: LOCAL_CANVAS_DESIGN_PATH }],
     });

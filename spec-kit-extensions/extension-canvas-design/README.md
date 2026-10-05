@@ -201,6 +201,14 @@ installation or provider evaluation. A warning (even on exit status 0),
 missing name, resolution mismatch, or executable script collision stops the
 open.
 
+The Generate command checks the integrity and checkout binding of its frozen
+request, the canvas target, and the Wizard handoff's workflow and installed
+inventory before writing files. It includes the hosted Canvas Design selection
+when recomputing the handoff fingerprint. If only the source fingerprint
+differs, the command returns a warning and attempts generation from the intact
+frozen request; the agent reports that warning when opening the generated
+canvas. Request or checkout integrity and workflow mismatches still stop it.
+
 Invalid registered field contributions stop the open with both names on a
 field collision; newly registered stock text/checkbox fields mount their
 resolved Designer adapters on their declared Designer page and can be saved.

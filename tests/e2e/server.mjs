@@ -1,8 +1,13 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { createHandler } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server.mjs";
+import releaseCatalog from "../../spec-kit-extensions/catalog.json" with { type: "json" };
 
 const repoPath = fileURLToPath(new URL("../../", import.meta.url));
+const releasedBase = releaseCatalog.extensions["extension-canvas-design"];
+if (!releasedBase?.version || !releasedBase.download_url) {
+    throw new Error("Canvas Design release catalog entry is missing a version or download URL");
+}
 const snapshot = {
     workspacePath: process.cwd(),
     featureFlags: { generateCanvas: true },
@@ -25,6 +30,9 @@ const snapshot = {
             { id: "unlisted-preset", name: "Unlisted preset", source: "copilot" },
         ],
         extensions: [
+            { id: releasedBase.id, name: releasedBase.name, source: "copilot",
+                version: releasedBase.version, downloadUrl: releasedBase.download_url,
+                tags: releasedBase.tags },
             { id: "design-extension", name: "Design extension", source: "community", description: "Extends the designer behavior", tags: ["canvas-design"] },
             { id: "unlisted-extension", name: "Unlisted extension", source: "copilot", tags: ["other"] },
         ],
