@@ -511,6 +511,7 @@ code, pre { font-family: var(--font-mono); }
     display: grid;
     gap: 1.25rem;
 }
+#workflow-pipeline { display: grid; gap: 1.25rem; min-width: 0; }
 .workflow-surface .workflow-header {
     display: flex;
     align-items: center;

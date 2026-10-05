@@ -49,7 +49,7 @@ async function mountGeneratedControl(root) {
     }
 }
 const $ = (id) => document.getElementById(id);
-const steps = [...document.querySelectorAll("[data-phase-index]")];
+let steps = [];
 const drafts = new Map();
 const failedValueDrafts = new Map();
 const failedPatches = new Map();
@@ -429,7 +429,8 @@ function renderPhase(focusId) {
     const mobileSelect = $("mobile-phase-select");
     if (mobileSelect) {
         mobileSelect.value = String(current);
-        $("mobile-next-phase").textContent = current + 1 < steps.length
+        const mobileNext = $("mobile-next-phase");
+        if (mobileNext) mobileNext.textContent = current + 1 < steps.length
             ? `Next: ${steps[current + 1].dataset.phaseLabel}` : "Final phase";
     }
     const back = $("previous-phase"), next = $("next-phase");
@@ -653,7 +654,6 @@ async function openArtifact(step) {
 }
 document.addEventListener("input", (event) => {
     if (!model) return;
-    if (event.target.id === "phase-args") { remember(phase(), event.target.value); queueInput(); }
     if (event.target.id === "workflow-name") {
         model.name = event.target.value;
         queueInput();
@@ -675,13 +675,9 @@ $("workflow-search").addEventListener("input", (event) => {
     workflowQuery = event.target.value;
     if (model) filterWorkflowList();
 });
-$("mobile-phase-select")?.addEventListener("change", (event) => {
-    selectPhase(Number(event.target.value), "mobile-phase-select")
-        .catch((error) => {
-            event.target.value = String(current);
-            message(error.message, "canvas-message", true);
-        });
-});
+function requireModel() {
+    if (!model) throw new Error("The canvas is connecting. Use Refresh to try again.");
+}
 document.addEventListener("click", (event) => {
     const button = event.target.closest("button");
     if (!button) return;
@@ -711,24 +707,15 @@ document.addEventListener("click", (event) => {
             message("Canvas refreshed.");
             return;
         }
-        if (!model) throw new Error("The canvas is connecting. Use Refresh to try again.");
+        requireModel();
         if (button.dataset.deleteWorkflowId) { await deleteFeature(button.dataset.deleteWorkflowId); return; }
         if (button.dataset.workflowId) { await selectFeature(button.dataset.workflowId); return; }
-        if (button.hasAttribute("data-phase-index")) await selectPhase(Number(button.dataset.phaseIndex));
-        else if (button.id === "previous-phase") await selectPhase(current - 1, button.id);
-        else if (button.id === "next-phase") await selectPhase(current + 1, button.id);
-        else if (button.id === "new-workflow" || button.id === "create-first-workflow") {
+        if (button.id === "new-workflow" || button.id === "create-first-workflow") {
             await selectFeature("__new__");
             $("workflow-name")?.focus();
         }
-        else if (button.id === "run-phase") await send(phase(), $("phase-args").value);
-        else if (button.id === "view-artifact") await openArtifact(phase());
         else if (button.id === "view-constitution") await openArtifact(constitution());
-        else if (button.id === "browse-output-folder") {
-            await flush();
-            const result = await api("/api/reveal", { phase: phase().id, itemId: model.selected });
-            message(result.message, "phase-message");
-        } else if (button.id === "run-constitution") {
+        else if (button.id === "run-constitution") {
             const key = draftKey(constitution());
             $("constitution-args").value = drafts.get(key) ?? model.drafts[key] ?? "";
             $("constitution-dialog").showModal();
@@ -737,6 +724,49 @@ document.addEventListener("click", (event) => {
     })().catch((error) => message(error.message, "canvas-message", true));
 });
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
+const pipelineRoot = $("workflow-pipeline");
+try {
+    const { mount } = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
+    if (typeof mount !== "function") throw new Error("Missing pipeline mount export");
+    const phases = JSON.parse(pipelineRoot.dataset.phases);
+    ({ steps } = mount({ root: pipelineRoot, phases,
+        actions: {
+            select: (index, focusId) => { requireModel(); return selectPhase(index, focusId); },
+            run: (value) => { requireModel(); return send(phase(), value); },
+            view: () => { requireModel(); return openArtifact(phase()); },
+            reveal: async () => {
+                requireModel();
+                await flush();
+                const result = await api("/api/reveal", { phase: phase().id, itemId: model.selected });
+                message(result.message, "phase-message");
+            },
+            draft: (value) => {
+                if (model) { remember(phase(), value); queueInput(); }
+            },
+            error: (error) => message(error.message, "canvas-message", true),
+        } }));
+    const required = [".phase-notice", "#browse-output-folder code", "#phase-args",
+        "#phase-message", "#phase-artifact-status", "#view-artifact",
+        "#run-phase", "#previous-phase", "#next-phase"];
+    const card = pipelineRoot.querySelector("#phase-card");
+    if (!Array.isArray(steps) || steps.length !== phases.length
+        || steps.some((step, index) => !(step instanceof HTMLButtonElement)
+            || !pipelineRoot.contains(step) || step.dataset.phaseIndex !== String(index)
+            || step.dataset.phaseLabel !== phases[index].label)
+            || !pipelineRoot.querySelector("#phase-navigation")
+            || !card
+            || (phases.length > 0 && required.some((selector) => !card.querySelector(selector)))
+        || phases.some((_, index) => {
+            const template = pipelineRoot.querySelector(`#phase-template-${index}`);
+            return !(template instanceof HTMLTemplateElement)
+                || required.some((selector) => !template.content.querySelector(selector));
+        })) {
+        throw new Error("Pipeline renderer did not render the required phase controls");
+    }
+} catch (error) {
+    message(`Pipeline could not render: ${error.message}`, "canvas-message", true);
+    throw error;
+}
 wireThemeToggle();
 wireGeneratedPages();
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);

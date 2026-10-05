@@ -5,7 +5,6 @@
   "description": "Upload a Logo for the preset-generated gallery page.",
   "order": 40,
   "enabled": true,
-  "slots": [{"id": "gallery.options", "accepts": ["field"],
-    "orderBy": ["order", "presetId", "id"]}],
+  "slots": [{"id": "gallery.options"}],
   "fields": []
 }

@@ -3,6 +3,6 @@
   "id": "demo.workflow",
   "label": "Workflow label",
   "schema": { "type": "string", "maxLength": 80 },
-  "source": { "kind": "provider", "module": "canvas-value-workflow-provider" },
+  "source": { "kind": "computed", "module": "canvas-value-workflow-provider" },
   "presentation": "stock.readonly"
 }
