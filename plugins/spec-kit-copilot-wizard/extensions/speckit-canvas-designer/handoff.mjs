@@ -14,6 +14,30 @@ const LOCAL_KINDS = ["presets", "extensions"];
 const LOCAL_PATH = /^(?:[A-Za-z]:[\\/]|\\\\|\/)[^\x00-\x1f]{0,4094}$/;
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
+export function validatePhaseOutputs(value, phases) {
+    if (!record(value) || Object.keys(value).length !== phases.length
+        || Object.keys(value).some((id) => !phases.includes(id))) {
+        throw new Error("Invalid Designer phase outputs");
+    }
+    for (const [id, entry] of Object.entries(value)) {
+        if (!record(entry) || Object.keys(entry).sort().join() !== "outputs,view"
+            || !Array.isArray(entry.outputs) || entry.outputs.length > 100
+            || entry.outputs.some((path) => typeof path !== "string"
+                || path.length > 1000 || !path.endsWith(".md")
+                || !/^(?!\.git(?:\/|$)|\.github(?:\/|$)|node_modules(?:\/|$)|\.speckit-canvas(?:\/|$)|\.speckit-wizard(?:\/|$)|\.specify\/(?:extensions|presets|templates)\/)[^\\\x00-\x1f\x7f]+$/.test(path)
+                || path.split("/").some((part) => !part || part === "." || part === ".."
+                    || /[. ]$/.test(part) || (part !== "<slug>" && /[<>:"|?*]/.test(part))
+                    || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))
+                || path.split("/").filter((part) => part === "<slug>").length > 1
+                || path.startsWith("<slug>/"))
+            || new Set(entry.outputs.map((path) => path.toLowerCase())).size !== entry.outputs.length
+            || (entry.outputs.length ? !entry.outputs.includes(entry.view) : entry.view !== null)) {
+            throw new Error(`Invalid outputs for phase ${id}`);
+        }
+    }
+    return value;
+}
+
 // `localSelections` is an optional, additive top-level handoff key. Absent
 // entirely (the hosted-catalog-only path) is valid and leaves the handoff
 // byte-identical to the pre-local-dev schema.
@@ -105,7 +129,7 @@ export function validateHandoff(handoff, id) {
         || handoff.schemaVersion !== 1 || handoff.handoffId !== id
         || !record(handoff.workflow)
         || Object.keys(handoff.workflow).some((key) =>
-            !["selectedPhases", "installed", "installLocators"].includes(key))
+            !["selectedPhases", "outputEvidence", "installed", "installLocators"].includes(key))
         || !Array.isArray(handoff.workflow.selectedPhases)
         || handoff.workflow.selectedPhases.length > 30
         || !handoff.workflow.selectedPhases.every((phase) => typeof phase === "string" && PACKAGE.test(phase))
@@ -168,6 +192,9 @@ export function validateHandoff(handoff, id) {
     }), "hex");
     if (!timingSafeEqual(expected, Buffer.from(handoff.sourceFingerprint, "hex"))) {
         throw new Error("Designer handoff fingerprint mismatch");
+    }
+    if (handoff.workflow.outputEvidence !== undefined) {
+        validatePhaseOutputs(handoff.workflow.outputEvidence, handoff.workflow.selectedPhases);
     }
     return handoff;
 }

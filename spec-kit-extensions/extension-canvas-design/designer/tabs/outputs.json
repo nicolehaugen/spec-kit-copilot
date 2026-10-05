@@ -2,8 +2,8 @@
   "$schema": "../../schemas/designer.tab-definition.schema.json",
   "schemaVersion": 1,
   "id": "designer-artifacts",
-  "title": "Artifacts",
-  "description": "Configure canvas artifacts.",
+  "title": "Outputs",
+  "description": "Confirm the files each phase produces. Choose the default file opened by View artifact.",
   "order": 20,
   "enabled": true,
   "fields": []

@@ -217,7 +217,13 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     async function artifact(input) {
         const step = phaseFor(input.phase);
-        const path = await outputPath(step, input.itemId);
+        if (input.output !== undefined && !step.outputs.includes(input.output)) {
+            throw new UserError("This output is not declared for the selected phase.", 403);
+        }
+        const path = input.output === undefined
+            ? await outputPath(step, input.itemId)
+            : await outputPath({ ...step, output: input.output, configuredArtifacts: true },
+                input.itemId);
         if (!path) throw new UserError(step.output
             ? "No artifact is available yet. Run the phase or select an existing workflow to view its artifact."
             : "No artifact is available for this phase yet. Run the phase, then refresh to check again.", 404);
@@ -453,7 +459,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }
         });
         return { accepted: true, slug: input.slug, phases: phases.map((step) => ({ phase: step.id,
-            outputs: step.outputs.map((path) => path.replace("<slug>", input.slug)) })) };
+            outputs: [step.output, ...step.outputs.filter((path) => path !== step.output)]
+                .filter(Boolean).map((path) => path.replace("<slug>", input.slug)) })) };
     }
     async function report(input, instanceId) {
         const run = reportingRun(input, instanceId);

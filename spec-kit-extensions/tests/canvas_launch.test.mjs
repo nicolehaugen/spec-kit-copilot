@@ -59,7 +59,7 @@ test("composed verification resolves every name, rejects warnings and native scr
         "sample-page": join(preset, "pages", "sample.json"),
         "sample-renderer": join(preset, "pages", "renderer.mjs"),
         "designer-essentials": join(installed, "designer", "tabs", "essentials.json"),
-        "designer-artifacts": join(installed, "designer", "tabs", "artifacts.json"),
+        "designer-artifacts": join(installed, "designer", "tabs", "outputs.json"),
         "designer-appearance": join(installed, "designer", "tabs", "appearance.json"),
         "designer-essentials-description": join(installed, "designer", "essentials-settings", "description.json"),
         "designer-essentials-workflow-heading": join(installed, "designer", "essentials-settings", "workflow-heading.json"),

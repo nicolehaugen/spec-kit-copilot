@@ -27,8 +27,8 @@ provides:
       file: designer/tabs/essentials.json
       description: Essentials fields for canvas identity and workflow naming.
     - name: designer-artifacts
-      file: designer/tabs/artifacts.json
-      description: Artifacts settings placeholder.
+      file: designer/tabs/outputs.json
+      description: Outputs page for confirming phase files and viewer defaults.
     - name: designer-appearance
       file: designer/tabs/appearance.json
       description: Appearance settings placeholder.

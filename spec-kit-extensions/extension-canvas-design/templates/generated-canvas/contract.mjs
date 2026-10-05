@@ -21,12 +21,15 @@ export function phaseContract(config) {
         const command = `speckit.${short}`;
         const declared = config.phaseOutputs[id]?.outputPath;
         const mapping = artifacts[id];
-        if (mapping && (typeof mapping !== "object" || Object.keys(mapping).some((key) => !["outputs", "view"].includes(key))
-            || !Array.isArray(mapping.outputs) || !mapping.outputs.length || !mapping.outputs.includes(mapping.view))) {
+        if (mapping && (typeof mapping !== "object" || Array.isArray(mapping)
+            || Object.keys(mapping).sort().join() !== "outputs,view"
+            || !Array.isArray(mapping.outputs) || mapping.outputs.length > 100
+            || (mapping.outputs.length ? !mapping.outputs.includes(mapping.view) : mapping.view !== null))) {
             throw new UserError("Invalid phase artifact outputs or viewer target.");
         }
         if (Object.hasOwn(artifacts, id) && !mapping) throw new UserError("Invalid phase artifact configuration.");
-        const output = mapping?.view ?? (config.phaseOutputs[id]?.expectsArtifact === false ? null : declared || outputs[short] || null);
+        const output = mapping ? mapping.view
+            : (config.phaseOutputs[id]?.expectsArtifact === false ? null : declared || outputs[short] || null);
         const paths = mapping?.outputs ?? (output ? [output] : []);
         const normalized = paths.map((path) => safePath(path, true));
         if (new Set(normalized.map((path) => path.toLowerCase())).size !== normalized.length) throw new UserError("Duplicate phase output path.");
@@ -42,7 +45,7 @@ export function phaseContract(config) {
         }
         return { id, command, skill: command.replaceAll(".", "-"), output: output ? safePath(output, true) : null,
             outputs: normalized, configuredArtifacts: !!mapping,
-            expectsArtifact: mapping ? true : config.phaseOutputs[id]?.expectsArtifact,
+            expectsArtifact: mapping ? mapping.outputs.length > 0 : config.phaseOutputs[id]?.expectsArtifact,
             project: short === "constitution", first: short === "specify" };
     });
 }

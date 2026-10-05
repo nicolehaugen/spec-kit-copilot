@@ -40,7 +40,7 @@ directory, so the finished app does not depend on this extension at runtime.
 | `generated-control-adapter-text` | Generated app | Render visible text in authorized placements |
 | `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
 | `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
-| `designer-artifacts` | Artifacts | Empty placeholder |
+| `designer-artifacts` | Outputs | Confirm each phase's Markdown outputs and default viewer target |
 | `designer-appearance` | Appearance | Empty placeholder |
 
 The Essentials core template lives in `designer/tabs/essentials.json`; its
@@ -138,6 +138,11 @@ shows phase names without run states; the selected phase card retains its status
 Dispatch success does not add a separate "Request sent" notice to the canvas.
 View artifact opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
+The Outputs tab confirms the Wizard-provided Markdown files for each phase,
+including phases with none, with add/remove controls and a selected View artifact
+default. The generated phase card lists the confirmed files as viewer links;
+the View artifact button opens the selected default and is hidden when a phase
+has no outputs. Existing header Save persists these selections.
 
 ## Requirements
 
@@ -375,9 +380,9 @@ added generated page's `renderPage` contract.
 
 The pipeline module exports `mount({ root, phases, actions })`. It owns the
 navigation and selected-phase card within `root` and returns `{ steps }`, an
-ordered array of its phase buttons. `phases` contains `{ id, label, output }`
+ordered array of its phase buttons. `phases` contains `{ id, label, output, outputs }`
 display data; the host supplies `actions.select(index, focusId?)`,
-`actions.run(args)`, `actions.view()`, `actions.reveal()`,
+`actions.run(args)`, `actions.view(output?)`, `actions.reveal()`,
 `actions.draft(value)`, and `actions.error(error)`. The first four request
 host-validated operations; adapters do not call workflow endpoints directly.
 For this initial proof, the renderer must retain the host's documented

@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
 import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
+import { phaseContract } from "../extension-canvas-design/templates/generated-canvas/contract.mjs";
 import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
 import { freezeGeneration, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
@@ -35,6 +36,66 @@ const model = {
 const values = { "canvas.id": "my-workflow", "canvas.displayName": "My Workflow",
     "canvas.description": "A workflow", "canvas.workflowListName": "Workflows",
     "workflowSlug.userProvided": false };
+
+test("confirmed outputs override legacy defaults, including an explicitly empty phase", () => {
+    const config = { phases: ["specify", "plan"], phaseOutputs: {
+        specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
+        plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" },
+    }, phaseArtifacts: {
+        specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
+            view: "specs/<slug>/research.md" },
+        plan: { outputs: [], view: null },
+    } };
+    const phases = phaseContract(config);
+    assert.equal(phases[0].output, "specs/<slug>/research.md");
+    assert.deepEqual(phases[0].outputs, config.phaseArtifacts.specify.outputs);
+    assert.equal(phases[1].output, null);
+    assert.deepEqual(phases[1].outputs, []);
+    assert.equal(phases[1].expectsArtifact, false);
+    for (const invalid of [
+        { outputs: [], view: "specs/<slug>/plan.md" },
+        { outputs: ["../bad.md"], view: "../bad.md" },
+        { outputs: ["specs/<slug>/plan.md", "specs/<slug>/plan.md"],
+            view: "specs/<slug>/plan.md" },
+    ]) {
+        assert.throws(() => phaseContract({ ...config, phaseArtifacts:
+            { ...config.phaseArtifacts, plan: invalid } }), /Invalid|outside|Duplicate/);
+    }
+});
+
+test("frozen Designer outputs become the generated viewer and link configuration", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const outputs = {
+        constitution: { outputs: [], view: null },
+        specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
+            view: "specs/<slug>/research.md" },
+        plan: { outputs: [], view: null },
+    };
+    const prepared = await freezeGeneration({ project, workspace, model, values, handoff, outputs });
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.phaseArtifacts, outputs);
+    const steps = phaseContract(config);
+    assert.equal(steps.find((step) => step.id === "specify").output, "specs/<slug>/research.md");
+    assert.equal(steps.find((step) => step.id === "plan").output, null);
+    const directory = join(project, "specs", "demo");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "spec.md"), "# Spec");
+    await writeFile(join(directory, "research.md"), "# Research");
+    const runtime = await createRuntime({ config, cwd: project, workspace,
+        session: { sessionId: "outputs-test", on: () => () => {},
+            getEvents: async () => [], log: async () => {} } });
+    t.after(() => runtime.close());
+    assert.equal((await runtime.artifact({ phase: "specify", itemId: "specs/demo" })).path,
+        "specs/demo/research.md");
+    assert.equal((await runtime.artifact({ phase: "specify", itemId: "specs/demo",
+        output: "specs/<slug>/spec.md" })).content, "# Spec");
+    await assert.rejects(runtime.artifact({ phase: "specify", itemId: "specs/demo",
+        output: ".github/private.md" }), /not declared/);
+    await assert.rejects(runtime.artifact({ phase: "plan", itemId: "specs/demo" }),
+        /No artifact is available/);
+});
 const handoff = { handoffId: "handoff-1", sourceFingerprint: "",
     selections: { presets: [], extensions: [], bundles: [] },
     workflow: { selectedPhases: ["constitution", "specify", "plan"],

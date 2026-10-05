@@ -8,7 +8,7 @@ function phaseCard({ id, label, output }) {
     </header>
     <dl class="phase-facts"><dt>View target</dt><dd><button class="phase-artifact-link" id="browse-output-folder" type="button" title="Open the viewer target's folder"><code>${escapeHtml(output ?? "No declared output")}</code></button></dd></dl>
     <p id="phase-artifact-status" class="muted" role="status"></p>
-    <p id="phase-other-outputs" class="muted" hidden></p>
+    <div id="phase-other-outputs" class="phase-output-list" aria-label="Phase outputs" hidden></div>
     <label class="field" for="phase-args">
         <span class="field-label" id="phase-input-label">Phase input</span>
         <span class="visually-hidden" id="phase-input-help">Add details or direction for this phase.</span>
@@ -53,6 +53,7 @@ export function mount({ root, phases, actions }) {
             else if (button.id === "next-phase") action = actions.select(current + 1, button.id);
             else if (button.id === "run-phase") action = actions.run(root.querySelector("#phase-args").value);
             else if (button.id === "view-artifact") action = actions.view();
+            else if (button.hasAttribute("data-output")) action = actions.view(button.dataset.output);
             else if (button.id === "browse-output-folder") action = actions.reveal();
             if (action) Promise.resolve(action).catch(actions.error);
         } catch (error) { actions.error(error); }

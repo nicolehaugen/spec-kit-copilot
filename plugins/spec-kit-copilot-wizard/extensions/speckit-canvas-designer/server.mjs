@@ -71,7 +71,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
     const skillAvailable = project ? await hasGenerateSkill(project) : false;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? GENERATE_UNAVAILABLE : null;
-    const state = () => ({ ...model, handoffId: handoff?.handoffId,
+    const state = () => ({ ...model, phases: handoff?.workflow.selectedPhases ?? [],
+        handoffId: handoff?.handoffId,
         generationAvailable: !!handoff?.workflow?.installed && !!session?.send
             && !!project && skillAvailable,
         generationError });
@@ -166,8 +167,12 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 if (!input || typeof input !== "object" || Array.isArray(input)
                     || Object.keys(input).sort().join() !== (model.templates?.some(
                         (item) => item.kind === "generated.computed-value-provider")
-                        ? "approvedProviders,modelRevision,settingsRevision,values"
-                        : "modelRevision,settingsRevision,values")
+                        ? (input.outputs === undefined
+                            ? "approvedProviders,modelRevision,settingsRevision,values"
+                            : "approvedProviders,modelRevision,outputs,settingsRevision,values")
+                        : (input.outputs === undefined
+                            ? "modelRevision,settingsRevision,values"
+                            : "modelRevision,outputs,settingsRevision,values"))
                     || input.modelRevision !== model.revision
                     || !Number.isSafeInteger(input.settingsRevision) || input.settingsRevision < 0) {
                     throw new Error("Invalid Designer generation request");
@@ -193,7 +198,9 @@ export async function startShell(handoff = null, model = null, { project, worksp
                         .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));
                     return;
                 }
-                const result = await freezeGeneration({ model: current, values: input.values, handoff, project, workspace });
+                const result = await freezeGeneration({ model: current, values: input.values,
+                    outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs,
+                    handoff, project, workspace });
                 try {
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });
                 } catch (cause) {

@@ -143,7 +143,7 @@ for (const [scenario, missing] of [
 }
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
-    generatedPages, readOnlyFields, generatedControls, valueSources) {
+    generatedPages, readOnlyFields, generatedControls, valueSources, phaseArtifacts = {}) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
         schemaVersion: 1, userProvidesSlug, workflowPage,
@@ -157,7 +157,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
             ...Object.fromEntries(phases.filter((phase) => !["constitution", "specify", "plan"].includes(phase))
                 .map((phase) => [phase, { expectsArtifact: false, outputPath: null }])),
         },
-        phaseArtifacts: {},
+        phaseArtifacts,
         installed: { presets: [], extensions: [], bundles: [] },
         ...(generatedPages ? { generatedPages } : {}),
         ...(readOnlyFields ? { readOnlyFields } : {}),
@@ -923,6 +923,33 @@ test("one workflow header, compact constitution and legible narrow phase navigat
     } finally {
         await canvas.close();
     }
+});
+
+test("confirmed phase outputs link to their files and View artifact opens the selected default", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"], undefined, undefined,
+        undefined, undefined, {
+            specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
+                view: "specs/<slug>/research.md" },
+            plan: { outputs: [], view: null },
+        });
+    try {
+        const folder = join(canvas.root, "specs", "sample-feature");
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "spec.md"), "# Spec");
+        await writeFile(join(folder, "research.md"), "# Research");
+        await page.goto(canvas.url);
+        await page.getByRole("button", { name: "sample-feature", exact: true }).click();
+        await expect(page.locator("#phase-other-outputs [data-output]")).toHaveCount(2);
+        await page.locator('#phase-other-outputs [data-output="specs/<slug>/spec.md"]').click();
+        await expect(page.locator("#artifact-path")).toHaveText("specs/sample-feature/spec.md");
+        await page.locator("#close-artifact").click();
+        await page.locator("#view-artifact").click();
+        await expect(page.locator("#artifact-path")).toHaveText("specs/sample-feature/research.md");
+        await page.locator("#close-artifact").click();
+        await page.locator("#next-phase").click();
+        await expect(page.locator("#view-artifact")).toBeHidden();
+        await expect(page.locator("#phase-other-outputs [data-output]")).toHaveCount(0);
+    } finally { await canvas.close(); }
 });
 
 test("artifact viewer matches the Wizard full-page layout and returns to the canvas", async ({ page }) => {

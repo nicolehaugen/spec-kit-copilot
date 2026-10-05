@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
-    checkDesignerProvider, DESIGNER_EXTENSION_ID, enableDesignerProvider,
+    checkDesignerProvider, DESIGNER_EXTENSION_ID, designerPhaseOutputs, enableDesignerProvider,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
     readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
@@ -36,6 +36,29 @@ const catalog = {
 };
 const snapshot = { pipeline: [{ id: "commands/plan" }], catalog };
 const empty = { presets: [], extensions: [], bundles: [] };
+
+test("Designer handoff carries existing Wizard file outputs and default without folder inference", () => {
+    const state = { pipeline: [{ id: "plan" }, { id: "speckit.assess.intake" }],
+        artifactEvidence: {
+            plan: { primaryIndex: 1, candidates: [
+                { kind: "file", path: "plan.md", relativeTo: "feature" },
+                { kind: "file", path: "research.md", relativeTo: "feature" },
+                { kind: "folder", path: "specs/<slug>/checklists/" },
+            ] },
+            "speckit.assess.intake": { primaryIndex: null, candidates: [{ kind: "none" }] },
+        } };
+    const outputs = designerPhaseOutputs(state);
+    assert.deepEqual(outputs.plan, { outputs: ["specs/<slug>/plan.md",
+        "specs/<slug>/research.md"], view: "specs/<slug>/research.md" });
+    assert.deepEqual(outputs["speckit.assess.intake"], { outputs: [], view: null });
+    const handoff = buildDesignerHandoff(state, empty, undefined, empty);
+    assert.deepEqual(handoff.workflow.outputEvidence, outputs);
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
+    const invalid = structuredClone(handoff);
+    invalid.workflow.outputEvidence.plan.view = "../other.md";
+    invalid.sourceFingerprint = fingerprint({ workflow: invalid.workflow, selections: invalid.selections });
+    assert.throws(() => validateHandoff(invalid, invalid.handoffId), /Invalid outputs for phase plan/);
+});
 
 function fixture(overrides = {}) {
     const sent = [];

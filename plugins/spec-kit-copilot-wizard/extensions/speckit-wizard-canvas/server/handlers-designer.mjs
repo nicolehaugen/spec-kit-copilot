@@ -212,7 +212,26 @@ export function designerPhaseIds(snapshot) {
     if (ids.length > 30 || ids.some((id) => typeof id !== "string" || !ID.test(id))) {
         throw new Error("Invalid Designer pipeline");
     }
+
     return ids;
+}
+
+export function designerPhaseOutputs(snapshot) {
+    return Object.fromEntries(designerPhaseIds(snapshot).map((id) => {
+        const evidence = snapshot.artifactEvidence?.[id]
+            ?? snapshot.artifactEvidence?.[id.startsWith("speckit.") ? id : `speckit.${id}`];
+        const candidates = evidence?.candidates ?? [];
+        const paths = candidates.map((candidate) => {
+            if (candidate?.kind !== "file" || typeof candidate.path !== "string") return null;
+            if (candidate.relativeTo === "feature") return `specs/<slug>/${candidate.path}`;
+            if (candidate.root) return candidate.root.path
+                ? `${candidate.root.path}/${candidate.path}` : null;
+            return candidate.path;
+        });
+        const outputs = [...new Set(paths.filter(Boolean))];
+        const preferred = paths[evidence?.primaryIndex];
+        return [id, { outputs, view: outputs.includes(preferred) ? preferred : outputs[0] ?? null }];
+    }));
 }
 
 export function validateDesignerSelections(raw, catalog) {
@@ -311,7 +330,8 @@ export function buildDesignerHandoff(snapshot, selections, localSelections, inst
     if (!installed || !installLocators) {
         throw new Error("Verified installed workflow inventory and sources are required");
     }
-    const workflow = { selectedPhases: designerPhaseIds(snapshot), installed, installLocators };
+    const workflow = { selectedPhases: designerPhaseIds(snapshot),
+        outputEvidence: designerPhaseOutputs(snapshot), installed, installLocators };
     const handoff = { schemaVersion: 1, handoffId, workflow, selections,
         sourceFingerprint: fingerprint({ workflow, selections, localSelections }) };
     if (localSelections !== undefined) handoff.localSelections = localSelections;

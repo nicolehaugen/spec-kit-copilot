@@ -58,7 +58,7 @@ test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
 
 async function model(revision = "first") {
     const pages = [];
-    for (const name of ["essentials", "artifacts", "appearance"]) {
+    for (const name of ["essentials", "outputs", "appearance"]) {
         const document = JSON.parse(await readFile(new URL(`${name}.json`, templateRoot), "utf8"));
         pages.push({ ...document, page: document.id });
     }
@@ -116,7 +116,8 @@ async function prepareScalarAdapters(project, state) {
 
 async function startPreparedShell(state) {
     const workspace = await mkdtemp(join(tmpdir(), "designer-pages-e2e-"));
-    const workflow = { selectedPhases: [] };
+    const workflow = { selectedPhases: Object.keys(state.outputs ?? {}),
+        ...(state.outputs ? { outputEvidence: state.outputs } : {}) };
     const selections = { presets: [], extensions: [], bundles: [] };
     const handoff = { schemaVersion: 1, handoffId: "test", workflow, selections,
         sourceFingerprint: fingerprint({ workflow, selections }) };
@@ -126,6 +127,8 @@ async function startPreparedShell(state) {
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const project = join(workspace, "project");
         await prepareScalarAdapters(project, state);
+        state.outputs ??= {};
+        state.settingsRevision ??= 0;
         if (state.adapters?.["stock.image"]) {
             const path = join(project, ".specify", "extensions", "extension-canvas-design",
                 "controls", "stock-image", "designer.mjs");
@@ -152,6 +155,39 @@ async function openDesigner(page) {
     await page.goto(shell.url);
     return shell;
 }
+
+test("Outputs page confirms phase files with the header Save and warns when a phase becomes empty", async ({ page }) => {
+    const state = await model();
+    state.outputs = {
+        specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
+            view: "specs/<slug>/research.md" },
+        "speckit.assess.intake": { outputs: [], view: null },
+    };
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await expect(page.locator(".output-section")).toHaveCount(2);
+        await expect(page.getByText("No outputs yet.")).toBeVisible();
+        await expect(page.locator(".output-section").first().locator("input[type=radio]").last()).toBeChecked();
+        await page.locator(".output-section").first().getByRole("button", { name: "Remove" }).last().click();
+        await page.locator(".output-section").first().getByRole("button", { name: "Remove" }).click();
+        await expect(page.locator(".output-section").first()).toContainText(
+            "will not have a View artifact button");
+        await page.locator(".output-section").first().getByRole("button", { name: "+ Add output" }).click();
+        await page.getByRole("textbox", { name: "Output 1 path for specify" })
+            .fill("specs/<slug>/updated.md");
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await expect(page.getByRole("textbox", { name: "Output 1 path for specify" }))
+            .toHaveValue("specs/<slug>/updated.md");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.getByText("Settings saved.")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    } finally {
+        await shell.close();
+    }
+});
 
 test("Main page Logo upload explains rejection beside the picker and clears on replacement", async ({ page }) => {
     const state = await model();
@@ -254,13 +290,13 @@ test("pending or failed image selection blocks actions until completion or cance
         await page.waitForFunction(() => window.uploadStarted);
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        await expect(page.getByRole("tab", { name: "Artifacts" })).toBeDisabled();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toBeDisabled();
         await expect(page.getByRole("tab", { name: "Essentials" })).toHaveAttribute("aria-selected", "true");
         await page.evaluate(() => window.releaseUpload());
         await expect(page.getByAltText("Header logo preview")).toBeVisible();
-        await expect(page.getByRole("tab", { name: "Artifacts" })).toBeEnabled();
-        await page.getByRole("tab", { name: "Artifacts" }).click();
-        await expect(page.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
+        await expect(page.getByRole("tab", { name: "Outputs" })).toBeEnabled();
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveAttribute("aria-selected", "true");
         await page.getByRole("tab", { name: "Essentials" }).click();
         await picker.setInputFiles({ name: "broken.png", mimeType: "image/png",
             buffer: Buffer.from("not a PNG") });
@@ -270,8 +306,8 @@ test("pending or failed image selection blocks actions until completion or cance
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#page-error")).toContainText("Header logo (canvas.logo) is still processing or needs attention");
         await page.getByRole("button", { name: "Cancel upload" }).click();
-        await page.getByRole("tab", { name: "Artifacts" }).click();
-        await expect(page.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveAttribute("aria-selected", "true");
     } finally {
         await shell.close();
     }
@@ -395,7 +431,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Artifacts", "Appearance", "Test settings"]);
+            ["Essentials", "Outputs", "Appearance", "Test settings"]);
         expect(resolved.pages[3].fields.map((item) => item.id)).toEqual(
             ["pr1Test.label", "pr1Test.enabled"]);
         expect(resolved.values["pr1Test.label"]).toBe("");
@@ -488,7 +524,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Artifacts", "Appearance", "Billing"]);
+            ["Essentials", "Outputs", "Appearance", "Billing"]);
         const costPage = resolved.pages.find((entry) =>
             entry.fields.some((field) => field.id === "billing.costCode"));
         shell = await startShell(handoff,
@@ -672,7 +708,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         stale = await startShell(handoff, await load(), { project, workspace });
         await page.goto(stale.url);
         await page.waitForFunction(() => globalThis.controlCallbacks?.length === 1);
-        await page.getByRole("tab", { name: "Artifacts" }).click();
+        await page.getByRole("tab", { name: "Outputs" }).click();
         await page.getByRole("tab", { name: "Essentials" }).click();
         await page.waitForFunction(() => globalThis.controlCallbacks?.length === 2);
         await page.evaluate(() => {
@@ -751,7 +787,7 @@ async function openWithError(page, name) {
 test("Essentials offers a default-off custom slug toggle independently of Workflow header", async ({ page }) => {
     const shell = await openDesigner(page);
     try {
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Artifacts", "Appearance"]);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         const title = page.getByRole("textbox", { name: "Title (required)" });
         await expect(page.getByRole("textbox")).toHaveCount(4);
@@ -771,9 +807,10 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
         await expect(page.getByRole("textbox", { name: "Workflow header" })).toHaveAttribute("maxlength", "80");
         await customSlug.check();
         await id.fill("example-canvas");
-        for (const name of ["Artifacts", "Appearance"]) {
+        for (const name of ["Outputs", "Appearance"]) {
             await page.getByRole("tab", { name }).click();
-            await expect(page.getByText("This template defines no fields.")).toBeVisible();
+            if (name === "Outputs") await expect(page.getByRole("heading", { name: "Outputs" })).toBeVisible();
+            else await expect(page.getByText("This template defines no fields.")).toBeVisible();
         }
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(id).toHaveValue("example-canvas");
@@ -938,8 +975,8 @@ test("failed Essentials remains selected with no identity fields; other tabs wor
             .toHaveAttribute("aria-selected", "true");
         await expect(page.getByRole("heading", { name: "Could not load designer-essentials" })).toBeVisible();
         await expect(page.getByRole("textbox")).toHaveCount(0);
-        await page.getByRole("tab", { name: "Artifacts" }).click();
-        await expect(page.getByText("This template defines no fields.")).toBeVisible();
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await expect(page.getByRole("heading", { name: "Outputs" })).toBeVisible();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
     } finally {
         await shell.close();

@@ -41,6 +41,41 @@ test("Designer packages the same control validator as the generated app", async 
             import.meta.url)));
 });
 
+test("Outputs persist with Designer settings and reject unsafe or stale edits", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.outputEvidence = {
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    await saveHandoff(workspace, handoff);
+    const model = { revision: "outputs-test", constraints: {}, values: {} };
+    const initial = await loadDesignerSettings(workspace, handoff, model);
+    assert.deepEqual(initial.outputs, handoff.workflow.outputEvidence);
+    const outputs = { specify: { outputs: ["specs/<slug>/research.md"],
+        view: "specs/<slug>/research.md" }, plan: { outputs: [], view: null } };
+    const saved = await saveDesignerSettings(workspace, handoff, initial,
+        { modelRevision: model.revision, revision: 0, values: {}, outputs });
+    assert.deepEqual(saved.outputs, outputs);
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, outputs);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, plan: { outputs: ["../outside.md"], view: "../outside.md" } },
+    }), /Invalid outputs for phase plan/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, plan: { outputs: Array.from({ length: 101 },
+            (_, index) => `specs/<slug>/output-${index}.md`),
+        view: "specs/<slug>/output-0.md" } },
+    }), /Invalid outputs for phase plan/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 0, values: {}, outputs,
+    }), /changed elsewhere/);
+});
+
 function validHandoff(id = ID) {
     const workflow = { selectedPhases: ["specify", "plan"] };
     const selections = {
@@ -82,12 +117,12 @@ async function projectFixture(t, workspace) {
     await copyFile(join(source, "schemas", "designer.tab-definition.schema.json"),
         join(installed, "schemas", "designer.tab-definition.schema.json"));
     await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
-    const pages = ["essentials", "artifacts", "appearance"];
+    const pages = ["essentials", "outputs", "appearance"];
     const entries = [];
     for (const filename of pages) {
         const path = join(installed, "designer", "tabs", `${filename}.json`);
         await copyFile(join(source, "designer", "tabs", `${filename}.json`), path);
-        entries.push({ name: `designer-${filename}`, path,
+        entries.push({ name: filename === "outputs" ? "designer-artifacts" : `designer-${filename}`, path,
             kind: "designer.tab-definition", strategy: "replace" });
     }
     const scalar = [];
@@ -1537,7 +1572,7 @@ test("reads the complete effective page set from the child checkout without a sn
         [{ ...entries[0], path: missingParentPath }, ...entries.slice(1)]);
     assert.equal(missingParent.pages[0].error.path, missingParentPath);
     assert.match(missingParent.pages[0].error.reason, /missing/);
-    assert.equal(missingParent.pages[1].title, "Artifacts");
+    assert.equal(missingParent.pages[1].title, "Outputs");
     await writeFile(join(workspace, "outside.json"), JSON.stringify(changed));
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [{ ...entries[0], path: join(workspace, "outside.json") }, ...entries.slice(1)]),
@@ -1658,7 +1693,7 @@ test("registered contributions validate slots, sources, references and determini
                 const model = await loadResolvedDesignerPages(handoff, project,
                     [...entries, pageEntry], templates);
                 assert.deepEqual(model.pages.map((page) => page.title),
-                    ["Essentials", "Artifacts", "Appearance", "Billing"]);
+                    ["Essentials", "Outputs", "Appearance", "Billing"]);
                 assert.equal(model.pages.find((page) => page.fields.some((field) =>
                     field.id === "billing.costCode")).page,
                 slot === "essentials.options" ? "designer-essentials" : "canvas-settings-billing");
@@ -1882,7 +1917,7 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
     assert.match(broken.pages[0].error.reason, /Invalid Designer JSON/);
     assert.equal(broken.pages[0].error.path, entries[0].path);
     assert.equal(Object.hasOwn(broken.values, "canvas.id"), false);
-    assert.equal(broken.pages[1].title, "Artifacts");
+    assert.equal(broken.pages[1].title, "Outputs");
     const allMissing = await loadResolvedDesignerPages(handoff, project, entries.map((entry, i) =>
         ({ ...entry, path: join(project, ".specify", `missing-${i}.json`) })));
     assert.equal(allMissing.pages.length, 3);
@@ -3002,7 +3037,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     await writeFile(entries[0].path, "{broken");
     const model = await loadResolvedDesignerPages(validHandoff(), project, entries);
     assert.match(model.pages[0].error.reason, /Invalid Designer JSON/);
-    assert.equal(model.pages[1].title, "Artifacts");
+    assert.equal(model.pages[1].title, "Outputs");
 });
 
 test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {

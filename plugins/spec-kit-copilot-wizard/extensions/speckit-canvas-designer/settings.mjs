@@ -2,12 +2,15 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { handoffDirectory } from "./handoff.mjs";
+import { handoffDirectory, validatePhaseOutputs } from "./handoff.mjs";
 import { isWindowsDeviceName } from "./pages.mjs";
 
 export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
+const initialOutputs = (handoff) => handoff.workflow.outputEvidence
+    ?? Object.fromEntries(handoff.workflow.selectedPhases.map((id) =>
+        [id, { outputs: [], view: null }]));
 
 export function validateValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
@@ -80,13 +83,18 @@ async function readSettings(path, handoff, model, openFile = open) {
         await file.close();
     }
     if (!record || typeof record !== "object" || Array.isArray(record)
-        || Object.keys(record).sort().join() !== "handoffId,modelRevision,revision,schemaVersion,values"
+        || Object.keys(record).sort().join() !== (record.outputs === undefined
+            ? "handoffId,modelRevision,revision,schemaVersion,values"
+            : "handoffId,modelRevision,outputs,revision,schemaVersion,values")
         || record.schemaVersion !== 1 || record.handoffId !== handoff.handoffId
         || !Number.isSafeInteger(record.revision) || record.revision < 1
         || record.modelRevision !== model.revision) {
         throw new Error("Saved Designer settings do not match the current handoff or pages");
     }
     validateValues(record.values, model.constraints);
+    if (record.outputs !== undefined) {
+        validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases);
+    }
     return record;
 }
 
@@ -103,18 +111,24 @@ async function assertTemporaryFile(file, path, folder) {
 export async function loadDesignerSettings(workspacePath, handoff, model, openFile = open) {
     const record = await readSettings(await settingsPath(workspacePath, handoff),
         handoff, model, openFile);
-    return { ...model, values: record?.values ?? model.values,
+    const outputs = record?.outputs ?? initialOutputs(handoff);
+    validatePhaseOutputs(outputs, handoff.workflow.selectedPhases);
+    return { ...model, values: record?.values ?? model.values, outputs,
         settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
 }
 
 export async function saveDesignerSettings(workspacePath, handoff, model, request, openFile = open) {
     if (!request || typeof request !== "object" || Array.isArray(request)
-        || Object.keys(request).sort().join() !== "modelRevision,revision,values"
+        || Object.keys(request).sort().join() !== (request.outputs === undefined
+            ? "modelRevision,revision,values" : "modelRevision,outputs,revision,values")
         || request.modelRevision !== model.revision
         || !Number.isSafeInteger(request.revision) || request.revision < 0) {
         throw new Error("Invalid Designer save request");
     }
     validateValues(request.values, model.constraints);
+    const outputs = validatePhaseOutputs(Object.hasOwn(request, "outputs")
+        ? request.outputs : model.outputs ?? initialOutputs(handoff),
+        handoff.workflow.selectedPhases);
     const path = await settingsPath(workspacePath, handoff);
     const prior = saves.get(path) ?? Promise.resolve();
     const work = prior.catch(() => {}).then(async () => {
@@ -123,7 +137,8 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
             throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before saving.");
         }
         const record = { schemaVersion: 1, handoffId: handoff.handoffId,
-            modelRevision: model.revision, revision: request.revision + 1, values: request.values };
+            modelRevision: model.revision, revision: request.revision + 1, values: request.values,
+            outputs };
         const bytes = JSON.stringify(record);
         if (Buffer.byteLength(bytes) > SETTINGS_LIMIT) throw new Error("Designer settings exceed the size limit");
         const folder = dirname(path);
@@ -145,7 +160,8 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
         } finally {
             await rm(temporary, { force: true });
         }
-        return { ...model, values: record.values, settingsRevision: record.revision, persisted: true };
+        return { ...model, values: record.values, outputs,
+            settingsRevision: record.revision, persisted: true };
     });
     saves.set(path, work);
     try { return await work; }

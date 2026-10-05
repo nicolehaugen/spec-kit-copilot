@@ -4,7 +4,7 @@ const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
-let model, currentPage, draft, saving = false;
+let model, currentPage, draft, draftOutputs, saving = false;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
@@ -56,7 +56,7 @@ generate.addEventListener("click", async () => {
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
-                settingsRevision: model.settingsRevision, values,
+                settingsRevision: model.settingsRevision, values, outputs: draftOutputs,
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
@@ -125,7 +125,8 @@ function checkReady() {
 
 function updateSave() {
     const noChanges = model?.persisted
-        && JSON.stringify(draft) === JSON.stringify(model.values);
+        && JSON.stringify(draft) === JSON.stringify(model.values)
+        && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs);
     saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges;
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
@@ -148,7 +149,7 @@ saveButton.addEventListener("click", async () => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
-                revision: model.settingsRevision, values: draft }),
+                revision: model.settingsRevision, values: draft, outputs: draftOutputs }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Designer save failed (${response.status})`);
@@ -186,6 +187,73 @@ function renderPage(pageId, invalidFieldId) {
         return true;
     }
     root.replaceChildren(element("h1", page.title), element("p", page.description ?? "", "muted"));
+    if (pageId === "designer-artifacts") {
+        const sections = element("div", undefined, "output-sections");
+        root.append(sections);
+        for (const [index, id] of model.phases.entries()) {
+            const entry = draftOutputs[id];
+            const section = element("section", undefined, "output-section");
+            const heading = element("h2", `${index + 1}. ${id}`);
+            section.append(heading);
+            const list = element("div", undefined, "output-list");
+            const render = () => {
+                list.replaceChildren();
+                if (!entry.outputs.length) {
+                    list.append(element("p", "No outputs yet.", "settings-note"));
+                    list.append(element("p",
+                        "This phase will not have a View artifact button in the generated canvas.",
+                        "output-warning"));
+                }
+                for (const [position, path] of entry.outputs.entries()) {
+                    const row = element("div", undefined, "output-row");
+                    const radio = element("input");
+                    radio.type = "radio";
+                    radio.name = `viewer-${index}`;
+                    radio.checked = entry.view === path;
+                    radio.setAttribute("aria-label", `Open output ${position + 1} by default for ${id}`);
+                    radio.addEventListener("change", () => {
+                        entry.view = entry.outputs[position];
+                        updateSave();
+                    });
+                    const input = element("input");
+                    input.type = "text";
+                    input.value = path;
+                    input.maxLength = 1000;
+                    input.placeholder = "specs/<slug>/output.md";
+                    input.setAttribute("aria-label", `Output ${position + 1} path for ${id}`);
+                    input.addEventListener("input", () => {
+                        if (entry.view === entry.outputs[position]) entry.view = input.value;
+                        entry.outputs[position] = input.value;
+                        updateSave();
+                    });
+                    const remove = element("button", "Remove");
+                    remove.type = "button";
+                    remove.addEventListener("click", () => {
+                        entry.outputs.splice(position, 1);
+                        if (!entry.outputs.includes(entry.view)) entry.view = entry.outputs[0] ?? null;
+                        render();
+                        updateSave();
+                    });
+                    row.append(radio, input, remove);
+                    list.append(row);
+                }
+            };
+            render();
+            const add = element("button", "+ Add output");
+            add.type = "button";
+            add.addEventListener("click", () => {
+                entry.outputs.push("");
+                if (entry.outputs.length === 1) entry.view = "";
+                render();
+                list.querySelector(".output-row:last-child input[type=text]")?.focus();
+                updateSave();
+            });
+            section.append(list, add);
+            sections.append(section);
+        }
+        root.setAttribute("aria-busy", "false");
+        return true;
+    }
     const form = element("form");
     form.noValidate = true;
     form.addEventListener("submit", (event) => {
@@ -318,6 +386,8 @@ function applyState(next) {
     if (changed) {
         model = next;
         draft = structuredClone(model.values);
+        draftOutputs = structuredClone(model.outputs ?? Object.fromEntries(
+            (model.phases ?? []).map((id) => [id, { outputs: [], view: null }])));
         tabs.replaceChildren();
         for (const page of model.pages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,

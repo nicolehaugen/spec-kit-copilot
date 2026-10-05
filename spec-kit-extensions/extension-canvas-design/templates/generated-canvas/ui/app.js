@@ -390,10 +390,22 @@ function renderStatus() {
             ? { ...status, output: path, artifactAvailability: "unknown", artifactError: null } : status);
         const otherOutputs = $("phase-other-outputs");
         if (otherOutputs) {
-            const paths = (selected.outputs ?? []).map(resolveOutput)
-                .filter((output) => output !== path);
-            otherOutputs.textContent = paths.length ? `Other expected outputs: ${paths.join(", ")}` : "";
-            otherOutputs.hidden = !paths.length;
+            otherOutputs.replaceChildren();
+            const outputs = selected.outputs ?? [];
+            if (outputs.length) {
+                const label = document.createElement("strong");
+                label.textContent = "Outputs";
+                otherOutputs.append(label);
+                for (const template of outputs) {
+                    const link = document.createElement("button");
+                    link.type = "button";
+                    link.className = "phase-artifact-link";
+                    link.dataset.output = template;
+                    link.textContent = resolveOutput(template);
+                    otherOutputs.append(link);
+                }
+            }
+            otherOutputs.hidden = !outputs.length;
         }
         const run = $("run-phase");
         run.textContent = pendingLabel(selected) ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
@@ -628,7 +640,8 @@ async function refreshArtifact() {
     context.reading = true;
     message("Loading artifact...", "artifact-message");
     try {
-        const query = new URLSearchParams({ phase: context.phase, itemId: context.itemId });
+        const query = new URLSearchParams({ phase: context.phase, itemId: context.itemId,
+            ...(context.output !== undefined ? { output: context.output } : {}) });
         const result = await api(`/api/artifact?${query}`);
         if (viewer !== context) return;
         $("artifact-path").textContent = result.path;
@@ -642,9 +655,10 @@ async function refreshArtifact() {
     try { await refresh(); }
     catch (error) { message(`Could not refresh artifact availability: ${error.message}`, "canvas-message", true); }
 }
-async function openArtifact(step) {
+async function openArtifact(step, output) {
     if (!step) throw new Error("Wait for the canvas to connect, then try again.");
-    viewer = { phase: step.id, itemId: step.project ? "project" : model.selected, loaded: false };
+    viewer = { phase: step.id, itemId: step.project ? "project" : model.selected,
+        ...(output !== undefined ? { output } : {}), loaded: false };
     $("artifact-title").textContent = step.project ? "Constitution" : steps[current].dataset.phaseLabel;
     $("artifact-path").textContent = "";
     $("artifact-content").replaceChildren();
@@ -733,7 +747,7 @@ try {
         actions: {
             select: (index, focusId) => { requireModel(); return selectPhase(index, focusId); },
             run: (value) => { requireModel(); return send(phase(), value); },
-            view: () => { requireModel(); return openArtifact(phase()); },
+            view: (output) => { requireModel(); return openArtifact(phase(), output); },
             reveal: async () => {
                 requireModel();
                 await flush();

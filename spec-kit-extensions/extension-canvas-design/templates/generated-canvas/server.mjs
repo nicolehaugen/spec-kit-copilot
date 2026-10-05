@@ -435,7 +435,8 @@ export function renderHtml(config, token = "") {
         message: '<p id="canvas-message" role="status"></p>',
         pipeline: `<div id="workflow-pipeline" data-module="/pages/${escapeHtml(config.workflowPage.pipeline)}.mjs"
             data-phases="${escapeHtml(JSON.stringify(phaseContract(config).filter((step) => !step.project)
-                .map((step) => ({ id: step.id, label: phaseLabel(step.id), output: step.output }))))}"></div>`,
+                .map((step) => ({ id: step.id, label: phaseLabel(step.id), output: step.output,
+                    outputs: step.outputs }))))}"></div>`,
     };
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
@@ -547,6 +548,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && url.pathname === "/api/state") return json(response, 200, await runtime.snapshot());
             if (request.method === "GET" && url.pathname === "/api/artifact") return json(response, 200, await runtime.artifact({
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
+                ...(url.searchParams.has("output") ? { output: url.searchParams.get("output") } : {}),
             }));
             if (request.method !== "POST" || !["/api/run", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;

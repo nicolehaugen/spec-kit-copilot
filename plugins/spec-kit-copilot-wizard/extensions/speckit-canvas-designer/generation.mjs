@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
+import { validatePhaseOutputs } from "./handoff.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
@@ -74,8 +75,9 @@ async function validateAdapterValues(model, values, project) {
     }
 }
 
-export async function freezeGeneration({ model, values, handoff, project, workspace }) {
+export async function freezeGeneration({ model, values, outputs = model.outputs, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
+    if (outputs !== undefined) validatePhaseOutputs(outputs, handoff.workflow.selectedPhases);
     await validateAdapterValues(model, essentials, project);
     if (!canvasIdPattern.test(essentials["canvas.id"])
         || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {
@@ -269,7 +271,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         canvas: { id: essentials["canvas.id"], displayName: essentials["canvas.displayName"],
             description: essentials["canvas.description"] || "Spec Kit workflow canvas.",
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
-        workflow: { selectedPhases: handoff.workflow.selectedPhases },
+        workflow: { selectedPhases: handoff.workflow.selectedPhases,
+            ...(outputs !== undefined ? { phaseArtifacts: outputs } : {}) },
         installed: handoff.workflow.installed,
         values: essentials,
         fieldConstraints: model.constraints,

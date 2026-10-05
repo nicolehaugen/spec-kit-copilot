@@ -7,6 +7,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validControlContract, validControlValue } from "../templates/generated-canvas/control-contract.mjs";
 import { isWindowsDeviceName } from "../templates/generated-canvas/files.mjs";
+import { phaseContract } from "../templates/generated-canvas/contract.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "templates", "generated-canvas");
@@ -306,6 +307,10 @@ function configuration(request) {
         || workflow.selectedPhases.length > 30 || new Set(workflow.selectedPhases).size !== workflow.selectedPhases.length
         || workflow.selectedPhases.some((phase) => typeof phase !== "string"
             || !/^(?:speckit\.)?[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(phase))
+        || (workflow.phaseArtifacts !== undefined
+            && (!workflow.phaseArtifacts || typeof workflow.phaseArtifacts !== "object"
+                || Array.isArray(workflow.phaseArtifacts)
+                || Object.keys(workflow.phaseArtifacts).length !== workflow.selectedPhases.length))
         || !installed || ["presets", "extensions", "bundles"].some((kind) =>
             !Array.isArray(installed[kind]) || installed[kind].some((item) =>
                 typeof item.id !== "string" || typeof item.version !== "string"))) {
@@ -629,7 +634,7 @@ function configuration(request) {
     const mainImage = generatedAssets?.find((item) => !item.page && item.slot === "workflow.intro");
     const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
-    return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
+    const config = { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
         workflowPage: workflowLayout,
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
         ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
@@ -659,12 +664,14 @@ function configuration(request) {
         phaseOutputs: Object.fromEntries(workflow.selectedPhases.map((phase) => {
             const path = outputs[phase.replace(/^speckit\./, "")] ?? null;
             return [phase, { expectsArtifact: !!path, outputPath: path }];
-        })), phaseArtifacts: {},
+        })), phaseArtifacts: workflow.phaseArtifacts ?? {},
         installed: {
             presets: installed.presets.map(({ id, version, priority }) => ({ id, version, priority })),
             extensions: installed.extensions.map(({ id, version, priority }) => ({ id, version, priority })),
             bundles: installed.bundles.map(({ id, version }) => ({ id, version })),
         } };
+    phaseContract(config);
+    return config;
 }
 
 function checkSyntax(path) {
