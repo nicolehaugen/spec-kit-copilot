@@ -5,8 +5,9 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.12** registers three JSON page templates and three ordered
-stock field templates, plus the
+Canvas Design **0.1.15** registers three JSON page templates, five ordered
+stock field templates, reusable text and checkbox definitions with Designer
+adapters, and a shared image definition with paired adapters, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -20,17 +21,77 @@ project extension directory, then validates the result in place.
 | `canvas-stock-description` | Essentials slot | Optional Description |
 | `canvas-stock-workflow-heading` | Essentials slot | Optional Workflow header |
 | `canvas-stock-custom-slug` | Essentials slot | Optional Allow custom slug |
+| `canvas-stock-logo` | Essentials slot | Optional small header logo |
+| `canvas-stock-logo-main-page` | Essentials slot | Optional larger main-page logo |
+| `canvas-stock-image` | Shared control | Image value contract and paired adapter names |
+| `canvas-stock-image-designer` | Designer | Upload, preview, replace, and remove images |
+| `canvas-stock-image-generated` | Generated app | Render packaged images in authorized slots |
+| `canvas-stock-text` | Shared control | String value contract and adapter names |
+| `canvas-stock-text-designer` | Designer | Edit text, including required Canvas ID and Title |
+| `canvas-stock-text-generated` | Generated app | Render visible text in authorized placements |
+| `canvas-stock-checkbox` | Shared control | Boolean value contract and Designer adapter name |
+| `canvas-stock-checkbox-designer` | Designer | Edit boolean settings |
 | `canvas-settings-artifacts` | Artifacts | Empty placeholder |
 | `canvas-settings-appearance` | Appearance | Empty placeholder |
 
 The Essentials core template lives in `pages/essentials.json`; its
 `canvas-settings-setup` ID stays stable for preset resolution.
+Its required Canvas ID and Title are fixed fields that share the `stock.text`
+editor with optional text contributions; a preset cannot remove them by
+omitting an optional contribution. Field-specific length, requiredness, and
+identifier rules remain enforced by the Designer host. Description and
+Workflow header use the packaged stock-text adapter for their visible
+generated presentation. Authors may set `"required": true` on a text field
+in a page or a field contribution to reject empty or whitespace-only values.
+The shared Designer adapter shows an inline error; Save and Generate verify
+the constraint independently. Omitted `required` preserves optional text.
+Allow custom slug uses the stock-checkbox editor
+but only its boolean value is consumed by the generated shell; it does not
+need an empty generated visual adapter. A future Setup confirm checkbox can
+reuse this pattern without moving privileged setup into an adapter.
 The composed load-page command explicitly resolves each stock contribution into
 `essentials.options` in the order shown. Omitting or replacing a stock contribution
 does not remove the required Canvas ID and Title. If absent, generated description
 defaults to `Spec Kit workflow canvas.`, heading to `Workflows`, and custom slug
 to off. Generate validates all enabled Designer pages, including custom fields;
 an invalid page blocks generation until repaired.
+The independent Header logo and Main page logo controls accept PNG, JPEG, GIF,
+or WebP images up to 32 KiB each. Upload, preview, replace, and remove are
+available for both in Designer. The smaller header logo replaces the existing
+brand mark; the optional larger main-page logo appears next to the workflow
+heading and description. Either image may be used alone. Generate freezes
+each selected image's bytes and SHA-256 hash and packages it within the
+generated extension, together with the frozen, shared generated adapter.
+The Designer accepts up to ten selected 32 KiB images; its Save and frozen
+generation size limits accommodate that maximum, while still rejecting
+oversized aggregate requests explicitly.
+Each image contribution uses `"control": "stock.image"` to select the uniquely
+resolved shared definition; its `generatedBinding` declares the target slot.
+Missing or duplicate definitions fail validation. Presets reuse the definition and both adapters rather than supplying
+per-placement image renderers. The resulting app serves its own images and
+loads its packaged adapter without Canvas Design installed. It rejects missing
+or modified packaged images instead of silently rendering a different logo.
+Without a Header logo the existing brand mark remains; a configured image
+that cannot mount its adapter shows a local error.
+Both adapters receive an image-source string as `value`. Designer supplies
+the editable data URI and upload capabilities in `context`; the generated
+host supplies an authorized packaged URL as `value` and presentation options
+such as alt text in `context`. Neither adapter selects a slot or reads files.
+
+Preset-generated pages can also place a `stock.image` contribution. Declare a
+slot on the generated page, for example
+`"slots": [{"id": "hero.logo", "accepts": ["asset"]}]`, and bind the image
+field with `"control": "stock.image"` and
+`"generatedBinding": {"presentation": "asset",
+"page": "canvas-generated-gallery", "slot": "hero.logo"}`. The page renderer
+puts a `<div data-asset-slot="hero.logo"></div>` at the desired location; the
+generated host mounts the packaged image there, with the field label as its
+accessible description. The renderer may style the slot to choose the size
+and layout. Every page, field, and renderer must be explicitly registered as
+a named replace-only template. Unknown, duplicate, or incompatible slots fail
+validation; a selected image whose slot is not rendered fails visibly when
+the generated page opens. Neither preset files nor the Canvas Design package
+are needed at runtime.
 
 The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
@@ -91,7 +152,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.12/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.15/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
@@ -127,11 +188,11 @@ missing name, resolution mismatch, or executable script collision stops the
 open.
 
 Invalid registered field contributions stop the open with both names on a
-field collision; newly registered stock text/checkbox fields render on their
-declared Designer page and can be saved. A registered bounded string
-contribution with
+field collision; newly registered stock text/checkbox fields mount their
+resolved Designer adapters on their declared Designer page and can be saved.
+A registered bounded string contribution with
 `generatedBinding: {"presentation": "stock.readonly"}` also freezes its
-validated value into a built-in read-only generated display, regardless of
+validated value into a read-only generated display, regardless of
 which declared Designer slot holds the field. A separately registered
 `generated.page` definition and `generated.renderer` `.mjs` template add a
 generated-only page without a Designer tab. The renderer is a complete

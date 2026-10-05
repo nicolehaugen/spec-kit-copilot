@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "stock.logo",
+  "host": "designer",
+  "slot": "essentials.options",
+  "order": 40,
+  "field": {"id": "canvas.logo", "type": "image", "control": "stock.image",
+    "label": "Header logo", "description": "Optional small PNG, JPEG, GIF, or WebP image (up to 32 KiB)."},
+  "generatedBinding": {"presentation": "asset", "slot": "header.brand"}
+}

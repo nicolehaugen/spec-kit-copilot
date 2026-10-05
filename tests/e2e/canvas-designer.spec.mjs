@@ -223,7 +223,7 @@ test("checked worktree Canvas Design extension is included in the launch request
     await localSection.locator("summary").click();
     await localSection.locator("[data-designer-local-path]").fill(LOCAL_CANVAS_DESIGN_PATH);
     await localSection.locator("[data-designer-local-add]").click();
-    await expect(localSection.locator(".designer-local-item")).toContainText("extension-canvas-design · v0.1.12");
+    await expect(localSection.locator(".designer-local-item")).toContainText("extension-canvas-design · v0.1.15");
     await expect(localSection.locator(".designer-local-item .designer-choice"))
         .toHaveAttribute("title", "Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.");
     await expect(localSection.locator(".designer-local-item").getByRole("checkbox")).toBeChecked();

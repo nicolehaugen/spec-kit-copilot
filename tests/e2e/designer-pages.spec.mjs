@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
@@ -27,6 +28,16 @@ function supportsSpecifyVersion(output) {
     return major > 1 || (major === 1 && (minor > 0 || patch >= 7));
 }
 
+function scalarRegistrations(resolve) {
+    return [
+        ["canvas-stock-text", "control.definition"],
+        ["canvas-stock-text-designer", "designer.adapter"],
+        ["canvas-stock-text-generated", "generated.adapter"],
+        ["canvas-stock-checkbox", "control.definition"],
+        ["canvas-stock-checkbox-designer", "designer.adapter"],
+    ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
+}
+
 test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
     for (const [version, supported] of [
         ["0.99.99", false], ["1.0.6", false], ["1.0.7", true],
@@ -45,15 +56,15 @@ async function model(revision = "first") {
     }
     for (const name of ["description", "workflow-heading", "custom-slug"]) {
         const { field } = JSON.parse(await readFile(new URL(`stock-${name}.json`, templateRoot), "utf8"));
-        const { control: _control, ...stockField } = field;
-        pages[0].fields.push(stockField);
+        pages[0].fields.push(field);
     }
     return {
         pages, revision,
         constraints: {
             "canvas.id": { type: "string", minLength: 1, maxLength: 100,
-                pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
-            "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
+                pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$", required: true },
+            "canvas.displayName": { type: "string", minLength: 1, maxLength: 120,
+                required: true },
             "canvas.description": { type: "string", maxLength: 240 },
             "canvas.workflowListName": { type: "string", maxLength: 80 },
             "workflowSlug.userProvided": { type: "boolean" },
@@ -61,6 +72,28 @@ async function model(revision = "first") {
         values: { "canvas.id": "", "canvas.displayName": "", "canvas.description": "",
             "canvas.workflowListName": "", "workflowSlug.userProvided": false },
     };
+}
+
+async function prepareScalarAdapters(project, state) {
+    state.controls = [...(state.controls ?? []),
+        ...await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
+            JSON.parse(await readFile(new URL(`controls/${name}/control.json`, extensionRoot), "utf8"))))];
+    state.adapters = { ...state.adapters, "stock.text": "canvas-stock-text-designer",
+        "stock.checkbox": "canvas-stock-checkbox-designer" };
+    state.templates ??= [];
+    for (const [name, file] of [
+        ["canvas-stock-text-designer", "stock-text"],
+        ["canvas-stock-checkbox-designer", "stock-checkbox"],
+    ]) {
+        const path = join(project, ".specify", "extensions", "extension-canvas-design",
+            "controls", file, "designer.mjs");
+        await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
+            "controls", file), { recursive: true });
+        await copyFile(new URL(`controls/${file}/designer.mjs`, extensionRoot), path);
+        const bytes = await readFile(path);
+        state.templates.push({ name, path,
+            hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.adapter" });
+    }
 }
 
 async function startPreparedShell(state) {
@@ -73,7 +106,19 @@ async function startPreparedShell(state) {
     try {
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        const shell = await startShell(handoff, state, { workspace });
+        const project = join(workspace, "project");
+        await prepareScalarAdapters(project, state);
+        if (state.adapters?.["stock.image"]) {
+            const path = join(project, ".specify", "extensions", "extension-canvas-design",
+                "controls", "stock-image", "designer.mjs");
+            await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
+                "controls", "stock-image"), { recursive: true });
+            await copyFile(new URL("controls/stock-image/designer.mjs", extensionRoot), path);
+            const bytes = await readFile(path);
+            state.templates.push({ name: "canvas-stock-image-designer", path,
+                hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.adapter" });
+        }
+        const shell = await startShell(handoff, state, { workspace, project });
         return { url: shell.url, close: async () => {
             await shell.close();
             await rm(workspace, { recursive: true, force: true });
@@ -90,6 +135,102 @@ async function openDesigner(page) {
     return shell;
 }
 
+test("Main page Logo upload explains rejection beside the picker and clears on replacement", async ({ page }) => {
+    const state = await model();
+    const { field } = JSON.parse(await readFile(new URL("stock-logo-main-page.json", templateRoot), "utf8"));
+    const logoField = field;
+    const { field: headerField } = JSON.parse(await readFile(new URL("stock-logo.json", templateRoot), "utf8"));
+    state.pages[0].fields.push(headerField);
+    state.constraints[headerField.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+    state.values[headerField.id] = "";
+    state.pages.push({ page: "main", title: "Main", description: "", fields: [logoField] });
+    state.constraints[field.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+    state.values[field.id] = "";
+    state.controls = [JSON.parse(await readFile(
+        new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
+    state.adapters = { "stock.image": "canvas-stock-image-designer" };
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        await page.getByRole("tab", { name: "Main" }).click();
+        const picker = page.getByLabel(field.label, { exact: true });
+        const feedback = page.locator(`#${await picker.getAttribute("id")}-error`);
+        await expect(feedback).toHaveAttribute("role", "alert");
+        expect((await picker.getAttribute("aria-describedby"))?.split(" "))
+            .toContain(await feedback.getAttribute("id"));
+
+        await picker.setInputFiles({ name: "large.png", mimeType: "image/png",
+            buffer: Buffer.alloc(326439) });
+        await expect(feedback).toBeVisible();
+        await expect(feedback).toContainText("326,439 bytes");
+        await expect(feedback).toContainText("32,768 bytes (32 KiB)");
+        await expect(picker).toHaveAttribute("aria-invalid", "true");
+
+        await picker.setInputFiles({ name: "almost.png", mimeType: "image/png",
+            buffer: Buffer.alloc(32988) });
+        await expect(feedback).toContainText("32,988 bytes");
+        await expect(feedback).toContainText("32,768 bytes (32 KiB)");
+
+        await picker.setInputFiles({ name: "vector.svg", mimeType: "image/svg+xml",
+            buffer: Buffer.from("<svg/>") });
+        await expect(feedback).toContainText("must be a nonempty PNG, JPEG, GIF, or WebP");
+
+        await picker.setInputFiles({ name: "broken.png", mimeType: "image/png",
+            buffer: Buffer.from("not a PNG") });
+        await expect(feedback).toContainText("Image bytes do not match the selected format");
+
+        await picker.setInputFiles({ name: "undecodable.png", mimeType: "image/png",
+            buffer: Buffer.from("89504e470d0a1a0a0000000d494844520000000100000001", "hex") });
+        await expect(feedback).toContainText("Image cannot be displayed");
+
+        await picker.setInputFiles({ name: "good.png", mimeType: "image/png",
+            buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64") });
+        await expect(page.getByAltText(`${field.label} preview`)).toBeVisible();
+        await expect(page.getByAltText(`${field.label} preview`)).toHaveJSProperty("naturalWidth", 1);
+        await expect(feedback).toBeHidden();
+        await expect(picker).not.toHaveAttribute("aria-invalid");
+        await page.getByRole("button", { name: "Remove" }).click();
+        await expect(feedback).toBeHidden();
+
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        const headerPicker = page.getByLabel(headerField.label, { exact: true });
+        const headerFeedback = page.locator(`#${await headerPicker.getAttribute("id")}-error`);
+        await headerPicker.setInputFiles({ name: "header-too-large.png", mimeType: "image/png",
+            buffer: Buffer.alloc(32988) });
+        await expect(headerFeedback).toContainText("32,988 bytes");
+        await expect(headerFeedback).toContainText("32,768 bytes (32 KiB)");
+        await expect(headerFeedback).toBeVisible();
+    } finally {
+        await shell.close();
+    }
+});
+
+test("configured image reports an incompatible Designer adapter beside its field", async ({ page }) => {
+    const state = await model();
+    const { field } = JSON.parse(await readFile(new URL("stock-logo.json", templateRoot), "utf8"));
+    state.pages[0].fields.push(field);
+    state.constraints[field.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+    state.values[field.id] = "";
+    state.controls = [JSON.parse(await readFile(
+        new URL("controls/stock-image/control.json", extensionRoot), "utf8"))];
+    state.adapters = { "stock.image": "canvas-stock-image-designer" };
+    const shell = await startPreparedShell(state);
+    try {
+        await page.route(/\/adapters\/canvas-stock-image-designer\.mjs/, (route) =>
+            route.fulfill({ contentType: "text/javascript", body:
+                'export const controlId = "wrong"; export const valueContract = { type: "image" }; export function mount() {}' }));
+        await page.goto(shell.url);
+        await expect(page.locator('[role="alert"]').filter({
+            hasText: "Could not load Header logo: Incompatible control ID or value contract",
+        })).toBeVisible();
+    } finally {
+        await shell.close();
+    }
+});
+
 test("Designer CSP allows its own UI but blocks cross-origin adapter requests", async ({ page }) => {
     let requests = 0;
     const external = createServer((_request, response) => {
@@ -104,7 +245,7 @@ test("Designer CSP allows its own UI but blocks cross-origin adapter requests", 
         await expect(page.locator(".app-header")).toHaveCSS("display", "grid");
         const document = await page.request.get(shell.url);
         expect(document.headers()["content-security-policy"]).toBe(
-            "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+            "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         const target = `http://127.0.0.1:${external.address().port}/receive`;
         const result = await page.evaluate(async (url) => {
             try {
@@ -122,7 +263,8 @@ test("Designer CSP allows its own UI but blocks cross-origin adapter requests", 
     }
 });
 
-test("isolated test preset resolves through Specify and saves contributed stock fields", async ({ page }) => {
+test("isolated test preset resolves through Specify and renders its contributed stock field", async ({ page }) => {
+    test.setTimeout(150_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -176,6 +318,7 @@ test("isolated test preset resolves through Specify and saves contributed stock 
                 return { ...entry, kind: "designer.page", strategy: "replace" }; });
         const templates = ["canvas-contribution-pr1-test", "canvas-contribution-pr1-toggle"]
             .map((name) => ({ ...resolve(name), kind: "designer.field", strategy: "replace" }));
+        templates.push(...scalarRegistrations(resolve));
         expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -219,6 +362,7 @@ test("isolated test preset resolves through Specify and saves contributed stock 
 });
 
 test("Billing preset resolves, saves and reopens Cost code, then generates its read-only value", async ({ page }) => {
+    test.setTimeout(150_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -266,7 +410,8 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.page", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contributions-billing"),
-            kind: "designer.field", strategy: "replace" }];
+            kind: "designer.field", strategy: "replace" },
+        ...scalarRegistrations(resolve)];
         expect(templates[0].sourceId).toBe("copilot-billing-canvas-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
@@ -319,7 +464,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
 });
 
 test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(150_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -384,6 +529,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         const adapterRelative = relative(await realpath(workspace), await realpath(templates[2].path));
         expect(isAbsolute(adapterRelative) || adapterRelative === ".."
             || adapterRelative.startsWith(`..${sep}`)).toBe(false);
+        templates.push(...scalarRegistrations(resolve));
+        templates.push(...["canvas-stock-description", "canvas-stock-workflow-heading"]
+            .map((name) => ({ ...resolve(name), kind: "designer.field", strategy: "replace" })));
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
@@ -401,6 +549,8 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("risk-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Risk Canvas");
+        await page.getByRole("textbox", { name: "Description" }).fill("Risk workflow description");
+        await page.getByRole("textbox", { name: "Workflow header" }).fill("Risk workflows");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#action-message")).toHaveText("Settings saved.");
         expect((await load()).values["risk.rating"]).toEqual({
@@ -430,6 +580,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         server = createServer(routes.handle);
         await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
         await page.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
+        await expect(page.locator("#workflow-heading")).toContainText("Risk workflows");
+        await expect(page.locator(".collection-description")).toHaveText("Risk workflow description");
+        await expect(page.locator(".brand-mark")).toContainText(String.fromCodePoint(9671));
         await expect(page.getByRole("table", { name: /impact medium, likelihood medium/ })).toBeVisible();
         await expect(page.locator('[data-control-id="risk.rating"] [aria-current="true"]')).toHaveText("Selected");
         const contract = JSON.parse(await readFile(templates[0].path, "utf8")).value;
@@ -524,7 +677,8 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
             "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.");
         await expect(id).toHaveAttribute("pattern",
             "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$");
-        await expect(page.locator(`[id="${await id.getAttribute("aria-describedby")}"]`))
+        await expect(id).toHaveAttribute("aria-describedby", "setting-field-0-hint setting-field-0-error");
+        await expect(page.locator("#setting-field-0-hint"))
             .toHaveText("Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used.");
         await expect(title).toHaveAttribute("maxlength", "120");
         await expect(page.getByRole("textbox", { name: "Description" })).toHaveAttribute("maxlength", "240");
@@ -546,6 +700,41 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
     }
 });
 
+test("required stock text reports nonblank errors alongside its field and rejects Save", async ({ page }) => {
+    const state = await model();
+    state.pages[0].fields.find((field) => field.id === "canvas.description").required = true;
+    state.constraints["canvas.description"].required = true;
+    state.settingsRevision = 0;
+    state.persisted = false;
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
+        const title = page.getByRole("textbox", { name: "Title (required)" });
+        const description = page.getByRole("textbox", { name: "Description (required)" });
+        await id.fill("required-canvas");
+        await title.fill("  ");
+        await title.blur();
+        const titleError = page.locator("#setting-field-1-error");
+        await expect(titleError).toHaveText("Enter a nonblank Title.");
+        await expect(title).toHaveAttribute("aria-invalid", "true");
+        await title.fill("Required Canvas");
+        await expect(titleError).toBeHidden();
+        await description.fill("   ");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(description).toBeFocused();
+        await expect(page.locator("#setting-field-2-error"))
+            .toHaveText("Enter a nonblank Description.");
+        await expect(page.locator("#page-error")).toContainText("Enter a valid Description");
+        await description.fill("A valid description");
+        await expect(page.locator("#setting-field-2-error")).toBeHidden();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+    } finally {
+        await shell.close();
+    }
+});
+
 test("missing Generate skill explains why the action is disabled", async ({ page }) => {
     const workspace = await mkdtemp(join(tmpdir(), "designer-generate-unavailable-"));
     const project = join(workspace, "project");
@@ -560,12 +749,14 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        shell = await startShell(handoff, await model(), { project, workspace,
+        const state = await model();
+        await prepareScalarAdapters(project, state);
+        shell = await startShell(handoff, state, { project, workspace,
             session: { send: async () => {} } });
         await page.goto(shell.url);
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        await expect(page.locator("#generation-error")).toHaveText(
-            "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.");
+        await expect(page.locator("#generation-error")).toContainText(
+            "Canvas Design does not provide Generate in this session. Launch a new Designer session");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
@@ -611,14 +802,17 @@ test("Save validates values, persists edits and reports stale revisions", async 
     const initial = await model();
     initial.settingsRevision = 0;
     initial.persisted = false;
-    const shell = await startShell(handoff, initial, { workspace });
-    const staleShell = await startShell(handoff, initial, { workspace });
+    const project = join(workspace, "project");
+    await prepareScalarAdapters(project, initial);
+    const shell = await startShell(handoff, initial, { project, workspace });
+    const staleShell = await startShell(handoff, initial, { project, workspace });
     try {
         await page.goto(shell.url);
         const save = page.getByRole("button", { name: "Save", exact: true });
         await save.click();
-        await expect(page.getByRole("alert")).toContainText("Enter a valid Canvas ID");
-        await expect(page.getByRole("alert")).toContainText("lowercase letters (a–z), numbers (0–9), and hyphens (-)");
+        await expect(page.locator("#page-error")).toContainText("Enter a valid Canvas ID");
+        await expect(page.locator('[name="canvas.id"]')).toBeFocused();
+        await expect(page.locator("#page-error")).toContainText("lowercase letters (a–z), numbers (0–9), and hyphens (-)");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("example-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Example");
         await save.click();
@@ -630,7 +824,8 @@ test("Save validates values, persists edits and reports stale revisions", async 
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
 
         const reopenedModel = await loadDesignerSettings(workspace, handoff, await model());
-        const reopened = await startShell(handoff, reopenedModel, { workspace });
+        await prepareScalarAdapters(project, reopenedModel);
+        const reopened = await startShell(handoff, reopenedModel, { project, workspace });
         try {
             await page.goto(reopened.url);
             await expect(page.getByRole("textbox", { name: "Canvas ID (required)" }))

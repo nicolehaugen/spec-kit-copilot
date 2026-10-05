@@ -13,13 +13,27 @@ import {
     validateHandoffId,
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
-import { assertPageCommand, loadResolvedDesignerPages, readFrozenAsset } from "../pages.mjs";
+import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAsset } from "../pages.mjs";
 import {
-    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT,
+    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
 import { freezeGeneration, validateEssentials } from "../generation.mjs";
+import { decodeImage } from "../image.mjs";
 
 const ID = "designer_1";
+const scalarFixtures = new Map();
+
+async function loadResolvedDesignerPages(handoff, project, entries, templates = [], registration) {
+    const scalar = scalarFixtures.get(project) ?? [];
+    const present = new Set(templates.map((entry) => entry.name));
+    const complete = [...templates, ...scalar.filter((entry) => !present.has(entry.name))];
+    const verify = (root, name) => name.startsWith("canvas-stock-text")
+        || name.startsWith("canvas-stock-checkbox")
+        ? { kind: "template", stack: [{ active: true, sourceId: "extension-canvas-design",
+            layer: "extension", strategy: "replace" }] }
+        : registration?.(root, name);
+    return loadPages(handoff, project, entries, complete, verify);
+}
 
 test("Designer packages the same control validator as the generated app", async () => {
     assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
@@ -68,6 +82,7 @@ async function projectFixture(t, workspace) {
         JSON.stringify({ extensions: { "extension-canvas-design": { enabled: true } } }));
     await copyFile(join(source, "schemas", "page.schema.json"),
         join(installed, "schemas", "page.schema.json"));
+    await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
     const pages = [["setup", "essentials"], ["artifacts", "artifacts"],
         ["appearance", "appearance"]];
     const entries = [];
@@ -77,6 +92,24 @@ async function projectFixture(t, workspace) {
         entries.push({ name: `canvas-settings-${name}`, path,
             kind: "designer.page", strategy: "replace" });
     }
+    const scalar = [];
+    for (const [directory, names] of [
+        ["stock-text", [["canvas-stock-text", "control.json", "control.definition"],
+            ["canvas-stock-text-designer", "designer.mjs", "designer.adapter"],
+            ["canvas-stock-text-generated", "generated.mjs", "generated.adapter"]]],
+        ["stock-checkbox", [["canvas-stock-checkbox", "control.json", "control.definition"],
+            ["canvas-stock-checkbox-designer", "designer.mjs", "designer.adapter"]]],
+    ]) {
+        await mkdir(join(installed, "controls", directory), { recursive: true });
+        for (const [name, filename, kind] of names) {
+            const path = join(installed, "controls", directory, filename);
+            await copyFile(join(source, "controls", directory, filename), path);
+            scalar.push({ name, path, sourceId: "extension:extension-canvas-design",
+                kind, strategy: "replace" });
+        }
+    }
+    scalarFixtures.set(project, scalar);
+    t.after(() => scalarFixtures.delete(project));
     t.after(() => rm(project, { recursive: true, force: true }));
     return { project, entries };
 }
@@ -95,6 +128,217 @@ async function stockTemplates(project) {
     }
     return templates;
 }
+
+async function stockImageTemplates(project) {
+    const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
+        import.meta.url));
+    const directory = join(project, ".specify", "extensions", "extension-canvas-design",
+        "controls", "stock-image");
+    await mkdir(directory, { recursive: true });
+    const entries = [
+        ["canvas-stock-image", "control.json", "control.definition"],
+        ["canvas-stock-image-designer", "designer.mjs", "designer.adapter"],
+        ["canvas-stock-image-generated", "generated.mjs", "generated.adapter"],
+    ];
+    return Promise.all(entries.map(async ([name, filename, kind]) => {
+        const path = join(directory, filename);
+        await copyFile(join(source, "controls", "stock-image", filename), path);
+        return { name, path, sourceId: "extension:extension-canvas-design",
+            kind, strategy: "replace" };
+    }));
+}
+
+test("stock image picker announces its format hint and upload error", async (t) => {
+    const previousDocument = globalThis.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const element = () => ({
+        children: [], attributes: new Map(), classList: { add() {} },
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        getAttribute(name) { return this.attributes.get(name); },
+        removeAttribute(name) { this.attributes.delete(name); },
+        addEventListener() {},
+        append(...children) { this.children.push(...children); },
+        replaceChildren(...children) { this.children = children; },
+    });
+    globalThis.document = { createElement: element };
+    const { mount } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/controls/stock-image/designer.mjs",
+        import.meta.url));
+    const root = element();
+    mount({ root, field: { label: "Header logo", description: "PNG or JPEG, up to 32 KiB." },
+        value: "", context: { inputId: "header-logo",
+            constraints: { maxBytes: 32768,
+                mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] },
+            validateImage: () => true, setBusy() {} }, onChange() {} });
+    const input = root.children[2].children[0];
+    const error = root.children[3];
+    const hint = root.children[4];
+    assert.equal(hint.textContent, "PNG or JPEG, up to 32 KiB.");
+    assert.equal(input.getAttribute("aria-describedby"), `${hint.id} ${error.id}`);
+});
+
+function stockImageRegistration(_root, name) {
+    const stock = name.startsWith("canvas-stock-image");
+    return { kind: "template", stack: [{ active: true,
+        sourceId: stock ? "extension-canvas-design" : "copilot-logo-gallery-test",
+        layer: stock ? "extension" : "preset", strategy: "replace" }] };
+}
+
+test("stock scalar definitions mount required fields and reject incomplete visual adapters", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const fields = await stockTemplates(project);
+    const scalar = scalarFixtures.get(project);
+    const verify = () => ({ kind: "template", stack: [{ active: true,
+        sourceId: "extension-canvas-design", layer: "extension", strategy: "replace" }] });
+    const model = await loadResolvedDesignerPages(handoff, project, entries, fields);
+    assert.equal(model.pages[0].fields[0].control, "stock.text");
+    assert.equal(model.pages[0].fields[1].control, "stock.text");
+    assert.equal(model.adapters["stock.text"], "canvas-stock-text-designer");
+    assert.equal(model.adapters["stock.checkbox"], "canvas-stock-checkbox-designer");
+    await assert.rejects(loadPages(handoff, project, entries, [], verify),
+        /missing shared control definition for canvas.id/);
+    await assert.rejects(loadPages(handoff, project, entries,
+        [...fields, ...scalar.filter((item) => item.name !== "canvas-stock-text-generated")],
+        verify), /missing generated adapter canvas-stock-text-generated/);
+    const original = await readFile(fields[0].path, "utf8");
+    const changed = JSON.parse(original);
+    changed.requires = ["canvas-stock-text"];
+    await writeFile(fields[0].path, JSON.stringify(changed));
+    assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields))
+        .contributions[0].requires[0], "canvas-stock-text");
+    changed.requires = ["canvas-stock-checkbox"];
+    await writeFile(fields[0].path, JSON.stringify(changed));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /missing or incompatible shared control definition/);
+    await writeFile(fields[0].path, original);
+    await writeFile(fields[0].path, JSON.stringify({ ...JSON.parse(original),
+        generatedBinding: { presentation: "text", slot: "workflow.heading" } }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /incompatible generated binding/);
+    await writeFile(fields[0].path, original);
+    const setup = JSON.parse(await readFile(entries[0].path, "utf8"));
+    setup.fields[0].control = "stock.checkbox";
+    await writeFile(entries[0].path, JSON.stringify(setup));
+    const invalid = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.match(invalid.pages[0].error.reason, /duplicate or invalid field canvas.id/);
+});
+
+test("custom text requiredness is field-specific and enforced by Save and Generate", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const setup = JSON.parse(await readFile(entries[0].path, "utf8"));
+    setup.fields.push({ id: "billing.reference", label: "Reference", type: "string",
+        control: "stock.text", required: true });
+    await writeFile(entries[0].path, JSON.stringify(setup));
+    const templates = await stockTemplates(project);
+    const contribution = JSON.parse(await readFile(templates[0].path, "utf8"));
+    contribution.field.required = true;
+    await writeFile(templates[0].path, JSON.stringify(contribution));
+    const model = await loadResolvedDesignerPages(handoff, project, entries, templates);
+    assert.equal(model.constraints["billing.reference"].required, true);
+    assert.equal(model.constraints["canvas.description"].required, true);
+    assert.equal(model.constraints["canvas.workflowListName"].required, undefined);
+    const values = { ...model.values, "canvas.id": "required-canvas",
+        "canvas.displayName": "Required Canvas", "billing.reference": "   ",
+        "canvas.description": "Description" };
+    assert.throws(() => validateValues(values, model.constraints),
+        /Invalid Designer setting: billing.reference/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        modelRevision: model.revision, revision: 0, values,
+    }), /Invalid Designer setting: billing.reference/);
+    await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
+        /Invalid Designer setting: billing.reference/);
+    values["billing.reference"] = "REF-42";
+    values["canvas.description"] = "  ";
+    assert.throws(() => validateValues(values, model.constraints),
+        /Invalid Designer setting: canvas.description/);
+    values["canvas.description"] = "Description";
+    values["canvas.displayName"] = "  ";
+    assert.throws(() => validateValues(values, model.constraints),
+        /Invalid Designer setting: canvas.displayName/);
+    values["canvas.displayName"] = "Required Canvas";
+    validateValues(values, model.constraints);
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
+    const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.equal(frozen.fieldConstraints["billing.reference"].required, true);
+    assert.equal(frozen.fieldConstraints["canvas.description"].required, true);
+    await saveDesignerSettings(workspace, handoff, model, {
+        modelRevision: model.revision, revision: 0, values,
+    });
+    const optional = { ...values, "canvas.workflowListName": "" };
+    validateValues(optional, model.constraints);
+    contribution.field.required = false;
+    await writeFile(templates[0].path, JSON.stringify(contribution));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
+        /incompatible field or control definition/);
+    setup.fields[2].required = false;
+    await writeFile(entries[0].path, JSON.stringify(setup));
+    const invalidPage = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.match(invalidPage.pages[0].error.reason, /canvas-settings-setup/);
+});
+
+test("stock image requires one compatible control definition and paired self-contained adapters", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
+        import.meta.url));
+    const fieldPath = join(project, ".specify", "extensions", "extension-canvas-design",
+        "pages", "stock-logo.json");
+    await copyFile(join(source, "pages", "stock-logo.json"), fieldPath);
+    const fields = [{ name: "canvas-stock-logo", path: fieldPath,
+        sourceId: "extension:extension-canvas-design", kind: "designer.field", strategy: "replace" }];
+    const adapters = await stockImageTemplates(project);
+    const templates = [...fields, ...adapters];
+    const load = (items = templates) => loadResolvedDesignerPages(handoff, project, entries,
+        items, stockImageRegistration);
+    const model = await load();
+    assert.equal(model.adapters["stock.image"], "canvas-stock-image-designer");
+    assert.equal(model.pages[0].fields.find((field) => field.id === "canvas.logo").control, "stock.image");
+    assert.deepEqual(model.constraints["canvas.logo"].mimeTypes,
+        ["image/png", "image/jpeg", "image/gif", "image/webp"]);
+    await assert.rejects(load(fields), /missing or incompatible shared control definition/);
+    for (const kind of ["designer.adapter", "generated.adapter"]) {
+        await assert.rejects(load(templates.filter((item) => item.kind !== kind)),
+            new RegExp(`missing ${kind.split(".")[0]} adapter`));
+    }
+    const originalField = await readFile(fieldPath, "utf8");
+    await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
+        requires: ["canvas-stock-image"] }));
+    assert.equal((await load()).contributions[0].requires[0], "canvas-stock-image");
+    await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
+        requires: ["canvas-stock-text"] }));
+    await assert.rejects(load(), /missing or incompatible shared control definition/);
+    await writeFile(fieldPath, originalField);
+    const control = adapters[0];
+    const originalControl = await readFile(control.path, "utf8");
+    const duplicate = { ...control, name: "canvas-stock-image-copy",
+        path: join(project, ".specify", "extensions", "extension-canvas-design",
+            "controls", "stock-image", "copy.json") };
+    await copyFile(control.path, duplicate.path);
+    await assert.rejects(load([...templates, duplicate]),
+        /unreferenced or duplicate control definition/);
+    await writeFile(control.path, JSON.stringify({ ...JSON.parse(originalControl),
+        value: { type: "image", maxBytes: 65536, mimeTypes: ["image/png"] } }));
+    await assert.rejects(load(), /invalid shared control value contract/);
+    await writeFile(control.path, originalControl);
+    const designer = adapters[1];
+    const originalDesigner = await readFile(designer.path, "utf8");
+    await writeFile(designer.path, 'import "elsewhere"; export function mount() {}');
+    await assert.rejects(load(), /must be self-contained/);
+    await writeFile(designer.path, originalDesigner);
+    await assert.rejects(load(templates.map((entry) => entry.name === designer.name
+        ? { ...entry, strategy: "append" } : entry)), /Invalid or duplicate Canvas Design template/);
+});
 
 test("stock contributions retain the five-field layout and minimal replaced Essentials generate defaults", async (t) => {
     const workspace = await fixture(t);
@@ -171,6 +415,7 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     await writeFile(templates[0].path, JSON.stringify({
         ...JSON.parse(await readFile(templates[0].path, "utf8")),
         field: { id: "canvas.id", type: "string", label: "Conflicting ID", control: "stock.text" },
+        generatedBinding: undefined,
     }));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
         /canvas-stock-description: duplicate field canvas.id also defined by canvas-settings-setup/);
@@ -201,6 +446,299 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     await assert.rejects(freezeGeneration({ model: missingIdentity,
         values: { ...missingIdentity.values, "canvas.id": "other" },
         handoff, project, workspace }), /Canvas ID and Title/);
+});
+
+test("stock Logo validates, persists, freezes and packages a portable header image with fallback", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
+        import.meta.url));
+    const path = join(project, ".specify", "extensions", "extension-canvas-design",
+        "pages", "stock-logo.json");
+    const mainPath = join(project, ".specify", "extensions", "extension-canvas-design",
+        "pages", "stock-logo-main-page.json");
+    await copyFile(join(source, "pages", "stock-logo.json"), path);
+    await copyFile(join(source, "pages", "stock-logo-main-page.json"), mainPath);
+    const templates = [...[path, mainPath].map((file, index) => ({
+        name: index ? "canvas-stock-logo-main-page" : "canvas-stock-logo", path: file,
+        sourceId: "extension:extension-canvas-design", kind: "designer.field", strategy: "replace",
+    })), ...await stockImageTemplates(project)];
+    const load = () => loadResolvedDesignerPages(handoff, project, entries, templates,
+        stockImageRegistration);
+    const model = await load();
+    assert.equal(model.constraints["canvas.logo"].type, "image");
+    assert.equal(model.values["canvas.logo"], "");
+    assert.equal(model.constraints["canvas.mainPageLogo"].type, "image");
+    assert.equal(model.values["canvas.mainPageLogo"], "");
+    const originalAppearance = await readFile(entries[2].path, "utf8");
+    const originalLogo = await readFile(path, "utf8");
+    const appearance = JSON.parse(originalAppearance);
+    appearance.slots = [{ id: "appearance.logo", accepts: ["field"],
+        orderBy: ["order", "presetId", "id"] }];
+    await writeFile(entries[2].path, JSON.stringify(appearance));
+    const logoContribution = JSON.parse(originalLogo);
+    await writeFile(path, JSON.stringify({ ...logoContribution, slot: "appearance.logo" }));
+    const moved = await load();
+    assert.equal(moved.pages.find((page) => page.page === "canvas-settings-appearance")
+        .fields[0].id, "canvas.logo");
+    await writeFile(path, originalLogo);
+    await writeFile(entries[2].path, originalAppearance);
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64");
+    const gif = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACAUwAOw==", "base64");
+    const logo = `data:image/png;base64,${png.toString("base64")}`;
+    const mainLogo = `data:image/gif;base64,${gif.toString("base64")}`;
+    assert.deepEqual(decodeImage(logo).bytes, png);
+    assert.deepEqual(decodeImage(mainLogo).bytes, gif);
+    const jpeg = Buffer.from([
+        "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/",
+        "2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/",
+        "8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/",
+        "8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/",
+        "9oADAMBAAIRAxEAPwD50ooor8MP9Uz/2Q==",
+    ].join(""), "base64");
+    assert.deepEqual(decodeImage(`data:image/jpeg;base64,${jpeg.toString("base64")}`).bytes, jpeg);
+    for (const bytes of [
+        Buffer.from([255, 216, 255, 255, 217]),
+        Buffer.from([255, 216, 255, 192, 0, 11, 8, 0, 1, 0, 1, 1, 1, 17, 0, 255, 217]),
+        Buffer.concat([jpeg.subarray(0, 30), jpeg.subarray(-2)]),
+    ]) {
+        assert.throws(() => decodeImage(`data:image/jpeg;base64,${bytes.toString("base64")}`),
+            /image bytes do not match/);
+    }
+    const values = { ...model.values, "canvas.id": "with-logo",
+        "canvas.displayName": "Logo test", "canvas.logo": logo, "canvas.mainPageLogo": mainLogo };
+    const imageContribution = model.contributions.find((item) => item.field.id === "canvas.logo");
+    const extraImages = Array.from({ length: 9 }, (_, index) => ({
+        ...imageContribution,
+        field: { ...imageContribution.field, id: `extra.image${index}`, label: `Extra ${index}` },
+        generatedBinding: { ...imageContribution.generatedBinding, slot: `header.extra${index}` },
+    }));
+    const manyImages = { ...model,
+        contributions: [...model.contributions, ...extraImages],
+        constraints: { ...model.constraints, ...Object.fromEntries(extraImages.map((item) =>
+            [item.field.id, model.constraints["canvas.logo"]])) } };
+    const emptyImages = { ...model.values, "canvas.id": "image-count",
+        "canvas.displayName": "Image count",
+        ...Object.fromEntries(extraImages.map((item) => [item.field.id, ""])) };
+    const emptyPrepared = await freezeGeneration({
+        model: manyImages, values: emptyImages, handoff, project, workspace,
+    });
+    const frozenRequest = async (requestId) => JSON.parse(await readFile(join(workspace,
+        "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", requestId, "request.json"), "utf8"));
+    assert.equal((await frozenRequest(emptyPrepared.requestId)).generatedAssets, undefined);
+    const tenImages = { ...emptyImages, "canvas.logo": logo, "canvas.mainPageLogo": mainLogo,
+        ...Object.fromEntries(extraImages.slice(0, 8).map((item) => [item.field.id, logo])) };
+    const tenPrepared = await freezeGeneration({
+        model: manyImages, values: tenImages, handoff, project, workspace,
+    });
+    assert.equal((await frozenRequest(tenPrepared.requestId)).generatedAssets.length, 10);
+    await assert.rejects(freezeGeneration({ model: manyImages,
+        values: { ...tenImages, [extraImages[8].field.id]: logo },
+        handoff, project, workspace }), /10-image limit/);
+    await assert.rejects(freezeGeneration({ model: { ...manyImages,
+        contributions: [...model.contributions, { ...extraImages[0],
+            generatedBinding: imageContribution.generatedBinding }] },
+        values: emptyImages, handoff, project, workspace }), /slots must be unique/);
+    for (const bad of ["data:image/svg+xml;base64,PHN2Zz4=", "data:image/png;base64,AAAA",
+        `data:image/png;base64,${Buffer.alloc(32769).toString("base64")}`, "data:image/png;base64,?"]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model,
+            { revision: 0, modelRevision: model.revision, values: { ...values, "canvas.logo": bad } }),
+        /Invalid Designer setting: canvas.logo/);
+        await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.logo": bad },
+            handoff, project, workspace }), /Invalid Designer setting: canvas.logo/);
+        await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.mainPageLogo": bad },
+            handoff, project, workspace }), /Invalid Designer setting: canvas.mainPageLogo/);
+    }
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { revision: 0, modelRevision: model.revision, values });
+    assert.equal((await loadDesignerSettings(workspace, handoff, model)).values["canvas.logo"], logo);
+    assert.equal((await loadDesignerSettings(workspace, handoff, model)).values["canvas.mainPageLogo"], mainLogo);
+    const prepared = await freezeGeneration({ model: saved, values, handoff, project, workspace });
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const frozen = JSON.parse(await readFile(requestPath, "utf8"));
+    assert.equal(frozen.generatedAssets[0].hash, createHash("sha256").update(png).digest("hex"));
+    assert.equal(frozen.generatedAssets[1].hash, createHash("sha256").update(gif).digest("hex"));
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const tampered = structuredClone(frozen);
+    tampered.generatedAssets[0].content = Buffer.from("not an image").toString("base64");
+    const { integrity: _prior, ...payload } = tampered;
+    tampered.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(tampered));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen image/);
+    await writeFile(requestPath, JSON.stringify(frozen));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, prepared.target);
+    const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(await readFile(join(target, "assets", config.brandAsset.file)), png);
+    assert.deepEqual(await readFile(join(target, "assets", config.mainPageAsset.file)), gif);
+    const portable = await import(pathToFileURL(join(target, "server.mjs")).href);
+    assert.deepEqual(portable.readConfig().brandAsset, config.brandAsset);
+    assert.deepEqual(portable.readConfig().mainPageAsset, config.mainPageAsset);
+    assert.match(portable.renderHtml(config, "secret"), /data-stock-image="header\.brand"/);
+    assert.match(portable.renderHtml(config, "secret"), /data-image-file="logo\.png"/);
+    assert.match(portable.renderHtml(config, "secret"), /data-stock-image="workflow\.intro"/);
+    assert.match(portable.renderHtml(config, "secret"), /data-image-file="main-page-logo\.gif"/);
+    assert.match(portable.renderHtml({ ...config, brandAsset: undefined }), /class="brand-mark" aria-hidden="true">&#9671;/);
+    const routed = createServer(portable.createWorkflowRoutes(config, { token: "secret" }).handle);
+    await new Promise((resolve) => routed.listen(0, "127.0.0.1", resolve));
+    try {
+        const base = `http://127.0.0.1:${routed.address().port}`;
+        const image = await fetch(`${base}/assets/logo.png?token=secret`);
+        assert.equal(image.status, 200);
+        assert.equal(image.headers.get("content-type"), "image/png");
+        assert.match(image.headers.get("content-security-policy"), /img-src 'self'/);
+        assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+        const mainImage = await fetch(`${base}/assets/main-page-logo.gif?token=secret`);
+        assert.equal(mainImage.status, 200);
+        assert.equal(mainImage.headers.get("content-type"), "image/gif");
+        assert.deepEqual(Buffer.from(await mainImage.arrayBuffer()), gif);
+        assert.equal((await fetch(`${base}/assets/logo.png`)).status, 401);
+    } finally {
+        await new Promise((resolve) => routed.close(resolve));
+    }
+    await writeFile(join(target, "assets", "logo.png"), Buffer.from("changed"));
+    assert.throws(() => portable.readConfig(), /Packaged image does not match its frozen hash/);
+    await writeFile(join(target, "assets", "logo.png"), png);
+    await writeFile(join(target, "assets", "main-page-logo.gif"), Buffer.from("changed"));
+    assert.throws(() => portable.readConfig(), /Packaged image does not match its frozen hash/);
+    const onlyMain = { ...values, "canvas.id": "main-only", "canvas.logo": "" };
+    const mainOnly = await freezeGeneration({ model, values: onlyMain, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, mainOnly.requestId);
+    const mainConfig = JSON.parse(await readFile(join(project, mainOnly.target, "canvas-config.json")));
+    assert.equal(mainConfig.brandAsset, undefined);
+    assert.equal(mainConfig.mainPageAsset.file, "main-page-logo.gif");
+    assert.match(portable.renderHtml(mainConfig), /class="brand-mark" aria-hidden="true">&#9671;/);
+    const onlyHeader = { ...values, "canvas.id": "header-only", "canvas.mainPageLogo": "" };
+    const headerOnly = await freezeGeneration({ model, values: onlyHeader, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, headerOnly.requestId);
+    const headerConfig = JSON.parse(await readFile(join(project, headerOnly.target, "canvas-config.json")));
+    assert.equal(headerConfig.mainPageAsset, undefined);
+    assert.doesNotMatch(portable.renderHtml(headerConfig), /class="collection-logo"/);
+    const absent = { ...model.values, "canvas.id": "without-logo",
+        "canvas.displayName": "Fallback", "canvas.logo": "", "canvas.mainPageLogo": "" };
+    const noLogo = await freezeGeneration({ model, values: absent, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, noLogo.requestId);
+    const fallback = JSON.parse(await readFile(join(project, noLogo.target, "canvas-config.json")));
+    assert.equal(fallback.brandAsset, undefined);
+    assert.equal(fallback.mainPageAsset, undefined);
+    assert.match(portable.renderHtml(fallback), /class="brand-mark" aria-hidden="true">&#9671;/);
+});
+
+test("logo gallery preset places a reusable Logo in its declared asset slot", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-logo-gallery-test/",
+        import.meta.url));
+    const folder = join(project, ".specify", "presets");
+    await mkdir(folder);
+    const designerPath = join(folder, "designer.json");
+    const pagePath = join(folder, "generated.json");
+    const rendererPath = join(folder, "generated.mjs");
+    const fieldPath = join(folder, "logo.json");
+    for (const [relative, target] of [
+        [join("pages", "designer.json"), designerPath],
+        [join("pages", "generated.json"), pagePath],
+        [join("pages", "generated.mjs"), rendererPath],
+        [join("contributions", "logo.json"), fieldPath],
+    ]) await copyFile(join(preset, relative), target);
+    const designer = JSON.parse(await readFile(designerPath, "utf8"));
+    const pageSource = await readFile(pagePath, "utf8");
+    const fieldSource = await readFile(fieldPath, "utf8");
+    const page = JSON.parse(pageSource);
+    const field = JSON.parse(fieldSource);
+    const renderer = await readFile(rendererPath, "utf8");
+    assert.match(renderer, /dataset\.assetSlot = "hero\.logo"/);
+    const templates = [
+        { name: page.id, path: pagePath, sourceId: "copilot-logo-gallery-test",
+            kind: "generated.page", strategy: "replace" },
+        { name: page.renderer, path: rendererPath, sourceId: "copilot-logo-gallery-test",
+            kind: "generated.renderer", strategy: "replace" },
+        { name: "canvas-logo-gallery-image", path: fieldPath, sourceId: "copilot-logo-gallery-test",
+            kind: "designer.field", strategy: "replace" },
+        ...await stockImageTemplates(project),
+    ];
+    const load = () => loadResolvedDesignerPages(handoff, project,
+        [...entries, { name: designer.id, path: designerPath,
+            kind: "designer.page", strategy: "replace" }], templates, stockImageRegistration);
+    const model = await load();
+    assert.equal(model.pages.find((item) => item.id === designer.id).fields[0].id, "gallery.logo");
+    assert.equal(model.pages.find((item) => item.id === "canvas-settings-setup").fields.length, 2);
+    assert.equal(field.slot, designer.slots[0].id);
+    assert.equal(field.generatedBinding.page, page.id);
+    assert.equal(field.generatedBinding.slot, page.slots[0].id);
+    await writeFile(fieldPath, JSON.stringify({ ...field,
+        generatedBinding: { ...field.generatedBinding, slot: "missing" } }));
+    await assert.rejects(load(), /unknown or incompatible generated page asset slot/);
+    await writeFile(fieldPath, fieldSource);
+    await writeFile(pagePath, JSON.stringify({ ...page, slots: [{ id: "hero.logo", accepts: ["field"] }] }));
+    await assert.rejects(load(), /invalid generated page definition/);
+    await writeFile(pagePath, pageSource);
+    const gif = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACAUwAOw==", "base64");
+    const values = { ...model.values, "canvas.id": "gallery-canvas",
+        "canvas.displayName": "Gallery canvas",
+        "gallery.logo": `data:image/gif;base64,${gif.toString("base64")}` };
+    const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const frozen = JSON.parse(await readFile(requestPath, "utf8"));
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const invalid = structuredClone(frozen);
+    invalid.generatedAssets[0].slot = "missing";
+    const { integrity: _old, ...payload } = invalid;
+    invalid.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(invalid));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /unknown generated page asset slot/);
+    await writeFile(requestPath, JSON.stringify(frozen));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, prepared.target);
+    const runtime = await import(pathToFileURL(join(target, "server.mjs")).href);
+    const config = runtime.readConfig();
+    assert.deepEqual(config.generatedPages[0].slots, page.slots);
+    const asset = config.generatedPageAssets[0];
+    assert.deepEqual({ id: asset.id, page: asset.page, slot: asset.slot },
+        { id: "gallery.logo", page: page.id, slot: "hero.logo" });
+    assert.equal(config.brandAsset, undefined);
+    assert.equal(config.mainPageAsset, undefined);
+    assert.deepEqual(await readFile(join(target, "assets", asset.file)), gif);
+    assert.match(runtime.renderHtml(config), /data-asset-slots=/);
+    const server = createServer(runtime.createWorkflowRoutes(config, { token: "gallery-token" }).handle);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+        const base = `http://127.0.0.1:${server.address().port}`;
+        const response = await fetch(`${base}/assets/${asset.file}?token=gallery-token`);
+        assert.equal(response.status, 200);
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), gif);
+        assert.equal((await fetch(`${base}/ui/page-assets.mjs?token=gallery-token`)).status, 200);
+    } finally {
+        await new Promise((resolve) => server.close(resolve));
+    }
+    const { mountPageAssets } = await import(pathToFileURL(join(target, "ui", "page-assets.mjs")).href);
+    const slot = { dataset: { assetSlot: "hero.logo" } };
+    const content = { querySelectorAll: () => [slot] };
+    const mounted = [];
+    await mountPageAssets(content, page.slots, [asset], (target, image) =>
+        mounted.push({ target, image }));
+    assert.deepEqual(mounted, [{ target: slot, image: asset }]);
+    await assert.rejects(async () => mountPageAssets({ querySelectorAll: () => [] },
+        page.slots, [asset], () => {}), /did not render asset slot/);
+    await assert.rejects(async () => mountPageAssets({ querySelectorAll: () => [slot, slot] },
+        page.slots, [asset], () => {}), /duplicate generated asset slot/);
+    await writeFile(join(target, "assets", asset.file), Buffer.from("tampered"));
+    assert.throws(() => runtime.readConfig(), /Packaged image does not match its frozen hash/);
 });
 
 test("handoff validates bounded IDs, shape, URLs and fingerprint", () => {
@@ -469,7 +1007,7 @@ test("settings reads stay bounded when the file grows after its initial stat", a
             return {
                 stat: async () => {
                     const before = await file.stat();
-                    await appendFile(join(folder, "settings.json"), "x".repeat(256 * 1024 + 1));
+                    await appendFile(join(folder, "settings.json"), "x".repeat(SETTINGS_LIMIT + 1));
                     return before;
                 },
                 read: (...args) => file.read(...args),
@@ -563,7 +1101,7 @@ test("shell serves validated pages behind its token", async (t) => {
     assert.equal(good.headers.get("cache-control"), "no-store");
     assert.equal(good.headers.get("x-content-type-options"), "nosniff");
     assert.equal(good.headers.get("content-security-policy"),
-        "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+        "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
     assert.match(await good.text(), /Spec Kit Canvas Designer/);
     const stateUrl = new URL(`/api/state?token=${url.searchParams.get("token")}`, url);
     const stateResponse = await fetch(stateUrl);
@@ -638,7 +1176,7 @@ test("token-gated Save endpoint reports errors without losing the current values
     await writeFile(entries[1].path, JSON.stringify(changedPage));
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries));
-    const shell = await startShell(handoff, model, { workspace });
+    const shell = await startShell(handoff, model, { project, workspace });
     t.after(() => shell.close());
     const url = new URL(shell.url);
     const saveUrl = new URL("/api/save", url);
@@ -671,7 +1209,7 @@ test("token-gated Save endpoint reports errors without losing the current values
     assert.deepEqual((await (await fetch(stateUrl)).json()).values, values);
 });
 
-test("Save reserves space for the stored envelope and rejects larger valid requests", async (t) => {
+test("Save accepts a bounded request and rejects one byte over the limit", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff("a".repeat(128));
     const folder = await saveHandoff(workspace, handoff);
@@ -694,22 +1232,23 @@ test("Save reserves space for the stored envelope and rejects larger valid reque
         values[id] = "x".repeat(length);
         remaining -= length;
     }
-    assert.equal(remaining, 0);
     const body = JSON.stringify(payload);
-    assert.equal(Buffer.byteLength(body), SAVE_REQUEST_LIMIT);
-    const shell = await startShell(handoff, model, { workspace });
+    assert.ok(Buffer.byteLength(body) < SAVE_REQUEST_LIMIT);
+    const padded = body + " ".repeat(SAVE_REQUEST_LIMIT - Buffer.byteLength(body));
+    assert.equal(Buffer.byteLength(padded), SAVE_REQUEST_LIMIT);
+    const shell = await startShell(handoff, model, { project, workspace });
     t.after(() => shell.close());
     const saveUrl = new URL(shell.url);
     saveUrl.pathname = "/api/save";
     const response = await fetch(saveUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: `${body} ` });
+        body: `${padded} ` });
     assert.equal(response.status, 413);
     assert.match(response.headers.get("content-type"), /application\/json/);
     assert.deepEqual(await response.json(), { error: "Designer save request is too large" });
     await assert.rejects(readFile(join(folder, "settings.json")), { code: "ENOENT" });
     const accepted = await fetch(saveUrl, { method: "POST",
-        headers: { "Content-Type": "application/json" }, body });
+        headers: { "Content-Type": "application/json" }, body: padded });
     assert.equal(accepted.status, 200);
     assert.equal((await accepted.json()).settingsRevision, 1);
     assert.ok((await readFile(join(folder, "settings.json"))).length <= SETTINGS_LIMIT);
@@ -1146,7 +1685,7 @@ test("registered contributions validate slots, sources, references and determini
         /canvas-contribution-beta: unknown or incompatible Designer slot unknown.slot/);
     await writeFile(beta.path, JSON.stringify({ ...beta.document, requires: ["missing-template"] }));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
-        /unresolved required Canvas Design template missing-template/);
+        /missing or incompatible shared control definition/);
     await writeFile(beta.path, JSON.stringify(beta.document));
     const replacement = join(directory, "project-replacement.json");
     await writeFile(replacement, JSON.stringify({ ...beta.document,
@@ -1874,6 +2413,8 @@ test("paired control validates both adapters, typed values and portable generate
     const load = (assets = templates, verify = registration) =>
         loadResolvedDesignerPages(handoff, project, entries, assets, verify);
     const model = await load();
+    assert.equal(model.contributions.find((item) => item.field.id === "risk.rating").requires,
+        undefined);
     assert.equal(model.pages[0].fields.find((field) => field.id === "risk.rating").control, "risk-matrix");
     assert.deepEqual(model.values["risk.rating"], null);
     assert.equal(model.generatedPages.length, 0);
@@ -1895,7 +2436,7 @@ test("paired control validates both adapters, typed values and portable generate
         ...controlDocument, id: "risk-other",
     }));
     await writeFile(secondFieldTemplate.path, JSON.stringify({
-        ...secondField, requires: [secondControlTemplate.name],
+        ...secondField,
         field: { ...secondField.field, control: "risk-other" },
     }));
     await assert.rejects(load([...templates, secondControlTemplate, secondFieldTemplate]),
@@ -1918,11 +2459,13 @@ test("paired control validates both adapters, typed values and portable generate
     }));
     const bothControls = [...templates, secondControlTemplate, secondFieldTemplate,
         secondDesignerAdapter, secondGeneratedAdapter];
-    assert.equal((await load(bothControls)).controls.length, 2);
+    assert.deepEqual((await load(bothControls)).controls
+        .filter((item) => item.id.startsWith("risk-")).map((item) => item.id),
+    ["risk-matrix", "risk-other"]);
     await writeFile(templates[1].path, JSON.stringify({
         ...contributionDocument, requires: [secondControlTemplate.name, templates[0].name],
     }));
-    await assert.rejects(load(bothControls), /object field requires exactly one control definition template/);
+    await assert.rejects(load(bothControls), /requires must name exactly one control definition template/);
     await writeFile(templates[1].path, contributionSource);
     const designerAdapter = templates[2];
     const designerModule = await readFile(designerAdapter.path, "utf8");
@@ -2102,14 +2645,13 @@ test("paired control validates both adapters, typed values and portable generate
         /replace-only Specify template/);
     const definition = templates[0];
     for (const requires of [
-        null, undefined, [], [templates[2].name],
+        null, [], [templates[2].name],
         [templates[2].name, definition.name], [definition.name, definition.name],
     ]) {
         const invalid = { ...contributionDocument };
-        if (requires === undefined) delete invalid.requires;
-        else invalid.requires = requires;
+        invalid.requires = requires;
         await writeFile(templates[1].path, JSON.stringify(invalid));
-        await assert.rejects(load(), /object field requires exactly one control definition template|missing or incompatible shared control definition/);
+        await assert.rejects(load(), /requires must name exactly one control definition template|missing or incompatible shared control definition/);
     }
     await writeFile(templates[1].path, contributionSource);
     const original = await readFile(definition.path, "utf8");
@@ -2349,6 +2891,10 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
 });
 
 test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {
+    if (spawnSync("specify", ["--version"], { encoding: "utf8" }).error?.code === "ENOENT") {
+        t.skip("Specify CLI is required for resolved-template integration");
+        return;
+    }
     const workspace = await fixture(t);
     const source = fileURLToPath(new URL("../", import.meta.url));
     const extension = join(workspace, "provider");
@@ -2356,7 +2902,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
     for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
-        "settings.mjs", "generation.mjs"]) {
+        "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
     await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
@@ -2453,13 +2999,13 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         await writeFile(schema, installedSchema);
         const missing = await canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [{ ...entries[0], path: join(project, ".specify", "missing.json") },
-                ...entries.slice(1)], templates: [],
+                ...entries.slice(1)], templates: scalarFixtures.get(project),
         } });
         const missingStateUrl = new URL(missing.url);
         missingStateUrl.pathname = "/api/state";
         assert.match((await (await fetch(missingStateUrl)).json()).pages[0].error.reason, /missing/);
         const filled = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         assert.notEqual(filled.url, empty.url);
         assert.match(await (await fetch(filled.url)).text(), /Spec Kit Canvas Designer/);
@@ -2478,7 +3024,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         const withTemplate = await canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: entries,
             templates: [{ name: "canvas-contribution-billing", path: templatePath,
-                sourceId: "billing", kind: "designer.field", strategy: "replace" }],
+                sourceId: "billing", kind: "designer.field", strategy: "replace" },
+            ...scalarFixtures.get(project)],
         } });
         const templateStateUrl = new URL(withTemplate.url);
         templateStateUrl.pathname = "/api/state";
@@ -2504,6 +3051,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
                 kind: "designer.page", strategy: "replace" }],
             templates: [{ name: "canvas-contribution-pr1-test", path: testField,
                 sourceId: "copilot-canvas-design-test", kind: "designer.field", strategy: "replace" },
+            ...scalarFixtures.get(project),
             { name: "canvas-contribution-pr1-toggle", path: testToggle,
                 sourceId: "copilot-canvas-design-test", kind: "designer.field", strategy: "replace" }],
         } });
@@ -2520,7 +3068,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         changed.title = "Updated Essentials";
         await writeFile(entries[0].path, JSON.stringify(changed));
         const reopened = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         assert.notEqual(reopened.url, filled.url);
         await assert.rejects(fetch(stateUrl));
@@ -2531,7 +3079,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         assert.notEqual(updated.revision, initial.revision);
         await writeFile(entries[1].path, "{broken");
         const broken = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         await assert.rejects(fetch(latest));
         const brokenStateUrl = new URL(broken.url);
@@ -2550,7 +3098,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
                 revision: brokenState.settingsRevision, values: savedValues }) });
         assert.equal(savedResponse.status, 200);
         const restored = await canvas.open({ instanceId: "same", input: {
-            handoffId: ID, pages: entries, templates: [],
+            handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
         const restoredUrl = new URL(restored.url);
         restoredUrl.pathname = "/api/state";

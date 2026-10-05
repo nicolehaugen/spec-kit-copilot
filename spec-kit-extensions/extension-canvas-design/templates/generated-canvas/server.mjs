@@ -1,5 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
 import { validControlValue } from "./control-contract.mjs";
@@ -7,13 +9,28 @@ import { validControlValue } from "./control-contract.mjs";
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
 const markdown = readFileSync(new URL("./ui/markdown.mjs", import.meta.url), "utf8");
+const pageAssets = readFileSync(new URL("./ui/page-assets.mjs", import.meta.url), "utf8");
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
+const packageRoot = realpathSync(new URL(".", import.meta.url));
 const RESERVED_GENERATED_PAGE_ID = "workflow";
+const imageValueContract = { type: "image", maxBytes: 32768,
+    mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
-function readOnlySections(fields) {
+function validImageAsset(asset, basename) {
+    return asset && typeof asset === "object" && !Array.isArray(asset)
+        && Object.keys(asset).sort().join() === "file,hash,mime"
+        && ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(asset.mime)
+        && asset.file === `${basename}.${{
+            "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+            "image/webp": "webp",
+        }[asset.mime]}`
+        && /^[a-f0-9]{64}$/.test(asset.hash);
+}
+
+function readOnlySections(fields, textPlacements = []) {
     const groups = new Map();
     const ungrouped = Symbol("ungrouped");
     for (const field of fields ?? []) {
@@ -23,7 +40,8 @@ function readOnlySections(fields) {
     }
     return [...groups.values()].map(({ title, fields: entries }) =>
         `<section class="phase-card" aria-label="${escapeHtml(title)}"><h2>${escapeHtml(title)}</h2><dl class="phase-facts">${entries.map(({ id, label, value }) =>
-            `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}">${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
+            `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}"${textPlacements.some((item) =>
+                item.id === id && item.slot === "details.content") ? ` data-stock-text="details.content" data-text-label="${escapeHtml(label)}"` : ""}>${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
 }
 
 function validReadOnlyFields(fields) {
@@ -49,7 +67,7 @@ function validGeneratedPages(pages) {
     return pages === undefined || (Array.isArray(pages) && pages.length <= 30
         && new Set(pages.map((page) => page?.id)).size === pages.length
         && pages.every((page) => page && typeof page === "object" && !Array.isArray(page)
-            && Object.keys(page).every((key) => ["id", "renderer", "title", "values"].includes(key))
+            && Object.keys(page).every((key) => ["id", "renderer", "title", "values", "slots"].includes(key))
             && typeof page.id === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             && page.id !== RESERVED_GENERATED_PAGE_ID && !isWindowsDeviceName(page.id)
             && typeof page.renderer === "string" && /^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
@@ -58,7 +76,14 @@ function validGeneratedPages(pages) {
             && (page.values === undefined || Array.isArray(page.values)
                 && page.values.length <= 100 && new Set(page.values).size === page.values.length
                 && page.values.every((id) => typeof id === "string"
-                    && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id)))));
+                    && /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id)))
+            && (page.slots === undefined || Array.isArray(page.slots)
+                && page.slots.length <= 30
+                && new Set(page.slots.map((slot) => slot?.id)).size === page.slots.length
+                && page.slots.every((slot) => slot && typeof slot === "object"
+                    && !Array.isArray(slot) && Object.keys(slot).sort().join() === "accepts,id"
+                    && typeof slot.id === "string" && /^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
+                    && JSON.stringify(slot.accepts) === '["asset"]'))));
 }
 
 function validGeneratedControls(controls) {
@@ -97,12 +122,132 @@ export function readConfig() {
         || !Array.isArray(config.phases) || !config.phases.length
         || config.phases.some((phase) => typeof phase !== "string" || !phase)
         || typeof config.userProvidesSlug !== "boolean"
-        || !validReadOnlyFields(config.readOnlyFields)
+        || (config.readOnlyFields !== undefined
+            && (!Array.isArray(config.readOnlyFields) || config.readOnlyFields.length > 100
+                || new Set(config.readOnlyFields.map((field) => field?.id)).size !== config.readOnlyFields.length
+                || config.readOnlyFields.some((field) => !field || typeof field !== "object"
+                    || Array.isArray(field)
+                    || Object.keys(field).some((key) => !["id", "label", "value", "section"].includes(key))
+                    || typeof field.id !== "string"
+                    || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
+                    || typeof field.label !== "string" || !field.label || field.label.length > 120
+                    || typeof field.value !== "string" || field.value.length > 1000
+                    || (field.section !== undefined
+                        && (!field.section || typeof field.section !== "object"
+                            || Array.isArray(field.section)
+                            || Object.keys(field.section).sort().join() !== "id,title"
+                            || typeof field.section.id !== "string"
+                            || !/^[a-z][a-z0-9.-]{0,79}$/.test(field.section.id)
+                            || typeof field.section.title !== "string"
+                            || !field.section.title.trim() || field.section.title.length > 120)))))
+        || (config.generatedPages !== undefined
+            && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
+                || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
+                || config.generatedPages.some((page) => !page || typeof page !== "object"
+                            || Array.isArray(page) || Object.keys(page).some((key) =>
+                                !["id", "renderer", "title", "values", "slots"].includes(key))
+                            || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
+                            || page.id === RESERVED_GENERATED_PAGE_ID
+                            || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
+                            || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
+                            || (page.slots !== undefined && (!Array.isArray(page.slots)
+                                || page.slots.length > 30
+                                || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
+                                || page.slots.some((slot) => !slot || typeof slot !== "object"
+                                    || Object.keys(slot).sort().join() !== "accepts,id"
+                                    || typeof slot.id !== "string"
+                                    || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
+                                    || JSON.stringify(slot.accepts) !== '["asset"]'))))))
+        || (config.generatedPageAssets !== undefined
+            && (!Array.isArray(config.generatedPageAssets)
+                || config.generatedPageAssets.length > 10
+                || new Set(config.generatedPageAssets.map((asset) => asset?.id)).size
+                    !== config.generatedPageAssets.length
+                || new Set(config.generatedPageAssets.map((asset) =>
+                    `${asset?.page}:${asset?.slot}`)).size !== config.generatedPageAssets.length
+                || config.generatedPageAssets.some((asset) => !asset
+                    || Object.keys(asset).sort().join() !== "file,hash,id,label,mime,page,slot"
+                    || typeof asset.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(asset.id)
+                    || typeof asset.label !== "string" || !asset.label.trim() || asset.label.length > 120
+                    || typeof asset.page !== "string" || typeof asset.slot !== "string"
+                    || !config.generatedPages?.some((page) => page.id === asset.page
+                        && page.slots?.some((slot) => slot.id === asset.slot
+                            && slot.accepts.includes("asset")))
+                    || !validImageAsset({ file: asset.file, hash: asset.hash, mime: asset.mime },
+                        `asset-${createHash("sha256").update(asset.id).digest("hex").slice(0,24)}`))))
+        || (config.generatedControls !== undefined
+            && (!Array.isArray(config.generatedControls) || config.generatedControls.length > 30
+                || new Set(config.generatedControls.map((item) => item?.id)).size !== config.generatedControls.length
+                || config.generatedControls.some((item) => !item
+                    || Object.keys(item).sort().join() !== "adapter,control,id,label,properties,slot,value"
+                    || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+                    || !/^[a-z][a-z0-9-]{0,79}$/.test(item.adapter)
+                    || !/^[a-z][a-z0-9-]{0,79}$/.test(item.control)
+                    || typeof item.label !== "string" || !item.label || item.label.length > 120
+                    || item.slot !== "details.content"
+                    || !item.properties || typeof item.properties !== "object"
+                    || Array.isArray(item.properties) || !Object.keys(item.properties).length
+                    || !item.value || typeof item.value !== "object" || Array.isArray(item.value)
+                    || Object.keys(item.value).sort().join() !== Object.keys(item.properties).sort().join()
+                    || Object.entries(item.properties).some(([key, allowed]) =>
+                        !/^[a-z][A-Za-z0-9]{0,39}$/.test(key)
+                        || !Array.isArray(allowed) || !allowed.length || allowed.length > 20
+                        || !allowed.includes(item.value[key])))))
+        || !config.phaseOutputs || typeof config.phaseOutputs !== "object" || Array.isArray(config.phaseOutputs)
+        || Object.values(config.phaseOutputs).some((output) => !output
+            || typeof output.expectsArtifact !== "boolean"
+            || (output.outputPath !== null && typeof output.outputPath !== "string"))
+        || (config.brandAsset !== undefined && !validImageAsset(config.brandAsset, "logo"))
+        || (config.mainPageAsset !== undefined && !validImageAsset(config.mainPageAsset, "main-page-logo"))
+        || (config.imageControl !== undefined && (!config.imageControl
+            || Object.keys(config.imageControl).sort().join() !== "adapter,definition,definitionHash,hash"
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.imageControl.adapter)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.imageControl.definition)
+            || !/^[a-f0-9]{64}$/.test(config.imageControl.hash)
+            || !/^[a-f0-9]{64}$/.test(config.imageControl.definitionHash)))
+        || (!config.imageControl && !!(config.brandAsset || config.mainPageAsset
+            || config.generatedPageAssets?.length))
+        || (config.imageControl && config.generatedControls?.some((item) =>
+            item.adapter === config.imageControl.adapter))
+        || (config.textControl !== undefined && (!config.textControl
+            || Object.keys(config.textControl).sort().join() !== "adapter,definition,definitionHash,hash"
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.textControl.adapter)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(config.textControl.definition)
+            || !/^[a-f0-9]{64}$/.test(config.textControl.hash)
+            || !/^[a-f0-9]{64}$/.test(config.textControl.definitionHash)))
+        || (!!config.textControl !== !!config.textPlacements?.length)
+        || (config.textPlacements !== undefined && (!Array.isArray(config.textPlacements)
+            || config.textPlacements.length > 100
+            || new Set(config.textPlacements.map((item) => item?.id)).size
+                !== config.textPlacements.length
+            || config.textPlacements.filter((item) => item?.presentation === "text").length
+                !== new Set(config.textPlacements.filter((item) =>
+                    item?.presentation === "text").map((item) => item.slot)).size
+            || config.textPlacements.some((item) => !item
+                || Object.keys(item).sort().join() !== "id,label,presentation,slot"
+                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(item.id)
+                || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+                || (item.presentation === "text"
+                    ? !((item.slot === "workflow.description" && item.id === "canvas.description")
+                        || (item.slot === "workflow.heading" && item.id === "canvas.workflowListName"))
+                    : item.presentation !== "stock.readonly" || item.slot !== "details.content"
+                        || !config.readOnlyFields?.some((field) =>
+                            field.id === item.id && field.label === item.label)))))
+        || (config.textControl && (config.generatedControls?.some((item) =>
+            item.adapter === config.textControl.adapter)
+            || config.imageControl?.adapter === config.textControl.adapter))
+        || (config.theme !== undefined && !["light", "dark"].includes(config.theme))
         || !validGeneratedPages(config.generatedPages)
+        || !validReadOnlyFields(config.readOnlyFields)
         || !validGeneratedControls(config.generatedControls)
         || !validRuntimeConfig(config)) {
         throw new Error("Invalid generated canvas configuration");
     }
+    for (const asset of [config.brandAsset, config.mainPageAsset, ...(config.generatedPageAssets ?? [])]) {
+        if (asset) readImageAsset(asset);
+    }
+    if (config.imageControl) readImageControl(config.imageControl);
+    if (config.textControl) readTextControl(config.textControl);
     const sections = new Map();
     for (const { section } of config.readOnlyFields ?? []) {
         if (!section) continue;
@@ -116,6 +261,87 @@ export function readConfig() {
     return config;
 }
 
+function readPackagedFile(url) {
+    const parent = dirname(fileURLToPath(url));
+    const checkParent = () => {
+        if (realpathSync(new URL(".", import.meta.url)) !== packageRoot
+            || realpathSync(parent) !== join(packageRoot, basename(parent))) {
+            throw new Error("Packaged asset directory escapes the generated canvas");
+        }
+    };
+    checkParent();
+    const before = lstatSync(url);
+    if (!before.isFile() || before.isSymbolicLink() || before.size > 32 * 1024) {
+        throw new Error("Packaged asset must be a regular file under 32 KiB");
+    }
+    const fd = openSync(url, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
+        | (constants.O_NONBLOCK ?? 0));
+    try {
+        const opened = fstatSync(fd);
+        if (!opened.isFile() || opened.size > 32 * 1024
+            || opened.dev !== before.dev || opened.ino !== before.ino) {
+            throw new Error("Packaged asset changed or exceeds 32 KiB");
+        }
+        const buffer = Buffer.alloc(32 * 1024 + 1);
+        let size = 0;
+        while (size < buffer.length) {
+            const count = readSync(fd, buffer, size, buffer.length - size, null);
+            if (!count) break;
+            size += count;
+        }
+        const after = fstatSync(fd);
+        const current = lstatSync(url);
+        if (size > 32 * 1024 || size !== opened.size || after.size !== opened.size
+            || after.mtimeMs !== opened.mtimeMs || current.dev !== opened.dev
+            || current.ino !== opened.ino || current.size !== opened.size
+            || current.mtimeMs !== opened.mtimeMs) {
+            throw new Error("Packaged asset changed or exceeds 32 KiB");
+        }
+        checkParent();
+        return buffer.subarray(0, size);
+    } finally { closeSync(fd); }
+}
+
+function readImageAsset(asset) {
+    const bytes = readPackagedFile(new URL(`./assets/${asset.file}`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== asset.hash) {
+        throw new Error("Packaged image does not match its frozen hash");
+    }
+    return bytes;
+}
+
+function readImageControl(control) {
+    const bytes = readPackagedFile(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
+        throw new Error("Packaged stock.image adapter does not match its frozen hash");
+    }
+    const definition = readPackagedFile(new URL(`./controls/${control.definition}.json`, import.meta.url));
+    const parsed = JSON.parse(definition);
+    if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
+        || parsed.id !== "stock.image" || parsed.adapters?.generated !== control.adapter
+        || JSON.stringify(Object.entries(parsed.value ?? {}).sort())
+            !== JSON.stringify(Object.entries(imageValueContract).sort())) {
+        throw new Error("Packaged stock.image definition does not match its frozen contract");
+    }
+    return bytes;
+}
+function readTextControl(control) {
+    const bytes = readPackagedFile(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
+        throw new Error("Packaged stock.text adapter does not match its frozen hash");
+    }
+    const definition = readPackagedFile(new URL(`./controls/${control.definition}.json`, import.meta.url));
+    const parsed = JSON.parse(definition);
+    if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
+        || parsed.id !== "stock.text" || parsed.adapters?.generated !== control.adapter
+        || JSON.stringify(parsed.value) !== JSON.stringify({ type: "string" })) {
+        throw new Error("Packaged stock.text definition does not match its frozen contract");
+    }
+    return bytes;
+}
 function phaseLabel(phase) {
     if (phase.replace(/^speckit\./, "") === "taskstoissues") return "Create issues";
     return phase.replace(/^speckit\./, "").split(/[._-]/)
@@ -153,13 +379,23 @@ export function renderHtml(config, token = "") {
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
     const phases = config.phases.filter((phase) => !isConstitution(phase));
     const hasConstitution = config.phases.some(isConstitution);
+    const headingAdapter = config.textPlacements?.find((item) => item.id === "canvas.workflowListName"
+        && item.slot === "workflow.heading");
+    const descriptionAdapter = config.textPlacements?.find((item) => item.id === "canvas.description"
+        && item.slot === "workflow.description");
+    const intro = `<div><h2 id="workflow-heading">${headingAdapter
+        ? `<span data-stock-text="workflow.heading" data-field-id="canvas.workflowListName" data-text-label="${escapeHtml(headingAdapter.label)}">${escapeHtml(canvas.workflowListName)}</span>`
+        : escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted"${descriptionAdapter
+        ? ` data-stock-text="workflow.description" data-field-id="canvas.description" data-text-label="${escapeHtml(descriptionAdapter.label)}"` : ""}>${escapeHtml(canvas.description)}</p></div>`;
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}</style></head>
 <body>
 <header class="app-header">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">&#9671;</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
+    <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}"${config.brandAsset
+        ? ` data-stock-image="header.brand" data-image-file="${escapeHtml(config.brandAsset.file)}" data-image-alt="" data-image-class="generated-image"`
+        : ' aria-hidden="true"'}>${config.brandAsset ? "" : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
 <main class="app-body workflow-surface">
@@ -173,7 +409,9 @@ export function renderHtml(config, token = "") {
     <div id="workflow-content" class="workflow-content">` : ""}
     <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
         <div class="instance-collection-head">
-            <div><h2 id="workflow-heading">${escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2><p class="collection-description muted">${escapeHtml(canvas.description)}</p></div>
+            ${config.mainPageAsset
+                ? `<div class="collection-intro"><span data-stock-image="workflow.intro" data-image-file="${escapeHtml(config.mainPageAsset.file)}" data-image-alt="${escapeHtml(canvas.displayName)} logo" data-image-class="collection-logo generated-image"></span>${intro}</div>`
+                : intro}
             <button class="btn btn-secondary" id="new-workflow" type="button">+ New</button>
         </div>
         <div id="workflow-identity" class="workflow-identity-fields"${phases.length ? "" : " hidden"}>
@@ -191,7 +429,7 @@ export function renderHtml(config, token = "") {
         <div id="workflow-empty" class="instance-list" hidden><button id="create-first-workflow" class="instance-select empty-workflow" type="button"><span class="empty-workflow-mark" aria-hidden="true">+</span><span class="instance-select-main"><strong>No workflows yet</strong><span class="muted">Create a workflow to see it here.</span></span><span class="empty-workflow-action" aria-hidden="true">Create workflow &#8594;</span></button></div>
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>
-    ${readOnlySections(config.readOnlyFields)}
+    ${readOnlySections(config.readOnlyFields, config.textPlacements)}
     ${config.valueSources?.length ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
     ${config.generatedControls?.map(({ id, label, adapter, control, properties, value }) =>
         `<section class="phase-card" aria-label="${escapeHtml(label)}">
@@ -219,12 +457,20 @@ export function renderHtml(config, token = "") {
     </nav>
     <section id="phase-card" class="phase-card" aria-label="Selected phase">${phases.length ? renderPhase(config, phases, 0) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>
     ${config.generatedPages?.length ? "</div>" : ""}
-    ${config.generatedPages?.map(({ id, renderer, values }) =>
-        `<span hidden data-generated-renderer="${escapeHtml(id)}"
-            data-module="/pages/${escapeHtml(renderer)}.mjs"
+    ${config.generatedPages?.map(({ id, renderer, slots, values }) =>
+        `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"
             data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? [])
                 .filter((field) => values?.includes(field.id))
-                .map(({ id, value }) => [id, value]))))}"></span>`).join("") ?? ""}
+                .map(({ id, value }) => [id, value]))))}"
+            data-asset-slots="${escapeHtml(JSON.stringify(slots ?? []))}"
+            data-assets="${escapeHtml(JSON.stringify((config.generatedPageAssets ?? [])
+                .filter((asset) => asset.page === id)))}"></span>`).join("") ?? ""}
+    ${config.imageControl ? `<span hidden id="stock-image-registration"
+        data-module="/controls/${escapeHtml(config.imageControl.adapter)}.mjs"
+        data-assets="${escapeHtml(JSON.stringify([config.brandAsset, config.mainPageAsset,
+            ...(config.generatedPageAssets ?? [])].filter(Boolean).map((asset) => asset.file)))}"></span>` : ""}
+    ${config.textControl ? `<span hidden id="stock-text-registration"
+        data-module="/controls/${escapeHtml(config.textControl.adapter)}.mjs"></span>` : ""}
     ${phases.map((_, index) => `<template id="phase-template-${index}">${renderPhase(config, phases, index)}</template>`).join("")}
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
@@ -242,7 +488,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
         response.setHeader("Cache-Control", "no-store");
         response.setHeader("X-Content-Type-Options", "nosniff");
         response.setHeader("Referrer-Policy", "no-referrer");
-        response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+        response.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         let url;
         try { url = new URL(request.url, "http://127.0.0.1"); }
         catch { response.writeHead(400).end("Invalid URL"); return; }
@@ -253,9 +499,21 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             response.writeHead(401).end("Unauthorized"); return;
         }
         try {
-            if (request.method === "GET" && ["/", "/ui/app.js", "/ui/markdown.mjs"].includes(url.pathname)) {
-                const body = url.pathname === "/" ? html : url.pathname === "/ui/app.js" ? script : markdown;
+            if (request.method === "GET" && ["/", "/ui/app.js", "/ui/markdown.mjs",
+                "/ui/page-assets.mjs"].includes(url.pathname)) {
+                const body = url.pathname === "/" ? html : url.pathname === "/ui/app.js"
+                    ? script : url.pathname === "/ui/markdown.mjs" ? markdown : pageAssets;
                 response.writeHead(200, { "Content-Type": `${url.pathname === "/" ? "text/html" : "text/javascript"}; charset=utf-8` }).end(body);
+                return;
+            }
+            const imageAsset = [config.brandAsset, config.mainPageAsset,
+                ...(config.generatedPageAssets ?? [])]
+                .find((asset) => asset && url.pathname === `/assets/${asset.file}`);
+            if (request.method === "GET" && imageAsset) {
+                const bytes = readImageAsset(imageAsset);
+                response.writeHead(200, { "Content-Type": imageAsset.mime,
+                    "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" })
+                    .end(bytes);
                 return;
             }
             const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
@@ -267,9 +525,16 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             }
             const controlName = /^\/controls\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
             if (request.method === "GET" && controlName
-                && config.generatedControls?.some((item) => item.adapter === controlName)) {
+                && (config.generatedControls?.some((item) => item.adapter === controlName)
+                    || config.imageControl?.adapter === controlName
+                    || config.textControl?.adapter === controlName)) {
+                const module = config.imageControl?.adapter === controlName
+                    ? readImageControl(config.imageControl)
+                    : config.textControl?.adapter === controlName
+                        ? readTextControl(config.textControl)
+                        : readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
-                    .end(readFileSync(new URL(`./controls/${controlName}.mjs`, import.meta.url)));
+                    .end(module);
                 return;
             }
             if (!runtime) throw new UserError("The Copilot session runtime is unavailable. Reopen the canvas.", 503);

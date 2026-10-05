@@ -101,6 +101,14 @@ with the same named root and filename remain distinct when their root paths
 differ. The default output opens in the artifact viewer when the file exists;
 folders and not-yet-created files offer a link to an existing parent folder
 instead.
+Inferred paths use one location form at a time: a repository-relative path,
+`relativeTo: "feature"` for the active feature directory (including
+`FEATURE_DIR`), or `root: {name, path?}` for a different named output
+directory. Combining `root` and `relativeTo` is invalid.
+Inference submissions fetch `/api/state` from the same Wizard instance and
+copy each current request fingerprint into the POST programmatically. They
+check the requested command IDs before posting; a stale request still fails
+the server's fingerprint validation rather than saving outdated evidence.
 Opening an expected output in the viewer before it exists shows an
 "Output not ready or not found" message rather than a raw 404.
 The **Composition** button reads **Refresh** when idle, whether or not the latest
@@ -242,15 +250,37 @@ addition to) the hosted registry entry:
   package install for that step; the official Canvas Designer *canvas
   provider* that ships with this plugin remains unaffected.
 - The Designer child installs the required Canvas Design base first, then
-  bundles; it verifies and, if necessary, restores the required hosted or
-  approved local base before remaining standalone extensions and presets.
-  It installs remaining standalone extensions (including local overrides), then
-  standalone presets (including local overrides). This ensures bundled and
-  standalone preset command additions have the base available. It stops on
-  composition warnings even if Specify exits
-  successfully, and resolves the generated load-page skill's declared
-  page/template names before opening Designer. This ordering applies
-  only to Designer launch, not the Wizard's Catalogs install actions.
+  all installed runtime bundles and selected bundles; it verifies and, if
+  necessary, restores the required hosted or approved local base before
+  remaining standalone extensions and presets. The handoff freezes the
+  Wizard's complete installed inventory (including disabled packages and
+  priorities), plus verified install locators. Catalog IDs and installed
+  manifest IDs are distinct: a catalog entry named `pirate`, for example,
+  can install a manifest named `pirate-full-preset`. Catalog-installed
+  presets/extensions must also match the CLI's reported catalog source;
+  locally installed ones are reproduced from their installed copies in
+  the Wizard checkout, not from an ID/version-matched catalog entry. Bundle
+  membership does not prove a component's installed source; each runtime
+  preset/extension is replayed from its own locator even if a bundle lists
+  the same ID, except when an approved local selection replaces it. A
+  same-ID local override can have a different version: its installed
+  version and local source replace the frozen runtime version and source
+  in the child, while the approved local path is frozen as its install
+  locator. The original runtime inventory is still checked before dispatch.
+  Since the CLI bundle inventory does not report provenance,
+  installed bundles use a matching catalog ID/name and version; an explicitly
+  selected bundle disambiguates matching catalog sources. A missing or
+  ambiguous match blocks launch rather than guessing a source.
+  Missing or ambiguous sources, version mismatches, and sources that
+  change before dispatch block launch instead of guessing. It installs
+  remaining standalone extensions (including local overrides), then
+  standalone presets (including local overrides).
+  This ensures bundled and standalone preset command additions have the base
+  available. It stops on composition warnings even if Specify exits
+  successfully, and checks the generated load-page skill for the registered
+  preset page/template names before opening Designer. This ordering applies
+  only to Designer launch, not the Wizard's Catalogs install actions or a
+  generated canvas opened independently as a standard plugin.
 - Before installing, the child runs a read-only preflight that checks the
   session-root handoff bytes against the hash in the launch prompt, as well as
   Specify CLI version, project setup, and approved local paths and manifest

@@ -235,11 +235,16 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
     assert.doesNotMatch(html, /<script>"CC"<\/script>|<input[^>]+billing\.costCode/);
     const pagesHtml = renderHtml({ ...config, generatedPages: [
         { id: "undeclared", title: "Undeclared", renderer: "undeclared", values: [] },
-        { id: "declared", title: "Declared", renderer: "declared", values: ["billing.costCode"] },
-    ] });
+        { id: "declared", title: "Declared", renderer: "declared", values: ["billing.costCode"],
+            slots: [{ id: "hero.logo", accepts: ["asset"] }] },
+    ], generatedPageAssets: [{ id: "brand.gallery", page: "declared",
+        slot: "hero.logo", label: "Gallery logo", file: "asset-gallery.png",
+        mime: "image/png", hash: "a".repeat(64) }] });
     assert.doesNotMatch(pagesHtml, /<section id="generated-page"[^>]*data-values=/);
     assert.match(pagesHtml, /data-generated-renderer="undeclared"[\s\S]*?data-values="\{\}"/);
     assert.match(pagesHtml, /data-generated-renderer="declared"[\s\S]*?data-values="\{&quot;billing\.costCode&quot;:&quot;&lt;script&gt;\\&quot;CC\\&quot;&lt;\/script&gt;&quot;\}"/);
+    assert.match(pagesHtml, /data-generated-renderer="declared"[\s\S]*?data-asset-slots="\[\{&quot;id&quot;:&quot;hero\.logo&quot;,&quot;accepts&quot;:\[&quot;asset&quot;\]\}\]"/);
+    assert.match(pagesHtml, /data-generated-renderer="declared"[\s\S]*?data-assets="\[\{&quot;id&quot;:&quot;brand\.gallery&quot;/);
     const grouped = renderHtml({ ...defaultConfig, readOnlyFields: [
         { id: "billing.costCode", label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } },
@@ -299,7 +304,7 @@ test("materialization rejects a re-signed request with a Windows device Canvas I
     request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     await writeFile(path, JSON.stringify(request));
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-        /Invalid frozen canvas identity/);
+        /Invalid frozen (?:Designer field: canvas\.id|canvas identity)/);
     await assert.rejects(readdir(join(project, ".github", "extensions")), { code: "ENOENT" });
 });
 

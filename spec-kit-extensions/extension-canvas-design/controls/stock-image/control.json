@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "stock.image",
+  "value": {
+    "type": "image",
+    "maxBytes": 32768,
+    "mimeTypes": ["image/png", "image/jpeg", "image/gif", "image/webp"]
+  },
+  "adapters": {
+    "designer": "canvas-stock-image-designer",
+    "generated": "canvas-stock-image-generated"
+  }
+}

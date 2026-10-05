@@ -136,6 +136,7 @@ code, pre { font-family: var(--font-mono); }
 }
 .brand-text { overflow: hidden; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
+.brand-mark.brand-image { background: transparent; border-radius: 0; }
 .canvas-compact .app-body { padding: 1rem; }
 .canvas-compact .phase-card { padding: 1rem; }
 .header-status { display: flex; align-items: center; gap: 0.75rem; margin-left: auto; }
@@ -316,6 +317,9 @@ code, pre { font-family: var(--font-mono); }
 .workflow-item-picker { max-width: 360px; }
 .instance-collection { display: grid; gap: 0.75rem; }
 .instance-collection-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.collection-intro { display: flex; align-items: center; gap: 1rem; min-width: 0; }
+.collection-logo { width: 72px; height: 72px; flex: 0 0 auto; object-fit: contain; }
+.generated-image { display: block; max-width: 100%; height: auto; object-fit: contain; }
 .instance-collection-head h2 { margin: 0; font-size: 18px; min-width: 0; overflow-wrap: anywhere; }
 .instance-collection-head .btn { flex-shrink: 0; }
 .workflow-identity-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 1rem; }
@@ -590,6 +594,7 @@ code, pre { font-family: var(--font-mono); }
 .constitution-dialog .wizard-modal-foot { flex-wrap: wrap; }
 @media (max-width: 700px) {
     .instance-collection-head { align-items: stretch; flex-direction: column; }
+    .collection-logo { width: 56px; height: 56px; }
     .instance-collection-head .btn, .instance-select, .phase-actions .btn { min-height: 44px; }
     .phase-navigation .stepper { display: none; }
     .phase-mobile-nav { display: grid; gap: 0.25rem; padding: 0.75rem 1rem; border: 1px solid var(--border-color-default); border-radius: var(--radius-md); background: var(--background-color-elevated); }

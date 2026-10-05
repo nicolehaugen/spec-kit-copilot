@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildCatalogPrompt } from "../prompts/catalog.mjs";
+import { buildCompositionPrompt } from "../prompts/composition.mjs";
 import { beginOutputInference, failOutputInference } from "../canvas-runtime/output-inference.mjs";
 import { failRefresh, finishRefreshPart, setRefreshWork, startRefresh } from "../canvas-runtime/refresh-status.mjs";
+import { validateCandidates } from "../artifact-evidence.mjs";
 
 test("refresh finishes only after both pipeline and output inference complete", () => {
     const frames = [];
@@ -51,5 +53,47 @@ test("catalog changes infer outputs after catalog updates, including removal", (
         assert.ok(finalCatalog >= 0 && inference > finalCatalog,
             `${kind} must request output evidence only after its final catalog update`);
         assert.match(prompt, /artifactInferenceRequests/);
+    }
+});
+
+test("inference prompt distinguishes feature-relative paths from named roots", () => {
+    for (const prompt of [
+        buildCatalogPrompt("preset.install", { name: "example" }, {},
+            { workspacePath: "C:\\workspace", skill: "speckit-preset" }),
+        buildCatalogPrompt("extension.install", { name: "example" }, {},
+            { workspacePath: "C:\\workspace", skill: "speckit-extension" }),
+    ]) {
+        assert.match(prompt, /Never include root and relativeTo on the same candidate/);
+        assert.match(prompt, /including helpers that call it FEATURE_DIR/);
+        assert.match(prompt, /\"path\":\"plan\.md\",\"relativeTo\":\"feature\"/);
+        assert.match(prompt, /\"root\":\{\"name\":\"REPORT_DIR\",\"path\":\"reports\/<slug>\"\}/);
+    }
+    const feature = { kind: "file", path: "plan.md", relativeTo: "feature",
+        source: "inference", effect: "creates", evidence: "Writes FEATURE_DIR/plan.md" };
+    const named = { kind: "file", path: "summary.md",
+        root: { name: "REPORT_DIR", path: "reports/<slug>" },
+        source: "inference", effect: "creates", evidence: "Writes REPORT_DIR/summary.md" };
+    assert.equal(validateCandidates([feature, named], { inference: true }).length, 2);
+    assert.throws(() => validateCandidates([{ ...feature, root: named.root }], { inference: true }),
+        /Invalid feature-relative artifact evidence/);
+});
+
+test("inference prompts require copying fresh fingerprints rather than transcribing them", () => {
+    for (const prompt of [
+        buildCatalogPrompt("preset.install", { name: "example" }, {},
+            { workspacePath: "C:\\workspace", skill: "speckit-preset" }),
+        buildCatalogPrompt("extension.install", { name: "example" }, {},
+            { workspacePath: "C:\\workspace", skill: "speckit-extension" }),
+        buildCompositionPrompt("extension.inferArtifactTargets",
+            { commands: [{ commandId: "speckit.plan", skillPath: ".github/skills/speckit-plan/SKILL.md",
+                fingerprint: "a".repeat(64) }], origin: "http://127.0.0.1:1234", token: "test-token" },
+            {}, { workspacePath: "C:\\workspace", skill: "speckit-plan" }),
+    ]) {
+        assert.match(prompt, /GET \/api\/state on the artifactInferenceEndpoint origin with the same token/);
+        assert.match(prompt, /artifactInferenceRequests as the data source for command IDs and fingerprints/);
+        assert.match(prompt, /Verify the GET request IDs exactly match/);
+        assert.match(prompt, /Build entries programmatically by joining your inferred candidates by command ID/);
+        assert.match(prompt, /If an ID is missing, extra, duplicated, or lacks a fingerprint or inference result, stop without POST/);
+        assert.match(prompt, /fingerprint copied programmatically from matching GET request/);
     }
 });

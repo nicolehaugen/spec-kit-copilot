@@ -30,12 +30,21 @@ FILES = {
     "schemas/page.schema.json",
     *(f"pages/{name}.json" for name in PAGE_NAMES),
     *(f"pages/stock-{name}.json" for name in (
-        "description", "workflow-heading", "custom-slug",
+        "description", "workflow-heading", "custom-slug", "logo", "logo-main-page",
     )),
+    "controls/stock-image/control.json",
+    "controls/stock-image/designer.mjs",
+    "controls/stock-image/generated.mjs",
+    "controls/stock-text/control.json",
+    "controls/stock-text/designer.mjs",
+    "controls/stock-text/generated.mjs",
+    "controls/stock-checkbox/control.json",
+    "controls/stock-checkbox/designer.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
+        "ui/page-assets.mjs",
     )),
 }
 
@@ -92,7 +101,22 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [(f"canvas-settings-{page}", f"pages/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
             + [(f"canvas-stock-{name}", f"pages/stock-{name}.json")
-               for name in ("description", "workflow-heading", "custom-slug")],
+               for name in ("description", "workflow-heading", "custom-slug",
+                            "logo", "logo-main-page")]
+            + [(name, f"controls/stock-image/{file}") for name, file in (
+                ("canvas-stock-image", "control.json"),
+                ("canvas-stock-image-designer", "designer.mjs"),
+                ("canvas-stock-image-generated", "generated.mjs"),
+            )]
+            + [(name, f"controls/stock-text/{file}") for name, file in (
+                ("canvas-stock-text", "control.json"),
+                ("canvas-stock-text-designer", "designer.mjs"),
+                ("canvas-stock-text-generated", "generated.mjs"),
+            )]
+            + [(name, f"controls/stock-checkbox/{file}") for name, file in (
+                ("canvas-stock-checkbox", "control.json"),
+                ("canvas-stock-checkbox-designer", "designer.mjs"),
+            )],
         )
         actual_files = set()
         for path in PACKAGE.rglob("*"):
@@ -166,8 +190,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.assertEqual(
             self.pages[0]["fields"],
             [
-                {"id": "canvas.id", "label": "Canvas ID", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used."},
-                {"id": "canvas.displayName", "label": "Title"},
+                {"id": "canvas.id", "label": "Canvas ID", "control": "stock.text", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used."},
+                {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
             ],
         )
         stock = [json.loads((PACKAGE / f"pages/stock-{name}.json").read_text("utf-8"))
@@ -185,7 +209,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         field_ids = [field["id"] for page in self.pages for field in page["fields"]]
         self.assertEqual(len(field_ids), len(set(field_ids)))
 
-    def test_minimal_essentials_test_preset_replaces_only_stock_registration(self):
+    def test_minimal_essentials_test_preset_registers_only_required_controls(self):
         fixture = EXTENSIONS.parent / "spec-kit-presets/copilot-minimal-essentials-test"
         manifest = yaml.safe_load((fixture / "preset.yml").read_text("utf-8"))
         self.assertEqual(manifest["preset"]["id"], "copilot-minimal-essentials-test")
@@ -210,15 +234,19 @@ class CanvasDesignPackageTests(unittest.TestCase):
         page = json.loads((fixture / "pages/essentials.json").read_text("utf-8"))
         self.validator.validate(page)
         self.assertEqual(page, self.pages[0])
-        stock_section = (
-            "## Canvas Design templates\n\n"
-            "- `canvas-stock-description` — `designer.field`, `replace`\n"
-            "- `canvas-stock-workflow-heading` — `designer.field`, `replace`\n"
-            "- `canvas-stock-custom-slug` — `designer.field`, `replace`\n\n"
+        replaced = (fixture / "commands/load-page.md").read_text("utf-8")
+        for page_id in ("setup", "artifacts", "appearance"):
+            self.assertIn(f"`canvas-settings-{page_id}`", replaced)
+        registrations = re.findall(
+            r"^- `(canvas-[a-z0-9-]+)` — `([^`]+)`, `([^`]+)`$",
+            replaced,
+            re.MULTILINE,
         )
-        self.assertEqual(self.command.count(stock_section), 1)
-        self.assertEqual((fixture / "commands/load-page.md").read_text("utf-8"),
-                         self.command.replace(stock_section, ""))
+        self.assertEqual(registrations, [
+            ("canvas-stock-text", "control.definition", "replace"),
+            ("canvas-stock-text-designer", "designer.adapter", "replace"),
+            ("canvas-stock-text-generated", "generated.adapter", "replace"),
+        ])
         self.assertNotIn(manifest["preset"]["id"],
                          json.loads((EXTENSIONS.parent / "spec-kit-presets/catalog.json")
                                     .read_text("utf-8"))["presets"])

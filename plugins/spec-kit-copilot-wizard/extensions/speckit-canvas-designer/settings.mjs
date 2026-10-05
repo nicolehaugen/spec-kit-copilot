@@ -3,9 +3,10 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { handoffDirectory } from "./handoff.mjs";
+import { decodeImage } from "./image.mjs";
 import { validControlValue } from "./control-contract.mjs";
 
-export const SETTINGS_LIMIT = 256 * 1024;
+export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
 
@@ -19,12 +20,22 @@ export function validateValues(values, constraints) {
         const value = values[key];
         if (rule.type === "boolean") {
             if (typeof value !== "boolean") throw new Error(`Invalid Designer setting: ${key}`);
+        } else if (rule.type === "image") {
+            if (Object.keys(rule).sort().join() !== "maxBytes,mimeTypes,type"
+                || rule.maxBytes !== 32 * 1024
+                || JSON.stringify(rule.mimeTypes)
+                    !== '["image/png","image/jpeg","image/gif","image/webp"]') {
+                throw new Error(`Invalid Designer image constraint: ${key}`);
+            }
+            try { decodeImage(value, rule.maxBytes); }
+            catch (error) { throw new Error(`Invalid Designer setting: ${key}: ${error.message}`, { cause: error }); }
         } else if (rule.type === "object") {
             if (!validControlValue(value, rule)) {
                 throw new Error(`Invalid Designer setting: ${key}`);
             }
         } else if (typeof value !== "string" || value.length > rule.maxLength
             || value.length < (rule.minLength ?? 0)
+            || (rule.required && !value.trim())
             || (rule.pattern && !new RegExp(rule.pattern).test(value))) {
             throw new Error(`Invalid Designer setting: ${key}`);
         }

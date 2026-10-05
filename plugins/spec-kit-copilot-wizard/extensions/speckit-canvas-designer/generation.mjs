@@ -3,6 +3,7 @@ import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
+import { decodeImage } from "./image.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
@@ -44,15 +45,97 @@ export function validateEssentials(model, values) {
 
 export async function freezeGeneration({ model, values, handoff, project, workspace }) {
     const essentials = validateEssentials(model, values);
+    const textContributions = (model.contributions ?? []).filter((item) =>
+        item.field.control === "stock.text"
+        && (item.generatedBinding?.presentation === "text"
+            || item.generatedBinding?.presentation === "stock.readonly"
+                && !["canvas.description", "canvas.workflowListName"].includes(item.field.id)));
+    const imageContributions = (model.contributions ?? [])
+        .filter((item) => item.field.type === "image"
+            && item.generatedBinding?.presentation === "asset");
+    if (new Set(imageContributions.map((item) =>
+            `${item.generatedBinding.page ?? "workflow"}:${item.generatedBinding.slot}`)).size
+            !== imageContributions.length) {
+        throw new Error("Generated asset slots must be unique");
+    }
     const checkout = await realpath(project);
     const specify = join(checkout, ".specify");
-    const generatedPages = [];
     const asset = async (item) => {
         if (!item || item.strategy !== "replace") throw new Error("Missing validated replace-only generated asset");
         const bytes = await readFrozenAsset(item, specify);
         return { name: item.name, kind: item.kind, sourceId: item.sourceId,
             hash: item.hash, content: bytes.toString("base64") };
     };
+    let definitions;
+    const generatedControl = async (id) => {
+        const controls = model.controls?.filter((entry) => entry.id === id) ?? [];
+        definitions ??= Promise.all((model.templates ?? [])
+            .filter((entry) => entry.kind === "control.definition").map(async (entry) => {
+                const bytes = await readFrozenAsset(entry, specify);
+                let document;
+                try { document = JSON.parse(bytes.toString("utf8")); }
+                catch { throw new Error(`${entry.name}: invalid frozen control definition`); }
+                return { entry, document };
+            }));
+        const matches = (await definitions).filter(({ document }) => document?.id === id);
+        const control = controls[0];
+        const adapter = model.templates?.find((entry) => entry.kind === "generated.adapter"
+            && entry.name === control?.adapters?.generated);
+        if (controls.length !== 1 || matches.length !== 1 || !adapter
+            || matches[0].document.adapters?.generated !== adapter.name) {
+            throw new Error(`Missing paired ${id} definition or generated adapter`);
+        }
+        return { control, definition: matches[0].entry, adapter };
+    };
+    let generatedImageControl;
+    if (imageContributions.length) {
+        const { control, definition, adapter } = await generatedControl("stock.image");
+        if (imageContributions.some((item) => item.field.control !== control.id)) {
+            throw new Error("Image contribution uses an incompatible shared control");
+        }
+        generatedImageControl = { control: control.id,
+            assets: await Promise.all([definition, adapter].map(asset)) };
+    }
+    const generatedAssets = imageContributions.flatMap((item) => {
+        const image = decodeImage(values[item.field.id]);
+        return image ? [{ id: item.field.id, label: item.field.label,
+            slot: item.generatedBinding.slot,
+            ...(item.generatedBinding.page ? { page: item.generatedBinding.page } : {}),
+            mime: image.mime, hash: createHash("sha256").update(image.bytes).digest("hex"),
+            content: image.bytes.toString("base64") }] : [];
+    });
+    if (generatedAssets.length > 10) {
+        throw new Error("Generated images exceed the 10-image limit");
+    }
+    const controlContributions = (model.contributions ?? [])
+        .filter((item) => item.generatedBinding?.presentation === "control");
+    if (controlContributions.length > 30) {
+        throw new Error("Generated controls exceed the 30-control limit");
+    }
+    const generatedPages = [];
+    let generatedTextControl;
+    let generatedTextPlacements;
+    if (textContributions.length) {
+        generatedTextPlacements = textContributions.map((item) => ({
+            id: item.field.id, label: item.field.label,
+            presentation: item.generatedBinding.presentation,
+            slot: item.generatedBinding.slot ?? "details.content",
+        }));
+        const visual = generatedTextPlacements.filter((item) => item.presentation === "text");
+        if (generatedTextPlacements.length > 100
+            || new Set(generatedTextPlacements.map((item) => item.id)).size
+                !== generatedTextPlacements.length
+            || new Set(visual.map((item) => item.slot)).size !== visual.length
+            || generatedTextPlacements.some((item) => item.presentation === "text"
+                ? !((item.id === "canvas.description" && item.slot === "workflow.description")
+                    || (item.id === "canvas.workflowListName" && item.slot === "workflow.heading"))
+                : item.slot !== "details.content")) {
+            throw new Error("Invalid or duplicate generated stock.text placement");
+        }
+        const { control, definition, adapter } = await generatedControl("stock.text");
+        generatedTextControl = { control: control.id,
+            assets: await Promise.all([definition, adapter].map(asset)) };
+    }
     for (const page of model.generatedPages ?? []) {
         const definition = model.templates.find((item) => item.name === page.name
             && item.kind === "generated.page");
@@ -61,7 +144,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         if (!definition || !renderer) throw new Error(`${page.name}: missing validated generated page assets`);
         const assets = await Promise.all([definition, renderer].map(asset));
         generatedPages.push({ id: page.id, title: page.title, renderer: page.renderer,
-            ...(page.values ? { values: page.values } : {}), assets });
+            ...(page.values ? { values: page.values } : {}),
+            ...(page.slots ? { slots: page.slots } : {}), assets });
     }
     const valueSources = [];
     for (const value of model.valueSources ?? []) {
@@ -88,6 +172,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         const { id, label } = contribution.field;
         const rule = model.constraints[id];
         if (binding.presentation === "stock.readonly") {
+            if (["canvas.description", "canvas.workflowListName"].includes(id)) continue;
             if (rule?.type !== "string") {
                 throw new Error(`${id}: generated stock field requires a string constraint`);
             }
@@ -95,6 +180,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
                 ...(binding.section ? { section: binding.section } : {}) });
             continue;
         }
+        if (binding.presentation === "text" || binding.presentation === "asset") continue;
         if (binding.presentation !== "control" || rule?.type !== "object") {
             throw new Error(`${id}: incompatible generated binding`);
         }
@@ -105,18 +191,18 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         if (!control) throw new Error(`${contribution.name}: missing shared control`);
         const definition = model.templates.find((entry) => entry.name === control.template
             && entry.kind === "control.definition");
-        if (!definition || contribution.requires?.length !== 1
-            || contribution.requires[0] !== definition.name) {
+        if (!definition || (contribution.requires !== undefined
+            && (contribution.requires.length !== 1
+                || contribution.requires[0] !== definition.name))) {
             throw new Error(`${contribution.name}: missing matching shared control definition`);
         }
-        const names = [
-            definition,
-            model.templates.find((entry) => entry.name === control.adapters.generated
-                && entry.kind === "generated.adapter"),
-        ];
         if (!controlAssets.has(control.id)) {
+            const paired = await generatedControl(control.id);
+            if (paired.definition.name !== definition.name) {
+                throw new Error(`${contribution.name}: mismatched shared control definition`);
+            }
             controlAssets.set(control.id, { control: control.id,
-                assets: await Promise.all(names.map(asset)) });
+                assets: await Promise.all([paired.definition, paired.adapter].map(asset)) });
         }
         generatedControls.push({ id, label, control: control.id, slot: binding.slot,
             value: essentials[id] });
@@ -144,6 +230,9 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),
+        ...(generatedAssets.length ? { generatedAssets } : {}),
+        ...(generatedImageControl ? { generatedImageControl } : {}),
+        ...(generatedTextControl ? { generatedTextControl, generatedTextPlacements } : {}),
         ...(valueSources.length ? { valueSources } : {}),
         ...(controlAssets.size ? { controlAssets: [...controlAssets.values()] } : {}),
     };

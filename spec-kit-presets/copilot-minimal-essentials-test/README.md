@@ -3,12 +3,12 @@
 This uncataloged, repository-local test preset replaces the Canvas Design
 Essentials page and the composed `load-page` command. It keeps only the required
 **Canvas ID** and **Title**, with the same labels, ID hint, and page slot. The
-replacement command deliberately omits registration of the three optional
-stock-field templates; leaving them registered while removing their slot would
-fail validation instead of producing a minimal page. This is a test fixture, not
+replacement command deliberately omits registration of optional stock-field
+templates, but retains the stock-text definition and adapters required by the
+fixed identity fields. This is a test fixture, not
 a published preset or a general mechanism for disabling fields.
 
-Install the current `extension-canvas-design` package in a **separate initialized
+Install `extension-canvas-design` v0.1.13 or later in a **separate initialized
 Designer child project**, then add this directory as a local development preset
 in the Wizard selection (or use `specify preset add --dev <absolute-path>` in
 that child project). Reload the generated skills and follow the composed

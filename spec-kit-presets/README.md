@@ -29,10 +29,11 @@ Only Copilot-specific presets belong here. Agent-agnostic presets (generic theme
 extension-specific workflows that don't rely on Copilot's tools) do **not** belong in
 this Copilot integration hub.
 
-The [`copilot-canvas-design-test`](copilot-canvas-design-test) preset is a
-**test-only** local fixture for the Copilot Canvas Designer provider. It is
-intentionally absent from `catalog.json` and is not released; tests install it
-with `specify preset add --dev`.
+The [`copilot-canvas-design-test`](copilot-canvas-design-test) and
+[`copilot-logo-gallery-test`](copilot-logo-gallery-test) presets are
+**test-only** local fixtures for the Copilot Canvas Designer provider. They are
+intentionally absent from `catalog.json` and are not released; install them
+locally with `specify preset add --dev`.
 
 ## Installing a preset
 

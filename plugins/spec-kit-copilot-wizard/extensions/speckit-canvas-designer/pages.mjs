@@ -23,8 +23,9 @@ class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
 const RULES = {
     "canvas.id": { type: "string", minLength: 1, maxLength: 100,
-        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$" },
-    "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
+        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$",
+        required: true },
+    "canvas.displayName": { type: "string", minLength: 1, maxLength: 120, required: true },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
     "workflowSlug.userProvided": { type: "boolean" },
@@ -143,8 +144,11 @@ function buildModel(entries, schema) {
             const ids = new Set();
             for (const field of document.fields) {
                 const type = field.type ?? "string";
+                const scalarControl = type === "boolean" ? "stock.checkbox" : "stock.text";
                 if (ids.has(field.id) || (Object.hasOwn(field, "default") && type !== "boolean")
-                    || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== type)) {
+                    || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== type)
+                    || (field.control !== undefined && field.control !== scalarControl)
+                    || (field.required !== undefined && (type !== "string" || field.required !== true))) {
                     throw new Error(`${name}: duplicate or invalid field ${field.id}`);
                 }
                 ids.add(field.id);
@@ -168,11 +172,15 @@ function buildModel(entries, schema) {
         for (const field of document.fields) {
             const type = field.type ?? "string";
             constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
-                : { type, ...(type === "string" ? { maxLength: 1000 } : {}) };
+                : { type, ...(type === "string"
+                    ? { maxLength: 1000, ...(field.required ? { required: true } : {}) } : {}) };
             values[field.id] = type === "boolean" ? (field.default ?? false) : "";
             fieldOrigins.set(field.id, name);
         }
-        pages.push({ ...document, page: name, provenance: { template: name, path, fingerprint: hash } });
+        pages.push({ ...document, fields: document.fields.map((field) => ({
+            ...field, control: field.control ?? (field.type === "boolean"
+                ? "stock.checkbox" : "stock.text") })),
+            page: name, provenance: { template: name, path, fingerprint: hash } });
     }
     pages.sort((a, b) => a.order - b.order || a.page.localeCompare(b.page));
     return { pages, constraints, values, fieldOrigins };
@@ -187,8 +195,7 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.id)
         || document.host !== "designer" || !Number.isInteger(document.order)
         || document.order < -100000 || document.order > 100000
-        || typeof document.slot !== "string"
-        || !Array.isArray(document.requires ?? [])) {
+        || typeof document.slot !== "string") {
         throw new Error(`${name}: invalid Canvas Design contribution`);
     }
     const slot = slots.get(document.slot)?.slot;
@@ -198,37 +205,58 @@ function validateContribution(document, name, slots, fieldOrigins) {
     const field = document.field;
     if (!field || typeof field !== "object" || Array.isArray(field)
         || Object.keys(field).some((key) =>
-            !["id", "label", "description", "type", "default", "control", "maxLength"].includes(key))
+            !["id", "label", "description", "type", "default", "control", "maxLength", "required"].includes(key))
         || typeof field.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
         || typeof field.label !== "string" || !field.label || field.label.length > 120
         || (field.description !== undefined
             && (typeof field.description !== "string" || field.description.length > 1000))
-        || !["string", "boolean", "object"].includes(field.type)
+        || !["string", "boolean", "object", "image"].includes(field.type)
         || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== field.type)
         || (field.type === "object"
             ? !PAGE_PATTERN.test(field.control)
-            : field.control !== (field.type === "boolean" ? "stock.checkbox" : "stock.text"))
+            : field.control !== (field.type === "boolean" ? "stock.checkbox"
+                : field.type === "image" ? "stock.image" : "stock.text"))
         || (field.maxLength !== undefined && (field.type !== "string"
             || !Number.isInteger(field.maxLength) || field.maxLength < 1
             || field.maxLength > 1000))
+        || (field.required !== undefined && (field.type !== "string" || field.required !== true))
         || (Object.hasOwn(field, "default")
             && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
         throw new Error(`${name}: incompatible field or control definition`);
     }
-    if (field.type === "object"
-        && (document.requires?.length !== 1 || typeof document.requires[0] !== "string")) {
-        throw new Error(`${name}: object field requires exactly one control definition template`);
+    if (document.requires !== undefined
+        && (!Array.isArray(document.requires)
+            || document.requires.length !== 1
+            || typeof document.requires[0] !== "string")) {
+        throw new Error(`${name}: requires must name exactly one control definition template`);
     }
     const binding = document.generatedBinding;
+    if (field.type === "image" && binding === undefined) {
+        throw new Error(`${name}: image asset requires a generated placement`);
+    }
     if (binding !== undefined
         && (!binding
             || typeof binding !== "object" || Array.isArray(binding)
-            || (field.type === "object"
-                ? Object.keys(binding).sort().join() !== "presentation,slot"
-                    || binding.presentation !== "control" || binding.slot !== "details.content"
+            || (["object", "image"].includes(field.type)
+                ? (field.type === "image"
+                    ? Object.keys(binding).sort().join() !== (binding.page === undefined
+                        ? "presentation,slot" : "page,presentation,slot")
+                        || (binding.page !== undefined && !PAGE_PATTERN.test(binding.page))
+                    : Object.keys(binding).sort().join() !== "presentation,slot")
+                    || binding.presentation !== (field.type === "image" ? "asset" : "control")
+                    || (field.type === "image"
+                        ? binding.page === undefined
+                            ? !["header.brand", "workflow.intro"].includes(binding.slot)
+                            : typeof binding.slot !== "string"
+                                || !/^[a-z][a-z0-9.-]{0,79}$/.test(binding.slot)
+                        : binding.slot !== "details.content")
                 : field.type !== "string"
-                    || Object.keys(binding).some((key) => !["presentation", "section"].includes(key))
-                    || binding.presentation !== "stock.readonly")
+                    || !(binding.presentation === "stock.readonly"
+                        && Object.keys(binding).every((key) => ["presentation", "section"].includes(key))
+                        || binding.presentation === "text"
+                        && Object.keys(binding).sort().join() === "presentation,slot"
+                        && ((field.id === "canvas.description" && binding.slot === "workflow.description")
+                            || (field.id === "canvas.workflowListName" && binding.slot === "workflow.heading"))))
             || (binding.section !== undefined
                 && (!binding.section || typeof binding.section !== "object"
                     || Array.isArray(binding.section)
@@ -246,20 +274,36 @@ function validateContribution(document, name, slots, fieldOrigins) {
 }
 
 function validateControl(document, name) {
+    const image = document?.value?.type === "image";
+    const scalar = document?.value?.type === "string"
+        || document?.value?.type === "boolean";
+    const checkbox = document?.id === "stock.checkbox";
     if (!document || typeof document !== "object" || Array.isArray(document)
         || Object.keys(document).sort().join() !== "adapters,id,schemaVersion,value"
-        || document.schemaVersion !== 1 || !PAGE_PATTERN.test(document.id)
-        || !validControlContract(document.value)
+        || document.schemaVersion !== 1
+        || (image ? document.id !== "stock.image"
+            : scalar ? document.id !== (checkbox ? "stock.checkbox" : "stock.text")
+                : !PAGE_PATTERN.test(document.id) || isWindowsDeviceName(document.id))
+        || !document.value || (image
+            ? Object.keys(document.value).sort().join() !== "maxBytes,mimeTypes,type"
+                || document.value.maxBytes !== 32 * 1024
+                || JSON.stringify(document.value.mimeTypes)
+                    !== '["image/png","image/jpeg","image/gif","image/webp"]'
+            : scalar
+                ? Object.keys(document.value).sort().join() !== "type"
+                    || document.value.type !== (checkbox ? "boolean" : "string")
+                : !validControlContract(document.value))
         || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
+            && !(checkbox && Object.keys(document.adapters).sort().join() === "designer")
         || !PAGE_PATTERN.test(document.adapters.designer)
-        || !PAGE_PATTERN.test(document.adapters.generated)) {
+        || (!checkbox && !PAGE_PATTERN.test(document.adapters.generated))) {
         throw new Error(`${name}: invalid shared control value contract or adapter references`);
     }
 }
 
 function validateGeneratedPage(document, name) {
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || Object.keys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values"].includes(key))
+        || Object.keys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
         || document.schemaVersion !== 1 || document.id !== name
         || document.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(document.id)
         || typeof document.title !== "string" || !document.title.trim()
@@ -269,7 +313,14 @@ function validateGeneratedPage(document, name) {
         || (document.values !== undefined && (!Array.isArray(document.values)
             || document.values.length > 100 || new Set(document.values).size !== document.values.length
             || document.values.some((id) => typeof id !== "string"
-                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id))))) {
+                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id))))
+        || (document.slots !== undefined && (!Array.isArray(document.slots)
+            || document.slots.length > 30
+            || new Set(document.slots.map((slot) => slot?.id)).size !== document.slots.length
+            || document.slots.some((slot) => !slot || typeof slot !== "object"
+                || Array.isArray(slot) || Object.keys(slot).sort().join() !== "accepts,id"
+                || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
+                || JSON.stringify(slot.accepts) !== '["asset"]')))) {
         throw new Error(`${name}: invalid generated page definition`);
     }
 }
@@ -488,13 +539,6 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         loaded.push({ ...item, path, hash, ...(document === undefined ? {} : { document }) });
     }
-    for (const entry of loaded) {
-        for (const name of entry.document?.requires ?? []) {
-            if (typeof name !== "string" || !names.has(name)) {
-                throw new Error(`${entry.name}: unresolved required Canvas Design template ${name}`);
-            }
-        }
-    }
     for (const entry of loaded.filter((item) => item.kind === "generated.page")) {
         const renderer = loaded.find((item) => item.name === entry.document.renderer);
         if (!renderer || renderer.kind !== "generated.renderer") {
@@ -531,19 +575,52 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             if (!generatedIds.has(id)) throw new Error(`${page.name}: undeclared generated value ${id}`);
         }
     }
+    const occupiedAssetSlots = new Set();
+    for (const entry of loaded.filter((item) => item.kind === "designer.field"
+        && item.document.generatedBinding?.presentation === "asset")) {
+        const binding = entry.document.generatedBinding;
+        if (binding.page) {
+            const page = loaded.find((item) => item.kind === "generated.page"
+                && item.document.id === binding.page);
+            if (!page?.document.slots?.some((slot) =>
+                slot.id === binding.slot && slot.accepts.includes("asset"))) {
+                throw new Error(`${entry.name}: unknown or incompatible generated page asset slot ${binding.page}.${binding.slot}`);
+            }
+        }
+        const key = `${binding.page ?? "workflow"}:${binding.slot}`;
+        if (occupiedAssetSlots.has(key)) {
+            throw new Error(`${entry.name}: duplicate generated asset slot ${key}`);
+        }
+        occupiedAssetSlots.add(key);
+    }
+    const occupiedTextSlots = new Set();
+    for (const entry of loaded.filter((item) => item.kind === "designer.field"
+        && item.document.generatedBinding?.presentation === "text")) {
+        const slot = entry.document.generatedBinding.slot;
+        if (occupiedTextSlots.has(slot)) {
+            throw new Error(`${entry.name}: duplicate generated text slot ${slot}`);
+        }
+        occupiedTextSlots.add(slot);
+    }
     const controls = loaded.filter((entry) => entry.kind === "control.definition");
     const adapterOwners = new Map();
     for (const control of controls) {
         const fields = loaded.filter((entry) => entry.kind === "designer.field"
             && entry.document.field.control === control.document.id);
-        if (!fields.length || controls.some((other) => other !== control
+        const pageFields = pageEntries.filter((page) => !page.error)
+            .flatMap((page) => page.fields ?? [])
+            .filter((field) => field.control === control.document.id);
+        if ((!fields.length && !pageFields.length
+            && !["stock.text", "stock.checkbox"].includes(control.document.id))
+            || controls.some((other) => other !== control
             && other.document.id === control.document.id)) {
             throw new Error(`${control.name}: unreferenced or duplicate control definition`);
         }
-        for (const [host, kind] of [["designer", "designer.adapter"], ["generated", "generated.adapter"]]) {
-            const adapter = loaded.find((item) => item.name === control.document.adapters[host]);
+        for (const [host, name] of Object.entries(control.document.adapters)) {
+            const kind = `${host}.adapter`;
+            const adapter = loaded.find((item) => item.name === name);
             if (!adapter || adapter.kind !== kind) {
-                throw new Error(`${control.name}: missing ${host} adapter ${control.document.adapters[host]}`);
+                throw new Error(`${control.name}: missing ${host} adapter ${name}`);
             }
             const owner = adapterOwners.get(adapter.name);
             if (owner) {
@@ -552,7 +629,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             adapterOwners.set(adapter.name, control.document.id);
         }
         for (const field of fields) {
-            if (!field.document.generatedBinding || field.document.field.type !== "object") {
+            if (field.document.field.type !== control.document.value.type
+                || (["object", "image"].includes(field.document.field.type)
+                    && !field.document.generatedBinding)
+                || (field.document.generatedBinding?.presentation === "control"
+                    && !control.document.adapters.generated)) {
                 throw new Error(`${field.name}: incompatible shared control value or generated placement`);
             }
         }
@@ -562,11 +643,21 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${entry.name}: unreferenced control adapter`);
         }
     }
-    for (const entry of loaded.filter((item) => item.kind === "designer.field"
-        && item.document.field.type === "object")) {
-        const control = controls.find((item) => item.name === entry.document.requires[0]);
-        if (!control || control.document.id !== entry.document.field.control) {
+    for (const entry of loaded.filter((item) => item.kind === "designer.field")) {
+        const { field, requires } = entry.document;
+        const control = controls.find((item) => item.document.id === field.control);
+        if (!control || control.document.id !== field.control
+            || control.document.value.type !== field.type
+            || (requires && control.name !== requires[0])) {
             throw new Error(`${entry.name}: missing or incompatible shared control definition`);
+        }
+    }
+    for (const page of pageEntries.filter((entry) => !entry.error)) {
+        for (const field of page.fields ?? []) {
+            if (!controls.some((control) => control.document.id === field.control
+                && control.document.value.type === (field.type ?? "string"))) {
+                throw new Error(`${page.page}: missing shared control definition for ${field.id}`);
+            }
         }
     }
     const ordered = loaded.filter((entry) => entry.kind === "designer.field");
@@ -703,13 +794,20 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
             for (const { document } of ordered.filter((entry) => entry.document.slot === slot.id)) {
                 if (page.fields.length >= 100) throw new Error(`${page.page}: too many resolved fields`);
                 const field = document.field;
-                const { control: _stockControl, ...scalarField } = field;
-                page.fields.push(field.type === "object" ? field : scalarField);
-                model.constraints[field.id] = Object.hasOwn(RULES, field.id) ? RULES[field.id]
+                page.fields.push(field);
+                model.constraints[field.id] = Object.hasOwn(RULES, field.id)
+                    ? { ...RULES[field.id], ...(field.required ? { required: true } : {}) }
                     : { type: field.type, ...(field.type === "string"
-                        ? { maxLength: field.maxLength ?? 1000 } : field.type === "object"
+                        ? { maxLength: field.maxLength ?? 1000,
+                            ...(field.required ? { required: true } : {}) } : field.type === "object"
                             ? { properties: controls.find((item) =>
-                                item.document.id === field.control).document.value.properties } : {}) };
+                                item.document.id === field.control).document.value.properties }
+                            : field.type === "image" ? {
+                                maxBytes: controls.find((item) =>
+                                    item.document.id === field.control).document.value.maxBytes,
+                                mimeTypes: controls.find((item) =>
+                                    item.document.id === field.control).document.value.mimeTypes,
+                            } : {}) };
                 model.values[field.id] = field.type === "boolean" ? (field.default ?? false)
                     : field.type === "object" ? null : "";
             }

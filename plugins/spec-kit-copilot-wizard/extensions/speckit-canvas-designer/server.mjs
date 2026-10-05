@@ -95,7 +95,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
         res.setHeader("Cache-Control", "no-store");
         res.setHeader("X-Content-Type-Options", "nosniff");
         res.setHeader("Content-Security-Policy",
-            "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+            "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         if (handoff && workspace && req.method === "POST" && url.pathname === "/api/save") {
             const sendError = (status, message) => {
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -159,7 +159,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 let size = 0;
                 for await (const chunk of req) {
                     size += chunk.length;
-                    if (size > SETTINGS_LIMIT) throw new Error("Generation request exceeds 256KB");
+                    if (size > SETTINGS_LIMIT) throw new Error("Generation request exceeds 1 MiB");
                     chunks.push(chunk);
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));

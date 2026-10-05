@@ -60,12 +60,23 @@ p { margin: 0; }
 #settings-page h1 { font-size: 26px; margin-bottom: .5rem; }
 #settings-page > p { max-width: 68ch; margin-bottom: 1rem; }
 .settings-field { display: grid; gap: .35rem; margin-bottom: 1.1rem; max-width: 660px; }
+.settings-field > [data-field-id] { display: grid; gap: .35rem; }
 .settings-field label { font-weight: 600; font-size: 14px; }
 .settings-field .settings-hint { margin: 0; color: var(--text-color-muted); font-size: 13px; }
 .settings-field input { width: 100%; min-height: 40px; font: inherit; font-size: 14px;
     padding: .6rem .75rem; border: 1px solid var(--border-color-strong);
     border-radius: var(--radius-sm); background: var(--background-color-elevated); color: var(--text-color-default); }
 .settings-checkbox { display: flex; align-items: center; gap: .6rem; }
+.settings-checkbox > [data-field-id] { display: flex; align-items: center; gap: .6rem; }
+.settings-image-content { display: grid; gap: .35rem; }
+.settings-image img { max-width: 180px; max-height: 100px; object-fit: contain;
+    border: 1px solid var(--border-color-default); border-radius: var(--radius-sm);
+    background: var(--background-color-elevated); padding: .35rem; }
+.image-controls { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.settings-image-error, .settings-field-error { margin: 0; color: var(--danger-color); font-size: 13px; }
+.settings-image .image-remove { min-height: 40px; padding: .5rem .75rem; font: inherit;
+    border: 1px solid var(--border-color-strong); border-radius: var(--radius-sm);
+    background: var(--background-color-elevated); color: var(--text-color-default); cursor: pointer; }
 .settings-field input[type="checkbox"] { width: 18px; height: 18px; min-height: 0;
     margin: 0; accent-color: var(--accent-color); }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--color-focus-outline, var(--accent-color)); outline-offset: 3px; }

@@ -1,4 +1,33 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
+const { mountPageAssets, createStockImageRenderer } = await import(
+    `./page-assets.mjs${new URL(import.meta.url).search}`);
+const token = new URL(location.href).searchParams.get("token");
+const imageRegistration = document.getElementById("stock-image-registration");
+const renderStockImage = createStockImageRenderer(imageRegistration, token);
+for (const root of document.querySelectorAll("[data-stock-image]")) {
+    void renderStockImage(root, { id: root.dataset.stockImage, label: root.dataset.imageAlt },
+        { file: root.dataset.imageFile }, root.dataset.imageAlt, root.dataset.imageClass);
+}
+const textRegistration = document.getElementById("stock-text-registration");
+if (textRegistration) {
+    for (const root of document.querySelectorAll("[data-stock-text]")) {
+        void (async () => {
+            try {
+                const { mount, controlId, valueContract } = await import(
+                    `${textRegistration.dataset.module}?token=${encodeURIComponent(token)}`);
+                if (controlId !== "stock.text" || JSON.stringify(valueContract) !== '{"type":"string"}'
+                    || typeof mount !== "function") throw new Error("Incompatible stock.text adapter");
+                const field = { id: root.dataset.fieldId, label: root.dataset.textLabel };
+                const value = root.textContent;
+                await mount({ root, field, value,
+                    context: { slot: root.dataset.stockText, className: "" } });
+            } catch (error) {
+                root.setAttribute("role", "alert");
+                root.textContent = `Generated text could not render: ${error.message}`;
+            }
+        })();
+    }
+}
 async function mountGeneratedControl(root) {
     const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
     try {
@@ -20,7 +49,6 @@ async function mountGeneratedControl(root) {
     }
 }
 const $ = (id) => document.getElementById(id);
-const token = new URL(location.href).searchParams.get("token");
 const steps = [...document.querySelectorAll("[data-phase-index]")];
 const drafts = new Map();
 const failedValueDrafts = new Map();
@@ -39,6 +67,8 @@ function wireGeneratedPages() {
         const currentSelection = ++selection;
         const id = button.dataset.canvasPage;
         const workflow = id === "workflow";
+        const introLogo = document.querySelector('[data-stock-image="workflow.intro"]');
+        if (introLogo) introLogo.hidden = !workflow;
         root.hidden = workflow;
         root.replaceChildren();
         root.classList.remove("workflow-error");
@@ -59,6 +89,11 @@ function wireGeneratedPages() {
             await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
                 displayName: root.dataset.canvasTitle },
                 values: { ...JSON.parse(registration.dataset.values), ...(model?.pageValues?.[id] ?? {}) } });
+            if (currentSelection !== selection) return;
+            await mountPageAssets(content, JSON.parse(registration.dataset.assetSlots),
+                JSON.parse(registration.dataset.assets),
+                (target, asset) => renderStockImage(target,
+                    { id: asset.id, label: asset.label }, asset, asset.label, "generated-image"));
             if (currentSelection !== selection) return;
             root.replaceChildren(content);
         } catch (error) {

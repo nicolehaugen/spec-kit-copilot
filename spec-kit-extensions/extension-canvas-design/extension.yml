@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: extension-canvas-design
   name: Canvas Design
-  version: "0.1.12"
+  version: "0.1.15"
   description: Provides the default layout and behavior for Canvas Designer. Select presets and extensions to override these defaults.
   category: process
   author: spec-kit-copilot
@@ -40,6 +40,36 @@ provides:
     - name: canvas-stock-custom-slug
       file: pages/stock-custom-slug.json
       description: Optional Essentials custom slug option.
+    - name: canvas-stock-logo
+      file: pages/stock-logo.json
+      description: Optional image asset for the generated canvas header.
+    - name: canvas-stock-logo-main-page
+      file: pages/stock-logo-main-page.json
+      description: Optional independent larger logo for the generated workflow page.
+    - name: canvas-stock-image
+      file: controls/stock-image/control.json
+      description: Shared image value contract and paired adapters.
+    - name: canvas-stock-image-designer
+      file: controls/stock-image/designer.mjs
+      description: Image upload, preview, replacement, and removal in Designer.
+    - name: canvas-stock-image-generated
+      file: controls/stock-image/generated.mjs
+      description: Portable image presentation in generated canvases.
+    - name: canvas-stock-text
+      file: controls/stock-text/control.json
+      description: Shared text value contract and host adapters.
+    - name: canvas-stock-text-designer
+      file: controls/stock-text/designer.mjs
+      description: Text editing in Designer.
+    - name: canvas-stock-text-generated
+      file: controls/stock-text/generated.mjs
+      description: Portable visual text presentation in generated canvases.
+    - name: canvas-stock-checkbox
+      file: controls/stock-checkbox/control.json
+      description: Shared boolean value contract and Designer adapter.
+    - name: canvas-stock-checkbox-designer
+      file: controls/stock-checkbox/designer.mjs
+      description: Boolean editing in Designer.
 
 tags:
   - copilot

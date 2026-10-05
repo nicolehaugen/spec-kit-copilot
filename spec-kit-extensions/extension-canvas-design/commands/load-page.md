@@ -30,7 +30,15 @@ templates**. Presets may list these and generated-host pages and modules under
 Each registration declares its Canvas Design kind (`designer.field`,
 `generated.page`, `generated.renderer`, `control.definition`,
 `designer.adapter`, `generated.adapter`, `value.definition`, or
-`value.provider`) and strategy (`replace`).
+`value.provider`) and strategy (`replace`). A `designer.field` can also
+register `stock.image` assets, bound to the generated `header.brand` or
+`workflow.intro` slot, or to a named `asset` slot on a registered generated
+page via `generatedBinding.page` and `.slot`. Each slot accepts one independent
+image; the generated page renderer places a `data-asset-slot` element where
+the image belongs. The `stock.image` control definition and its paired
+Designer/generated adapters must be resolved alongside any image field.
+Generate packages the frozen image and winning generated adapter into the
+generated app; it never loads Specify at runtime.
 Designer pages have kind `designer.page` and strategy `replace` (implicit for
 the extension's default page templates). A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
@@ -46,6 +54,16 @@ Providers are packaged, never evaluated by Designer.
 - `canvas-stock-description` — `designer.field`, `replace`
 - `canvas-stock-workflow-heading` — `designer.field`, `replace`
 - `canvas-stock-custom-slug` — `designer.field`, `replace`
+- `canvas-stock-logo` — `designer.field`, `replace`
+- `canvas-stock-logo-main-page` — `designer.field`, `replace`
+- `canvas-stock-image` — `control.definition`, `replace`
+- `canvas-stock-image-designer` — `designer.adapter`, `replace`
+- `canvas-stock-image-generated` — `generated.adapter`, `replace`
+- `canvas-stock-text` — `control.definition`, `replace`
+- `canvas-stock-text-designer` — `designer.adapter`, `replace`
+- `canvas-stock-text-generated` — `generated.adapter`, `replace`
+- `canvas-stock-checkbox` — `control.definition`, `replace`
+- `canvas-stock-checkbox-designer` — `designer.adapter`, `replace`
 
 ## Steps
 
@@ -71,7 +89,7 @@ hosted packages without this verifier must perform steps 1-3 manually.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        canvas-settings-setup: C:\project\.specify\extensions\extension-canvas-design\pages\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.12)
+         (top layer from: extension:extension-canvas-design v0.1.15)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on

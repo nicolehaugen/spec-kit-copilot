@@ -62,7 +62,18 @@ test("composed verification resolves every name, rejects warnings and native scr
         "canvas-stock-description": join(installed, "pages", "stock-description.json"),
         "canvas-stock-workflow-heading": join(installed, "pages", "stock-workflow-heading.json"),
         "canvas-stock-custom-slug": join(installed, "pages", "stock-custom-slug.json"),
+        "canvas-stock-logo": join(installed, "pages", "stock-logo.json"),
+        "canvas-stock-logo-main-page": join(installed, "pages", "stock-logo-main-page.json"),
+        "canvas-stock-image": join(installed, "controls", "stock-image", "control.json"),
+        "canvas-stock-image-designer": join(installed, "controls", "stock-image", "designer.mjs"),
+        "canvas-stock-image-generated": join(installed, "controls", "stock-image", "generated.mjs"),
+        "canvas-stock-text": join(installed, "controls", "stock-text", "control.json"),
+        "canvas-stock-text-designer": join(installed, "controls", "stock-text", "designer.mjs"),
+        "canvas-stock-text-generated": join(installed, "controls", "stock-text", "generated.mjs"),
+        "canvas-stock-checkbox": join(installed, "controls", "stock-checkbox", "control.json"),
+        "canvas-stock-checkbox-designer": join(installed, "controls", "stock-checkbox", "designer.mjs"),
     };
+    const stockTemplateCount = declarations(base).filter((entry) => entry.kind !== "designer.page").length;
     const minimalBase = base.replace(/## Canvas Design templates[\s\S]*?(?=## Steps)/, "");
     let warning = "", collision = false, strategy = "replace";
     const run = async (_binary, args) => {
@@ -87,12 +98,12 @@ test("composed verification resolves every name, rejects warnings and native scr
     };
     const result = await verifyComposition(project, run);
     assert.equal(result.pages.length, 4);
-    assert.equal(result.templates.length, 4);
+    assert.equal(result.templates.length, stockTemplateCount + 1);
     assert.deepEqual(result.templates.find((entry) => entry.name === "sample-renderer").sourceId, "sample");
     await writeFile(skill, base);
     const baseOnly = await verifyComposition(project, run);
     assert.equal(baseOnly.pages.length, 3);
-    assert.equal(baseOnly.templates.length, 3);
+    assert.equal(baseOnly.templates.length, stockTemplateCount);
     await writeFile(skill, `${base}\n${contribution}`);
     warning = "missing";
     await assert.rejects(verifyComposition(project, run), /warning or missing result/);
