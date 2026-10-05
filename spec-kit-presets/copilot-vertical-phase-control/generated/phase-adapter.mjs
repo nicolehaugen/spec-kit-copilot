@@ -136,7 +136,8 @@ export function mount({ root, state, actions }) {
         const focused = root.contains(root.ownerDocument.activeElement) ? root.ownerDocument.activeElement : null;
         const selector = focused?.hasAttribute("data-phase-draft") ? "[data-phase-draft]"
             : focused?.hasAttribute("data-phase-index") ? `[data-phase-index="${focused.dataset.phaseIndex}"]`
-                : focused?.dataset.action ? `[data-action="${focused.dataset.action}"]` : null;
+                : focused?.dataset.action ? `[data-action="${focused.dataset.action}"]${focused.dataset.index === undefined
+                    ? "" : `[data-index="${focused.dataset.index}"]`}` : null;
         const cursor = focused?.hasAttribute("data-phase-draft")
             ? [focused.selectionStart, focused.selectionEnd] : null;
         root.innerHTML = render(state);

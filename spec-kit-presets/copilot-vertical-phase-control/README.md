@@ -16,8 +16,8 @@ Each step can be started manually. Autopilot asks the attached Copilot session
 to run the installed skills in order; the host validates reported outputs
 before accepting the next step. Stop or a failed/missing output leaves the
 workflow pending for an explicit retry. Like the stock control, a manual retry
-while a prior turn is pending may duplicate work; check chat first. Project Constitution remains a
-separate, project-scoped action; the default generated app retains its
+while a prior turn is pending may duplicate work; check chat first. Project
+Constitution remains a separate, project-scoped action; the default generated app retains its
 horizontal control when this preset is not selected.
 
 This preset depends on the Copilot Canvas Design runtime and its Copilot
