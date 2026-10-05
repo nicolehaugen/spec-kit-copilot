@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test, expect } from "./playwright.mjs";
 
-const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/workflow/", import.meta.url);
+const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/", import.meta.url);
 const phaseControlSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/phase-control/", import.meta.url);
 const scaffoldSource = new URL("../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/", import.meta.url);
 const workflowDefinition = await readFile(new URL("workflow.json", workflowSource));

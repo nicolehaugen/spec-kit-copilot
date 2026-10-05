@@ -18,7 +18,7 @@ The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
 
 Replaceable templates are organized by host: `designer-host/` contains Designer
-tabs and settings, `generated-host/workflow/` contains the Workflow page and
+tabs and settings, `generated-host/workflow-page/` contains the Workflow page and
 phase placement, and `generated-host/phase-control/` contains the phase control
 and adapter. `shared-controls/` contains definitions and adapters used by both
 hosts. `templates/generated-canvas/` is the static app scaffold; Generate

@@ -295,8 +295,8 @@ spec-kit-extensions/extension-canvas-design/
   designer-host/tabs/outputs.json           Outputs page definition
   designer-host/tabs/appearance.json        currently empty placeholder
   designer-host/essentials-settings/*.json  optional Essentials fields
-  generated-host/workflow/workflow.json      required Workflow page definition
-  generated-host/workflow/generated-phase-placement.json  phase control placement
+  generated-host/workflow-page/workflow.json      required Workflow page definition
+  generated-host/workflow-page/generated-phase-placement.json  phase control placement
   generated-host/phase-control/phase-control.json  phase control identity
   generated-host/phase-control/generated-phase-adapter.mjs  phase UI adapter
   shared-controls/stock-{text,checkbox,image}/  cross-host definitions and adapters

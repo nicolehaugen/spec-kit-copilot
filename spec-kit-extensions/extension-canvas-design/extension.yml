@@ -52,10 +52,10 @@ provides:
 
     # Workflow page and its required phase-control placement.
     - name: generated-workflow
-      file: generated-host/workflow/workflow.json
+      file: generated-host/workflow-page/workflow.json
       description: Required Workflow page definition and declared contribution slots.
     - name: generated-phase-placement
-      file: generated-host/workflow/generated-phase-placement.json
+      file: generated-host/workflow-page/generated-phase-placement.json
       description: Required Workflow phase-control placement.
     - name: generated-phase-control
       file: generated-host/phase-control/phase-control.json

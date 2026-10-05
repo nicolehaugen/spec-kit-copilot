@@ -48,8 +48,8 @@ FILES = {
     "shared-controls/stock-text/generated.mjs",
     "shared-controls/stock-checkbox/control.json",
     "shared-controls/stock-checkbox/designer.mjs",
-    "generated-host/workflow/workflow.json",
-    "generated-host/workflow/generated-phase-placement.json",
+    "generated-host/workflow-page/workflow.json",
+    "generated-host/workflow-page/generated-phase-placement.json",
     "generated-host/phase-control/phase-control.json",
     "generated-host/phase-control/generated-phase-adapter.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
@@ -115,8 +115,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             + [(f"designer-essentials-{filename}", f"designer-host/essentials-settings/{filename}.json")
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
-            + [("generated-workflow", "generated-host/workflow/workflow.json"),
-               ("generated-phase-placement", "generated-host/workflow/generated-phase-placement.json"),
+            + [("generated-workflow", "generated-host/workflow-page/workflow.json"),
+               ("generated-phase-placement", "generated-host/workflow-page/generated-phase-placement.json"),
                ("generated-phase-control", "generated-host/phase-control/phase-control.json"),
                ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
@@ -235,7 +235,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "designer.setting-definition": list(PACKAGE.glob("designer-host/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
             "generated.added-page-definition": preset_generated_pages,
-            "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow/workflow.json"],
+            "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow-page/workflow.json"],
             "shared.control-definition": list(PACKAGE.glob("shared-controls/*/control.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
