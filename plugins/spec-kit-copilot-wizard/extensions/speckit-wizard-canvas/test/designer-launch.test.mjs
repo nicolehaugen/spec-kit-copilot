@@ -57,6 +57,17 @@ test("hosted install URLs are quoted as single shell arguments in both install s
     assert.match(prompt, /Run the quoted --from commands in PowerShell on Windows or a POSIX shell elsewhere/);
 });
 
+test("duplicate Canvas Design catalog entries report ambiguity", () => {
+    const duplicates = { ...snapshot, catalog: { ...catalog,
+        extensions: [hostedBase, { ...hostedBase }],
+    } };
+    assert.throws(() => buildDesignerHandoff(duplicates, empty, undefined, empty),
+        /Multiple Canvas Design catalog entries are ambiguous/);
+    assert.throws(() => buildDesignerHandoff({ ...snapshot, catalog: {
+        ...catalog, extensions: [],
+    } }, empty, undefined, empty), /missing a valid version or download URL/);
+});
+
 function fixture(overrides = {}) {
     const sent = [];
     const errors = [];

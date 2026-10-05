@@ -134,8 +134,9 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-At Generate, Designer checks the child checkout's Specify inventory and freezes
-the versions actually installed alongside the original Wizard snapshot.
+At Generate, Designer checks the child checkout's Specify inventory for packages
+in the Wizard handoff and freezes their installed versions alongside the original
+Wizard snapshot. Unrelated installed packages do not affect version verification.
 Version drift is reported as a warning rather than blocking generation. If
 Specify's inventory cannot be read or a package is missing, that package's
 generated version is marked `unverified` and the warning remains visible.

@@ -68,13 +68,16 @@ test("Specify inventories supply observed package versions and reject invalid re
         extension: [{ id: "extension-canvas-design", version: "0.1.19", priority: 1 }],
         bundle: [{ bundle_id: "bundle-one", version: "2.0.0" }],
     };
+    const frozen = { presets: [{ id: "copilot-sub-agents" }],
+        extensions: [{ id: "extension-canvas-design" }],
+        bundles: [{ id: "bundle-one" }] };
     const kinds = ["presets", "extensions", "bundles"];
     const calls = [];
     const run = async (_command, args, options) => {
         calls.push({ args, cwd: options.cwd });
         return { stdout: JSON.stringify(lists[args[0]]) };
     };
-    assert.deepEqual(await readCurrentInstalledVersions("child", kinds, run), {
+    assert.deepEqual(await readCurrentInstalledVersions("child", frozen, run), {
         inventory: { presets: lists.preset, extensions: lists.extension,
             bundles: [{ id: "bundle-one", version: "2.0.0" }] }, warnings: [],
     });
@@ -82,18 +85,35 @@ test("Specify inventories supply observed package versions and reject invalid re
         args: [kind === "presets" ? "preset" : kind === "extensions" ? "extension" : "bundle",
             "list", "--json"], cwd: "child",
     })));
-    assert.deepEqual(await readCurrentInstalledVersions("child", [], run),
+    assert.deepEqual(await readCurrentInstalledVersions("child",
+        { presets: [], extensions: [], bundles: [] }, run),
         { inventory: { presets: [], extensions: [], bundles: [] }, warnings: [] });
-    const unreadable = await readCurrentInstalledVersions("child", kinds, async (_command, args) => ({
+    const unreadable = await readCurrentInstalledVersions("child", frozen, async (_command, args) => ({
         stdout: args[0] === "preset" ? "not JSON" : JSON.stringify(lists[args[0]]),
     }));
     assert.match(unreadable.warnings[0], /Invalid presets JSON from Specify/);
     assert.deepEqual(unreadable.inventory.extensions, lists.extension);
-    const duplicates = await readCurrentInstalledVersions("child", kinds, async (_command, args) => ({
+    const duplicates = await readCurrentInstalledVersions("child", frozen, async (_command, args) => ({
         stdout: JSON.stringify(args[0] === "preset"
             ? [lists.preset[0], lists.preset[0]] : lists[args[0]]),
     }));
     assert.match(duplicates.warnings[0], /Invalid presets package identity or version/);
+    const unrelated = Array.from({ length: 45 }, (_, index) =>
+        ({ id: `other-${index}`, version: "1.0.0", priority: 1 }));
+    const crowded = await readCurrentInstalledVersions("child", frozen, async (_command, args) => ({
+        stdout: JSON.stringify(args[0] === "preset"
+            ? [...unrelated, { id: "unrelated-malformed" }, lists.preset[0]]
+            : lists[args[0]]),
+    }));
+    assert.deepEqual(crowded.inventory.presets, lists.preset);
+    assert.deepEqual(crowded.warnings, []);
+    const malformedRelevant = await readCurrentInstalledVersions("child", frozen,
+        async (_command, args) => ({
+            stdout: JSON.stringify(args[0] === "preset"
+                ? [...unrelated, { id: "copilot-sub-agents" }]
+                : lists[args[0]]),
+        }));
+    assert.match(malformedRelevant.warnings[0], /Invalid presets package identity or version/);
 });
 
 test("generated package versions reflect the installed inventory without blocking drift", async (t) => {

@@ -76,18 +76,24 @@ async function validateAdapterValues(model, values, project) {
     }
 }
 
-export async function readCurrentInstalledVersions(project, kinds, run = execFileAsync) {
+export async function readCurrentInstalledVersions(project, frozen, run = execFileAsync) {
     const inventory = { presets: [], extensions: [], bundles: [] };
     const warnings = [];
     for (const [kind, command] of [["presets", "preset"], ["extensions", "extension"], ["bundles", "bundle"]]) {
-        if (!kinds.includes(kind)) continue;
+        const relevantIds = new Set(frozen[kind].map((entry) => entry.id));
+        if (!relevantIds.size) continue;
         try {
             const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
                 [command, "list", "--json"], { cwd: project, timeout: 10000, maxBuffer: 128 * 1024 });
             let entries;
             try { entries = JSON.parse(stdout); }
             catch { throw new Error(`Invalid ${kind} JSON from Specify`); }
-            if (!Array.isArray(entries) || entries.length > 40) {
+            if (!Array.isArray(entries)) {
+                throw new Error(`Invalid ${kind} inventory from Specify`);
+            }
+            entries = entries.filter((entry) =>
+                relevantIds.has(kind === "bundles" ? entry?.bundle_id : entry?.id));
+            if (entries.length > 40) {
                 throw new Error(`Invalid ${kind} inventory from Specify`);
             }
             const seen = new Set();

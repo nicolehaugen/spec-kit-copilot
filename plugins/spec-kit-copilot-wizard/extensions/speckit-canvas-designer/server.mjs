@@ -195,9 +195,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 }
                 let runtimeInventory, inventoryWarning;
                 try {
-                    const kinds = ["presets", "extensions", "bundles"].filter((kind) =>
-                        handoff.workflow.installed[kind].length);
-                    const observed = await readCurrentInstalledVersions(project, kinds);
+                    const observed = await readCurrentInstalledVersions(project, handoff.workflow.installed);
                     runtimeInventory = observed.inventory;
                     inventoryWarning = observed.warnings.length
                         ? `${observed.warnings.join(" ")} Affected versions will be marked unverified.` : undefined;

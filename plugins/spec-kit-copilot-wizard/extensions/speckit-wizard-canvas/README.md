@@ -345,7 +345,7 @@ flow recognize it.
   `speckit-cli-setup`).
 - The `spec-kit-copilot` core skills plugin installed — the wizard
   dispatches to its skills by name.
-- Node.js runtime (bundled with the Copilot App). Wizard setup installs
+- Node.js 22 or newer (bundled with the Copilot App). Wizard setup installs
   `js-yaml` for YAML manifests and `es-module-lexer` for the sibling
   Designer's generated-renderer validation when either is missing.
 

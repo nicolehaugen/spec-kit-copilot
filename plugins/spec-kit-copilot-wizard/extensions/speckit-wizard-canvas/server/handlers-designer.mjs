@@ -322,6 +322,9 @@ export function buildDesignerHandoff(snapshot, selections, localSelections, inst
     const localBase = localSelections?.extensions?.some((item) => item.id === "extension-canvas-design");
     const hosted = candidates.length === 1 && candidates[0].version
         && safeDownloadUrl(candidates[0].downloadUrl);
+    if (!localBase && candidates.length > 1) {
+        throw new Error("Multiple Canvas Design catalog entries are ambiguous");
+    }
     if (!localBase && !hosted) {
         throw new Error("Canvas Design catalog entry is missing a valid version or download URL");
     }
