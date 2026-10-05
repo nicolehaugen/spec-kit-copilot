@@ -543,11 +543,8 @@ export function renderHtml(config, token = "") {
                     data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("") ?? "",
         pages: config.generatedPages?.length ? `<nav class="phase-navigation" aria-label="Canvas pages">
             <button class="btn btn-secondary" type="button" data-canvas-page="workflow" aria-current="page">${escapeHtml(config.workflowPage.title)}</button>
-            ${config.generatedPages.map((page, index) => ({ page, index }))
-                .sort((a, b) => (a.page.order ?? 100) - (b.page.order ?? 100)
-                    || (a.page.order === undefined && b.page.order === undefined
-                        ? a.index - b.index : a.page.id.localeCompare(b.page.id)))
-                .map(({ page: { id, title } }) => `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
+            ${config.generatedPages.map(({ id, title }) =>
+                `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
         </nav>
         <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
             data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>` : "",

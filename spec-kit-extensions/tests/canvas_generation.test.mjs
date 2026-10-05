@@ -230,6 +230,44 @@ test("six maximum-size generated pages fit the frozen request and materialize", 
     }
 });
 
+test("generated navigation preserves frozen order with explicit and implicit page orders", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const pages = join(project, ".specify", "pages");
+    await mkdir(pages, { recursive: true });
+    const generatedPages = [], templates = [...model.templates];
+    for (const [id, order] of [["explicit", 50], ["implicit", undefined]]) {
+        const pageId = `canvas-generated-${id}`, renderer = `canvas-renderer-${id}`;
+        const definition = JSON.stringify({ schemaVersion: 1, id: pageId, title: id,
+            renderer, ...(order !== undefined ? { order } : {}) });
+        generatedPages.push({ name: pageId, id: pageId, title: id, renderer,
+            ...(order !== undefined ? { order } : {}) });
+        for (const [name, kind, content, extension] of [
+            [pageId, "generated.added-page-definition", definition, "json"],
+            [renderer, "generated.added-page-renderer", "export function renderPage() {}", "mjs"],
+        ]) {
+            const path = join(pages, `${name}.${extension}`);
+            await writeFile(path, content);
+            templates.push({ name, path, kind, sourceId: "test-preset", strategy: "replace",
+                hash: createHash("sha256").update(content).digest("hex") });
+        }
+    }
+    const prepared = await freezeGeneration({ project, workspace,
+        model: { ...model, generatedPages, templates }, values, handoff });
+    const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    const expected = ["canvas-generated-implicit", "canvas-generated-explicit"];
+    assert.deepEqual(frozen.generatedPages.map(({ id }) => id), expected);
+
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        values["canvas.id"], "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.generatedPages.map(({ id }) => id), expected);
+    const navigation = renderHtml(config).match(/<nav class="phase-navigation" aria-label="Canvas pages">([\s\S]*?)<\/nav>/)?.[1];
+    assert.ok(navigation);
+    assert.deepEqual([...navigation.matchAll(/data-canvas-page="([^"]+)"/g)]
+        .map(([, id]) => id), ["workflow", ...expected]);
+});
+
 test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
