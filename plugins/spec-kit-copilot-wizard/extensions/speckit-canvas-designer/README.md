@@ -143,7 +143,7 @@ generated version is marked `unverified` and the warning remains visible.
 Pages explicitly marked `enabled: false` are omitted even if their other fields
 are malformed; unreadable pages still show errors because their enabled state
 cannot be determined.
-A missing skill directs users to relaunch with Canvas Design v0.1.18 or the
+A missing skill directs users to relaunch with the current Canvas Design release or the
 current local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies

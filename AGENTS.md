@@ -128,6 +128,20 @@ the preset version suffix. Keep discovery tags such as `canvas-design`, template
 IDs such as `canvas-settings-*`, and Copilot provider/tool IDs independent of
 the package identity. Standard manifest filenames remain `extension.yml`.
 
+## Local development versus releases
+
+- Do not bump plugin, preset, or extension versions, marketplace metadata, or
+  catalog release URLs during routine development. Do not publish or tag a release
+  unless the user explicitly requests it. Test unreleased Canvas Design changes
+  with the Wizard's approved local-source override instead of replacing a
+  published ZIP or pretending that the hosted path contains worktree changes.
+- When a release is requested, update the component's version, matching catalog
+  entry and download URL, and directly related documentation together. Verify
+  the published ZIP against the Wizard's default hosted Generate path before
+  treating that path as release-ready. Keep an incompatible hosted path visible
+  as a release-readiness issue during local development; do not demand a version
+  bump for every development change.
+
 ## When revving the core skills plugin
 
 1. Re-enumerate the `specify` CLI surface for the **latest** release

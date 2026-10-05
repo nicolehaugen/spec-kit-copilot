@@ -95,7 +95,7 @@ hosted packages without this verifier must perform steps 1-3 manually.
    Use Specify CLI >=1.0.7. Its human-readable output looks like:
 
        designer-essentials: C:\project\.specify\extensions\extension-canvas-design\designer\tabs\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.18)
+         (top layer from: extension:extension-canvas-design v0.1.19)
 
    Ignore leading indentation and record the complete path following the exact
    `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
