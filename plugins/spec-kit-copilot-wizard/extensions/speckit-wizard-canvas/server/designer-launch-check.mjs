@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { HANDOFF_LIMIT, readHandoff, validateHandoffId } from "../../speckit-canvas-designer/handoff.mjs";
 import { specifySpawnOptions } from "../env/specify-invocation.mjs";
-import { validateLocalSource } from "./designer-local-sources.mjs";
+import { readDesignerContract, validateLocalSource } from "./designer-local-sources.mjs";
+import designerCompatibility from "../../speckit-canvas-designer/designer-contract.json" with { type: "json" };
 
 const exec = promisify(execFile);
 const manifestName = { presets: "preset.yml", extensions: "extension.yml" };
@@ -91,6 +92,10 @@ export async function preflight(project, sessionRoot, handoffId, expectedHash, r
         if (checked.id !== entry.id || checked.path !== entry.path) {
             throw new Error(`Approved local ${entry.kind} ${entry.id} changed path or manifest.`);
         }
+        if (entry.kind === "extensions" && entry.id === "extension-canvas-design"
+            && !designerCompatibility.supportedVersions.includes(await readDesignerContract(entry.path))) {
+            throw new Error("Local Canvas Design contract is incompatible with this Designer.");
+        }
         locals.push({ kind: entry.kind, id: entry.id, path: checked.path });
     }
     return { checkout: child, sessionRoot: root, handoffPath: path,
@@ -123,7 +128,40 @@ export async function verifyLocalInstall(project, handoff, kind, id, run = exec)
     if (!actual || actual.source?.kind !== "local") {
         throw new Error(`Installed local ${kind} ${id} is missing or is not a local installation.`);
     }
+    if (id === "extension-canvas-design"
+        && (!designerCompatibility.supportedVersions.includes(await readDesignerContract(installedPath))
+            || !designerCompatibility.supportedVersions.includes(await readDesignerContract(entry.path)))) {
+        throw new Error("Installed local Canvas Design contract is incompatible with this Designer.");
+    }
     return { kind, id, source: source.path, installed: installed.path };
+}
+
+export async function verifyHostedCanvasDesign(project, handoff, run = exec) {
+    const base = handoff.canvasDesign;
+    if (!base) throw new Error("Canvas Design handoff has no approved catalog entry.");
+    const child = await realpath(project);
+    const path = join(child, ".specify", "extensions", "extension-canvas-design");
+    const installed = await validateLocalSource("extensions", path);
+    if (installed.id !== "extension-canvas-design") {
+        throw new Error("Installed Canvas Design ID differs from the approved catalog.");
+    }
+    const contract = await readDesignerContract(path);
+    if (!designerCompatibility.supportedVersions.includes(contract)) {
+        throw new Error(`Installed Canvas Design contract ${contract} is not supported by this Designer.`);
+    }
+    const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
+        ["extension", "list", "--json"],
+        await specifySpawnOptions(child, { timeout: 10000, maxBuffer: 128 * 1024 }));
+    const entry = JSON.parse(stdout).find((item) => item.id === installed.id);
+    if (entry?.id !== installed.id || !["local", "catalog"].includes(entry.source?.kind)) {
+        throw new Error("Installed Canvas Design source or ID differs from the approved handoff.");
+    }
+    if (entry.version !== installed.version) {
+        throw new Error("Installed Canvas Design manifest and inventory versions disagree.");
+    }
+    return { id: installed.id, version: installed.version, designerContract: contract,
+        warnings: installed.version === base.version ? [] :
+            [`Canvas Design version drift: approved ${base.version}, installed ${installed.version}.`] };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -136,7 +174,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
             : mode === "verify-local"
                 ? await verifyLocalInstall(project, await readHandoff(root, handoffId),
                     rest[0], rest[1])
-                : (() => { throw new Error("Expected prepare, preflight or verify-local mode."); })();
+                : mode === "verify-base"
+                    ? await verifyHostedCanvasDesign(project, await readHandoff(root, handoffId))
+                : (() => { throw new Error("Expected prepare, preflight, verify-local, or verify-base mode."); })();
         console.log(JSON.stringify(result));
     } catch (error) {
         console.error(`Designer launch verification failed: ${error.message}`);

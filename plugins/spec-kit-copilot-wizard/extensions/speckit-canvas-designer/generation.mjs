@@ -1,15 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
+import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "designer-essentials");
@@ -74,7 +77,69 @@ async function validateAdapterValues(model, values, project) {
     }
 }
 
-export async function freezeGeneration({ model, values, handoff, project, workspace }) {
+export async function readCurrentInstalledVersions(project, frozen, run = execFileAsync) {
+    const inventory = { presets: [], extensions: [], bundles: [] };
+    const warnings = [];
+    for (const [kind, command] of [["presets", "preset"], ["extensions", "extension"], ["bundles", "bundle"]]) {
+        const relevantIds = new Set(frozen[kind].map((entry) => entry.id));
+        if (!relevantIds.size) continue;
+        try {
+            const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
+                [command, "list", "--json"],
+                await specifySpawnOptions(project, { timeout: 10000, maxBuffer: 128 * 1024 }));
+            let entries;
+            try { entries = JSON.parse(stdout); }
+            catch { throw new Error(`Invalid ${kind} JSON from Specify`); }
+            if (!Array.isArray(entries)) {
+                throw new Error(`Invalid ${kind} inventory from Specify`);
+            }
+            entries = entries.filter((entry) =>
+                relevantIds.has(kind === "bundles" ? entry?.bundle_id : entry?.id));
+            if (entries.length > 40) {
+                throw new Error(`Invalid ${kind} inventory from Specify`);
+            }
+            const seen = new Set();
+            inventory[kind] = entries.map((entry) => {
+                const id = kind === "bundles" ? entry?.bundle_id : entry?.id;
+                if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)
+                    || typeof entry.version !== "string"
+                    || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(entry.version)
+                    || (kind !== "bundles" && !Number.isSafeInteger(entry.priority))
+                    || seen.has(id)) {
+                    throw new Error(`Invalid ${kind} package identity or version from Specify`);
+                }
+                seen.add(id);
+                return { id, version: entry.version,
+                    ...(kind === "bundles" ? {} : { priority: entry.priority }) };
+            });
+        } catch (error) {
+            inventory[kind] = [];
+            warnings.push(`Could not read ${kind} inventory from Specify: ${error.message}.`);
+        }
+    }
+    return { inventory, warnings };
+}
+
+export function reconcileInstalledVersions(frozen, inventory) {
+    const installed = { presets: [], extensions: [], bundles: [] };
+    const warnings = [];
+    for (const kind of ["presets", "extensions", "bundles"]) {
+        for (const entry of frozen[kind]) {
+            const current = inventory[kind].find((item) => item.id === entry.id);
+            const version = current?.version ?? "unverified";
+            installed[kind].push(kind === "bundles" ? { id: entry.id, version }
+                : { id: entry.id, version,
+                    ...(Number.isSafeInteger(current?.priority) ? { priority: current.priority } : {}) });
+            if (version !== entry.version) {
+                warnings.push(`${kind} ${entry.id}: Wizard version ${entry.version}, installed version ${version}.`);
+            }
+        }
+    }
+    return { installed, warnings };
+}
+
+export async function freezeGeneration({ model, values, handoff, project, workspace,
+    runtimeInventory, inventoryWarning }) {
     const essentials = validateEssentials(model, values);
     await validateAdapterValues(model, essentials, project);
     if (!canvasIdPattern.test(essentials["canvas.id"])
@@ -304,6 +369,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
     } catch (error) {
         if (error.code !== "ENOENT") throw error;
     }
+    const actual = runtimeInventory === undefined ? undefined
+        : reconcileInstalledVersions(handoff.workflow.installed, runtimeInventory);
     const requestId = randomUUID();
     const request = {
         schemaVersion: 1, requestId, handoffId: handoff.handoffId,
@@ -314,6 +381,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
         workflow: { selectedPhases: handoff.workflow.selectedPhases },
         installed: handoff.workflow.installed,
+        ...(actual ? { actualInstalled: actual.installed } : {}),
         values: essentials,
         fieldConstraints: model.constraints,
         ...(generatedFields.length ? { generatedFields } : {}),
@@ -339,5 +407,7 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         "generations", requestId);
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, "request.json"), serialized, { flag: "wx" });
-    return { requestId, target: request.target };
+    return { requestId, target: request.target,
+        ...((inventoryWarning || actual?.warnings.length)
+            ? { warnings: [inventoryWarning, ...(actual?.warnings ?? [])].filter(Boolean) } : {}) };
 }
