@@ -230,8 +230,12 @@ The generated host validates and packages all four resolved assets. The
 adapter owns its DOM and exposes `mount({ root, state, actions })` with
 `update(state)` and `dispose()`; the host retains phase execution,
 persistence, and artifact routes. `copilot-vertical-phase-control` replaces
-only that adapter with a vertical step list and opts in to Copilot Autopilot.
-The generated host verifies the packaged adapter before exposing Autopilot,
+only that adapter with a vertical step list and declares the optional
+`workflow.rows.v1` and `workflow.managed-run.v1` host capabilities. The
+adapter owns row actions, confirmations, and progress presentation; other
+adapters can reuse these capabilities without a new host branch. The host
+rejects unsupported capability requirements at mount, verifies the packaged
+adapter's declared managed-run capability before exposing Autopilot,
 dispatches one Copilot autopilot-mode turn, and accepts in-order step reports
 only after required artifacts are present. An interrupted or unconfirmed turn
 blocks further automatic progress until the user deliberately resumes. The

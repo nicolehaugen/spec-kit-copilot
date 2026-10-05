@@ -54,8 +54,10 @@ export function phaseControlDom() {
         replaceChildren() { this.innerHTML = ""; },
         querySelector(selector) {
             if (selector.startsWith("#")) return nodes.find((node) => node.id === selector.slice(1)) ?? null;
-            if (selector.startsWith('[data-action="')) return nodes.find((node) =>
-                node.dataset.action === selector.slice(14, -2)) ?? null;
+            const action = selector.match(/^\[data-action="([^"]+)"\](?:\[data-index="([^"]+)"\])?$/);
+            if (action) return nodes.find((node) =>
+                node.dataset.action === action[1]
+                    && (action[2] === undefined || node.dataset.index === action[2])) ?? null;
             if (selector.startsWith('[data-phase-index="')) return nodes.find((node) =>
                 node.dataset.phaseIndex === selector.slice(19, -2)) ?? null;
             if (selector === ".phase-notice") return nodes.find((node) => node.classList.contains("phase-notice")) ?? null;

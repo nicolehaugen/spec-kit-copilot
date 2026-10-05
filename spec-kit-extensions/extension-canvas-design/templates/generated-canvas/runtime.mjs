@@ -382,7 +382,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             throw new UserError("Packaged phase control changed; restore the generated canvas files.");
         }
         const adapter = await import(new URL(`./pages/${module}.mjs`, import.meta.url));
-        if (adapter.supportsAutopilot !== true) throw new UserError("This phase control does not provide Autopilot.");
+        if (!Array.isArray(adapter.requiredCapabilities)
+            || !adapter.requiredCapabilities.includes("workflow.managed-run.v1")) {
+            throw new UserError("This phase control does not provide Autopilot.");
+        }
     }
     async function startAutopilot(input, instanceId) {
         if (!input || Object.keys(input).some((key) => !["itemId"].includes(key))

@@ -21,7 +21,7 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         t.after(() => { globalThis.document = previousDocument; });
         const calls = [];
         const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt", "viewAt",
-            "autopilot", "stopAutopilot", "reveal", "error"]
+            "startManagedRun", "stopManagedRun", "reveal", "error"]
             .map((action) => [action, (...args) => { calls.push([action, ...args]); }]));
         const initial = name === "stock" ? {
             ...state, phases: [], current: -1, output: null,
@@ -58,6 +58,13 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         control.update({ ...state, status: { status: "Completed" } });
         assert.equal(dom.document.activeElement,
             dom.root.querySelectorAll("[data-phase-index]")[0]);
+        if (name === "vertical") {
+            const secondStart = dom.root.querySelector('[data-action="start"][data-index="1"]');
+            secondStart.focus();
+            control.update(state);
+            assert.equal(dom.document.activeElement,
+                dom.root.querySelector('[data-action="start"][data-index="1"]'));
+        }
 
         dom.root.dispatch("click", dom.root.querySelectorAll("[data-phase-index]")[1]);
         const input = dom.root.querySelector(name === "stock" ? "#phase-args" : "[data-phase-draft]");

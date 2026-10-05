@@ -99,6 +99,40 @@ test("vertical Autopilot initiates the first step through the packaged Copilot s
     } finally { await canvas.close(); }
 });
 
+test("a different phase adapter uses the same row and managed-run capabilities", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"],
+        undefined, undefined, undefined, undefined, true);
+    try {
+        for (const name of ["specify", "plan"]) {
+            const skill = join(canvas.root, ".github", "skills", `speckit-${name}`);
+            await mkdir(skill, { recursive: true });
+            await writeFile(join(skill, "SKILL.md"), `---\nname: speckit-${name}\n---\n`);
+        }
+        const alternate = `export const controlId = "workflow-phases";
+            export const contractVersion = 1;
+            export const requiredCapabilities = ["workflow.rows.v1", "workflow.managed-run.v1"];
+            export function mount({ root, actions }) {
+                root.innerHTML = '<button type="button" id="other-auto">Automate</button><button type="button" id="other-step">Run second</button>';
+                const click = (event) => {
+                    if (event.target.id === "other-auto") actions.startManagedRun().catch(actions.error);
+                    if (event.target.id === "other-step") actions.runAt(1).catch(actions.error);
+                };
+                root.addEventListener("click", click);
+                return { update() {}, dispose() { root.removeEventListener("click", click); root.replaceChildren(); } };
+            }`;
+        await page.route("**/pages/generated-phase-adapter.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript", body: alternate,
+        }));
+        await page.goto(canvas.url);
+        await page.locator("#other-auto").click();
+        await expect.poll(() => canvas.sent.length).toBe(1);
+        assert.equal(canvas.sent[0].agentMode, "autopilot");
+        await page.locator("#other-step").click();
+        await expect(page.locator("#canvas-message")).toContainText("Stop Autopilot before starting a manual step");
+        await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
+    } finally { await canvas.close(); }
+});
+
 for (const [scenario, module, error] of [
     ["wrong control identity", `export const controlId = "wrong";
         export const contractVersion = 1; export function mount() {}`, "Incompatible phase control adapter"],
@@ -117,6 +151,11 @@ for (const [scenario, module, error] of [
     ["mount failure", `export const controlId = "workflow-phases";
         export const contractVersion = 1;
         export function mount() { throw new Error("adapter unavailable"); }`, "adapter unavailable"],
+    ["unavailable capability", `export const controlId = "workflow-phases";
+        export const contractVersion = 1;
+        export const requiredCapabilities = ["workflow.unknown.v1"];
+        export function mount() { throw new Error("must not mount"); }`,
+    "Phase control adapter requires unavailable host capabilities"],
 ]) {
     test(`invalid phase adapter reports ${scenario}`, async ({ page }) => {
         const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);

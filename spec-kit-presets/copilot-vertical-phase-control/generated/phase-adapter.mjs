@@ -1,6 +1,6 @@
 export const controlId = "workflow-phases";
 export const contractVersion = 1;
-export const supportsAutopilot = true;
+export const requiredCapabilities = ["workflow.rows.v1", "workflow.managed-run.v1"];
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -104,7 +104,7 @@ function render(state) {
 
 export function mount({ root, state, actions }) {
     if (!root || typeof root.replaceChildren !== "function" || !validState(state)
-        || !actions || ["select", "draft", "runAt", "viewAt", "reveal", "autopilot", "stopAutopilot", "error"]
+        || !actions || ["select", "draft", "runAt", "viewAt", "reveal", "startManagedRun", "stopManagedRun", "error"]
             .some((key) => typeof actions[key] !== "function")) throw new Error("Invalid vertical phase control context");
     let disposed = false;
     const invoke = (callback) => {
@@ -118,10 +118,22 @@ export function mount({ root, state, actions }) {
         if (button.hasAttribute("data-phase-index")) invoke(() => actions.select(Number(button.dataset.phaseIndex)));
         else if (action === "previous") invoke(() => actions.select(state.current - 1));
         else if (action === "next") invoke(() => actions.select(state.current + 1));
-        else if (action === "start") invoke(() => actions.runAt(Number(button.dataset.index)));
+        else if (action === "start") invoke(async () => {
+            if (["Request sent", "Running", "Finishing"].includes(state.autopilot?.status)) {
+                if (!root.ownerDocument.defaultView.confirm(
+                    "Autopilot is running. Stop it before starting this step manually?")) return;
+                await actions.stopManagedRun();
+            }
+            await actions.runAt(Number(button.dataset.index));
+        });
         else if (action === "view-row") invoke(() => actions.viewAt(Number(button.dataset.index)));
-        else if (action === "autopilot") invoke(() => actions.autopilot());
-        else if (action === "stop") invoke(() => actions.stopAutopilot());
+        else if (action === "autopilot") invoke(() => {
+            if (state.autopilot?.status === "Blocked"
+                && !root.ownerDocument.defaultView.confirm(
+                    "The previous Autopilot outcome is unconfirmed. Check chat and artifacts before resuming. Resume?")) return;
+            return actions.startManagedRun();
+        });
+        else if (action === "stop") invoke(() => actions.stopManagedRun());
         else if (action === "reveal") invoke(() => actions.reveal());
     };
     const onInput = (event) => {

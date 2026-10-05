@@ -896,10 +896,16 @@ document.addEventListener("click", (event) => {
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 const pipelineRoot = $("workflow-pipeline");
 try {
-    const { mount, controlId, contractVersion, supportsAutopilot } = await import(
+    const { mount, controlId, contractVersion, requiredCapabilities = [] } = await import(
         `${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
     if (controlId !== "workflow-phases" || contractVersion !== 1 || typeof mount !== "function") {
         throw new Error("Incompatible phase control adapter");
+    }
+    const capabilities = new Set(["workflow.rows.v1", "workflow.managed-run.v1"]);
+    if (!Array.isArray(requiredCapabilities)
+        || requiredCapabilities.some((name) => !capabilities.has(name))
+        || new Set(requiredCapabilities).size !== requiredCapabilities.length) {
+        throw new Error("Phase control adapter requires unavailable host capabilities");
     }
     const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
     phaseControl = mount({ root: pipelineRoot, state: {
@@ -915,11 +921,6 @@ try {
                 requireModel();
                 const step = workflowPhases()[index];
                 if (!step) throw new Error("This step is no longer configured.");
-                if (["Request sent", "Running", "Finishing"].includes(model.autopilot?.status)) {
-                    if (!window.confirm("Autopilot is running. Stop it before starting this step manually?")) return;
-                    await api("/api/autopilot/stop", {});
-                    await refresh();
-                }
                 return send(step, drafts.get(draftKey(step)) ?? model.drafts[draftKey(step)] ?? "");
             },
             view: () => { requireModel(); return openArtifact(phase()); },
@@ -927,16 +928,13 @@ try {
                 requireModel();
                 return openArtifact(workflowPhases()[index]);
             },
-            autopilot: async () => {
+            startManagedRun: async () => {
                 requireModel();
-                if (!supportsAutopilot) throw new Error("This phase control does not provide Autopilot.");
                 await flush();
-                if (model.autopilot?.status === "Blocked"
-                    && !window.confirm("The previous Autopilot outcome is unconfirmed. Check chat and artifacts before resuming. Resume?")) return;
                 await api("/api/autopilot/start", { itemId: model.selected });
                 await refresh();
             },
-            stopAutopilot: async () => {
+            stopManagedRun: async () => {
                 requireModel();
                 await api("/api/autopilot/stop", {});
                 await refresh();

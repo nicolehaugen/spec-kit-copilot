@@ -426,13 +426,26 @@ reaches into the adapter's DOM. An adapter renders its own controls and updates
 them in `update` when the host supplies new state. A minimal phase list:
 
 The catalog-listed `copilot-vertical-phase-control` preset replaces the
-`generated-phase-adapter` named template. Its adapter exports
-`supportsAutopilot = true` and receives per-step statuses and the current
-Autopilot state. The host offers `runAt`, `viewAt`, `autopilot`, and
-`stopAutopilot` actions in addition to the original actions, validates
-step progress and artifacts, and keeps phase execution in the Copilot
-session. The stock adapter does not opt in, so its layout and behavior
-remain unchanged. See the [preset guide](../../spec-kit-presets/copilot-vertical-phase-control/README.md)
+`generated-phase-adapter` named template. Adapters may export
+`requiredCapabilities` (an array of unique names); absent means no optional
+capabilities. The generated host rejects unknown requirements before calling
+`mount`. Currently supported optional capabilities are:
+
+| Requirement | Additional state and actions |
+| --- | --- |
+| `workflow.rows.v1` | `state.statuses` maps phase IDs to host-verified status, output, artifact availability and error. `actions.runAt(index)` submits the configured phase with its saved draft; `actions.viewAt(index)` opens its authorized artifact. Invalid indexes and unavailable artifacts fail visibly. |
+| `workflow.managed-run.v1` | `state.autopilot` contains the selected workflow's persisted status, current step and progress message (or `null`). `actions.startManagedRun()` preflights and starts the attached Copilot session's ordered workflow; `actions.stopManagedRun()` cancels it. Failures are reported through `actions.error` or the host's canvas message. The runtime verifies the packaged adapter's hash and declared capability before starting a run. |
+
+These actions are stable host operations, not preset-specific buttons. The
+vertical adapter owns its entire layout, row selection and confirmation flow;
+it does not call `/api` or the Copilot session directly. The host continues to
+enforce conflicts, step order, artifact/path checks, cancellation, and
+persistence even if the adapter omits a UI safeguard. Adding another adapter
+that uses these capabilities needs no new host branch. A genuinely new
+privileged operation requires a deliberate, versioned host capability rather
+than an adapter reaching into private host code. The stock adapter declares
+no optional capabilities, so its behavior remains unchanged. See the
+[preset guide](../../spec-kit-presets/copilot-vertical-phase-control/README.md)
 for local installation; the catalog download requires a published release.
 
 ```js

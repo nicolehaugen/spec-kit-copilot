@@ -21,5 +21,8 @@ Constitution remains a separate, project-scoped action; the default generated ap
 horizontal control when this preset is not selected.
 
 This preset depends on the Copilot Canvas Design runtime and its Copilot
-session APIs; it is not a general-purpose Specify layout preset. Its catalog
-archive URL only becomes usable when the versioned preset release is published.
+session APIs. Its packaged adapter requires `workflow.rows.v1` and
+`workflow.managed-run.v1` host capabilities; a generated host missing either
+reports an incompatibility instead of silently omitting Autopilot. It is not
+a general-purpose Specify layout preset. Its catalog archive URL only becomes
+usable when the versioned preset release is published.
