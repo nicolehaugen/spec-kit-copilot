@@ -273,10 +273,92 @@ test("switching a blocked run cannot capture transient Autopilot as the previous
     session.mode = "autopilot";
     await assert.rejects(runtime.startAutopilot({ itemId: "specs/beta" }, "panel"),
         /Stop the blocked Autopilot/);
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
     await runtime.stopAutopilot({}, "panel");
     assert.equal(session.mode, "interactive");
     await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("completed Autopilot cannot seed another run with an unrestored session mode", async (t) => {
+    const { runtime, project, session, sent, finish } = await setup(t);
+    for (const name of ["alpha", "beta"]) {
+        await mkdir(join(project, "specs", name), { recursive: true });
+    }
+    let restorationAttempt;
+    const restoration = new Promise((resolve) => { restorationAttempt = resolve; });
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode === "interactive") {
+            restorationAttempt();
+            return { modeApplied: false };
+        }
+        return setMode(input);
+    };
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    for (const [phase, file] of [["specify", "spec.md"], ["plan", "plan.md"]]) {
+        const { phaseRunId } = await runtime.reportAutopilotStep(
+            { autopilotId, phase, action: "start" }, "panel");
+        await writeFile(join(project, "specs", "alpha", file), phase);
+        await runtime.report({ phaseRunId, path: `specs/alpha/${file}` }, "panel");
+        await runtime.reportAutopilotStep({ autopilotId, phase, action: "complete" }, "panel");
+    }
+    assert.equal(await finish(true), "Completed");
+    let timeout;
+    try {
+        await Promise.race([restoration, new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Mode restoration was not attempted")), 5000);
+        })]);
+    } finally {
+        clearTimeout(timeout);
+    }
+    assert.equal(session.mode, "autopilot");
+    for (const itemId of ["specs/alpha", "specs/beta"]) {
+        await assert.rejects(runtime.startAutopilot({ itemId }, "panel"),
+            /Switch Copilot to interactive mode before starting another workflow/);
+    }
+    assert.equal(sent.length, 1);
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    session.rpc.mode.set = setMode;
+    session.mode = "interactive";
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    await runtime.stopAutopilot({}, "panel");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("a stale Paused run requires mode recovery before a new start", async (t) => {
+    const { runtime, project, session } = await setup(t);
+    for (const name of ["alpha", "beta"]) {
+        await mkdir(join(project, "specs", name), { recursive: true });
+    }
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    await runtime.stopAutopilot({}, "panel");
+    session.mode = "autopilot";
+    for (const itemId of ["specs/alpha", "specs/beta"]) {
+        await assert.rejects(runtime.startAutopilot({ itemId }, "panel"),
+            /Switch Copilot to interactive mode before starting another workflow/);
+    }
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    session.mode = "interactive";
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("an intentionally preexisting Autopilot mode remains the original mode", async (t) => {
+    const { runtime, project, session } = await setup(t);
+    for (const name of ["alpha", "beta"]) {
+        await mkdir(join(project, "specs", name), { recursive: true });
+    }
+    session.mode = "autopilot";
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
+    await runtime.stopAutopilot({}, "panel");
+    assert.equal(session.mode, "autopilot");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
 });
 
 test("Stop cannot pause a run while Copilot remains in Autopilot mode", async (t) => {

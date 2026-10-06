@@ -435,8 +435,13 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
             const start = resuming ? prior.current : 0;
             const currentMode = await session.rpc.mode.get();
-            if (prior?.item !== input.itemId && prior?.status === "Blocked" && currentMode === "autopilot") {
-                throw new UserError("Stop the blocked Autopilot run before starting another workflow.");
+            if (currentMode === "autopilot" && prior) {
+                if (prior.item !== input.itemId && prior.status === "Blocked") {
+                    throw new UserError("Stop the blocked Autopilot run before starting another workflow.");
+                }
+                if (prior.previousMode !== "autopilot" && !(resuming && prior.status === "Blocked")) {
+                    throw new UserError(`Copilot is still in Autopilot mode after the previous run. Switch Copilot to ${prior.previousMode} mode before starting another workflow.`, 409);
+                }
             }
             id = randomUUID();
             previousMode = resuming ? prior.previousMode : currentMode;

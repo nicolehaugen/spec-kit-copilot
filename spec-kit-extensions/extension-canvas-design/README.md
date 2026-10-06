@@ -453,13 +453,14 @@ reaches into the adapter's DOM. An adapter renders its own controls and updates
 them in `update` when the host supplies new state. A minimal phase list:
 
 The catalog-listed `copilot-vertical-phase-control` preset replaces the
-`generated-phase-adapter` named template. Adapters may export
-`requiredCapabilities` as an array of unique capability names; absent means no
-optional capabilities. For managed runs, the resolved `generated-phase-control`
-JSON must additionally declare `"managedRun": true`. Designer freezes that
-declaration with the definition's hash; the generated server never imports the
-browser adapter to determine its privileges. The browser rejects unknown requirements before calling
-`mount`. Currently supported optional capabilities are:
+`generated-phase-adapter` and `generated-phase-control` named templates.
+Adapters may export `requiredCapabilities` as an array of unique capability
+names; absent means no optional capabilities. For managed runs, the resolved
+`generated-phase-control` JSON must additionally declare `"managedRun": true`.
+Designer freezes that declaration with the definition's hash; the generated
+server never imports the browser adapter to determine its privileges. The
+browser rejects unknown requirements before calling `mount`. Currently
+supported optional capabilities are:
 
 | Requirement | Additional state and actions |
 | --- | --- |
