@@ -507,6 +507,12 @@ Steps:\n${instructions}` });
             }
             if (persistenceError) {
                 await diagnostic(`Could not persist the Autopilot dispatch outcome: ${persistenceError.message}`);
+                if (restoreError) {
+                    await diagnostic(`Could not restore the Copilot session mode: ${restoreError.message}`);
+                    throw new UserError(`Autopilot failed and its state could not be saved: ${persistenceError.message}. `
+                        + `Mode restoration also failed: ${restoreError.message}. `
+                        + `Switch Copilot to ${previousMode} mode manually before retrying.`, 500);
+                }
                 throw new UserError(`Autopilot failed and its state could not be saved: ${persistenceError.message}`, 500);
             }
             if (restoreError) throw restoreError;
