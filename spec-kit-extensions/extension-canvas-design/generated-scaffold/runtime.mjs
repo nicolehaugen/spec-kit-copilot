@@ -513,10 +513,10 @@ Steps:\n${instructions}` });
             throw error;
         } finally { autopilotDispatching = false; }
     }
-    async function stopAutopilot(input, instanceId) {
+    async function stopAutopilot(input) {
         if (!input || Object.keys(input).length) throw new UserError("Invalid stop request.");
         const automation = state.autopilot;
-        if (!automation || automation.instanceId !== instanceId || automation.sessionId !== session.sessionId
+        if (!automation || automation.sessionId !== session.sessionId
             || !["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)) {
             throw new UserError("No active Autopilot run is available to stop.");
         }

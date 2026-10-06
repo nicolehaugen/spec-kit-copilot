@@ -685,13 +685,16 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
     }
     const adapterSource = phaseAdapters[0].document;
-    const declaration = adapterSource.match(/^export const requiredCapabilities = (\[[^\]\r\n]*\]);?\s*$/m);
+    const declaration = adapterSource.match(/^\s*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;?/m);
     let managedRun = false;
     if (declaration) {
-        let capabilities;
-        try { capabilities = JSON.parse(declaration[1]); }
-        catch { throw new Error(`${phaseAdapters[0].name}: invalid requiredCapabilities declaration`); }
-        if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== "string")) {
+        const entries = declaration[1].slice(1, -1).trim().replace(/,\s*$/, "");
+        const capabilities = entries ? entries.split(",").map((entry) => {
+            const match = /^\s*(["'])([a-zA-Z0-9._-]+)\1\s*$/.exec(entry);
+            if (!match) throw new Error(`${phaseAdapters[0].name}: requiredCapabilities must be a literal string array`);
+            return match[2];
+        }) : [];
+        if (new Set(capabilities).size !== capabilities.length) {
             throw new Error(`${phaseAdapters[0].name}: requiredCapabilities must be a literal string array`);
         }
         managedRun = capabilities.includes("workflow.managed-run.v1");

@@ -387,7 +387,10 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, false);
     await writeFile(adapterFile, `export const controlId = "workflow-phases";
 export const contractVersion = 1;
-export const requiredCapabilities = ["workflow.managed-run.v1"];
+  export const requiredCapabilities = [
+    'workflow.rows.v1',
+    'workflow.managed-run.v1',
+  ];
 export function mount() {}`);
     assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, true);
     await writeFile(adapterFile, `export const controlId = "workflow-phases";

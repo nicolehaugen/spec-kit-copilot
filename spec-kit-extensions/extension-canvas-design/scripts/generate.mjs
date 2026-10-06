@@ -288,12 +288,16 @@ function frozenWorkflowPage(page) {
     if (check.error || check.status !== 0) {
         throw new Error(`Invalid frozen phase control adapter: ${check.stderr || check.error || "module validation failed"}`);
     }
-    const declaration = module.match(/^export const requiredCapabilities = (\[[^\]\r\n]*\]);?\s*$/m);
+    const declaration = module.match(/^\s*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;?/m);
     let capabilities = [];
     if (declaration) {
-        try { capabilities = JSON.parse(declaration[1]); }
-        catch { throw new Error("Invalid frozen phase control capabilities"); }
-        if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== "string")) {
+        const entries = declaration[1].slice(1, -1).trim().replace(/,\s*$/, "");
+        capabilities = entries ? entries.split(",").map((entry) => {
+            const match = /^\s*(["'])([a-zA-Z0-9._-]+)\1\s*$/.exec(entry);
+            if (!match) throw new Error("Invalid frozen phase control capabilities");
+            return match[2];
+        }) : [];
+        if (new Set(capabilities).size !== capabilities.length) {
             throw new Error("Invalid frozen phase control capabilities");
         }
     } else if (/\bexport\s+const\s+requiredCapabilities\b/.test(module)) {

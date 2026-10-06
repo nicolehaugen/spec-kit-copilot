@@ -258,7 +258,10 @@ test("Autopilot remains stoppable while viewing another workflow without project
     assert.equal(snapshot.autopilot.item, "specs/alpha");
     assert.equal(snapshot.autopilot.status, "Running");
     assert.equal(snapshot.statuses.specify.status, "Not run");
-    assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
+    await assert.rejects(runtime.reportAutopilotStep(
+        { autopilotId, phase: "specify", action: "complete" }, "other-panel"), /inactive/);
+    assert.equal((await runtime.stopAutopilot({}, "other-panel")).stopped, true);
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
 });
 
 test("switching a blocked run cannot capture transient Autopilot as the previous mode", async (t) => {

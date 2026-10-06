@@ -188,7 +188,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         : phaseAdapter;
     const config = {
         schemaVersion: 1, userProvidesSlug,
-        workflowPage: { ...workflowPage, hash: digest(selectedAdapter) },
+        workflowPage: { ...workflowPage, hash: digest(selectedAdapter), managedRun: vertical },
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
