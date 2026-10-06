@@ -227,6 +227,7 @@ export function designerPhaseOutputs(snapshot) {
         if (id.replace(/^speckit\./, "") === "constitution") {
             return [id, { outputs: [CONSTITUTION_OUTPUT], view: CONSTITUTION_OUTPUT }];
         }
+
         const evidence = snapshot.artifactEvidence?.[id]
             ?? snapshot.artifactEvidence?.[id.startsWith("speckit.") ? id : `speckit.${id}`];
         const candidates = evidence?.candidates ?? [];
@@ -248,6 +249,16 @@ export function designerPhaseOutputs(snapshot) {
             view: outputs.find((path) => path.toLowerCase() === preferred?.toLowerCase())
                 ?? outputs[0] ?? null }];
     }));
+}
+
+function outputEvidenceReady(state) {
+    return state && !state.artifactEvidenceIncomplete
+        && !["updating", "incomplete"].includes(state.outputInferenceProgress?.status);
+}
+
+function outputsUnchanged(state, outputEvidence) {
+    return outputEvidenceReady(state)
+        && JSON.stringify(designerPhaseOutputs(state)) === JSON.stringify(outputEvidence);
 }
 
 export function validateDesignerSelections(raw, catalog) {
@@ -441,6 +452,9 @@ export async function handleDesignerLaunch(res, body, {
             || JSON.stringify(body?.expectedPhases) !== JSON.stringify(phases)) {
             return jsonError(res, 409, "Wizard pipeline or catalog changed; reopen the Designer setup");
         }
+        if (!outputEvidenceReady(snapshot)) {
+            return jsonError(res, 409, "Wizard output inference is not ready; refresh outputs before opening Designer");
+        }
         let selections;
         try { selections = validateDesignerSelections(body.selections, snapshot.catalog); }
         catch (error) { return jsonError(res, 422, error.message); }
@@ -479,6 +493,9 @@ export async function handleDesignerLaunch(res, body, {
             || JSON.stringify(current?.composition) !== JSON.stringify(snapshot.composition)) {
             return jsonError(res, 409, "Wizard pipeline or catalog changed; reopen the Designer setup");
         }
+        if (!outputsUnchanged(current, handoff.workflow.outputEvidence)) {
+            return jsonError(res, 409, "Wizard outputs changed or inference is incomplete; refresh outputs and reopen the Designer setup");
+        }
         try {
             if (await boundedReadiness(() => checkDesignerProvider(session.rpc),
                 READINESS_TIMEOUT_MS, "Canvas Designer readiness timed out. Inspect its extension log and retry.") === "disabled") {
@@ -493,6 +510,9 @@ export async function handleDesignerLaunch(res, body, {
             || JSON.stringify(designerPhaseIds(readyState)) !== JSON.stringify(phases)
             || JSON.stringify(readyState?.composition) !== JSON.stringify(snapshot.composition)) {
             return jsonError(res, 409, "Wizard pipeline or catalog changed; reopen the Designer setup");
+        }
+        if (!outputsUnchanged(readyState, handoff.workflow.outputEvidence)) {
+            return jsonError(res, 409, "Wizard outputs changed or inference is incomplete; refresh outputs and reopen the Designer setup");
         }
         // Local development sources point at arbitrary directories on disk,
         // not the Wizard's own state, so the fingerprint/phase re-checks

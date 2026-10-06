@@ -896,6 +896,42 @@ test("catalog or pipeline changes during provider readiness reject the stale lau
     }
 });
 
+test("Designer launch waits for complete output inference and rejects changed inferred outputs", async () => {
+    for (const incomplete of [
+        { artifactEvidenceIncomplete: true },
+        { outputInferenceProgress: { status: "updating", total: 1, remaining: 1 } },
+        { outputInferenceProgress: { status: "incomplete", total: 1, remaining: 1 } },
+    ]) {
+        const launch = fixture({ getState: async () => ({ ...snapshot, ...incomplete }) });
+        const response = await launch.post(request());
+        assert.equal(response.statusCode, 409);
+        assert.match(response.body.error, /output inference is not ready/);
+        assert.equal(launch.sent.length, 0);
+    }
+    const changed = { ...snapshot, artifactEvidence: { plan: {
+        primaryIndex: 0, candidates: [
+            { kind: "file", path: "plan.md", relativeTo: "feature" },
+        ],
+    } } };
+    for (const checkpoint of [2, 3]) {
+        let reads = 0;
+        const launch = fixture({ getState: async () => ++reads === checkpoint ? changed : snapshot });
+        const response = await launch.post(request());
+        assert.equal(response.statusCode, 409);
+        assert.match(response.body.error, /outputs changed or inference is incomplete/);
+        assert.equal(launch.sent.length, 0);
+        assert.equal(reads, checkpoint);
+    }
+    let reads = 0;
+    const updating = fixture({ getState: async () => ++reads === 3
+        ? { ...snapshot, outputInferenceProgress: { status: "updating", total: 1, remaining: 1 } }
+        : snapshot });
+    const response = await updating.post(request());
+    assert.equal(response.statusCode, 409);
+    assert.match(response.body.error, /inference is incomplete/);
+    assert.equal(updating.sent.length, 0);
+});
+
 test("consecutive launch requests acknowledge before agent turns finish and have separate handoffs", async () => {
     const sent = [];
     let finish;
