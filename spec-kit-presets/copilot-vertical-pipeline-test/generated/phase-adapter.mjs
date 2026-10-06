@@ -11,7 +11,7 @@ function validState(state) {
         && (state.status == null || typeof state.status === "object")
         && typeof state.draft === "string"
         && (state.output === null || typeof state.output === "string")
-        && Array.isArray(state.otherOutputs) && typeof state.sending === "boolean"
+        && Array.isArray(state.outputLinks) && typeof state.sending === "boolean"
         && (state.runLabel == null || typeof state.runLabel === "string");
 }
 
@@ -21,7 +21,6 @@ function render(state) {
     const phase = phases[current];
     const status = state.status?.status ?? "Not run";
     const output = state.output;
-    const otherOutputs = state.otherOutputs.join(", ");
     const available = output && output === state.status?.output
         && state.status?.artifactAvailability === "available";
     return `<nav class="phase-navigation vertical-phase-navigation" aria-label="Workflow phases">
@@ -51,10 +50,9 @@ function render(state) {
             (available ? "" : output
                 ? `${output} is not available yet. Run the phase, then refresh to check again.`
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."))}</p>
-        ${state.outputLinks?.length ? `<div class="phase-output-list" aria-label="Phase outputs"><strong>Outputs</strong>
+        ${state.outputLinks.length ? `<div class="phase-output-list" aria-label="Phase outputs"><strong>Outputs</strong>
             ${state.outputLinks.map(({ template, label }) => `<button class="phase-artifact-link" type="button"
-                data-action="output" data-output="${escapeHtml(template)}">${escapeHtml(label)}</button>`).join("")}</div>`
-            : `<p class="muted" ${otherOutputs ? "" : "hidden"}>${otherOutputs ? `Other expected outputs: ${escapeHtml(otherOutputs)}` : ""}</p>`}
+                data-action="output" data-output="${escapeHtml(template)}">${escapeHtml(label)}</button>`).join("")}</div>` : ""}
         <label class="field"><span class="field-label">Phase input</span>
             <textarea class="phase-input-control" data-phase-draft placeholder="Add details or direction for this phase."
                 aria-label="Phase input">${escapeHtml(state.draft)}</textarea>

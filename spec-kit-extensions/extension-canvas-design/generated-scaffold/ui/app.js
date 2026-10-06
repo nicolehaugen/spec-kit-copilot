@@ -552,9 +552,7 @@ function phaseState(pendingLabel = () => null) {
         status: status && output !== status.output
             ? { ...status, artifactAvailability: "unknown", artifactError: null } : status,
         draft: selected ? drafts.get(draftKey(selected)) ?? model.drafts[draftKey(selected)] ?? "" : "",
-        output: output ?? null, otherOutputs: selected
-            ? (selected.outputs ?? []).map((template) => resolveOutput(template)) : [],
-        outputLinks: selected
+        output: output ?? null, outputLinks: selected
             ? (selected.outputs ?? []).map((template) => ({
                 template, label: resolveOutput(template),
             })) : [],
@@ -910,7 +908,7 @@ try {
     phaseControl = mount({ root: pipelineRoot, state: {
         phases: initialPhases, current: initialPhases.length ? 0 : -1,
         workflow: "__new__", status: null, draft: "",
-        output: initialPhases[0]?.output ?? null, otherOutputs: [],
+        output: initialPhases[0]?.output ?? null, outputLinks: [],
         slugEditable: Boolean($("workflow-slug")), sending: false,
     },
         actions: {

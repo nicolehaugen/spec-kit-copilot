@@ -10,7 +10,7 @@ const phases = [
 ];
 const state = {
     phases, current: 0, workflow: "demo", status: null, draft: "initial",
-    output: phases[0].output, otherOutputs: [], sending: false, runLabel: null,
+    output: phases[0].output, outputLinks: [], sending: false, runLabel: null,
 };
 
 for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
@@ -75,7 +75,7 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         assert.deepEqual(calls[0], ["select", 1]);
         assert.deepEqual(calls[2], ["run", "run this"]);
         if (name === "stock") {
-            control.update({ ...state, otherOutputs: ["specs/demo/spec.md"], outputLinks: [
+            control.update({ ...state, outputLinks: [
                 { template: "specs/<slug>/spec.md", label: "specs/demo/spec.md" },
             ] });
             const link = dom.root.querySelector("#phase-other-outputs").children

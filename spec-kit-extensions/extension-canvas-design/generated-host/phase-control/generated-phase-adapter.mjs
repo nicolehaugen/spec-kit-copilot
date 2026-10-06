@@ -39,7 +39,7 @@ export function mount({ root, state, actions }) {
     function update(next) {
         if (!next || !Array.isArray(next.phases) || !Number.isInteger(next.current)
             || next.current < -1 || next.current >= next.phases.length
-            || typeof next.draft !== "string" || !Array.isArray(next.otherOutputs)) {
+            || typeof next.draft !== "string" || !Array.isArray(next.outputLinks)) {
             throw new Error("Invalid phase control state");
         }
         const key = `${next.workflow}:${next.current}`;
@@ -101,22 +101,21 @@ export function mount({ root, state, actions }) {
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."));
         artifact.hidden = !artifact.textContent;
         const others = $("#phase-other-outputs");
-        const links = next.outputLinks ?? next.otherOutputs;
         others.replaceChildren();
-        if (links.length) {
+        if (next.outputLinks.length) {
             const heading = document.createElement("strong");
             heading.textContent = "Outputs";
             others.append(heading);
-            for (const output of links) {
+            for (const output of next.outputLinks) {
                 const button = document.createElement("button");
                 button.type = "button";
                 button.className = "phase-artifact-link";
-                button.dataset.output = typeof output === "string" ? output : output.template;
-                button.textContent = typeof output === "string" ? output : output.label;
+                button.dataset.output = output.template;
+                button.textContent = output.label;
                 others.append(button);
             }
         }
-        others.hidden = !links.length;
+        others.hidden = !next.outputLinks.length;
         $("#run-phase").textContent = next.runLabel
             ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
         const notice = $("#phase-message");
