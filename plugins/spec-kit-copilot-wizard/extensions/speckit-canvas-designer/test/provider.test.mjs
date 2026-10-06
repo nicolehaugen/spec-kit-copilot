@@ -224,7 +224,6 @@ async function projectFixture(t, workspace) {
     const scalar = [];
     for (const [name, directory, filename, kind] of [
         ["generated-workflow", "workflow-page", "workflow.json", "generated.workflow-page-definition"],
-        ["generated-phase-placement", "workflow-page", "generated-phase-placement.json", "generated.phase-control-placement"],
         ["generated-phase-control", "phase-control", "phase-control.json", "generated.phase-control-definition"],
         ["generated-phase-adapter", "phase-control", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
@@ -373,6 +372,11 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(controlFile, JSON.stringify(changedControl));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /invalid phase control definition/);
+    changedControl.id = "workflow-phases";
+    changedControl.placement.slot = "workflow.unknown";
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid phase control definition/);
     await writeFile(controlFile, originalControl);
     const adapterFile = scalar.find((item) => item.name === "generated-phase-adapter").path;
     const originalAdapter = await readFile(adapterFile, "utf8");
@@ -382,7 +386,6 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(adapterFile, originalAdapter);
     await assert.rejects(loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
-            || item.kind === "generated.phase-control-placement"
             || item.kind === "generated.phase-control-definition"
             || item.kind === "generated.phase-control-adapter"), verify),
         /missing shared control definition for canvas.id/);
@@ -618,7 +621,8 @@ test("stock image requires one compatible control definition and paired self-con
         items, stockImageRegistration);
     const model = await load();
     assert.equal(model.adapters["stock.image"], "designer-control-adapter-image");
-    assert.equal(model.pages[0].fields.find((field) => field.id === "canvas.logo").control, "stock.image");
+    assert.equal(model.pages.find((page) => page.page === "designer-appearance")
+        .fields.find((field) => field.id === "canvas.logo").control, "stock.image");
     assert.deepEqual(model.constraints["canvas.logo"].mimeTypes,
         ["image/png", "image/jpeg", "image/gif", "image/webp"]);
     await assert.rejects(load(fields), /missing or incompatible shared control definition/);
@@ -685,8 +689,9 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     assert.deepEqual(Object.keys(phaseRequest.workflowPage).sort(),
         ["assets", "id", "order", "slots", "title"]);
     assert.equal(phaseRequest.workflowPage.id, "workflow");
-    assert.equal(phaseRequest.phasePlacement.control, "generated-phase-control");
-    assert.equal(phaseRequest.phasePlacement.slot, "workflow.phases");
+    assert.equal(phaseRequest.phasePlacement, undefined);
+    assert.deepEqual(JSON.parse(Buffer.from(phaseRequest.workflowPage.assets[1].content, "base64")).placement,
+        { page: "workflow", slot: "workflow.phases" });
     assert.deepEqual(phaseRequest.workflowPage.assets.map(({ name, kind }) => [name, kind]), [
         ["generated-workflow", "generated.workflow-page-definition"],
         ["generated-phase-control", "generated.phase-control-definition"],
@@ -797,6 +802,131 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
         handoff, project, workspace }), /Essentials must load with Canvas ID and Title/);
 });
 
+test("Appearance palette colors persist and style both runtime themes without replacing defaults", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
+        import.meta.url));
+    const folder = join(project, ".specify", "extensions", "extension-canvas-design",
+        "designer-host", "appearance-settings");
+    await mkdir(folder, { recursive: true });
+    const templates = [];
+    for (const mode of ["light", "dark"]) {
+        for (const color of ["accent", "background", "surface", "secondary", "text"]) {
+            const filename = `${mode}-${color}.json`;
+            const path = join(folder, filename);
+            await copyFile(join(source, "designer-host", "appearance-settings", filename), path);
+            templates.push({ name: `designer-appearance-${mode}-${color}`, path,
+                sourceId: "extension:extension-canvas-design",
+                kind: "designer.setting-definition", strategy: "replace" });
+        }
+    }
+    const imageFolder = join(project, ".specify", "extensions", "extension-canvas-design",
+        "designer-host", "essentials-settings");
+    await mkdir(imageFolder, { recursive: true });
+    for (const name of ["header-logo", "main-page-logo"]) {
+        const path = join(imageFolder, `${name}.json`);
+        await copyFile(join(source, "designer-host", "essentials-settings", `${name}.json`), path);
+        templates.push({ name: `designer-essentials-${name}`, path,
+            sourceId: "extension:extension-canvas-design",
+            kind: "designer.setting-definition", strategy: "replace" });
+    }
+    const model = await loadResolvedDesignerPages(handoff, project, entries,
+        [...templates, ...await stockImageTemplates(project)],
+        () => ({ kind: "template", stack: [{ active: true,
+            sourceId: "extension-canvas-design", layer: "extension", strategy: "replace" }] }));
+    assert.deepEqual(model.pages.find((page) => page.page === "designer-appearance")
+        .fields.map((field) => field.id),
+        ["canvas.accentLight", "canvas.backgroundLight", "canvas.surfaceLight",
+            "canvas.secondaryLight", "canvas.textLight",
+            "canvas.accentDark", "canvas.backgroundDark", "canvas.surfaceDark",
+            "canvas.secondaryDark", "canvas.textDark", "canvas.logo", "canvas.mainPageLogo"]);
+    assert.deepEqual(model.pages.find((page) => page.page === "designer-essentials")
+        .fields.map((field) => field.id), ["canvas.id", "canvas.displayName"]);
+    assert.equal(model.values["canvas.accentLight"], "");
+    assert.equal(model.values["canvas.accentDark"], "");
+    const values = { ...model.values, "canvas.id": "colored-canvas",
+        "canvas.displayName": "Colored canvas", "canvas.accentLight": "123aBc",
+        "canvas.backgroundLight": "E8F8E9", "canvas.surfaceLight": "#F7FFF0",
+        "canvas.secondaryLight": "CCF0D0", "canvas.textLight": "#233044",
+        "canvas.accentDark": "#ABC123", "canvas.backgroundDark": "#11142A",
+        "canvas.surfaceDark": "252942", "canvas.secondaryDark": "#303550",
+        "canvas.textDark": "F8ECDB" };
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { modelRevision: model.revision, revision: 0, values });
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).values, values);
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs",
+        import.meta.url));
+    const prepared = await freezeGeneration({ model: saved, values, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, prepared.target);
+    const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.appearance, {
+        light: { accent: "#123aBc", background: "#E8F8E9", surface: "#F7FFF0",
+            secondary: "#CCF0D0", text: "#233044" },
+        dark: { accent: "#ABC123", background: "#11142A", surface: "#252942",
+            secondary: "#303550", text: "#F8ECDB" },
+    });
+    const { renderHtml, readConfig } = await import(pathToFileURL(join(target, "server.mjs")).href);
+    const html = renderHtml(config);
+    assert.match(html, /:root\[data-theme="light"\] \{ --accent-color: #123aBc;/);
+    assert.match(html, /:root\[data-theme="dark"\] \{ --accent-color: #ABC123;/);
+    assert.match(html, /--background-color-default: #E8F8E9; --background-color-elevated: #F7FFF0; --background-color-secondary: #CCF0D0; --text-color-default: #233044;/);
+    assert.match(html, /--background-color-default: #11142A; --background-color-elevated: #252942; --background-color-secondary: #303550; --text-color-default: #F8ECDB;/);
+    assert.match(html, /@media \(prefers-color-scheme: dark\).*:root:not\(\[data-theme\]\)/);
+    assert.match(html, /id="theme-toggle"/);
+    assert.deepEqual(readConfig().appearance, config.appearance);
+    const opposite = { ...values, "canvas.id": "opposite-accent",
+        "canvas.accentLight": "#123aBc", "canvas.accentDark": "ABC123" };
+    const alternate = await freezeGeneration({ model, values: opposite, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, alternate.requestId);
+    const alternateConfig = JSON.parse(await readFile(
+        join(project, alternate.target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(alternateConfig.appearance, config.appearance);
+    assert.match(renderHtml(alternateConfig), /:root\[data-theme="dark"\] \{ --accent-color: #ABC123;/);
+    await writeFile(join(target, "canvas-config.json"), JSON.stringify({
+        ...config, appearance: { light: { background: "red" } },
+    }));
+    assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
+    assert.doesNotMatch(renderHtml({ ...config, appearance: { light: { accent: "#123aBc" } } }),
+        /:root\[data-theme="dark"\] \{ --accent-color:/);
+    assert.match(renderHtml({ ...config, appearance: { light: "#123aBc" } }),
+        /:root\[data-theme="light"\] \{ --accent-color: #123aBc;/);
+    const backgroundOnly = renderHtml({ ...config, appearance: { light: { background: "#E8F8E9" } } });
+    assert.match(backgroundOnly, /:root\[data-theme="light"\] \{ --background-color-default: #E8F8E9;/);
+    assert.doesNotMatch(backgroundOnly, /--grad-primary: linear-gradient\(135deg, #E8F8E9/);
+    assert.doesNotMatch(backgroundOnly, /:root\[data-theme="dark"\] \{ --background-color-default:/);
+
+    const incomplete = { ...values, "canvas.accentDark": "#123" };
+    await saveDesignerSettings(workspace, handoff, saved,
+        { modelRevision: model.revision, revision: 1, values: incomplete });
+    await assert.rejects(freezeGeneration({ model, values: incomplete, handoff, project, workspace }),
+        /Invalid Dark mode accent \(canvas.accentDark\)/);
+    for (const invalid of ["red", "12345g", "#12345g", "1234567", "#1234567", "var(--foo)"]) {
+        await assert.rejects(freezeGeneration({ model,
+            values: { ...values, "canvas.accentLight": invalid }, handoff, project, workspace }),
+        /Invalid Light mode accent \(canvas.accentLight\)/);
+    }
+    await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.backgroundDark": "11223g" },
+        handoff, project, workspace }), /Invalid Dark page background \(canvas.backgroundDark\)/);
+    const defaults = { ...values, "canvas.id": "default-accent" };
+    for (const id of Object.keys(defaults)) {
+        if (/^canvas\.(?:accent|background|surface|secondary|text)(?:Light|Dark)$/.test(id)) {
+            defaults[id] = "";
+        }
+    }
+    const plain = await freezeGeneration({ model, values: defaults, handoff, project, workspace });
+    await materialize(project, workspace, handoff.handoffId, plain.requestId);
+    const plainConfig = JSON.parse(await readFile(join(project, plain.target, "canvas-config.json")));
+    assert.equal(plainConfig.appearance, undefined);
+    assert.doesNotMatch(renderHtml(plainConfig), /:root\[data-theme="light"\] \{ --accent-color:/);
+});
+
 test("stock Logo validates, persists, freezes and packages a portable header image with fallback", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
@@ -824,16 +954,20 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     assert.equal(model.values["canvas.logo"], "");
     assert.equal(model.constraints["canvas.mainPageLogo"].type, "image");
     assert.equal(model.values["canvas.mainPageLogo"], "");
+    assert.deepEqual(model.pages.find((page) => page.page === "designer-appearance")
+        .fields.map((field) => field.id), ["canvas.logo", "canvas.mainPageLogo"]);
+    assert.deepEqual(model.pages.find((page) => page.page === "designer-essentials")
+        .fields.map((field) => field.id), ["canvas.id", "canvas.displayName"]);
     const originalAppearance = await readFile(entries[2].path, "utf8");
     const originalLogo = await readFile(path, "utf8");
     const appearance = JSON.parse(originalAppearance);
-    appearance.slots = [{ id: "appearance.logo" }];
+    appearance.slots.push({ id: "appearance.logo" });
     await writeFile(entries[2].path, JSON.stringify(appearance));
     const logoContribution = JSON.parse(originalLogo);
     await writeFile(path, JSON.stringify({ ...logoContribution, slot: "appearance.logo" }));
     const moved = await load();
     assert.equal(moved.pages.find((page) => page.page === "designer-appearance")
-        .fields[0].id, "canvas.logo");
+        .fields.at(-1).id, "canvas.logo");
     await writeFile(path, originalLogo);
     await writeFile(entries[2].path, originalAppearance);
     const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64");
@@ -3355,7 +3489,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.deepEqual(canvas.inputSchema.properties.templates.items.properties.kind.enum,
         ["designer.setting-definition", "generated.workflow-page-definition",
             "generated.phase-control-definition", "generated.phase-control-adapter",
-            "generated.phase-control-placement", "generated.field-placement",
+            "generated.field-placement",
             "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",
             "designer.control-adapter", "generated.control-adapter",

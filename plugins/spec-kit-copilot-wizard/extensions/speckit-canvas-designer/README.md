@@ -27,14 +27,14 @@ Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
 Essentials requires Canvas ID and Title from the resolved core page. Description,
-Workflow header, Allow custom slug, Header logo, and Main page logo are separate
-ordered stock contributions registered by the composed load-page command. The
-two required fields use the fixed Designer identity control; their inputs are
-not mounted through the replaceable `stock.text` adapter. The Outputs page
-likewise mounts its fixed phase-artifacts control. Other Essentials fields
-continue to use registered adapters: `stock.checkbox` provides
-the optional boolean editor, and the stock-text adapter validates optional text
-at Generate. Generate packages the winning stock-text generated adapter
+Workflow header, and Allow custom slug are ordered Essentials contributions.
+Header logo, Main page logo, and light/dark accent, page background, surface,
+secondary surface, and text colors are ordered Appearance contributions
+registered by the composed load-page command. The two required identity fields
+use the fixed Designer identity control, while the Outputs page mounts its fixed
+phase-artifacts control. Other fields use registered adapters: `stock.checkbox`
+provides the optional boolean editor, and `stock.text` validates optional text
+and palette values at Generate. Generate packages the winning stock-text generated adapter
 for visible Description, Workflow header, or read-only text placements. Text
 fields on a page or in a contribution can opt into `"required": true`; the
 shared text validator rejects blank or whitespace-only values at Generate,
@@ -44,7 +44,7 @@ remain optional unless configured otherwise. The custom-slug boolean is
 consumed by the generated shell, so it needs no
 generated visual adapter or display toggle. A future Setup confirm checkbox
 can follow this pattern without delegating project setup to adapter code. The
-optional image controls upload, preview, replace, and remove independent PNG,
+Appearance's optional image controls upload, preview, replace, and remove independent PNG,
 JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
 reason beside their picker, including the actual size when over the limit;
 successful replacement or removal clears the message. A failed upload blocks
@@ -99,6 +99,11 @@ The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff restores them when its resolved pages are unchanged.
+Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
+blank retains the current color in that mode, while invalid hex blocks Generate
+without preventing an incomplete draft from being saved. The generated canvas
+keeps its existing light/dark toggle; there is no Designer color preview or
+contrast warning.
 Generate freezes the combined artifact links into the app: its phase card links
 to each listed file and View artifact opens the selected default. A phase with no
 inferred artifacts remains empty unless a link is added.

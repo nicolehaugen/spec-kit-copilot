@@ -33,6 +33,8 @@ export const isWindowsDeviceName = (name) =>
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
+const OPTIONAL_COLOR = { type: "string", maxLength: 7,
+    pattern: "^(?:#?[0-9A-Fa-f]{6})?$" };
 const RULES = {
     "canvas.id": { type: "string", minLength: 1, maxLength: 100,
         pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$",
@@ -40,6 +42,16 @@ const RULES = {
     "canvas.displayName": { type: "string", minLength: 1, maxLength: 120, required: true },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
+    "canvas.accentLight": OPTIONAL_COLOR,
+    "canvas.backgroundLight": OPTIONAL_COLOR,
+    "canvas.surfaceLight": OPTIONAL_COLOR,
+    "canvas.secondaryLight": OPTIONAL_COLOR,
+    "canvas.textLight": OPTIONAL_COLOR,
+    "canvas.accentDark": OPTIONAL_COLOR,
+    "canvas.backgroundDark": OPTIONAL_COLOR,
+    "canvas.surfaceDark": OPTIONAL_COLOR,
+    "canvas.secondaryDark": OPTIONAL_COLOR,
+    "canvas.textDark": OPTIONAL_COLOR,
     "workflowSlug.userProvided": { type: "boolean" },
 };
 const RESERVED_CANVAS_IDS = ["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"];
@@ -378,17 +390,6 @@ function validateWorkflowPage(document, name) {
     }
 }
 
-function validatePhasePlacement(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "control,id,page,schemaVersion,slot"
-        || document.schemaVersion !== 1 || document.id !== "generated-phase-placement"
-        || document.page !== "workflow" || document.slot !== "workflow.phases"
-        || document.control !== "generated-phase-control") {
-        throw new Error(`${name}: invalid phase control placement`);
-    }
-}
-
 function validateFieldPlacement(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
@@ -409,10 +410,15 @@ function validateFieldPlacement(document, name) {
 function validatePhaseControl(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "adapter,id,schemaVersion"
+        || contractKeys(document).sort().join() !== "adapter,id,placement,schemaVersion"
         || document.schemaVersion !== 1 || document.id !== "workflow-phases"
         || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
-        || isWindowsDeviceName(document.adapter)) {
+        || isWindowsDeviceName(document.adapter)
+        || !document.placement || typeof document.placement !== "object"
+        || Array.isArray(document.placement)
+        || Object.keys(document.placement).sort().join() !== "page,slot"
+        || document.placement.page !== "workflow"
+        || document.placement.slot !== "workflow.phases") {
         throw new Error(`${name}: invalid phase control definition`);
     }
 }
@@ -534,7 +540,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
             || !["designer.setting-definition", "generated.added-page-definition", "generated.added-page-renderer",
                 "generated.workflow-page-definition", "generated.phase-control-definition",
-                "generated.phase-control-adapter", "generated.phase-control-placement",
+                "generated.phase-control-adapter",
                 "generated.field-placement",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                 "generated.value-definition", "generated.computed-value-provider"].includes(item.kind)
@@ -584,9 +590,6 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             } else if (item.kind === "generated.phase-control-definition") {
                 validatePhaseControl(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: phase control definition exceeds 32 KiB`);
-            } else if (item.kind === "generated.phase-control-placement") {
-                validatePhasePlacement(document, item.name);
-                if (bytes > 32 * 1024) throw new Error(`${item.name}: phase placement exceeds 32 KiB`);
             } else if (item.kind === "generated.field-placement") {
                 validateFieldPlacement(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: field placement exceeds 32 KiB`);
@@ -673,12 +676,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
     if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
-    const phasePlacements = loaded.filter((item) => item.kind === "generated.phase-control-placement");
-    if (phasePlacements.length !== 1 || phasePlacements[0].name !== "generated-phase-placement") {
-        throw new Error("Exactly one generated phase placement is required");
-    }
     const phaseControls = loaded.filter((item) => item.kind === "generated.phase-control-definition");
-    if (phaseControls.length !== 1 || phaseControls[0].name !== phasePlacements[0].document.control) {
+    if (phaseControls.length !== 1 || phaseControls[0].name !== "generated-phase-control") {
         throw new Error(`${workflowPages[0].name}: missing or unreferenced phase control definition`);
     }
     const phaseAdapters = loaded.filter((item) => item.kind === "generated.phase-control-adapter");
@@ -977,8 +976,6 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
     model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
-    const phasePlacement = loaded.find((entry) => entry.kind === "generated.phase-control-placement");
-    model.phasePlacement = { name: phasePlacement.name, ...phasePlacement.document };
     model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
         .map(({ name, sourceId, document }) =>
             ({ name, sourceId, ...document, control: placementControls.get(name) }))

@@ -221,16 +221,28 @@ At **each milestone**, preserve the unchanged Wizard code, behavior, and handoff
 `generated-workflow` page declares its title, order, and named slots; the
 generated host owns the fixed shell rather than taking an ordered list of
 shell regions from the page JSON. The required `workflow.phases` slot has a
-separately registered phase placement referencing `generated-phase-control`.
+`generated-phase-control` definition placing itself in that slot.
 Additional Workflow slots share an ordered contributions area; added page
 renderers expose declared mount points. Separate field placements target
 those slots without duplicating field values. The control definition identifies
 `workflow-phases` and references the replaceable `generated-phase-adapter`.
-The generated host validates and packages all four resolved assets. The
+The generated host validates and packages all three resolved assets. The
 adapter owns its DOM and exposes `mount({ root, state, actions })` with
 `update(state)` and `dispose()`; the host retains phase execution,
-persistence, and artifact routes. `copilot-vertical-pipeline-test` exercises
-an alternate vertical adapter without replacing phase-dispatch safeguards.
+persistence, and artifact routes. `copilot-vertical-phase-control` replaces
+only that adapter with a vertical step list and declares the optional
+`workflow.rows.v1` and `workflow.managed-run.v1` host capabilities. The
+adapter owns row actions, confirmations, and progress presentation; other
+adapters can reuse these capabilities without a new host branch. The host
+rejects unsupported capability requirements at mount, verifies the packaged
+adapter's declared managed-run capability before exposing Autopilot,
+dispatches one Copilot autopilot-mode turn, and accepts in-order step reports
+only after required artifacts are present. An interrupted or unconfirmed turn
+is persisted as blocked on reopen; after checking chat and outputs, the user
+can deliberately resume from the first unverified step. A finishing run with
+every step verified cannot replay its final step, and an active run prevents
+deletion of its workflow. The
+stock control and default presentation remain unchanged.
 
 An **adapter** is JavaScript supplied for a particular control or presentation **in one canvas**. A control definition describes its stable ID, supported value schema, host capabilities, and adapter IDs. Multiple fields can reuse one control and adapter; a new field does not necessarily need new JavaScript.
 
@@ -293,11 +305,11 @@ spec-kit-extensions/extension-canvas-design/
   commands/generate.md
   designer-host/tabs/essentials.json        required identity fields and an optional-field slot
   designer-host/tabs/outputs.json           Outputs page definition
-  designer-host/tabs/appearance.json        currently empty placeholder
+  designer-host/tabs/appearance.json        Appearance slot for logo and palette contributions
   designer-host/essentials-settings/*.json  optional Essentials fields
-  generated-host/workflow-page/workflow.json      required Workflow page definition
-  generated-host/workflow-page/generated-phase-placement.json  phase control placement
-  generated-host/phase-control/phase-control.json  phase control identity
+  designer-host/appearance-settings/*.json  optional per-mode palette fields
+  generated-host/workflow-page/workflow.json required Workflow page definition
+  generated-host/phase-control/phase-control.json  phase control identity and placement
   generated-host/phase-control/generated-phase-adapter.mjs  phase UI adapter
   shared-controls/stock-{text,checkbox,image}/  cross-host definitions and adapters
   schemas/designer.tab-definition.schema.json  currently string/boolean fields
@@ -673,13 +685,13 @@ The `designer-artifacts` template ID remains stable, but its visible Designer
 page is **Outputs**. Its fixed phase-artifacts control renders the phase rows
 while the shell owns validation and persistence. Essentials has a fixed identity
 control and an `essentials.options` slot for added fields.
-`designer-appearance` remains an enabled empty page. These are Designer pages,
-not automatically pages in the Generated Workflow Canvas app.
+`designer-appearance` has a slot for optional light/dark palette fields and
+two logos. These are Designer pages, not automatically pages in the generated app.
 
 | Page | Proposed stock Designer contribution | What Generate packages into the app |
 | --- | --- | --- |
 | **Outputs** | Read-only Wizard-inferred pipeline artifacts, removable additional Markdown links, and a selected viewer target. Adding links does not create files or change pipeline outputs. | Validated links and one selected default per nonempty phase. The generated shell still owns artifact-path authorization, placeholder resolution, and file reads. |
-| **Appearance** | A **palette editor/preview** in an Appearance page slot. It configures colors for the overall Generated Workflow Canvas app; Logo can remain on Essentials. | Validated palette/theme values and any needed packaged assets. The generated app applies them without reinstalling Canvas Design Presets. |
+| **Appearance** | Optional per-mode accent, page background, card surface, secondary surface, and main text hex fields plus Header/Main page logos. | Validated per-mode palette overrides and packaged logo assets; blank fields preserve each existing color. |
 
 ### Outputs: confirmed handoff
 
@@ -709,9 +721,9 @@ expected file has not yet been created.
 
 The **Generated Workflow Canvas app already has a light/dark button in its header**. That is an end-user runtime theme choice, not an Appearance page setting.
 
-The proposed Appearance editor lets the canvas creator select or configure a validated **palette for the app**. Its contract must say how that palette applies in **both light and dark modes**, so the existing button can still switch modes without discarding the chosen visual identity. A preset could contribute another palette or a compatible palette-editing control. The editor should preview the resulting colors in Designer; Generate freezes the chosen tokens/assets into the app.
+The Appearance editor lets the canvas creator enter optional six-digit accent, page background, card surface, secondary surface, and main text colors for light and dark modes with or without `#`. It validates the hex syntax at Generate, saves incomplete drafts, and packages valid overrides as `#RRGGBB` under `appearance.light` and `appearance.dark` in `canvas-config.json` alongside the existing independent logos. Blank fields preserve the current per-mode colors. The existing viewer button still switches modes; the MVP has no preview or contrast gate, so creators must select readable text and surface combinations.
 
-**Acceptance:** Palette choices survive Generate and reopen, apply consistently throughout the app in light and dark mode, retain readable contrast, and do not require the originating Canvas Design Preset in the project running the finished app.
+**Acceptance:** Accent choices survive Generate and reopen, apply to their respective modes without changing an unselected mode's default, and do not require Canvas Design in the project running the finished app.
 
 ## 17. Implementation and verification implications
 

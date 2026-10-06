@@ -159,6 +159,19 @@ function validRuntimeConfig(config) {
             && typeof output.expectsArtifact === "boolean"
             && (output.outputPath === null || typeof output.outputPath === "string"))
         && (config.theme === undefined || ["light", "dark"].includes(config.theme))
+        && (config.appearance === undefined || (config.appearance
+            && typeof config.appearance === "object" && !Array.isArray(config.appearance)
+            && Object.keys(config.appearance).length > 0
+            && Object.keys(config.appearance).every((mode) => ["light", "dark"].includes(mode)
+                && (typeof config.appearance[mode] === "string"
+                    ? /^#[0-9a-fA-F]{6}$/.test(config.appearance[mode])
+                    : config.appearance[mode] && typeof config.appearance[mode] === "object"
+                        && !Array.isArray(config.appearance[mode])
+                        && Object.keys(config.appearance[mode]).length > 0
+                        && Object.keys(config.appearance[mode]).every((key) =>
+                            Object.hasOwn(APPEARANCE_PROPERTIES, key)
+                            && typeof config.appearance[mode][key] === "string"
+                            && /^#[0-9a-fA-F]{6}$/.test(config.appearance[mode][key]))))))
         && config.installed && ["presets", "extensions", "bundles"].every((kind) =>
             Array.isArray(config.installed[kind]) && config.installed[kind].every((item) =>
                 item && typeof item === "object" && !Array.isArray(item)
@@ -319,7 +332,6 @@ export function readConfig() {
     if (config.imageControl) readImageControl(config.imageControl);
     if (config.textControl) readTextControl(config.textControl);
     readWorkflowPage(config.workflowPage);
-    readPhasePlacement(config.phasePlacement, config.workflowPage);
     for (const item of config.fieldPlacements ?? []) {
         readFieldPlacement(item);
         if (item.adapter) readPlacementControl(item);
@@ -336,22 +348,6 @@ export function readConfig() {
     phaseContract(config);
     valueContract(config);
     return config;
-}
-
-function readPhasePlacement(placement, page) {
-    if (!placement || Object.keys(placement).sort().join() !== "control,hash,id,page,slot"
-        || placement.id !== "generated-phase-placement" || placement.page !== "workflow"
-        || placement.slot !== "workflow.phases" || placement.control !== page.phaseControl
-        || !/^[a-f0-9]{64}$/.test(placement.hash)) {
-        throw new Error("Invalid required phase placement");
-    }
-    const bytes = readPackagedFile(new URL("./pages/generated-phase-placement.json", import.meta.url));
-    const { $schema, ...definition } = JSON.parse(bytes);
-    if (createHash("sha256").update(bytes).digest("hex") !== placement.hash
-        || !isDeepStrictEqual(definition, { schemaVersion: 1,
-            id: placement.id, page: placement.page, slot: placement.slot, control: placement.control })) {
-        throw new Error("Packaged phase placement differs from its frozen contract");
-    }
 }
 
 function readFieldPlacement(placement) {
@@ -398,7 +394,9 @@ function readWorkflowPage(page) {
     const registration = JSON.parse(control);
     if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
         || registration.adapter !== page.adapter
-        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,schemaVersion") {
+        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,placement,schemaVersion"
+        || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
+        || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases") {
         throw new Error("Packaged phase control definition differs from its frozen contract");
     }
     const bytes = readPackagedFile(new URL(`./pages/${page.adapter}.mjs`, import.meta.url));
@@ -489,7 +487,26 @@ function readTextControl(control) {
     }
     return bytes;
 }
+const APPEARANCE_PROPERTIES = {
+    accent: "--accent-color",
+    background: "--background-color-default",
+    surface: "--background-color-elevated",
+    secondary: "--background-color-secondary",
+    text: "--text-color-default",
+};
+
 export function renderHtml(config, token = "") {
+    if (!validRuntimeConfig(config)) throw new Error("Invalid generated canvas configuration");
+    const appearanceCss = Object.entries(config.appearance ?? {}).map(([mode, options]) => {
+        const colors = typeof options === "string" ? { accent: options } : options;
+        const rule = Object.entries(colors).map(([key, value]) =>
+            `${APPEARANCE_PROPERTIES[key]}: ${value};`).join(" ")
+            + (colors.accent
+                ? ` --grad-primary: linear-gradient(135deg, ${colors.accent}, color-mix(in srgb, ${colors.accent} 75%, black));`
+                : "");
+        return `:root[data-theme="${mode}"] { ${rule} }
+@media (prefers-color-scheme: ${mode}) { :root:not([data-theme]) { ${rule} } }`;
+    }).join("\n");
     const { canvas } = config;
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
     const phases = config.phases.filter((phase) => !isConstitution(phase));
@@ -559,7 +576,7 @@ export function renderHtml(config, token = "") {
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}</style></head>
+<title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}\n${appearanceCss}</style></head>
 <body>
 <header class="app-header">
     <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}"${config.brandAsset
@@ -677,7 +694,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
                 ...(url.searchParams.has("output") ? { output: url.searchParams.get("output") } : {}),
             }));
-            if (request.method !== "POST" || !["/api/run", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
+            if (request.method !== "POST" || !["/api/run", "/api/autopilot/start", "/api/autopilot/stop", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;
             if (origin && origin !== `http://127.0.0.1:${port()}`) throw new UserError("Untrusted request origin.", 403);
             if (!request.headers["content-type"]?.startsWith("application/json")) throw new UserError("Expected a JSON request.", 415);
@@ -692,12 +709,14 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             try { input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); } catch { throw new UserError("Invalid JSON request."); }
             if (!input || typeof input !== "object" || Array.isArray(input)) throw new UserError("Expected a JSON object.");
             const result = url.pathname === "/api/run" ? await runtime.run(input, instanceId)
+                : url.pathname === "/api/autopilot/start" ? await runtime.startAutopilot(input, instanceId)
+                    : url.pathname === "/api/autopilot/stop" ? await runtime.stopAutopilot(input, instanceId)
                 : url.pathname === "/api/state" ? await runtime.save(input)
                     : url.pathname === "/api/values" ? await runtime.saveValue(input)
                     : url.pathname === "/api/reveal" ? await runtime.reveal(input)
                         : url.pathname === "/api/workflow/delete" ? await runtime.deleteWorkflow(input)
                             : await runtime.refresh();
-            return json(response, url.pathname === "/api/run" ? 202 : 200, result);
+            return json(response, ["/api/run", "/api/autopilot/start"].includes(url.pathname) ? 202 : 200, result);
         } catch (error) {
             if (!(error instanceof UserError)) await log("Generated canvas request failed. Check the local runtime and state permissions.");
             json(response, error instanceof UserError ? error.status : 500, {

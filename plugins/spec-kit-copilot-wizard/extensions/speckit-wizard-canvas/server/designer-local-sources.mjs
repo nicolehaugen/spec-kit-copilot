@@ -306,8 +306,7 @@ export async function verifyHostedWorkflowRegistrations(path) {
     catch { throw new Error("Invalid installed Canvas Design extension manifest"); }
     const templates = manifest?.provides?.templates;
     const required = [
-        "generated-workflow", "generated-phase-placement",
-        "generated-phase-control", "generated-phase-adapter",
+        "generated-workflow", "generated-phase-control", "generated-phase-adapter",
     ];
     const missing = [];
     for (const name of required) {
@@ -327,5 +326,13 @@ export async function verifyHostedWorkflowRegistrations(path) {
     }
     if (missing.length) {
         throw new Error(`Installed hosted Canvas Design lacks required Workflow registrations/files: ${missing.join(", ")}. Use an approved local-source override containing the Workflow phase controls; do not open Designer.`);
+    }
+    const controlFile = templates.find((entry) => entry.name === "generated-phase-control").file;
+    let control;
+    try { control = JSON.parse(await readBoundedManifest(join(canonical, controlFile), { file: controlFile }, canonical)); }
+    catch { throw new Error("Installed hosted Canvas Design has an invalid phase control definition; use an approved local-source override."); }
+    if (control.id !== "workflow-phases" || control.adapter !== "generated-phase-adapter"
+        || control.placement?.page !== "workflow" || control.placement?.slot !== "workflow.phases") {
+        throw new Error("Installed hosted Canvas Design lacks the required Workflow phase placement; use an approved local-source override.");
     }
 }

@@ -72,6 +72,12 @@ const session = await joinSession({
                     inputSchema: { type: "object", additionalProperties: false, required: ["phaseRunId", "path"],
                         properties: { phaseRunId: { type: "string" }, path: { type: "string" } } },
                     handler: (ctx) => opened(ctx, (value) => value.report(ctx.input, ctx.instanceId)) },
+                { name: "report_autopilot_step", description: "Start or verify one step in a Copilot Autopilot run.",
+                    inputSchema: { type: "object", additionalProperties: false,
+                        required: ["autopilotId", "phase", "action"],
+                        properties: { autopilotId: { type: "string" }, phase: { type: "string" },
+                            action: { type: "string", enum: ["start", "complete"] } } },
+                    handler: (ctx) => opened(ctx, (value) => value.reportAutopilotStep(ctx.input, ctx.instanceId)) },
             ],
             open: (ctx) => withLifecycle(async () => {
                 let entry = servers.get(ctx.instanceId);

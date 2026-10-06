@@ -29,7 +29,7 @@ templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.setting-definition`,
 `generated.workflow-page-definition`, `generated.phase-control-definition`,
-`generated.phase-control-adapter`, `generated.phase-control-placement`,
+`generated.phase-control-adapter`,
 `generated.field-placement`,
 `generated.added-page-definition`, `generated.added-page-renderer`,
 `shared.control-definition`, `designer.control-adapter`, `generated.control-adapter`,
@@ -55,8 +55,8 @@ declares the value IDs it consumes in its `values` list. A processing-only value
 is not automatically presented and is not secret from its declared consumers.
 Computed-value providers are packaged, never evaluated by Designer.
 The required `generated-workflow` page declares `workflow.phases` first; the
-separate `generated-phase-placement` targets that slot and references the phase
-control definition. Each placement JSON `id` equals its registered template
+`generated-phase-control` definition places itself in that slot and references
+its adapter. Each field placement JSON `id` equals its registered template
 name. Presets may replace the Workflow page to add slots or add
 pages with declared slots. `generated.field-placement` targets a declared slot
 and references a Designer setting field or a generated value ID; its `order`
@@ -74,8 +74,17 @@ bindings retain their separate slots; a field placement cannot occupy one.
 - `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-accent` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-background` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-surface` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-secondary` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-text` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-accent` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-background` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-surface` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-secondary` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-text` — `designer.setting-definition`, `replace`
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
-- `generated-phase-placement` — `generated.phase-control-placement`, `replace`
 - `generated-phase-control` — `generated.phase-control-definition`, `replace`
 - `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`

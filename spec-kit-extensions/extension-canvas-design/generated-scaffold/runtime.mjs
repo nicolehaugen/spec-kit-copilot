@@ -105,7 +105,15 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                     const field = valueFields.find((entry) => entry.id === id && entry.presentation === "stock.editable");
                     if (!field) return true;
                     try { validateValue(field.schema, value, id); return false; } catch { return true; }
-                })))) {
+                })))
+            || (state.autopilot !== undefined && (!state.autopilot
+                || typeof state.autopilot.id !== "string" || typeof state.autopilot.item !== "string"
+                || typeof state.autopilot.instanceId !== "string" || typeof state.autopilot.sessionId !== "string"
+                || !Number.isInteger(state.autopilot.current) || state.autopilot.current < 0
+                || state.autopilot.current > phases.filter((step) => !step.project).length
+                || !["Request sent", "Running", "Finishing", "Completed", "Blocked", "Paused"].includes(state.autopilot.status)
+                || (state.autopilot.messageId !== null && typeof state.autopilot.messageId !== "string")
+                || !["interactive", "plan", "autopilot", "shell"].includes(state.autopilot.previousMode)))) {
             throw new UserError("Saved canvas state is invalid. Restore its state.json before continuing.");
         }
     } catch (error) {
@@ -120,7 +128,15 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const busy = { value: false };
     const subscriptions = [];
     const observedMessages = new Set();
+    const workflowSteps = phases.filter((step) => !step.project);
+    let autopilotDispatching = false;
     const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
+    async function restoreMode(automation) {
+        if (!automation?.previousMode || automation.previousMode === "autopilot") return;
+        if (await session.rpc.mode.get() !== "autopilot") return;
+        const result = await session.rpc.mode.set({ mode: automation.previousMode, expectedMode: "autopilot" });
+        if (result.modeApplied === false) await diagnostic("Copilot session mode changed; Autopilot did not restore the previous mode.");
+    }
     const update = (fn, uiChange = false, announce = true) => {
         const pending = writes.then(async () => {
             const next = structuredClone(state);
@@ -134,6 +150,17 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         writes = pending.catch(() => {});
         return pending;
     };
+    if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)) {
+        await update((next) => {
+            next.autopilot.status = "Blocked";
+            next.autopilot.error = "Autopilot was interrupted. Check chat and outputs before resuming.";
+            for (const run of next.runs.filter((run) => run.autopilotId === next.autopilot.id
+                && run.status === "Running")) {
+                run.status = "Unconfirmed";
+                run.error = "This step was interrupted before verification. Check its output before retrying.";
+            }
+        }, false, false);
+    }
     const phaseFor = (id) => {
         const step = phases.find((phase) => phase.id === id);
         if (!step) throw new UserError("Select a configured phase.");
@@ -302,7 +329,16 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
-        return { ...view, userProvidesSlug: config.userProvidesSlug,
+        const automation = view.autopilot?.item === item
+            ? { ...view.autopilot, message: view.autopilot.error
+                ?? `${view.autopilot.status}: step ${Math.min(view.autopilot.current + 1, workflowSteps.length)} of ${workflowSteps.length}` }
+            : null;
+        if (automation && ["Request sent", "Running", "Finishing"].includes(automation.status)
+            && (automation.sessionId !== session.sessionId || !liveRuns.has(automation.id))) {
+            automation.status = "Blocked";
+            automation.message = "Autopilot outcome is unconfirmed. Check chat before resuming.";
+        }
+        return { ...view, userProvidesSlug: config.userProvidesSlug, autopilot: automation,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             phases, items: entries, statuses, valueFields: visibleValues, pageValues, valueErrors };
     }
@@ -356,8 +392,215 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const result = await session.rpc.skills.reload();
         if (result?.errors?.length) throw new UserError("Session skills could not reload. Check Copilot's skill diagnostics and retry.");
     }
+    async function enabledAutopilot() {
+        const module = config.workflowPage.adapter;
+        const bytes = await readBoundedBytes(fileURLToPath(new URL(".", import.meta.url)),
+            `pages/${module}.mjs`, 128 * 1024);
+        if (createHash("sha256").update(bytes).digest("hex") !== config.workflowPage.hash) {
+            throw new UserError("Packaged phase control changed; restore the generated canvas files.");
+        }
+        const adapter = await import(new URL(`./pages/${module}.mjs`, import.meta.url));
+        if (!Array.isArray(adapter.requiredCapabilities)
+            || !adapter.requiredCapabilities.includes("workflow.managed-run.v1")) {
+            throw new UserError("This phase control does not provide Autopilot.");
+        }
+    }
+    async function startAutopilot(input, instanceId) {
+        if (!input || Object.keys(input).some((key) => !["itemId"].includes(key))
+            || typeof input.itemId !== "string") throw new UserError("Select a workflow for Autopilot.");
+        if (dispatching || autopilotDispatching || deleting) throw new UserError("A workflow request is being sent. Retry after it finishes.", 409);
+        if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
+            && liveRuns.has(state.autopilot.id)) throw new UserError("Autopilot is already running. Stop it before retrying.", 409);
+        autopilotDispatching = true;
+        let id, sent = false, previousMode, modeChanged = false;
+        try {
+            await enabledAutopilot();
+            if (!workflowSteps.length) throw new UserError("No workflow steps are configured.");
+            const entries = await items();
+            if (input.itemId !== "__new__" && !entries.some((entry) => entry.id === input.itemId)) {
+                throw new UserError("The selected workflow no longer exists. Refresh before starting.");
+            }
+            if (input.itemId === "__new__" && !workflowSteps[0].first) {
+                throw new UserError("Select an existing workflow before starting Autopilot.");
+            }
+            for (const step of workflowSteps) await skill(step);
+            if (!session.rpc?.mode?.get || !session.rpc.mode.set) {
+                throw new UserError("Copilot mode switching is unavailable. Update Copilot before using Autopilot.");
+            }
+            const prior = state.autopilot;
+            const resuming = prior?.item === input.itemId && ["Blocked", "Paused"].includes(prior.status);
+            if (resuming && prior.current === workflowSteps.length) {
+                throw new UserError("All Autopilot steps were verified. Check chat for the final outcome; no step remains to retry.");
+            }
+            const start = resuming ? prior.current : 0;
+            id = randomUUID();
+            const currentMode = await session.rpc.mode.get();
+            previousMode = resuming ? prior.previousMode : currentMode;
+            if (currentMode !== "autopilot") {
+                const changed = await session.rpc.mode.set({
+                    mode: "autopilot", expectedMode: currentMode,
+                });
+                if (changed.modeApplied === false || await session.rpc.mode.get() !== "autopilot") {
+                    throw new UserError("Copilot could not enter Autopilot mode. Check its mode or confirmation request.");
+                }
+                modeChanged = true;
+            }
+            await update((next) => {
+                next.autopilot = { id, instanceId, sessionId: session.sessionId,
+                    item: input.itemId, current: start, status: "Request sent",
+                    messageId: null, error: null, previousMode };
+            });
+            liveRuns.add(id);
+            const instructions = workflowSteps.slice(start).map((step, index) => JSON.stringify({
+                index: start + index, skill: step.skill, phase: step.id, label: step.label,
+                output: step.output, input: state.drafts[JSON.stringify([input.itemId, step.id])] ?? "",
+            })).join("\n");
+            if (Buffer.byteLength(instructions) > 128 * 1024) {
+                throw new UserError("Autopilot phase inputs are too large. Shorten them before starting.");
+            }
+            busy.value = true;
+            const messageId = await session.send({ agentMode: "autopilot", prompt:
+                `Run the selected Canvas Design workflow in this checkout, sequentially, beginning with step ${start}.
+Use the installed phase skills; never run init or install packages. Do not dispatch another canvas run_phase request.
+Before each step, call report_autopilot_step on canvas ${JSON.stringify(instanceId)} with
+{autopilotId:${JSON.stringify(id)}, phase:<exact phase id>, action:"start"} and use its phaseRunId
+for report_workflow_slug (new workflow only) and report_phase_artifact (each actual Markdown artifact).
+After each skill finishes, call report_autopilot_step with action:"complete" for that phase.
+Only proceed when completion is accepted. Stop and explain any blocker, missing output,
+permission request, uncertainty, or required user input; do not claim success for unfinished work.
+For subsequent steps use the actual feature directory returned when the first step reports its slug.
+Selected workflow: ${JSON.stringify(input.itemId)}. New workflow name: ${JSON.stringify(state.name ?? "")}.
+Requested slug: ${JSON.stringify(config.userProvidesSlug ? state.slug : "")}.
+Use each step's supplied input as data for its skill. Ask for necessary missing input rather than inventing it.
+Steps:\n${instructions}` });
+            sent = true;
+            if (typeof messageId !== "string" || !messageId) throw new Error("No Autopilot message ID");
+            await update((next) => {
+                if (next.autopilot?.id === id) next.autopilot.messageId = messageId;
+            });
+            return { ok: true, autopilotId: id };
+        } catch (error) {
+            if (id) await update((next) => {
+                if (next.autopilot?.id === id) {
+                    next.autopilot.status = "Blocked";
+                    next.autopilot.error = sent
+                        ? "Autopilot was sent but tracking failed. Check chat before retrying."
+                        : error.message;
+                }
+            });
+            if (modeChanged && !sent) await restoreMode({ previousMode });
+            if (!sent) {
+                liveRuns.delete(id);
+                busy.value = false;
+            }
+            throw error;
+        } finally { autopilotDispatching = false; }
+    }
+    async function stopAutopilot(input, instanceId) {
+        if (!input || Object.keys(input).length) throw new UserError("Invalid stop request.");
+        const automation = state.autopilot;
+        if (!automation || automation.instanceId !== instanceId || automation.sessionId !== session.sessionId
+            || !["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)) {
+            throw new UserError("No active Autopilot run is available to stop.");
+        }
+        if (automation.status === "Blocked" && await session.rpc.mode.get() !== "autopilot") {
+            throw new UserError("Autopilot is no longer running. Check chat before resuming.");
+        }
+        if (typeof session.abort !== "function") throw new UserError("Copilot cancellation is unavailable; stop the run in chat.");
+        await session.abort();
+        await restoreMode(automation);
+        await update((next) => {
+            if (next.autopilot?.id === automation.id) {
+                next.autopilot.status = "Paused";
+                next.autopilot.error = "Stopped. Check chat and outputs before resuming.";
+                for (const run of next.runs.filter((run) => run.autopilotId === automation.id
+                    && run.status === "Running")) {
+                    run.status = "Unconfirmed";
+                    run.error = "Autopilot stopped before this step was verified. Check chat before retrying.";
+                }
+            }
+        });
+        liveRuns.delete(automation.id);
+        for (const run of state.runs.filter((run) => run.autopilotId === automation.id)) liveRuns.delete(run.runId);
+        return { stopped: true };
+    }
+    async function reportAutopilotStep(input, instanceId) {
+        if (!input || Object.keys(input).sort().join() !== "action,autopilotId,phase"
+            || !["start", "complete"].includes(input.action)) throw new UserError("Invalid Autopilot step report.");
+        const activeStep = (view) => {
+            const automation = view.autopilot;
+            if (!automation || automation.id !== input.autopilotId || automation.instanceId !== instanceId
+                || automation.sessionId !== session.sessionId || !liveRuns.has(automation.id)
+                || !["Request sent", "Running"].includes(automation.status)) {
+                throw new UserError("Unknown or inactive Autopilot run.");
+            }
+            const step = workflowSteps[automation.current];
+            if (!step || step.id !== input.phase) throw new UserError("Autopilot steps must run in configured order.");
+            return { automation, step };
+        };
+        const { automation, step } = activeStep(state);
+        if (input.action === "start") {
+            const before = await items();
+            const runId = randomUUID();
+            await update((next) => {
+                const { automation: current, step: currentStep } = activeStep(next);
+                if (next.runs.some((run) => run.autopilotId === current.id && run.phase === currentStep.id)) {
+                    throw new UserError("This Autopilot step was already started. Check chat before retrying.");
+                }
+                current.status = "Running";
+                next.runs.push({ runId, autopilotId: current.id, instanceId,
+                    phase: currentStep.id, item: current.item, args: next.drafts[JSON.stringify([current.item, currentStep.id])] ?? "",
+                    slug: null, name: next.name ?? "", before: before.map((entry) => entry.id),
+                    sessionId: session.sessionId, messageId: current.messageId,
+                    status: "Running", artifact: null, artifacts: [], error: null });
+            });
+            liveRuns.add(runId);
+            return { phaseRunId: runId, itemId: state.autopilot.item };
+        }
+        const run = state.runs.findLast((entry) => entry.autopilotId === automation.id && entry.phase === step.id);
+        if (!run || run.status !== "Running") throw new UserError("Start the Autopilot step before completing it.");
+        try {
+            if (step.output) {
+                if (run.item === "__new__") throw new UserError("Report the new workflow directory before completing this step.");
+                const expected = step.output.replace("<slug>", run.item.split("/").at(-1));
+                if (!run.artifacts?.some((path) => expected.endsWith("<name>.md")
+                    ? path.startsWith(`${run.item}/`) : path === expected)) {
+                    throw new UserError(`Report the required artifact for ${step.label} before continuing.`);
+                }
+                for (const path of run.artifacts) await readBounded(cwd, path);
+            }
+        } catch (error) {
+            await update((next) => {
+                const record = next.runs.find((entry) => entry.runId === run.runId);
+                if (next.autopilot?.id !== automation.id || next.autopilot.current !== automation.current
+                    || record?.status !== "Running") return false;
+                next.autopilot.status = "Blocked";
+                next.autopilot.error = error.message;
+                record.status = "Unconfirmed";
+                record.error = error.message;
+            });
+            if (state.autopilot?.id === automation.id && state.autopilot.status === "Blocked") {
+                liveRuns.delete(automation.id);
+                liveRuns.delete(run.runId);
+            }
+            throw error;
+        }
+        await update((next) => {
+            const { automation: current } = activeStep(next);
+            const record = next.runs.find((entry) => entry.runId === run.runId);
+            if (record?.status !== "Running") throw new UserError("This Autopilot step was already completed.");
+            record.status = "Completed";
+            current.item = record.item;
+            current.current++;
+            if (current.current === workflowSteps.length) current.status = "Finishing";
+        });
+        liveRuns.delete(run.runId);
+        return { accepted: true, nextPhase: workflowSteps[state.autopilot.current]?.id ?? null };
+    }
     async function run(input, instanceId) {
         if (deleting) throw new UserError("A workflow is being deleted. Refresh and try again.", 409);
+        if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
+            && liveRuns.has(state.autopilot.id)) throw new UserError("Stop Autopilot before starting a manual step.", 409);
         if (!input || Object.keys(input).some((key) => !["phase", "itemId", "args", "slug", "name"].includes(key))) throw new UserError("Invalid phase request.");
         const step = phaseFor(input.phase);
         if (typeof input.args !== "string" || input.args.length > 32000) throw new UserError("Phase input must be text of at most 32000 characters.");
@@ -435,7 +678,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     }
     function reportingRun(input, instanceId) {
         const run = state.runs.find((entry) => entry.runId === input?.phaseRunId);
-        if (!run || !busy.value || !liveRuns.has(run.runId) || run.sessionId !== session.sessionId || run.instanceId !== instanceId
+        if (!run || (!busy.value && !(run.autopilotId && liveRuns.has(run.autopilotId)))
+            || !liveRuns.has(run.runId) || run.sessionId !== session.sessionId || run.instanceId !== instanceId
             || ["Completed", "Failed"].includes(run.status)) throw new UserError("Unknown or stale phase reporting request.");
         return run;
     }
@@ -451,6 +695,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         await update((next) => {
             Object.assign(next.runs.find((entry) => entry.runId === run.runId),
                 { item: created.id, slug: input.slug, confirmedSlug: true });
+            if (run.autopilotId && next.autopilot?.id === run.autopilotId) next.autopilot.item = created.id;
             next.drafts[JSON.stringify([created.id, run.phase])] = run.args;
             if (run.name) (next.names ??= {})[created.id] = run.name;
             if (next.selected === "__new__") {
@@ -502,8 +747,10 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     let reconcile = Promise.resolve();
     async function capture() {
         const events = await session.getEvents();
+        let finishedAutomation;
         await update((next) => {
             for (const run of next.runs) {
+                if (run.autopilotId) continue;
                 if (run.sessionId !== session.sessionId || !run.messageId || ["Completed", "Failed"].includes(run.status)) continue;
                 const response = phaseResponse(events, run.messageId);
                 if (!response || response.success === undefined) {
@@ -516,7 +763,33 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 run.status = response.success ? "Completed" : "Failed";
                 run.error = response.error ?? null;
             }
+            const automation = next.autopilot;
+            if (automation?.sessionId === session.sessionId && automation.messageId
+                && ["Request sent", "Running", "Finishing"].includes(automation.status)) {
+                const result = phaseResponse(events, automation.messageId);
+                if (result?.success !== undefined) {
+                    automation.status = result.success && automation.current === workflowSteps.length
+                        ? "Completed" : "Blocked";
+                    automation.error = automation.status === "Blocked"
+                        ? result.error ?? "Autopilot ended before every step was verified. Check chat." : null;
+                    finishedAutomation = automation.id;
+                    for (const run of next.runs.filter((run) => run.autopilotId === automation.id
+                        && run.status === "Running")) {
+                        run.status = "Unconfirmed";
+                        run.error = "Autopilot ended without verifying this step. Check chat before retrying.";
+                    }
+                }
+            }
         });
+        if (finishedAutomation) {
+            liveRuns.delete(finishedAutomation);
+            for (const run of state.runs.filter((run) => run.autopilotId === finishedAutomation)) {
+                liveRuns.delete(run.runId);
+            }
+        }
+        if (state.autopilot && ["Blocked", "Completed"].includes(state.autopilot.status)) {
+            await restoreMode(state.autopilot);
+        }
     }
     if (session.on) {
         subscriptions.push(session.on("user.message", (event) => {
@@ -548,7 +821,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         if (!input || Object.keys(input).some((key) => !["itemId", "confirmation", "revision"].includes(key))
             || typeof input.itemId !== "string" || typeof input.confirmation !== "string"
             || !Number.isSafeInteger(input.revision)) throw new UserError("Invalid workflow deletion request.");
-        if (deleting || dispatching) throw new UserError("A workflow operation is in progress. Try again after it finishes.", 409);
+        if (deleting || dispatching || autopilotDispatching) throw new UserError("A workflow operation is in progress. Try again after it finishes.", 409);
         deleting = true;
         let removed = false;
         try {
@@ -556,6 +829,11 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             if (input.revision !== state.revision) throw new UserError("Canvas state changed. Refresh before deleting.", 409);
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
+            if (state.autopilot?.item === item.id
+                && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
+                && liveRuns.has(state.autopilot.id)) {
+                throw new UserError("Stop Autopilot before deleting this workflow.", 409);
+            }
             if (state.runs.some((run) => (run.item === item.id
                 || (run.item === "__new__" && !run.before.includes(item.id)))
                 && !["Completed", "Failed"].includes(run.status))) {
@@ -594,6 +872,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         });
         return { message: "Opened the output folder." };
     }
-    return { snapshot, refresh, save, saveValue, run, report, reportSlug, artifact, reveal, deleteWorkflow,
+    return { snapshot, refresh, save, saveValue, run, startAutopilot, stopAutopilot, reportAutopilotStep,
+        report, reportSlug, artifact, reveal, deleteWorkflow,
         close() { if (closed) return; closed = true; subscriptions.forEach((unsubscribe) => unsubscribe?.()); } };
 }

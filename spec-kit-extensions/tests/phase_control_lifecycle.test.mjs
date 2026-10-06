@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as stock from "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs";
-import * as vertical from "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/phase-adapter.mjs";
+import * as vertical from "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs";
 import { phaseControlDom } from "./phase_control_dom_fixture.mjs";
 
 const phases = [
@@ -20,7 +20,8 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         globalThis.document = dom.document;
         t.after(() => { globalThis.document = previousDocument; });
         const calls = [];
-        const actions = Object.fromEntries(["select", "draft", "run", "view", "reveal", "error"]
+        const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt", "viewAt",
+            "startManagedRun", "stopManagedRun", "reveal", "error"]
             .map((action) => [action, (...args) => { calls.push([action, ...args]); }]));
         const initial = name === "stock" ? {
             ...state, phases: [], current: -1, output: null,
@@ -50,30 +51,38 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         assert.equal(updatedDraft.value, "typed but not yet saved");
         assert.equal(updatedDraft.selectionStart, 5);
         assert.equal(dom.root.querySelector(".phase-notice").textContent, "Completed");
-        const view = dom.root.querySelector(name === "stock" ? "#view-artifact" : '[data-action="view"]');
-        if (view) assert.equal(view.hidden, false);
-        else assert.match(dom.root.innerHTML, /data-action="view" type="button"\s*>View artifact/);
+        const view = dom.root.querySelector(name === "stock" ? "#view-artifact" : '[data-action="view-row"]');
+        if (name === "stock") assert.equal(view.hidden, false);
+        else assert.match(dom.root.innerHTML, /data-action="view-row"/);
         dom.root.querySelectorAll("[data-phase-index]")[0].focus();
         control.update({ ...state, status: { status: "Completed" } });
         assert.equal(dom.document.activeElement,
             dom.root.querySelectorAll("[data-phase-index]")[0]);
+        if (name === "vertical") {
+            const secondStart = dom.root.querySelector('[data-action="start"][data-index="1"]');
+            secondStart.focus();
+            control.update(state);
+            assert.equal(dom.document.activeElement,
+                dom.root.querySelector('[data-action="start"][data-index="1"]'));
+        }
 
         dom.root.dispatch("click", dom.root.querySelectorAll("[data-phase-index]")[1]);
         const input = dom.root.querySelector(name === "stock" ? "#phase-args" : "[data-phase-draft]");
         input.value = "run this";
         dom.root.dispatch("input", input);
-        dom.root.dispatch("click", dom.root.querySelector(name === "stock" ? "#run-phase" : '[data-action="run"]'));
+        dom.root.dispatch("click", dom.root.querySelector(name === "stock" ? "#run-phase" : '[data-action="start"]'));
         if (name === "stock") {
             dom.root.dispatch("click", dom.root.querySelector("#view-artifact"));
             dom.root.dispatch("click", dom.root.querySelector("#browse-output-folder"));
         } else {
-            for (const action of ["view", "reveal"])
+            for (const action of ["view-row", "reveal"])
                 dom.root.dispatch("click", dom.root.querySelector(`[data-action="${action}"]`));
         }
-        assert.deepEqual(calls.map(([action]) => action),
-            ["select", "draft", "run", "view", "reveal"]);
+        assert.deepEqual(calls.map(([action]) => action), name === "stock"
+            ? ["select", "draft", "run", "view", "reveal"]
+            : ["select", "draft", "runAt", "reveal"]);
         assert.deepEqual(calls[0], ["select", 1]);
-        assert.deepEqual(calls[2], ["run", "run this"]);
+        assert.deepEqual(calls[2], name === "stock" ? ["run", "run this"] : ["runAt", 0]);
         if (name === "stock") {
             control.update({ ...state, outputLinks: [
                 { template: "specs/<slug>/spec.md", label: "specs/demo/spec.md" },
@@ -84,8 +93,8 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
             dom.root.dispatch("click", link);
             assert.deepEqual(calls.at(-1), ["view", "specs/<slug>/spec.md"]);
         }
-        actions.run = () => Promise.reject(new Error("run failed"));
-        dom.root.dispatch("click", dom.root.querySelector(name === "stock" ? "#run-phase" : '[data-action="run"]'));
+        actions[name === "stock" ? "run" : "runAt"] = () => Promise.reject(new Error("run failed"));
+        dom.root.dispatch("click", dom.root.querySelector(name === "stock" ? "#run-phase" : '[data-action="start"]'));
         await new Promise((resolve) => setImmediate(resolve));
         assert.deepEqual(calls.at(-1).slice(0, 1), ["error"]);
         assert.match(calls.at(-1)[1].message, /run failed/);
