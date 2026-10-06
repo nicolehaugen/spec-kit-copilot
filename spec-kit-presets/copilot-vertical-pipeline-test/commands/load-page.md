@@ -1,10 +1,10 @@
-<!-- speckit:vertical-pipeline-test v1 -->
+<!-- speckit:vertical-pipeline-test v2 -->
 ## Additional Canvas Design templates
 
-- `generated-pipeline` — `generated.pipeline-renderer`, `replace`
+- `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
 
-## Vertical pipeline registration
+## Vertical phase control registration
 
-Resolve the winning `generated-pipeline` along with the base Workflow definition
-before opening Designer. Generate packages the winning module; do not load this
-preset from the generated canvas.
+Resolve the winning `generated-phase-adapter` along with the
+`generated-phase-control` definition before opening Designer. Generate packages
+the winning module; do not load this preset from the generated canvas.

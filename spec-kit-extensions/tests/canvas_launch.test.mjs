@@ -26,6 +26,9 @@ test("generated skill declarations include appended pages and templates anywhere
     const names = declarations(appended).map((entry) => entry.name);
     assert.ok(names.includes("designer-essentials"));
     assert.ok(names.includes("designer-essentials-description"));
+    assert.ok(names.includes("generated-phase-placement"));
+    assert.ok(names.includes("generated-phase-control"));
+    assert.ok(names.includes("generated-phase-adapter"));
     assert.ok(names.includes("sample-renderer"));
     assert.ok(names.includes("sample-page"));
     assert.throws(() => declarations(`${appended}\n## Additional Canvas Design templates\n- \`sample-page\` — \`generated.computed-value-provider\`, \`replace\``),
@@ -34,7 +37,7 @@ test("generated skill declarations include appended pages and templates anywhere
         /Invalid Canvas Design kind or strategy/);
     assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`bad\` — \`generated.added-page-renderer\`, \`replace\`, \`append\``),
         /Invalid Canvas Design kind or strategy/);
-    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`con\` — \`generated.pipeline-renderer\`, \`replace\``),
+    assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`con\` — \`generated.phase-control-adapter\`, \`replace\``),
         /Invalid Canvas Design registration/);
 });
 
@@ -58,28 +61,30 @@ test("composed verification resolves every name, rejects warnings and native scr
     const paths = {
         "sample-page": join(preset, "pages", "sample.json"),
         "sample-renderer": join(preset, "pages", "renderer.mjs"),
-        "designer-essentials": join(installed, "designer", "tabs", "essentials.json"),
-        "designer-artifacts": join(installed, "designer", "tabs", "artifacts.json"),
-        "designer-appearance": join(installed, "designer", "tabs", "appearance.json"),
-        "designer-essentials-description": join(installed, "designer", "essentials-settings", "description.json"),
-        "designer-essentials-workflow-heading": join(installed, "designer", "essentials-settings", "workflow-heading.json"),
-        "designer-essentials-custom-slug": join(installed, "designer", "essentials-settings", "custom-slug.json"),
-        "designer-essentials-header-logo": join(installed, "designer", "essentials-settings", "header-logo.json"),
-        "designer-essentials-main-page-logo": join(installed, "designer", "essentials-settings", "main-page-logo.json"),
+        "designer-essentials": join(installed, "designer-host", "tabs", "essentials.json"),
+        "designer-artifacts": join(installed, "designer-host", "tabs", "artifacts.json"),
+        "designer-appearance": join(installed, "designer-host", "tabs", "appearance.json"),
+        "designer-essentials-description": join(installed, "designer-host", "essentials-settings", "description.json"),
+        "designer-essentials-workflow-heading": join(installed, "designer-host", "essentials-settings", "workflow-heading.json"),
+        "designer-essentials-custom-slug": join(installed, "designer-host", "essentials-settings", "custom-slug.json"),
+        "designer-essentials-header-logo": join(installed, "designer-host", "essentials-settings", "header-logo.json"),
+        "designer-essentials-main-page-logo": join(installed, "designer-host", "essentials-settings", "main-page-logo.json"),
         ...Object.fromEntries(["light", "dark"].flatMap((mode) =>
             ["accent", "background", "surface", "secondary", "text"].map((color) =>
                 [`designer-appearance-${mode}-${color}`,
-                    join(installed, "designer", "appearance-settings", `${mode}-${color}.json`)]))),
-        "generated-workflow": join(installed, "generated", "pages", "workflow.json"),
-        "generated-pipeline": join(installed, "generated", "pages", "generated-pipeline.mjs"),
-        "shared-controls-image": join(installed, "controls", "stock-image", "control.json"),
-        "designer-control-adapter-image": join(installed, "controls", "stock-image", "designer.mjs"),
-        "generated-control-adapter-image": join(installed, "controls", "stock-image", "generated.mjs"),
-        "shared-controls-text": join(installed, "controls", "stock-text", "control.json"),
-        "designer-control-adapter-text": join(installed, "controls", "stock-text", "designer.mjs"),
-        "generated-control-adapter-text": join(installed, "controls", "stock-text", "generated.mjs"),
-        "shared-controls-checkbox": join(installed, "controls", "stock-checkbox", "control.json"),
-        "designer-control-adapter-checkbox": join(installed, "controls", "stock-checkbox", "designer.mjs"),
+                    join(installed, "designer-host", "appearance-settings", `${mode}-${color}.json`)]))),
+        "generated-workflow": join(installed, "generated-host", "workflow", "workflow.json"),
+        "generated-phase-placement": join(installed, "generated-host", "workflow", "generated-phase-placement.json"),
+        "generated-phase-control": join(installed, "generated-host", "phase-control", "phase-control.json"),
+        "generated-phase-adapter": join(installed, "generated-host", "phase-control", "generated-phase-adapter.mjs"),
+        "shared-controls-image": join(installed, "shared-controls", "stock-image", "control.json"),
+        "designer-control-adapter-image": join(installed, "shared-controls", "stock-image", "designer.mjs"),
+        "generated-control-adapter-image": join(installed, "shared-controls", "stock-image", "generated.mjs"),
+        "shared-controls-text": join(installed, "shared-controls", "stock-text", "control.json"),
+        "designer-control-adapter-text": join(installed, "shared-controls", "stock-text", "designer.mjs"),
+        "generated-control-adapter-text": join(installed, "shared-controls", "stock-text", "generated.mjs"),
+        "shared-controls-checkbox": join(installed, "shared-controls", "stock-checkbox", "control.json"),
+        "designer-control-adapter-checkbox": join(installed, "shared-controls", "stock-checkbox", "designer.mjs"),
     };
     const stockTemplateCount = declarations(base).filter((entry) => entry.kind !== "designer.tab-definition").length;
     const minimalBase = base.replace(/## Canvas Design templates[\s\S]*?(?=## Steps)/, "");

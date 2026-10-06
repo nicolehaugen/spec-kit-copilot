@@ -4,7 +4,7 @@ import { test, expect } from "./playwright.mjs";
 const ui = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/ui/",
     import.meta.url);
 const extension = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
-const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design/controls/",
+const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design/shared-controls/",
     import.meta.url);
 
 async function openDesigner(page, fields, extraPage, warnings = []) {
@@ -57,7 +57,7 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
         } else if (path === "/adapters/designer-control-adapter-text.mjs"
             || path === "/adapters/designer-control-adapter-checkbox.mjs") {
             const name = path.includes("checkbox") ? "stock-checkbox" : "stock-text";
-            await route.fulfill({ body: await readFile(new URL(`controls/${name}/designer.mjs`, extension)),
+            await route.fulfill({ body: await readFile(new URL(`shared-controls/${name}/designer.mjs`, extension)),
                 contentType: "text/javascript" });
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css") {
             const file = path === "/" ? "index.html" : path.slice(4);

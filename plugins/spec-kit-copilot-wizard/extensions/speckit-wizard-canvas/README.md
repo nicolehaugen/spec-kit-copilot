@@ -285,7 +285,10 @@ addition to) the hosted registry entry:
   preset page/template names before opening Designer. This ordering applies
   only to Designer launch, not the Wizard's Catalogs install actions or a
   generated canvas opened independently as a standard plugin.
-- Before installing, the child runs a read-only preflight that checks the
+- Before installing, the child prepares the session-root handoff: it accepts
+  the exact launch-hashed bytes or strips one trailing LF/CRLF only when the
+  remaining bytes match the launch hash. Other changes fail without rewriting
+  the file. The subsequent read-only preflight checks the
   session-root handoff bytes against the hash in the launch prompt, as well as
   Specify CLI version, project setup, and approved local paths and manifest
   IDs. The child writes the exact UTF-8 JSON from the prompt without a
@@ -305,6 +308,11 @@ addition to) the hosted registry entry:
   as a local development override. The CLI inventory does not preserve the
   download URL, so the child uses the frozen URL for installation and restores
   it after bundles before verifying the base again.
+  For hosted Canvas Design, `verify-base` also requires the installed Workflow,
+  phase-placement, phase-control, and phase-adapter template registrations and
+  files; a compatible schema contract alone is insufficient. If they are
+  missing, launch stops before Designer opens and directs the user to an
+  approved local-source override instead of treating the hosted package as ready.
   An approved local source may have a different version but must declare a
   compatible Designer tab schema version.
 - Newer Canvas Design packages run a read-only verifier over the **generated,

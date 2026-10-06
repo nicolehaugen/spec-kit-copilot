@@ -16,8 +16,6 @@ const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "control-cont
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
-const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
-    "pages", "constitution", "message", "pipeline"];
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
@@ -239,17 +237,21 @@ const imageFile = (item) => `${item.page
 }[item.mime]}`;
 
 function frozenWorkflowPage(page) {
-    if (!page || Object.keys(page).sort().join() !== "assets,id,pipeline,regions"
-        || page.id !== "workflow" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.pipeline)
-        || isWindowsDeviceName(page.pipeline)
-        || !Array.isArray(page.regions) || page.regions.length !== WORKFLOW_REGIONS.length
-        || new Set(page.regions).size !== WORKFLOW_REGIONS.length
-        || page.regions.some((region) => !WORKFLOW_REGIONS.includes(region))
-        || !Array.isArray(page.assets) || page.assets.length !== 2
+    if (!page || Object.keys(page).sort().join() !== "assets,id,order,slots,title"
+        || page.id !== "workflow" || page.order !== 0
+        || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
+        || !Array.isArray(page.slots) || !page.slots.some((slot) => slot?.id === "workflow.phases")
+        || page.slots.length > 30
+        || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
+        || page.slots.some((slot) => !slot || Object.keys(slot).join() !== "id"
+            || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))
+        || !Array.isArray(page.assets) || page.assets.length !== 3
         || page.assets[0]?.name !== "generated-workflow"
         || page.assets[0]?.kind !== "generated.workflow-page-definition"
-        || page.assets[1]?.name !== page.pipeline
-        || page.assets[1]?.kind !== "generated.pipeline-renderer"
+        || page.assets[1]?.name !== "generated-phase-control"
+        || page.assets[1]?.kind !== "generated.phase-control-definition"
+        || page.assets[2]?.name !== "generated-phase-adapter"
+        || page.assets[2]?.kind !== "generated.phase-control-adapter"
         || page.assets.some((asset) => !asset || typeof asset !== "object"
             || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
             || typeof asset.sourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
@@ -262,26 +264,59 @@ function frozenWorkflowPage(page) {
     let definition;
     try { definition = withoutSchema(JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid frozen Workflow page definition"); }
-    if (!definition || Object.keys(definition).sort().join() !== "id,pipeline,regions,schemaVersion"
+    if (!definition || Object.keys(definition).sort().join() !== "id,order,schemaVersion,slots,title"
         || definition.schemaVersion !== 1 || definition.id !== page.id
-        || definition.pipeline !== page.pipeline
-        || JSON.stringify(definition.regions) !== JSON.stringify(page.regions)) {
+        || definition.title !== page.title || definition.order !== page.order
+        || JSON.stringify(definition.slots) !== JSON.stringify(page.slots)) {
         throw new Error("Frozen Workflow page definition differs from registration");
     }
-    const module = Buffer.from(page.assets[1].content, "base64").toString("utf8");
+    let control;
+    try { control = withoutSchema(JSON.parse(Buffer.from(page.assets[1].content, "base64").toString("utf8"))); }
+    catch { throw new Error("Invalid frozen phase control definition"); }
+    if (!control || Object.keys(control).sort().join() !== "adapter,id,schemaVersion"
+        || control.schemaVersion !== 1 || control.id !== "workflow-phases"
+        || control.adapter !== page.assets[2].name) {
+        throw new Error("Invalid frozen phase control definition");
+    }
+    const module = Buffer.from(page.assets[2].content, "base64").toString("utf8");
     const check = spawnSync("node", ["--check", "--input-type=module"],
         { input: module, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
     if (check.error || check.status !== 0) {
-        throw new Error(`Invalid frozen pipeline renderer: ${check.stderr || check.error || "module validation failed"}`);
+        throw new Error(`Invalid frozen phase control adapter: ${check.stderr || check.error || "module validation failed"}`);
     }
-    return { regions: page.regions, pipeline: page.pipeline,
-        definitionHash: page.assets[0].hash, hash: page.assets[1].hash };
+    return { title: page.title, order: page.order, slots: page.slots,
+        phaseControl: page.assets[1].name,
+        adapter: control.adapter, definitionHash: page.assets[0].hash,
+        controlHash: page.assets[1].hash, hash: page.assets[2].hash };
+}
+
+function frozenPlacement(item, kind) {
+    if (!item || !Array.isArray(item.assets) || item.assets.length !== 1
+        || !item.assets[0] || item.assets[0].kind !== kind
+        || item.assets[0].name !== item.id
+        || typeof item.assets[0].sourceId !== "string"
+        || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.assets[0].sourceId)
+        || typeof item.assets[0].content !== "string"
+        || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.assets[0].content)
+        || Buffer.from(item.assets[0].content, "base64").length > 32 * 1024
+        || createHash("sha256").update(Buffer.from(item.assets[0].content, "base64")).digest("hex")
+            !== item.assets[0].hash) throw new Error(`Invalid frozen ${kind} asset`);
+    let definition;
+    try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
+    catch { throw new Error(`Invalid frozen ${kind} definition`); }
+    const { assets, label, control, ...registration } = item;
+    if (!isDeepStrictEqual(definition, { schemaVersion: 1, ...registration,
+        ...(definition.control === undefined ? {} : { control }) })) {
+        throw new Error(`Frozen ${kind} differs from registration`);
+    }
+    return { ...registration, ...(control === undefined ? {} : { control }), hash: assets[0].hash };
 }
 
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
         generatedPages, generatedControls, generatedAssets, generatedImageControl,
-        generatedTextControl, generatedTextPlacements, controlAssets, valueSources, workflowPage } = request;
+        generatedTextControl, generatedTextPlacements, controlAssets, valueSources, workflowPage,
+        phasePlacement, fieldPlacements, designerFields } = request;
     validateFrozenValues(values, fieldConstraints);
     const appearance = {};
     for (const [mode, suffix] of [["light", "Light"], ["dark", "Dark"]]) {
@@ -299,6 +334,11 @@ function configuration(request) {
         if (Object.keys(colors).length) appearance[mode] = colors;
     }
     const workflowLayout = frozenWorkflowPage(workflowPage);
+    const phase = frozenPlacement(phasePlacement, "generated.phase-control-placement");
+    if (phase.id !== "generated-phase-placement" || phase.page !== "workflow"
+        || phase.slot !== "workflow.phases" || phase.control !== workflowLayout.phaseControl) {
+        throw new Error("Invalid required phase placement");
+    }
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -437,6 +477,15 @@ function configuration(request) {
     if (frozenIds.size !== Object.keys(fieldConstraints).length + (valueSources?.length ?? 0)) {
         throw new Error("Frozen value source collides with a Designer field");
     }
+    if (designerFields !== undefined && (!Array.isArray(designerFields)
+        || designerFields.length > 100 || new Set(designerFields.map((item) => item?.id)).size !== designerFields.length
+        || designerFields.some((item) => !item || !fieldPattern.test(item.id)
+            || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+            || typeof item.control !== "string"
+            || !/^(?:stock\.(?:text|checkbox|image)|[a-z][a-z0-9-]{0,79})$/.test(item.control)
+            || !Object.hasOwn(fieldConstraints, item.id)))) {
+        throw new Error("Invalid frozen Designer field registry");
+    }
     const generatedIds = new Set([
         ...(generatedFields ?? []).map((item) => item.id),
         ...(valueSources ?? []).map((item) => item?.id),
@@ -515,13 +564,15 @@ function configuration(request) {
     }
     for (const page of generatedPages ?? []) {
         if (!page || typeof page !== "object" || Array.isArray(page)
-            || Object.keys(page).some((key) => !["assets", "id", "renderer", "title", "values", "slots"].includes(key))
+            || Object.keys(page).some((key) => !["assets", "id", "renderer", "title", "order", "values", "slots"].includes(key))
             || typeof page.id !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.id)
             || page.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(page.id)
             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
-            || page.renderer === workflowLayout.pipeline
+            || page.renderer === workflowLayout.adapter
             || isWindowsDeviceName(page.renderer)
             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
+            || (page.order !== undefined && (!Number.isInteger(page.order)
+                || page.order < -100000 || page.order > 100000))
             || (page.values !== undefined && (!Array.isArray(page.values)
                 || page.values.length > 100 || new Set(page.values).size !== page.values.length
                 || page.values.some((id) => !generatedIds.has(id))))
@@ -549,9 +600,10 @@ function configuration(request) {
         try { definition = withoutSchema(JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8"))); }
         catch { throw new Error(`${page.id}: invalid frozen generated page definition`); }
         if (!definition || Object.keys(definition).some((key) =>
-            !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
+            !["id", "renderer", "schemaVersion", "title", "order", "values", "slots"].includes(key))
             || definition.schemaVersion !== 1 || definition.id !== page.id
             || definition.renderer !== page.renderer || definition.title !== page.title
+            || definition.order !== page.order
             || JSON.stringify(definition.values) !== JSON.stringify(page.values)
             || JSON.stringify(definition.slots) !== JSON.stringify(page.slots)) {
             throw new Error(`${page.id}: frozen generated page definition differs from registration`);
@@ -564,7 +616,7 @@ function configuration(request) {
         }
     }
     if (controlAssets !== undefined
-        && (!Array.isArray(controlAssets) || !generatedControls?.length
+        && (!Array.isArray(controlAssets) || !(generatedControls?.length || fieldPlacements?.length)
             || !controlAssets.length || controlAssets.length > 30
             || new Set(controlAssets.map((item) => item?.control)).size !== controlAssets.length)) {
         throw new Error("Invalid frozen generated control assets");
@@ -631,7 +683,66 @@ function configuration(request) {
             throw new Error(`${item.id}: incompatible frozen control value or adapters`);
         }
     }
-    if (assetsByControl.size !== new Set((generatedControls ?? []).map((item) => item.control)).size) {
+    const placements = [];
+    const placementIds = new Set();
+    const placementTargets = new Set();
+    if (fieldPlacements !== undefined && (!Array.isArray(fieldPlacements) || fieldPlacements.length > 100)) {
+        throw new Error("Invalid frozen generated field placements");
+    }
+    for (const item of fieldPlacements ?? []) {
+        const placement = frozenPlacement(item, "generated.field-placement");
+        const page = placement.page === "workflow" ? workflowPage
+            : generatedPages?.find((entry) => entry.id === placement.page);
+        const source = valueSources?.find((entry) => entry.id === placement.field);
+        const constraint = source?.schema ?? fieldConstraints[placement.field];
+        const control = placement.control ?? (constraint?.type === "string" ? "stock.text"
+            : constraint?.type === "boolean" ? "stock.checkbox"
+                : constraint?.type === "image" ? "stock.image" : null);
+        const target = `${placement.page}:${placement.slot}:${placement.field}`;
+        if (!/^[a-z][a-z0-9-]{0,79}$/.test(placement.id)
+            || placementIds.has(placement.id) || placementTargets.has(target)
+            || ["workflow", "phase-control", workflowLayout.adapter,
+                ...((generatedPages ?? []).flatMap((entry) => [entry.id, entry.renderer]))].includes(placement.id)
+            || !page?.slots?.some(({ id }) => id === placement.slot)
+            || placement.slot === "workflow.phases"
+            || !fieldPattern.test(placement.field) || !constraint
+            || source?.presentation === "processing-only"
+            || !Number.isInteger(placement.order)
+            || placement.order < -100000 || placement.order > 100000
+            || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120
+            || (source && item.label !== source.label)
+            || (!source && designerFields?.find((entry) => entry.id === placement.field)?.label !== item.label)
+            || (!source && designerFields?.find((entry) => entry.id === placement.field)?.control !== control)
+            || !control
+            || constraint.type === "object" && (!assetsByControl.has(control)
+                || !isDeepStrictEqual(assetsByControl.get(control).contract, constraint))
+            || constraint.type !== "object" && control !== ({
+                string: "stock.text", boolean: "stock.checkbox", image: "stock.image",
+            })[constraint.type]) {
+            throw new Error(`Invalid generated field placement: ${placement.id}`);
+        }
+        placementIds.add(placement.id);
+        placementTargets.add(target);
+        const image = constraint.type === "image"
+            ? generatedAssets?.find((entry) => entry.id === placement.field) : null;
+        if (constraint.type === "image" && !image && values[placement.field] !== "") {
+            throw new Error(`${placement.id}: image placement has no packaged asset for its value`);
+        }
+        placements.push({ ...placement, label: item.label, control,
+            schema: constraint, editable: source?.presentation === "stock.editable",
+            ...(!source && constraint.type !== "image" ? { value: values[placement.field] } : {}),
+            ...(image ? { asset: { file: imageFile(image), mime: image.mime, hash: image.hash } } : {}),
+            ...(assetsByControl.has(control) ? {
+                adapter: assetsByControl.get(control).assets[1].name,
+                definition: assetsByControl.get(control).assets[0].name,
+                adapterHash: assetsByControl.get(control).assets[1].hash,
+                definitionHash: assetsByControl.get(control).assets[0].hash,
+            } : {}) });
+    }
+    if (assetsByControl.size !== new Set([
+        ...(generatedControls ?? []).map((item) => item.control),
+        ...placements.map((item) => item.control).filter((id) => assetsByControl.has(id)),
+    ]).size) {
         throw new Error("Unused frozen generated control assets");
     }
     const outputs = {
@@ -647,6 +758,8 @@ function configuration(request) {
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
         ...(Object.keys(appearance).length ? { appearance } : {}),
         workflowPage: workflowLayout,
+        phasePlacement: phase,
+        ...(placements.length ? { fieldPlacements: placements } : {}),
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
         ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
         ...(pageImages.length ? { generatedPageAssets: pageImages.map((item) =>
@@ -655,7 +768,8 @@ function configuration(request) {
         ...(imageControl ? { imageControl } : {}),
         ...(textControl ? { textControl, textPlacements: generatedTextPlacements } : {}),
         ...(generatedPages?.length ? { generatedPages: generatedPages.map(({ id, title, renderer,
-            values: declared, slots }) => ({ id, title, renderer,
+            order, values: declared, slots }) => ({ id, title, renderer,
+            ...(order !== undefined ? { order } : {}),
             ...(declared ? { values: declared } : {}), ...(slots ? { slots } : {}) })) } : {}),
         ...(valueSources?.length ? { valueSources: valueSources.map(
             ({ id, label, schema, source, presentation, section, assets }) => ({
@@ -792,8 +906,20 @@ export async function materialize(project, workspace, handoffId, requestId) {
     ]);
     pageFiles.push(
         { filename: "workflow.json", bytes: Buffer.from(request.workflowPage.assets[0].content, "base64") },
-        { filename: `${request.workflowPage.pipeline}.mjs`,
-            bytes: Buffer.from(request.workflowPage.assets[1].content, "base64") });
+        { filename: "generated-phase-placement.json",
+            bytes: Buffer.from(request.phasePlacement.assets[0].content, "base64") },
+        { filename: "phase-control.json",
+            bytes: Buffer.from(request.workflowPage.assets[1].content, "base64") },
+        { filename: `${config.workflowPage.adapter}.mjs`,
+            bytes: Buffer.from(request.workflowPage.assets[2].content, "base64") });
+    for (const item of request.fieldPlacements ?? []) {
+        pageFiles.push({ filename: `${item.id}.json`, bytes: Buffer.from(item.assets[0].content, "base64") });
+    }
+    const pageFilenames = new Set();
+    for (const { filename } of pageFiles) {
+        if (pageFilenames.has(filename)) throw new Error(`Conflicting generated page asset: ${filename}`);
+        pageFilenames.add(filename);
+    }
     const controlFiles = (request.controlAssets ?? []).flatMap(({ assets }) => [
         { filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") },
         { filename: `${assets[1].name}.mjs`, bytes: Buffer.from(assets[1].content, "base64") },

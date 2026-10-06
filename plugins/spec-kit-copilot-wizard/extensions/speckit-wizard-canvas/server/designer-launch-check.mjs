@@ -1,11 +1,13 @@
 import { execFile } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
+import { HANDOFF_LIMIT, readHandoff, validateHandoffId } from "../../speckit-canvas-designer/handoff.mjs";
 import { specifySpawnOptions } from "../env/specify-invocation.mjs";
-import { readDesignerContract, validateLocalSource } from "./designer-local-sources.mjs";
+import { readDesignerContract, validateLocalSource, verifyHostedWorkflowRegistrations } from "./designer-local-sources.mjs";
 import designerCompatibility from "../../speckit-canvas-designer/designer-contract.json" with { type: "json" };
 
 const exec = promisify(execFile);
@@ -14,6 +16,53 @@ const manifestName = { presets: "preset.yml", extensions: "extension.yml" };
 function localEntries(handoff) {
     return Object.entries(manifestName).flatMap(([kind]) =>
         (handoff.localSelections?.[kind] ?? []).map((entry) => ({ ...entry, kind })));
+}
+
+export async function prepareHandoff(sessionRoot, handoffId, expectedHash) {
+    validateHandoffId(handoffId);
+    if (!/^[a-f0-9]{64}$/.test(expectedHash)) throw new Error("Invalid Designer handoff hash.");
+    const root = await realpath(sessionRoot);
+    const folder = join(root, "speckit-canvas-designer", "handoffs", handoffId);
+    const actual = await realpath(folder);
+    const rel = relative(root, actual);
+    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || actual !== folder) {
+        throw new Error("Designer handoff escapes session artifacts");
+    }
+    const path = join(folder, "handoff.json");
+    const file = await open(path, constants.O_RDWR
+        | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    try {
+        const [stat, pathStat, currentFolder] = await Promise.all([
+            file.stat(), lstat(path), realpath(folder),
+        ]);
+        if (currentFolder !== folder || !stat.isFile() || !pathStat.isFile()
+            || pathStat.isSymbolicLink() || stat.dev !== pathStat.dev || stat.ino !== pathStat.ino
+            || stat.size > HANDOFF_LIMIT + 2) {
+            throw new Error("Invalid Designer handoff file");
+        }
+        const buffer = Buffer.alloc(HANDOFF_LIMIT + 3);
+        let length = 0;
+        while (length < buffer.length) {
+            const { bytesRead } = await file.read(buffer, length, buffer.length - length, length);
+            if (!bytesRead) break;
+            length += bytesRead;
+        }
+        const digest = (value) => createHash("sha256").update(value).digest("hex");
+        if (length > HANDOFF_LIMIT + 2) throw new Error("Invalid Designer handoff file");
+        const bytes = buffer.subarray(0, length);
+        if (digest(bytes) !== expectedHash) {
+            const suffixLength = bytes.subarray(-2).equals(Buffer.from("\r\n")) ? 2
+                : bytes.at(-1) === 10 ? 1 : 0;
+            if (!suffixLength || digest(bytes.subarray(0, -suffixLength)) !== expectedHash) {
+                throw new Error("Designer handoff bytes changed; stop and relaunch.");
+            }
+            await file.truncate(bytes.length - suffixLength);
+        }
+    } finally {
+        await file.close();
+    }
+    await readHandoff(root, handoffId, undefined, expectedHash);
+    return { handoffPath: path };
 }
 
 export async function preflight(project, sessionRoot, handoffId, expectedHash, run = exec) {
@@ -100,6 +149,7 @@ export async function verifyHostedCanvasDesign(project, handoff, run = exec) {
     if (!designerCompatibility.supportedVersions.includes(contract)) {
         throw new Error(`Installed Canvas Design contract ${contract} is not supported by this Designer.`);
     }
+    await verifyHostedWorkflowRegistrations(path);
     const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
         ["extension", "list", "--json"],
         await specifySpawnOptions(child, { timeout: 10000, maxBuffer: 128 * 1024 }));
@@ -118,14 +168,16 @@ export async function verifyHostedCanvasDesign(project, handoff, run = exec) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     try {
         const [, , mode, project, root, handoffId, ...rest] = process.argv;
-        const result = mode === "preflight"
-            ? await preflight(project, root, handoffId, rest[0])
+        const result = mode === "prepare"
+            ? await prepareHandoff(root, handoffId, rest[0])
+            : mode === "preflight"
+                ? await preflight(project, root, handoffId, rest[0])
             : mode === "verify-local"
                 ? await verifyLocalInstall(project, await readHandoff(root, handoffId),
                     rest[0], rest[1])
                 : mode === "verify-base"
                     ? await verifyHostedCanvasDesign(project, await readHandoff(root, handoffId))
-                : (() => { throw new Error("Expected preflight, verify-local, or verify-base mode."); })();
+                : (() => { throw new Error("Expected prepare, preflight, verify-local, or verify-base mode."); })();
         console.log(JSON.stringify(result));
     } catch (error) {
         console.error(`Designer launch verification failed: ${error.message}`);

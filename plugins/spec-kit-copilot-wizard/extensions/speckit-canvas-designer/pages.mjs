@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { Script } from "node:vm";
 import { fingerprint } from "./handoff.mjs";
 import { validControlContract } from "./control-contract.mjs";
@@ -331,10 +332,12 @@ function validateControl(document, name) {
 function validateGeneratedPage(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "values", "slots"].includes(key))
+        || contractKeys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "order", "values", "slots"].includes(key))
         || document.schemaVersion !== 1 || document.id !== name
         || document.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(document.id)
         || typeof document.title !== "string" || !document.title.trim()
+        || (document.order !== undefined && (!Number.isInteger(document.order)
+            || document.order < -100000 || document.order > 100000))
         || document.title.length > 120 || typeof document.renderer !== "string"
         || !PAGE_PATTERN.test(document.renderer)
         || isWindowsDeviceName(document.renderer)
@@ -347,24 +350,65 @@ function validateGeneratedPage(document, name) {
             || new Set(document.slots.map((slot) => slot?.id)).size !== document.slots.length
             || document.slots.some((slot) => !slot || typeof slot !== "object"
                 || Array.isArray(slot) || Object.keys(slot).join() !== "id"
-                || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))))) {
+                || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
+                || slot.id === "workflow.phases")))) {
         throw new Error(`${name}: invalid generated page definition`);
     }
 }
 
-const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
-    "pages", "constitution", "message", "pipeline"];
 function validateWorkflowPage(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "id,pipeline,regions,schemaVersion"
+        || contractKeys(document).sort().join() !== "id,order,schemaVersion,slots,title"
         || document.schemaVersion !== 1 || document.id !== "workflow" || name !== "generated-workflow"
-        || typeof document.pipeline !== "string" || !PAGE_PATTERN.test(document.pipeline)
-        || isWindowsDeviceName(document.pipeline)
-        || !Array.isArray(document.regions) || document.regions.length !== WORKFLOW_REGIONS.length
-        || new Set(document.regions).size !== WORKFLOW_REGIONS.length
-        || document.regions.some((region) => !WORKFLOW_REGIONS.includes(region))) {
+        || typeof document.title !== "string" || !document.title.trim()
+        || document.title.length > 120 || document.order !== 0
+        || !Array.isArray(document.slots) || document.slots.length < 1 || document.slots.length > 30
+        || document.slots[0]?.id !== "workflow.phases"
+        || new Set(document.slots.map((slot) => slot?.id)).size !== document.slots.length
+        || document.slots.some((slot) => !slot || typeof slot !== "object"
+            || Array.isArray(slot) || Object.keys(slot).join() !== "id"
+            || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))) {
         throw new Error(`${name}: invalid Workflow page definition`);
+    }
+}
+
+function validatePhasePlacement(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).sort().join() !== "control,id,page,schemaVersion,slot"
+        || document.schemaVersion !== 1 || document.id !== "generated-phase-placement"
+        || document.page !== "workflow" || document.slot !== "workflow.phases"
+        || document.control !== "generated-phase-control") {
+        throw new Error(`${name}: invalid phase control placement`);
+    }
+}
+
+function validateFieldPlacement(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).some((key) =>
+            !["schemaVersion", "id", "page", "slot", "field", "order", "control"].includes(key))
+        || document.schemaVersion !== 1 || document.id !== name
+        || typeof document.page !== "string" || !PAGE_PATTERN.test(document.page)
+        || typeof document.slot !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(document.slot)
+        || document.slot === "workflow.phases"
+        || typeof document.field !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.field)
+        || !Number.isInteger(document.order) || document.order < -100000 || document.order > 100000
+        || (document.control !== undefined && (typeof document.control !== "string"
+            || !/^[a-z][a-z0-9.-]{0,79}$/.test(document.control)))) {
+        throw new Error(`${name}: invalid generated field placement`);
+    }
+}
+
+function validatePhaseControl(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).sort().join() !== "adapter,id,schemaVersion"
+        || document.schemaVersion !== 1 || document.id !== "workflow-phases"
+        || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
+        || isWindowsDeviceName(document.adapter)) {
+        throw new Error(`${name}: invalid phase control definition`);
     }
 }
 
@@ -484,7 +528,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || typeof item.sourceId !== "string"
             || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
             || !["designer.setting-definition", "generated.added-page-definition", "generated.added-page-renderer",
-                "generated.workflow-page-definition", "generated.pipeline-renderer",
+                "generated.workflow-page-definition", "generated.phase-control-definition",
+                "generated.phase-control-adapter", "generated.phase-control-placement",
+                "generated.field-placement",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                 "generated.value-definition", "generated.computed-value-provider"].includes(item.kind)
             || item.strategy !== "replace") {
@@ -493,7 +539,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         names.add(item.name);
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
-        const executable = ["generated.added-page-renderer", "generated.pipeline-renderer",
+        const executable = ["generated.added-page-renderer", "generated.phase-control-adapter",
             "designer.control-adapter", "generated.control-adapter",
             "generated.computed-value-provider"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
@@ -530,6 +576,15 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             } else if (item.kind === "generated.workflow-page-definition") {
                 validateWorkflowPage(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: Workflow page definition exceeds 32 KiB`);
+            } else if (item.kind === "generated.phase-control-definition") {
+                validatePhaseControl(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: phase control definition exceeds 32 KiB`);
+            } else if (item.kind === "generated.phase-control-placement") {
+                validatePhasePlacement(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: phase placement exceeds 32 KiB`);
+            } else if (item.kind === "generated.field-placement") {
+                validateFieldPlacement(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: field placement exceeds 32 KiB`);
             } else if (item.kind === "shared.control-definition") {
                 validateControl(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: control definition exceeds 32 KiB`);
@@ -552,7 +607,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                             ? "computed value provider" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
                 const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
-                    : item.kind === "generated.pipeline-renderer" ? "mount"
+                    : item.kind === "generated.phase-control-adapter" ? "mount"
                     : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
                 const check = spawnSync("node", ["--check", "--input-type=module"],
                     { input: document, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
@@ -563,6 +618,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (!exports.some((entry) => entry.n === requiredExport)) {
                     throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
+                }
+                if (item.kind === "generated.phase-control-adapter"
+                    && (!exports.some((entry) => entry.n === "controlId")
+                        || !exports.some((entry) => entry.n === "contractVersion"))) {
+                    throw new Error(`${item.name}: phase control adapter is missing controlId or contractVersion export`);
                 }
                 if (item.kind === "designer.control-adapter"
                     && !exports.some((entry) => entry.n === "validate")) {
@@ -608,11 +668,68 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
     if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
-    const pipelines = loaded.filter((item) => item.kind === "generated.pipeline-renderer");
-    if (pipelines.length !== 1 || pipelines[0].name !== workflowPages[0].document.pipeline) {
-        throw new Error(`${workflowPages[0].name}: missing or unreferenced generated pipeline renderer`);
+    const phasePlacements = loaded.filter((item) => item.kind === "generated.phase-control-placement");
+    if (phasePlacements.length !== 1 || phasePlacements[0].name !== "generated-phase-placement") {
+        throw new Error("Exactly one generated phase placement is required");
+    }
+    const phaseControls = loaded.filter((item) => item.kind === "generated.phase-control-definition");
+    if (phaseControls.length !== 1 || phaseControls[0].name !== phasePlacements[0].document.control) {
+        throw new Error(`${workflowPages[0].name}: missing or unreferenced phase control definition`);
+    }
+    const phaseAdapters = loaded.filter((item) => item.kind === "generated.phase-control-adapter");
+    if (phaseAdapters.length !== 1 || phaseAdapters[0].name !== phaseControls[0].document.adapter) {
+        throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
     }
     const sources = loaded.filter((entry) => entry.kind === "generated.value-definition");
+    const addedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition");
+    const fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement");
+    const placed = new Set();
+    const placementIds = new Set();
+    const placementControls = new Map();
+    for (const entry of fieldPlacements) {
+        const { page: pageId, slot, field: fieldId, control: controlId } = entry.document;
+        if (placementIds.has(entry.document.id)) {
+            throw new Error(`${entry.name}: duplicate generated field placement ID ${entry.document.id}`);
+        }
+        placementIds.add(entry.document.id);
+        const page = pageId === "workflow" ? workflowPages[0]
+            : addedPages.find((candidate) => candidate.document.id === pageId);
+        if (!page?.document.slots?.some((candidate) => candidate.id === slot)) {
+            throw new Error(`${entry.name}: unknown generated page slot ${pageId}.${slot}`);
+        }
+        const key = `${pageId}:${slot}:${fieldId}`;
+        if (placed.has(key)) throw new Error(`${entry.name}: duplicate generated field placement ${key}`);
+        placed.add(key);
+        const setting = loaded.find((candidate) =>
+            candidate.kind === "designer.setting-definition" && candidate.document.field.id === fieldId);
+        const baseField = pageEntries.filter((candidate) => !candidate.error)
+            .flatMap((candidate) => candidate.fields ?? []).find((candidate) => candidate.id === fieldId);
+        const value = sources.find((candidate) => candidate.document.id === fieldId);
+        if (!setting && !baseField && !value) {
+            throw new Error(`${entry.name}: missing generated field ${fieldId}`);
+        }
+        if (value?.document.presentation === "processing-only") {
+            throw new Error(`${entry.name}: processing-only value cannot be placed`);
+        }
+        const field = setting?.document.field ?? baseField;
+        const type = field ? field.type ?? "string" : value.document.schema.type;
+        const requiredControl = controlId ?? field?.control
+            ?? (type === "string" ? "stock.text" : type === "boolean" ? "stock.checkbox"
+                : type === "image" ? "stock.image" : undefined);
+        if (!requiredControl || type === "object" && !controlId
+            || field && controlId && controlId !== field.control) {
+            throw new Error(`${entry.name}: incompatible generated field control`);
+        }
+        const shared = loaded.find((candidate) => candidate.kind === "shared.control-definition"
+            && candidate.document.id === requiredControl);
+        if (!shared || shared.document.value.type !== type
+            || type === "object" && !field
+                && !isDeepStrictEqual(shared.document.value.properties, value.document.schema.properties)
+            || requiredControl !== "stock.checkbox" && !shared.document.adapters.generated) {
+            throw new Error(`${entry.name}: missing or incompatible shared generated control`);
+        }
+        placementControls.set(entry.name, requiredControl);
+    }
     for (const entry of sources) {
         const module = entry.document.source.kind === "computed" && entry.document.source.module;
         if (module && !loaded.some((item) => item.name === module && item.kind === "generated.computed-value-provider")) {
@@ -652,6 +769,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         occupiedAssetSlots.add(key);
     }
+    for (const entry of fieldPlacements) {
+        const { page, slot } = entry.document;
+        if (occupiedAssetSlots.has(`${page}:${slot}`)) {
+            throw new Error(`${entry.name}: generated field slot is reserved for an image asset`);
+        }
+    }
     const occupiedTextSlots = new Set();
     for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition"
         && item.document.generatedBinding?.presentation === "text")) {
@@ -669,7 +792,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         const pageFields = pageEntries.filter((page) => !page.error)
             .flatMap((page) => page.fields ?? [])
             .filter((field) => field.control === control.document.id);
-        if ((!fields.length && !pageFields.length
+        const placedFields = fieldPlacements.filter((entry) =>
+            entry.document.control === control.document.id);
+        if ((!fields.length && !pageFields.length && !placedFields.length
             && !["stock.text", "stock.checkbox"].includes(control.document.id))
             || controls.some((other) => other !== control
             && other.document.id === control.document.id)) {
@@ -735,7 +860,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         sections.set(section.id, section.title);
     }
-    return { loaded, ordered, controls };
+    return { loaded, ordered, controls, placementControls };
 }
 
 async function context(project) {
@@ -839,7 +964,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
-    const { loaded, ordered, controls } = await loadTemplates(
+    const { loaded, ordered, controls, placementControls } = await loadTemplates(
         templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
@@ -847,6 +972,13 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
     model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
+    const phasePlacement = loaded.find((entry) => entry.kind === "generated.phase-control-placement");
+    model.phasePlacement = { name: phasePlacement.name, ...phasePlacement.document };
+    model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
+        .map(({ name, sourceId, document }) =>
+            ({ name, sourceId, ...document, control: placementControls.get(name) }))
+        .sort((a, b) => a.order - b.order || a.sourceId.localeCompare(b.sourceId)
+            || a.id.localeCompare(b.id));
     model.valueSources = loaded.filter((entry) => entry.kind === "generated.value-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.controls = controls.map(({ name, document }) => ({ ...document, template: name }));
@@ -876,6 +1008,13 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
                     : field.type === "object" ? null : "";
             }
         }
+    }
+    for (const placement of model.fieldPlacements) {
+        const field = model.pages.flatMap((page) => page.fields ?? [])
+            .find((entry) => entry.id === placement.field);
+        placement.label = field?.label ?? model.valueSources.find((entry) =>
+            entry.id === placement.field)?.label;
+        if (!placement.label) throw new Error(`${placement.name}: missing resolved field label`);
     }
     model.templates = loaded.map(({ name, path, hash, sourceId, kind, strategy }) =>
         ({ name, path, hash, sourceId, kind, strategy }));

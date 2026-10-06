@@ -6,16 +6,23 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test, expect } from "./playwright.mjs";
 
-const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated/pages/", import.meta.url);
+const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/workflow/", import.meta.url);
+const phaseControlSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/phase-control/", import.meta.url);
 const scaffoldSource = new URL("../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/", import.meta.url);
 const workflowDefinition = await readFile(new URL("workflow.json", workflowSource));
-const pipelineModule = await readFile(new URL("generated-pipeline.mjs", workflowSource));
+const phasePlacementDefinition = await readFile(new URL("generated-phase-placement.json", workflowSource));
+const phaseControlDefinition = await readFile(new URL("phase-control.json", phaseControlSource));
+const phaseAdapter = await readFile(new URL("generated-phase-adapter.mjs", phaseControlSource));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const workflowPage = { pipeline: "generated-pipeline",
-    regions: JSON.parse(workflowDefinition).regions,
-    definitionHash: digest(workflowDefinition), hash: digest(pipelineModule) };
+const { title, order, slots } = JSON.parse(workflowDefinition);
+const workflowPage = { title, order, slots, phaseControl: "generated-phase-control",
+    adapter: "generated-phase-adapter", definitionHash: digest(workflowDefinition),
+    controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter) };
+const phasePlacement = { id: "generated-phase-placement", page: "workflow",
+    slot: "workflow.phases", control: "generated-phase-control",
+    hash: digest(phasePlacementDefinition) };
 
-test("pipeline actions report connecting before the first state refresh", async ({ page }) => {
+test("phase actions report connecting before the first state refresh", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     let releaseState;
     const waiting = new Promise((resolve) => { releaseState = resolve; });
@@ -26,7 +33,8 @@ test("pipeline actions report connecting before the first state refresh", async 
         });
         await page.goto(canvas.url, { waitUntil: "commit" });
         await expect(page.locator("#run-phase")).toBeVisible();
-        for (const selector of ["#run-phase", "#browse-output-folder", '[data-phase-index="1"]']) {
+        await expect(page.locator("#browse-output-folder")).toBeDisabled();
+        for (const selector of ["#run-phase", '[data-phase-index="1"]']) {
             await page.locator(selector).click();
             await expect(page.locator("#canvas-message")).toHaveText(
                 "The canvas is connecting. Use Refresh to try again.");
@@ -38,115 +46,79 @@ test("pipeline actions report connecting before the first state refresh", async 
     }
 });
 
-test("vertical pipeline replacement keeps phase navigation and host run actions", async ({ page }) => {
+test("vertical phase adapter keeps navigation and host run actions", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
     try {
         const vertical = await readFile(new URL(
-            "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/pipeline.mjs", import.meta.url));
-        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/phase-adapter.mjs", import.meta.url));
+        await page.route("**/pages/generated-phase-adapter.mjs*", (route) => route.fulfill({
             contentType: "text/javascript", body: vertical,
         }));
         await page.goto(canvas.url);
         await expect(page.locator(".vertical-phase-list [data-phase-index]")).toHaveCount(2);
         await page.locator('.vertical-phase-list [data-phase-index="1"]').click();
-        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
-        await expect(page.locator("#run-phase")).toBeVisible();
-        await page.locator("#previous-phase").click();
-        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
-        await page.locator("#phase-args").fill("Vertical proof");
-        await page.locator("#run-phase").click();
-        await expect(page.locator("#run-phase")).toBeVisible();
+        await expect(page.locator(".phase-card h2")).toHaveText("Plan");
+        await expect(page.locator('[data-action="run"]')).toBeVisible();
+        await page.locator('[data-action="previous"]').click();
+        await expect(page.locator(".phase-card h2")).toHaveText("Specify");
+        await page.locator("[data-phase-draft]").fill("Vertical proof");
+        await page.locator('[data-action="run"]').click();
+        await expect(page.locator('[data-action="run"]')).toBeVisible();
         await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
     } finally { await canvas.close(); }
 });
 
-for (const [scenario, module] of [
-    ["missing phase card", `export function mount({root, phases}) {
-        const nav = document.createElement("nav");
-        nav.id = "phase-navigation";
-        const steps = phases.map((_, index) => {
-            const button = document.createElement("button");
-            button.dataset.phaseIndex = String(index);
-            nav.append(button);
-            return button;
-        });
-        root.replaceChildren(nav);
-        return { steps };
-    }`],
-    ["non-element steps", `export function mount() { return { steps: [null, null] }; }`],
+for (const [scenario, module, error] of [
+    ["wrong control identity", `export const controlId = "wrong";
+        export const contractVersion = 1; export function mount() {}`, "Incompatible phase control adapter"],
+    ["wrong contract version", `export const controlId = "workflow-phases";
+        export const contractVersion = 2; export function mount() {}`, "Incompatible phase control adapter"],
+    ["missing mount function", `export const controlId = "workflow-phases";
+        export const contractVersion = 1;`, "Incompatible phase control adapter"],
+    ["missing update", `export const controlId = "workflow-phases";
+        export const contractVersion = 1;
+        export function mount() { return { dispose() {} }; }`,
+    "Phase control adapter must return update and dispose"],
+    ["missing dispose", `export const controlId = "workflow-phases";
+        export const contractVersion = 1;
+        export function mount() { return { update() {} }; }`,
+    "Phase control adapter must return update and dispose"],
+    ["mount failure", `export const controlId = "workflow-phases";
+        export const contractVersion = 1;
+        export function mount() { throw new Error("adapter unavailable"); }`, "adapter unavailable"],
 ]) {
-    test(`invalid pipeline replacement reports ${scenario}`, async ({ page }) => {
+    test(`invalid phase adapter reports ${scenario}`, async ({ page }) => {
         const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
         try {
-            await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
+            await page.route("**/pages/generated-phase-adapter.mjs*", (route) => route.fulfill({
                 contentType: "text/javascript", body: module,
             }));
             await page.goto(canvas.url);
             await expect(page.locator("#canvas-message")).toContainText(
-                "Pipeline could not render: Pipeline renderer did not render the required phase controls");
+                `Pipeline could not render: ${error}`);
         } finally { await canvas.close(); }
     });
 }
 
-test("pipeline replacement without live phase controls fails at startup", async ({ page }) => {
+test("phase adapter mobile navigation selects phases", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
     try {
-        const original = pipelineModule.toString("utf8");
-        expect(original).toContain("? phaseCard(phases[0]) :");
-        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
-            contentType: "text/javascript",
-            body: original.replace("? phaseCard(phases[0]) :", '? "" :'),
-        }));
-        await page.goto(canvas.url);
-        await expect(page.locator("#canvas-message")).toContainText(
-            "Pipeline could not render: Pipeline renderer did not render the required phase controls");
-    } finally { await canvas.close(); }
-});
-
-test("pipeline replacement without mobile next-phase hint still navigates", async ({ page }) => {
-    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
-    try {
-        const original = pipelineModule.toString("utf8");
-        const hint = '<span id="mobile-next-phase" class="muted"></span>';
-        expect(original).toContain(hint);
-        await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
-            contentType: "text/javascript", body: original.replace(hint, ""),
-        }));
         await page.setViewportSize({ width: 390, height: 780 });
         await page.goto(canvas.url);
         await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+        await expect(page.locator("#mobile-next-phase")).toHaveText("Next: Plan");
         await page.locator("#mobile-phase-select").selectOption("1");
         await expect(page.locator("#phase-card h2")).toHaveText("Plan");
-        await expect(page.locator("#canvas-message")).toBeEmpty();
+        await expect(page.locator("#mobile-next-phase")).toHaveText("Final phase");
+        await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
     } finally { await canvas.close(); }
 });
-
-for (const [scenario, missing] of [
-    ["phase label", 'data-phase-label="${escapeHtml(phase.label)}"'],
-    ["artifact action", 'id="view-artifact"'],
-    ["artifact status", 'id="phase-artifact-status"'],
-    ["phase message", 'id="phase-message"'],
-]) {
-    test(`pipeline replacement missing ${scenario} fails at startup`, async ({ page }) => {
-        const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
-        try {
-            const original = pipelineModule.toString("utf8");
-            expect(original).toContain(missing);
-            await page.route("**/pages/generated-pipeline.mjs*", (route) => route.fulfill({
-                contentType: "text/javascript", body: original.replace(missing, ""),
-            }));
-            await page.goto(canvas.url);
-            await expect(page.locator("#canvas-message")).toContainText(
-                "Pipeline could not render: Pipeline renderer did not render the required phase controls");
-        } finally { await canvas.close(); }
-    });
-}
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
     generatedPages, readOnlyFields, generatedControls, valueSources) {
     const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
     const config = {
-        schemaVersion: 1, userProvidesSlug, workflowPage,
+        schemaVersion: 1, userProvidesSlug, workflowPage, phasePlacement,
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
@@ -170,8 +142,12 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         const sdk = join(sdkRoot, "generated-canvas");
         await cp(scaffoldSource, sdk, { recursive: true });
         await mkdir(join(sdk, "pages"), { recursive: true });
-        await Promise.all(["workflow.json", "generated-pipeline.mjs"].map((file) =>
-            copyFile(new URL(file, workflowSource), join(sdk, "pages", file))));
+        await Promise.all([
+            ["workflow.json", workflowSource],
+            ["generated-phase-placement.json", workflowSource],
+            ["phase-control.json", phaseControlSource],
+            ["generated-phase-adapter.mjs", phaseControlSource],
+        ].map(([file, source]) => copyFile(new URL(file, source), join(sdk, "pages", file))));
         const { createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
         const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
         runtime = await createRuntime({ config, cwd: root, workspace: root,

@@ -24,98 +24,104 @@ provides:
   templates:
     # designer.tab-definition: required Designer tabs
     - name: designer-essentials
-      file: designer/tabs/essentials.json
+      file: designer-host/tabs/essentials.json
       description: Essentials fields for canvas identity and workflow naming.
     - name: designer-artifacts
-      file: designer/tabs/artifacts.json
+      file: designer-host/tabs/artifacts.json
       description: Artifacts settings placeholder.
     - name: designer-appearance
-      file: designer/tabs/appearance.json
+      file: designer-host/tabs/appearance.json
       description: Generated canvas logos and per-mode palette colors.
 
     # designer.setting-definition: fields placed in Designer tab slots
     - name: designer-essentials-description
-      file: designer/essentials-settings/description.json
+      file: designer-host/essentials-settings/description.json
       description: Optional Essentials collection description.
     - name: designer-essentials-workflow-heading
-      file: designer/essentials-settings/workflow-heading.json
+      file: designer-host/essentials-settings/workflow-heading.json
       description: Optional Essentials workflow heading.
     - name: designer-essentials-custom-slug
-      file: designer/essentials-settings/custom-slug.json
+      file: designer-host/essentials-settings/custom-slug.json
       description: Optional Essentials custom slug option.
     - name: designer-essentials-header-logo
-      file: designer/essentials-settings/header-logo.json
+      file: designer-host/essentials-settings/header-logo.json
       description: Optional image asset for the generated canvas header.
     - name: designer-essentials-main-page-logo
-      file: designer/essentials-settings/main-page-logo.json
+      file: designer-host/essentials-settings/main-page-logo.json
       description: Optional independent larger logo for the generated workflow page.
     - name: designer-appearance-light-accent
-      file: designer/appearance-settings/light-accent.json
+      file: designer-host/appearance-settings/light-accent.json
       description: Optional generated canvas light-mode accent color.
     - name: designer-appearance-light-background
-      file: designer/appearance-settings/light-background.json
+      file: designer-host/appearance-settings/light-background.json
       description: Optional generated canvas light-mode page background.
     - name: designer-appearance-light-surface
-      file: designer/appearance-settings/light-surface.json
+      file: designer-host/appearance-settings/light-surface.json
       description: Optional generated canvas light-mode card surface.
     - name: designer-appearance-light-secondary
-      file: designer/appearance-settings/light-secondary.json
+      file: designer-host/appearance-settings/light-secondary.json
       description: Optional generated canvas light-mode secondary surface.
     - name: designer-appearance-light-text
-      file: designer/appearance-settings/light-text.json
+      file: designer-host/appearance-settings/light-text.json
       description: Optional generated canvas light-mode main text color.
     - name: designer-appearance-dark-accent
-      file: designer/appearance-settings/dark-accent.json
+      file: designer-host/appearance-settings/dark-accent.json
       description: Optional generated canvas dark-mode accent color.
     - name: designer-appearance-dark-background
-      file: designer/appearance-settings/dark-background.json
+      file: designer-host/appearance-settings/dark-background.json
       description: Optional generated canvas dark-mode page background.
     - name: designer-appearance-dark-surface
-      file: designer/appearance-settings/dark-surface.json
+      file: designer-host/appearance-settings/dark-surface.json
       description: Optional generated canvas dark-mode card surface.
     - name: designer-appearance-dark-secondary
-      file: designer/appearance-settings/dark-secondary.json
+      file: designer-host/appearance-settings/dark-secondary.json
       description: Optional generated canvas dark-mode secondary surface.
     - name: designer-appearance-dark-text
-      file: designer/appearance-settings/dark-text.json
+      file: designer-host/appearance-settings/dark-text.json
       description: Optional generated canvas dark-mode main text color.
 
-    # Workflow page: required regions and the generated phase presentation.
+    # Workflow page and its required phase-control placement.
     - name: generated-workflow
-      file: generated/pages/workflow.json
-      description: Ordered Workflow page regions and pipeline renderer reference.
-    - name: generated-pipeline
-      file: generated/pages/generated-pipeline.mjs
-      description: Horizontal workflow phase presentation.
+      file: generated-host/workflow/workflow.json
+      description: Required Workflow page definition and declared contribution slots.
+    - name: generated-phase-placement
+      file: generated-host/workflow/generated-phase-placement.json
+      description: Required Workflow phase-control placement.
+    - name: generated-phase-control
+      file: generated-host/phase-control/phase-control.json
+      description: Workflow phase control identity and adapter reference.
+    - name: generated-phase-adapter
+      file: generated-host/phase-control/generated-phase-adapter.mjs
+      description: Workflow phase navigation and card adapter.
 
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image
-      file: controls/stock-image/control.json
+      file: shared-controls/stock-image/control.json
       description: Image value type, size and MIME limits, and adapter registrations.
     - name: designer-control-adapter-image
-      file: controls/stock-image/designer.mjs
+      file: shared-controls/stock-image/designer.mjs
       description: Image upload, preview, replacement, and removal in Designer.
     - name: generated-control-adapter-image
-      file: controls/stock-image/generated.mjs
+      file: shared-controls/stock-image/generated.mjs
       description: Image rendering in generated canvases.
 
     # Text control: define string values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-text
-      file: controls/stock-text/control.json
+      file: shared-controls/stock-text/control.json
       description: String value type and adapter registrations.
     - name: designer-control-adapter-text
-      file: controls/stock-text/designer.mjs
+      file: shared-controls/stock-text/designer.mjs
       description: Text editing in Designer.
     - name: generated-control-adapter-text
-      file: controls/stock-text/generated.mjs
+      file: shared-controls/stock-text/generated.mjs
       description: Text rendering in generated canvases.
 
     # Checkbox control: define boolean values and edit them in Designer.
     - name: shared-controls-checkbox
-      file: controls/stock-checkbox/control.json
+      file: shared-controls/stock-checkbox/control.json
       description: Boolean value type and Designer adapter registration.
     - name: designer-control-adapter-checkbox
-      file: controls/stock-checkbox/designer.mjs
+      file: shared-controls/stock-checkbox/designer.mjs
       description: Boolean editing in Designer.
 
 tags:
