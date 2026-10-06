@@ -12,6 +12,10 @@ import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invoca
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
 const REQUIRED_PAGES = ["designer-essentials", "designer-artifacts",
     "designer-appearance"];
+const FIXED_PAGE_CONTROLS = {
+    "designer-essentials": "designer.identity",
+    "designer-artifacts": "designer.outputs",
+};
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
@@ -166,6 +170,17 @@ function buildModel(entries, schema) {
         try {
             checkSchema(document, schema, name);
             if (document.id !== name) throw new Error(`${name}: page id does not match template name`);
+            const fixedControl = FIXED_PAGE_CONTROLS[name];
+            if (document.fixedControl !== undefined && document.fixedControl !== fixedControl
+                || name === "designer-artifacts" && document.fields.length
+                || name === "designer-essentials" && ["canvas.id", "canvas.displayName"].some((id) => {
+                    const field = document.fields.filter((entry) => entry.id === id);
+                    return field.length !== 1 || field[0].label !== (id === "canvas.id" ? "Canvas ID" : "Title")
+                        || (field[0].type ?? "string") !== "string"
+                        || field[0].control !== "stock.text";
+                })) {
+                throw new Error(`${name}: required fixed Designer control is missing or changed`);
+            }
             const ids = new Set();
             for (const field of document.fields) {
                 const type = field.type ?? "string";
@@ -202,7 +217,9 @@ function buildModel(entries, schema) {
             values[field.id] = type === "boolean" ? (field.default ?? false) : "";
             fieldOrigins.set(field.id, name);
         }
-        pages.push({ ...document, fields: document.fields.map((field) => resolvedField({
+        pages.push({ ...document, ...(FIXED_PAGE_CONTROLS[name]
+            ? { fixedControl: FIXED_PAGE_CONTROLS[name] } : {}),
+            fields: document.fields.map((field) => resolvedField({
             ...field, control: field.control ?? (field.type === "boolean"
                 ? "stock.checkbox" : "stock.text") }, constraints[field.id])),
             page: name, provenance: { template: name, path, fingerprint: hash } });

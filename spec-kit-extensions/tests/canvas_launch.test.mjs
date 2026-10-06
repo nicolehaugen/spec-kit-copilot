@@ -61,7 +61,7 @@ test("composed verification resolves every name, rejects warnings and native scr
         "sample-page": join(preset, "pages", "sample.json"),
         "sample-renderer": join(preset, "pages", "renderer.mjs"),
         "designer-essentials": join(installed, "designer-host", "tabs", "essentials.json"),
-        "designer-artifacts": join(installed, "designer-host", "tabs", "artifacts.json"),
+        "designer-artifacts": join(installed, "designer-host", "tabs", "outputs.json"),
         "designer-appearance": join(installed, "designer-host", "tabs", "appearance.json"),
         "designer-essentials-description": join(installed, "designer-host", "essentials-settings", "description.json"),
         "designer-essentials-workflow-heading": join(installed, "designer-host", "essentials-settings", "workflow-heading.json"),
@@ -72,7 +72,7 @@ test("composed verification resolves every name, rejects warnings and native scr
             ["accent", "background", "surface", "secondary", "text"].map((color) =>
                 [`designer-appearance-${mode}-${color}`,
                     join(installed, "designer-host", "appearance-settings", `${mode}-${color}.json`)]))),
-        "generated-workflow": join(installed, "generated-host", "workflow", "workflow.json"),
+        "generated-workflow": join(installed, "generated-host", "workflow-page", "workflow.json"),
         "generated-phase-control": join(installed, "generated-host", "phase-control", "phase-control.json"),
         "generated-phase-adapter": join(installed, "generated-host", "phase-control", "generated-phase-adapter.mjs"),
         "shared-controls-image": join(installed, "shared-controls", "stock-image", "control.json"),

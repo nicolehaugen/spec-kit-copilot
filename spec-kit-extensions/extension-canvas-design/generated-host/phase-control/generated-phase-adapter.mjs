@@ -11,7 +11,7 @@ function card(phase) {
     </header>
     <dl class="phase-facts"><dt>View target</dt><dd><button class="phase-artifact-link" id="browse-output-folder" type="button" title="Open the viewer target's folder"><code></code></button></dd></dl>
     <p id="phase-artifact-status" class="muted" role="status"></p>
-    <p id="phase-other-outputs" class="muted" hidden></p>
+    <div id="phase-other-outputs" class="phase-output-list" aria-label="Phase outputs" hidden></div>
     <label class="field" for="phase-args">
         <span class="field-label" id="phase-input-label">Phase input</span>
         <span class="visually-hidden" id="phase-input-help">Add details or direction for this phase.</span>
@@ -39,7 +39,7 @@ export function mount({ root, state, actions }) {
     function update(next) {
         if (!next || !Array.isArray(next.phases) || !Number.isInteger(next.current)
             || next.current < -1 || next.current >= next.phases.length
-            || typeof next.draft !== "string" || !Array.isArray(next.otherOutputs)) {
+            || typeof next.draft !== "string" || !Array.isArray(next.outputLinks)) {
             throw new Error("Invalid phase control state");
         }
         const key = `${next.workflow}:${next.current}`;
@@ -101,8 +101,21 @@ export function mount({ root, state, actions }) {
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."));
         artifact.hidden = !artifact.textContent;
         const others = $("#phase-other-outputs");
-        others.textContent = next.otherOutputs.length ? `Other expected outputs: ${next.otherOutputs.join(", ")}` : "";
-        others.hidden = !next.otherOutputs.length;
+        others.replaceChildren();
+        if (next.outputLinks.length) {
+            const heading = document.createElement("strong");
+            heading.textContent = "Outputs";
+            others.append(heading);
+            for (const output of next.outputLinks) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "phase-artifact-link";
+                button.dataset.output = output.template;
+                button.textContent = output.label;
+                others.append(button);
+            }
+        }
+        others.hidden = !next.outputLinks.length;
         $("#run-phase").textContent = next.runLabel
             ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
         const notice = $("#phase-message");
@@ -126,6 +139,7 @@ export function mount({ root, state, actions }) {
                 });
             } else if (button.id === "run-phase") action = actions.run($("#phase-args").value);
             else if (button.id === "view-artifact") action = actions.view();
+            else if (button.hasAttribute("data-output")) action = actions.view(button.dataset.output);
             else if (button.id === "browse-output-folder") action = actions.reveal();
             if (action) Promise.resolve(action).catch(actions.error);
         } catch (error) { actions.error(error); }

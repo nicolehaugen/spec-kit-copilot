@@ -59,7 +59,8 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
             const name = path.includes("checkbox") ? "stock-checkbox" : "stock-text";
             await route.fulfill({ body: await readFile(new URL(`shared-controls/${name}/designer.mjs`, extension)),
                 contentType: "text/javascript" });
-        } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css") {
+        } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css"
+            || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js") {
             const file = path === "/" ? "index.html" : path.slice(4);
             await route.fulfill({ body: await readFile(new URL(file, ui)), contentType:
                 file.endsWith(".html") ? "text/html" : file.endsWith(".css")

@@ -26,13 +26,17 @@ export function phaseContract(config) {
         const short = id.replace(/^speckit\./, "");
         const command = `speckit.${short}`;
         const declared = config.phaseOutputs[id]?.outputPath;
-        const mapping = artifacts[id];
-        if (mapping && (typeof mapping !== "object" || Object.keys(mapping).some((key) => !["outputs", "view"].includes(key))
-            || !Array.isArray(mapping.outputs) || !mapping.outputs.length || !mapping.outputs.includes(mapping.view))) {
+        const configured = artifacts[id];
+        if (configured && (typeof configured !== "object" || Array.isArray(configured)
+            || Object.keys(configured).sort().join() !== "outputs,view"
+            || !Array.isArray(configured.outputs) || configured.outputs.length > 100
+            || (configured.outputs.length ? !configured.outputs.includes(configured.view) : configured.view !== null))) {
             throw new UserError("Invalid phase artifact outputs or viewer target.");
         }
-        if (Object.hasOwn(artifacts, id) && !mapping) throw new UserError("Invalid phase artifact configuration.");
-        const output = mapping?.view ?? (config.phaseOutputs[id]?.expectsArtifact === false ? null : declared || outputs[short] || null);
+        if (Object.hasOwn(artifacts, id) && !configured) throw new UserError("Invalid phase artifact configuration.");
+        const mapping = short === "constitution" ? null : configured;
+        const output = short === "constitution" ? outputs.constitution : mapping ? mapping.view
+            : (config.phaseOutputs[id]?.expectsArtifact === false ? null : declared || outputs[short] || null);
         const paths = mapping?.outputs ?? (output ? [output] : []);
         const normalized = paths.map((path) => safePath(path, true));
         if (new Set(normalized.map((path) => path.toLowerCase())).size !== normalized.length) throw new UserError("Duplicate phase output path.");
@@ -49,7 +53,8 @@ export function phaseContract(config) {
         return { id, label: phaseLabel(id), command, skill: command.replaceAll(".", "-"),
             output: output ? safePath(output, true) : null,
             outputs: normalized, configuredArtifacts: !!mapping,
-            expectsArtifact: mapping ? true : config.phaseOutputs[id]?.expectsArtifact,
+            expectsArtifact: short === "constitution" ? true
+                : mapping ? mapping.outputs.length > 0 : config.phaseOutputs[id]?.expectsArtifact,
             project: short === "constitution", first: short === "specify" };
     });
 }

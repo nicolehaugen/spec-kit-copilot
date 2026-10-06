@@ -23,12 +23,15 @@ export function phaseControlDom() {
             value: "", textContent: "", selectionStart: 0, selectionEnd: 0,
             hasAttribute(name) {
                 return name === "data-phase-index" ? index !== undefined
+                    : name === "data-output" ? "output" in this.dataset
                     : this.attributes.has(name) || attributes.includes(name);
             },
             setAttribute(name, value) { this.attributes.set(name, value); },
             removeAttribute(name) { this.attributes.delete(name); },
             focus() { document.activeElement = this; },
             setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
+            replaceChildren(...children) { this.children = children; },
+            append(...children) { this.children = [...(this.children ?? []), ...children]; },
             closest(selector) { return selector === "button" && tag === "button" ? this : null; },
             matches(selector) { return selector === "[data-phase-draft]" && "phaseDraft" in this.dataset; },
             querySelector(selector) { return selector === "code" ? this.code : null; },
@@ -36,6 +39,7 @@ export function phaseControlDom() {
         if (id === "browse-output-folder") node.code = { textContent: "" };
         return node;
     };
+    document.createElement = (tag) => makeNode(tag, "");
     const root = {
         ownerDocument: document,
         get innerHTML() { return html; },
@@ -68,7 +72,10 @@ export function phaseControlDom() {
             return selector === "[data-phase-index]" ? nodes.filter((node) =>
                 "phaseIndex" in node.dataset) : [];
         },
-        contains(node) { return nodes.includes(node); },
+        contains(node) {
+            const includes = (item) => item === node || item.children?.some(includes);
+            return nodes.some(includes);
+        },
         addEventListener(type, callback, options) {
             listeners.set(type, callback);
             options?.signal?.addEventListener("abort", () => listeners.delete(type), { once: true });

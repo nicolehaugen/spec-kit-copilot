@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { phaseResponse } from "../extension-canvas-design/templates/generated-canvas/phase-response.mjs";
+import { phaseResponse } from "../extension-canvas-design/generated-scaffold/phase-response.mjs";
 
 test("task completion after a tool-using turn records success", () => {
     const events = [

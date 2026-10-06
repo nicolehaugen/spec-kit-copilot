@@ -4,7 +4,8 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { readFrozenAsset } from "./pages.mjs";
-import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
+import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
+    loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
 import { freezeGeneration, readCurrentInstalledVersions } from "./generation.mjs";
 
 export function shellHtml() {
@@ -32,6 +33,8 @@ const ASSETS = {
     "/": ["index.html", "text/html"],
     "/ui/styles.css": ["styles.css", "text/css"],
     "/ui/app.js": ["app.js", "text/javascript"],
+    "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
+    "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
 const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.";
@@ -71,7 +74,9 @@ export async function startShell(handoff = null, model = null, { project, worksp
     const skillAvailable = project ? await hasGenerateSkill(project) : false;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? GENERATE_UNAVAILABLE : null;
-    const state = () => ({ ...model, handoffId: handoff?.handoffId,
+    const state = () => ({ ...model, phases: handoff?.workflow.selectedPhases ?? [],
+        pipelineOutputs: handoff ? initialOutputs(handoff) : {},
+        handoffId: handoff?.handoffId,
         generationAvailable: !!handoff?.workflow?.installed && !!session?.send
             && !!project && skillAvailable,
         generationError });
@@ -125,7 +130,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
                 res.end(JSON.stringify(state()));
             } catch (error) {
-                const invalid = error instanceof SyntaxError || /Invalid Designer|unexpected or missing fields/.test(error.message);
+                const invalid = error instanceof SyntaxError
+                    || /Invalid Designer|Invalid outputs for phase|unexpected or missing fields|Pipeline artifacts cannot be changed|Constitution output is fixed/.test(error.message);
                 const conflict = [
                     "Designer handoff changed; reopen before saving",
                     "Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before saving.",
@@ -166,8 +172,12 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 if (!input || typeof input !== "object" || Array.isArray(input)
                     || Object.keys(input).sort().join() !== (model.templates?.some(
                         (item) => item.kind === "generated.computed-value-provider")
-                        ? "approvedProviders,modelRevision,settingsRevision,values"
-                        : "modelRevision,settingsRevision,values")
+                        ? (input.outputs === undefined
+                            ? "approvedProviders,modelRevision,settingsRevision,values"
+                            : "approvedProviders,modelRevision,outputs,settingsRevision,values")
+                        : (input.outputs === undefined
+                            ? "modelRevision,settingsRevision,values"
+                            : "modelRevision,outputs,settingsRevision,values"))
                     || input.modelRevision !== model.revision
                     || !Number.isSafeInteger(input.settingsRevision) || input.settingsRevision < 0) {
                     throw new Error("Invalid Designer generation request");
@@ -204,6 +214,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                     inventoryWarning = `Could not read the installed Specify packages: ${error.message}. Generated package versions will be marked unverified.`;
                 }
                 const result = await freezeGeneration({ model: current, values: input.values,
+                    outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs,
                     handoff, project, workspace, runtimeInventory, inventoryWarning });
                 try {
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });

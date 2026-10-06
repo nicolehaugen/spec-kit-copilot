@@ -29,12 +29,12 @@ individual page errors still appear as tabs once the schema loads.
 Essentials requires Canvas ID and Title from the resolved core page. Description,
 Workflow header, and Allow custom slug are ordered Essentials contributions.
 Header logo, Main page logo, and light/dark accent, page background, surface,
-secondary surface, and text colors are
-ordered Appearance contributions registered by the composed load-page command. The
-two required fields stay fixed but mount the same registered `stock.text`
-Designer adapter as optional text fields. `stock.checkbox` similarly provides
-the optional boolean editor. Their field-specific resolved rules come from approved declarations; the
-adapter validates the values at Generate. Generate packages the winning stock-text generated adapter
+secondary surface, and text colors are ordered Appearance contributions
+registered by the composed load-page command. The two required identity fields
+use the fixed Designer identity control, while the Outputs page mounts its fixed
+phase-artifacts control. Other fields use registered adapters: `stock.checkbox`
+provides the optional boolean editor, and `stock.text` validates optional text
+and palette values at Generate. Generate packages the winning stock-text generated adapter
 for visible Description, Workflow header, or read-only text placements. Text
 fields on a page or in a contribution can opt into `"required": true`; the
 shared text validator rejects blank or whitespace-only values at Generate,
@@ -86,14 +86,28 @@ phase navigation, while creating a workflow. It labels the workflow there.
 Essentials' default-off Allow custom slug setting controls whether an optional
 Workflow slug field appears below it. The slug previews the View target directory; the created
 directory remains authoritative.
-Artifacts is empty by default. Appearance's optional `RRGGBB` or `#RRGGBB`
-palette fields use `stock.text`; blank retains the current color in that mode, while
-invalid hex blocks Generate without preventing an incomplete draft from being
-saved. The generated canvas keeps its existing light/dark toggle; there is no
-Designer color preview or contrast warning. Save persists bounded, structurally
-valid drafts, including incomplete field values, to `settings.json`
+The **Outputs** tab (resolved template ID `designer-artifacts`) lets users select
+one phase at a time, except Constitution. Wizard-inferred pipeline artifacts are
+read-only; users may add or remove separate project-relative Markdown artifact
+links and choose which one opens with View artifact. Additions do not create
+files or change what the pipeline produces. Removing a selected addition restores
+the original inferred viewer default. If a phase has no pipeline artifacts or
+additions, the tab warns that its generated card will have no View artifact button.
+Constitution always opens `.specify/memory/constitution.md` and cannot be edited
+on this tab.
+The existing header Save persists confirmed outputs with the other bounded,
+structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff restores them when its resolved pages are unchanged.
+Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
+blank retains the current color in that mode, while invalid hex blocks Generate
+without preventing an incomplete draft from being saved. The generated canvas
+keeps its existing light/dark toggle; there is no Designer color preview or
+contrast warning.
+Generate freezes the combined artifact links into the app: its phase card links
+to each listed file and View artifact opens the selected default. A phase with no
+inferred artifacts remains empty unless a link is added.
+Appearance remains empty by default.
 Preset-registered stock text and checkbox fields mount their shared adapters
 in their declared Designer page slot and are saved alongside required values. A registered
 `shared.control-definition` for a typed object or image field must reference both a

@@ -69,6 +69,9 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 }
 #view-artifact[hidden], #view-constitution[hidden] { display: none; }
 #phase-other-outputs { overflow-wrap: anywhere; }
+.phase-output-list { display: grid; gap: .4rem; padding: .75rem 1rem; }
+.phase-output-list strong { font-size: 12px; text-transform: uppercase; color: var(--text-color-muted); }
+.phase-output-list .phase-artifact-link { justify-self: start; font: inherit; }
 .app-header { flex-wrap: wrap; }
 .header-status { flex-wrap: wrap; justify-content: flex-end; }
 .header-status .conn { white-space: nowrap; }

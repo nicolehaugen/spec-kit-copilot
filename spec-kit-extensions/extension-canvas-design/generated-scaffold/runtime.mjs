@@ -173,7 +173,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             throw error;
         }
     }
-    const roots = [...new Set(["specs", ...phases.flatMap((step) => step.outputs)
+    const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
+        ? [config.phaseOutputs?.[step.id]?.outputPath].filter(Boolean) : step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
     async function items(view = state) {
         const found = [];
@@ -194,8 +195,6 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (!path.endsWith(".md")) throw new UserError("Reported artifact must be Markdown.");
         if (step.configuredArtifacts && step.outputs.some((output) =>
             output.replace("<slug>", item.split("/").at(-1)) === path)) {
-            if (!step.project && step.outputs.some((output) => output.includes("<slug>") && output.replace("<slug>", item.split("/").at(-1)) === path)
-                && !path.startsWith(`${item}/`)) throw new UserError("This phase output belongs to a different workflow.");
             return;
         }
         if (step.project || (step.output && !step.output.includes("<"))) {
@@ -223,7 +222,9 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             const slug = selected?.slug ?? (item === "__new__" && config.userProvidesSlug && validSlug(view.slug) ? view.slug : null);
             if (!slug) return null;
             path = path.replace("<slug>", slug);
-            if (selected && !path.startsWith(`${selected.id}/`)) throw new UserError("This phase output belongs to a different workflow.");
+            if (selected && !step.configuredArtifacts && !path.startsWith(`${selected.id}/`)) {
+                throw new UserError("This phase output belongs to a different workflow.");
+            }
         }
         if (path.endsWith("<name>.md")) {
             const parent = posix.dirname(path);
@@ -244,7 +245,13 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     async function artifact(input) {
         const step = phaseFor(input.phase);
-        const path = await outputPath(step, input.itemId);
+        if (input.output !== undefined && !step.outputs.includes(input.output)) {
+            throw new UserError("This output is not declared for the selected phase.", 403);
+        }
+        const path = input.output === undefined
+            ? await outputPath(step, input.itemId)
+            : await outputPath({ ...step, output: input.output, configuredArtifacts: true },
+                input.itemId);
         if (!path) throw new UserError(step.output
             ? "No artifact is available yet. Run the phase or select an existing workflow to view its artifact."
             : "No artifact is available for this phase yet. Run the phase, then refresh to check again.", 404);
@@ -698,7 +705,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }
         });
         return { accepted: true, slug: input.slug, phases: phases.map((step) => ({ phase: step.id,
-            outputs: step.outputs.map((path) => path.replace("<slug>", input.slug)) })) };
+            outputs: [step.output, ...step.outputs.filter((path) => path !== step.output)]
+                .filter(Boolean).map((path) => path.replace("<slug>", input.slug)) })) };
     }
     async function report(input, instanceId) {
         const run = reportingRun(input, instanceId);

@@ -27,8 +27,8 @@ provides:
       file: designer-host/tabs/essentials.json
       description: Essentials fields for canvas identity and workflow naming.
     - name: designer-artifacts
-      file: designer-host/tabs/artifacts.json
-      description: Artifacts settings placeholder.
+      file: designer-host/tabs/outputs.json
+      description: Outputs page for confirming phase files and viewer defaults.
     - name: designer-appearance
       file: designer-host/tabs/appearance.json
       description: Generated canvas logos and per-mode palette colors.
@@ -82,7 +82,7 @@ provides:
 
     # Workflow page and its required phase control.
     - name: generated-workflow
-      file: generated-host/workflow/workflow.json
+      file: generated-host/workflow-page/workflow.json
       description: Required Workflow page definition and declared contribution slots.
     - name: generated-phase-control
       file: generated-host/phase-control/phase-control.json

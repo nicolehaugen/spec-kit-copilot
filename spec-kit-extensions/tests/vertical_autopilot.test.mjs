@@ -11,7 +11,7 @@ async function setup(t, vertical = true) {
     t.after(() => rm(root, { recursive: true, force: true }));
     const target = join(root, "generated");
     const project = join(root, "project");
-    await cp(new URL("../extension-canvas-design/templates/generated-canvas/", import.meta.url),
+    await cp(new URL("../extension-canvas-design/generated-scaffold/", import.meta.url),
         target, { recursive: true });
     await mkdir(join(target, "pages"), { recursive: true });
     const adapter = await readFile(new URL(vertical

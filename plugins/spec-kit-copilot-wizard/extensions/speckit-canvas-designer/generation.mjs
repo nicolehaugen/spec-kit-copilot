@@ -4,8 +4,9 @@ import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
-import { validateValues } from "./settings.mjs";
+import { initialOutputs, validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
+import { validateConfirmedOutputs } from "./handoff.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
@@ -37,6 +38,8 @@ export function validateEssentials(model, values) {
         if (Object.hasOwn(result, id)) result[id] = result[id].trim();
     }
     if (!result["canvas.id"] || !result["canvas.displayName"]
+        || !canvasIdPattern.test(result["canvas.id"])
+        || result["canvas.displayName"].length > 120
         || reserved.has(result["canvas.id"]) || isWindowsDeviceName(result["canvas.id"])) {
         throw new Error("Canvas ID and Title must be valid and non-reserved");
     }
@@ -48,6 +51,8 @@ async function validateAdapterValues(model, values, project) {
     const modules = new Map();
     for (const page of model.pages) {
         for (const field of page.fields ?? []) {
+            if (page.fixedControl === "designer.identity"
+                && ["canvas.id", "canvas.displayName"].includes(field.id)) continue;
             const name = model.adapters[field.control];
             const asset = model.templates.find((item) =>
                 item.name === name && item.kind === "designer.control-adapter");
@@ -138,9 +143,11 @@ export function reconcileInstalledVersions(frozen, inventory) {
     return { installed, warnings };
 }
 
-export async function freezeGeneration({ model, values, handoff, project, workspace,
+export async function freezeGeneration({ model, values, outputs = model.outputs, handoff, project, workspace,
     runtimeInventory, inventoryWarning }) {
     const essentials = validateEssentials(model, values);
+    if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases,
+        initialOutputs(handoff));
     await validateAdapterValues(model, essentials, project);
     if (!canvasIdPattern.test(essentials["canvas.id"])
         || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {
@@ -375,7 +382,8 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         canvas: { id: essentials["canvas.id"], displayName: essentials["canvas.displayName"],
             description: essentials["canvas.description"] || "Spec Kit workflow canvas.",
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
-        workflow: { selectedPhases: handoff.workflow.selectedPhases },
+        workflow: { selectedPhases: handoff.workflow.selectedPhases,
+            ...(outputs !== undefined ? { phaseArtifacts: outputs } : {}) },
         installed: handoff.workflow.installed,
         ...(actual ? { actualInstalled: actual.installed } : {}),
         values: essentials,

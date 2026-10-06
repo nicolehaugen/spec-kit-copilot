@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { load } from "js-yaml";
 import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
-    checkDesignerProvider, DESIGNER_EXTENSION_ID, enableDesignerProvider,
+    checkDesignerProvider, DESIGNER_EXTENSION_ID, designerPhaseOutputs, enableDesignerProvider,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
     quoteInstallUrl, readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
@@ -69,6 +69,55 @@ test("duplicate Canvas Design catalog entries report ambiguity", () => {
     assert.throws(() => buildDesignerHandoff({ ...snapshot, catalog: {
         ...catalog, extensions: [],
     } }, empty, undefined, empty), /missing a valid version or download URL/);
+});
+
+test("Designer handoff carries existing Wizard file outputs and default without folder inference", () => {
+    const state = { ...snapshot, pipeline: [{ id: "plan" }, { id: "speckit.assess.intake" }],
+        artifactEvidence: {
+            plan: { primaryIndex: 1, candidates: [
+                { kind: "file", path: "plan.md", relativeTo: "feature" },
+                { kind: "file", path: "research.md", relativeTo: "feature" },
+                { kind: "folder", path: "specs/<slug>/checklists/" },
+            ] },
+            "speckit.assess.intake": { primaryIndex: null, candidates: [{ kind: "none" }] },
+        } };
+    const outputs = designerPhaseOutputs(state);
+    assert.deepEqual(outputs.plan, { outputs: ["specs/<slug>/plan.md",
+        "specs/<slug>/research.md"], view: "specs/<slug>/research.md" });
+    assert.deepEqual(outputs["speckit.assess.intake"], { outputs: [], view: null });
+    const handoff = buildDesignerHandoff(state, empty, undefined, empty);
+    assert.deepEqual(handoff.workflow.outputEvidence, outputs);
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
+    const invalid = structuredClone(handoff);
+    invalid.workflow.outputEvidence.plan.view = "../other.md";
+    invalid.sourceFingerprint = fingerprint({ workflow: invalid.workflow, selections: invalid.selections,
+        canvasDesign: invalid.canvasDesign });
+    assert.throws(() => validateHandoff(invalid, invalid.handoffId), /Invalid outputs for phase plan/);
+});
+
+test("Designer handoff deduplicates case-only file evidence and retains the default", () => {
+    const state = { ...snapshot, pipeline: [{ id: "plan" }], artifactEvidence: {
+        plan: { primaryIndex: 1, candidates: [
+            { kind: "file", path: "Plan.md", relativeTo: "feature" },
+            { kind: "file", path: "plan.md", relativeTo: "feature" },
+        ] },
+    } };
+    const handoff = buildDesignerHandoff(state, empty, undefined, empty);
+    assert.deepEqual(handoff.workflow.outputEvidence.plan, {
+        outputs: ["specs/<slug>/Plan.md"], view: "specs/<slug>/Plan.md",
+    });
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
+});
+
+test("Designer handoff fixes Constitution to its canonical artifact", () => {
+    const state = { ...snapshot, pipeline: [{ id: "constitution" }],
+        artifactEvidence: { constitution: { primaryIndex: null, candidates: [{ kind: "none" }] } } };
+    const handoff = buildDesignerHandoff(state, empty, undefined, empty);
+    assert.deepEqual(handoff.workflow.outputEvidence.constitution, {
+        outputs: [".specify/memory/constitution.md"],
+        view: ".specify/memory/constitution.md",
+    });
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
 });
 
 function fixture(overrides = {}) {
@@ -851,6 +900,42 @@ test("catalog or pipeline changes during provider readiness reject the stale lau
         assert.match(response.body.error, /pipeline or catalog changed/);
         assert.equal(delayed.sent.length, 0);
     }
+});
+
+test("Designer launch waits for complete output inference and rejects changed inferred outputs", async () => {
+    for (const incomplete of [
+        { artifactEvidenceIncomplete: true },
+        { outputInferenceProgress: { status: "updating", total: 1, remaining: 1 } },
+        { outputInferenceProgress: { status: "incomplete", total: 1, remaining: 1 } },
+    ]) {
+        const launch = fixture({ getState: async () => ({ ...snapshot, ...incomplete }) });
+        const response = await launch.post(request());
+        assert.equal(response.statusCode, 409);
+        assert.match(response.body.error, /output inference is not ready/);
+        assert.equal(launch.sent.length, 0);
+    }
+    const changed = { ...snapshot, artifactEvidence: { plan: {
+        primaryIndex: 0, candidates: [
+            { kind: "file", path: "plan.md", relativeTo: "feature" },
+        ],
+    } } };
+    for (const checkpoint of [2, 3]) {
+        let reads = 0;
+        const launch = fixture({ getState: async () => ++reads === checkpoint ? changed : snapshot });
+        const response = await launch.post(request());
+        assert.equal(response.statusCode, 409);
+        assert.match(response.body.error, /outputs changed or inference is incomplete/);
+        assert.equal(launch.sent.length, 0);
+        assert.equal(reads, checkpoint);
+    }
+    let reads = 0;
+    const updating = fixture({ getState: async () => ++reads === 3
+        ? { ...snapshot, outputInferenceProgress: { status: "updating", total: 1, remaining: 1 } }
+        : snapshot });
+    const response = await updating.post(request());
+    assert.equal(response.statusCode, 409);
+    assert.match(response.body.error, /inference is incomplete/);
+    assert.equal(updating.sent.length, 0);
 });
 
 test("consecutive launch requests acknowledge before agent turns finish and have separate handoffs", async () => {

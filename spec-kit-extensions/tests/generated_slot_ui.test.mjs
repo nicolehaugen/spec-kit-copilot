@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 
-const source = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/ui/app.js",
+const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
     import.meta.url), "utf8").then((text) => text.replaceAll("\r\n", "\n"));
 
 function section(start, end) {

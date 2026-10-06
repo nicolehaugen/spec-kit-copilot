@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { fingerprint, HANDOFF_LIMIT, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
+import { CONSTITUTION_OUTPUT, fingerprint, HANDOFF_LIMIT, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { dispatchPromptToSession } from "../canvas-runtime/dispatch.mjs";
 import { buildAugmentedPath } from "../env/resolve-path.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
@@ -218,7 +218,47 @@ export function designerPhaseIds(snapshot) {
     if (ids.length > 30 || ids.some((id) => typeof id !== "string" || !ID.test(id))) {
         throw new Error("Invalid Designer pipeline");
     }
+
     return ids;
+}
+
+export function designerPhaseOutputs(snapshot) {
+    return Object.fromEntries(designerPhaseIds(snapshot).map((id) => {
+        if (id.replace(/^speckit\./, "") === "constitution") {
+            return [id, { outputs: [CONSTITUTION_OUTPUT], view: CONSTITUTION_OUTPUT }];
+        }
+
+        const evidence = snapshot.artifactEvidence?.[id]
+            ?? snapshot.artifactEvidence?.[id.startsWith("speckit.") ? id : `speckit.${id}`];
+        const candidates = evidence?.candidates ?? [];
+        const paths = candidates.map((candidate) => {
+            if (candidate?.kind !== "file" || typeof candidate.path !== "string") return null;
+            if (candidate.relativeTo === "feature") return `specs/<slug>/${candidate.path}`;
+            if (candidate.root) return candidate.root.path
+                ? `${candidate.root.path}/${candidate.path}` : null;
+            return candidate.path;
+        });
+        const seen = new Set();
+        const outputs = paths.filter((path) => {
+            if (!path || seen.has(path.toLowerCase())) return false;
+            seen.add(path.toLowerCase());
+            return true;
+        });
+        const preferred = paths[evidence?.primaryIndex];
+        return [id, { outputs,
+            view: outputs.find((path) => path.toLowerCase() === preferred?.toLowerCase())
+                ?? outputs[0] ?? null }];
+    }));
+}
+
+function outputEvidenceReady(state) {
+    return state && !state.artifactEvidenceIncomplete
+        && !["updating", "incomplete"].includes(state.outputInferenceProgress?.status);
+}
+
+function outputsUnchanged(state, outputEvidence) {
+    return outputEvidenceReady(state)
+        && JSON.stringify(designerPhaseOutputs(state)) === JSON.stringify(outputEvidence);
 }
 
 export function validateDesignerSelections(raw, catalog) {
@@ -330,7 +370,8 @@ export function buildDesignerHandoff(snapshot, selections, localSelections, inst
     }
     const canvasDesign = !localBase && hosted ? { version: candidates[0].version,
         downloadUrl: candidates[0].downloadUrl } : undefined;
-    const workflow = { selectedPhases: designerPhaseIds(snapshot), installed, installLocators };
+    const workflow = { selectedPhases: designerPhaseIds(snapshot),
+        outputEvidence: designerPhaseOutputs(snapshot), installed, installLocators };
     const handoff = { schemaVersion: 1, handoffId, workflow, selections,
         ...(canvasDesign ? { canvasDesign } : {}),
         sourceFingerprint: fingerprint({ workflow, selections, localSelections,
@@ -411,6 +452,9 @@ export async function handleDesignerLaunch(res, body, {
             || JSON.stringify(body?.expectedPhases) !== JSON.stringify(phases)) {
             return jsonError(res, 409, "Wizard pipeline or catalog changed; reopen the Designer setup");
         }
+        if (!outputEvidenceReady(snapshot)) {
+            return jsonError(res, 409, "Wizard output inference is not ready; refresh outputs before opening Designer");
+        }
         let selections;
         try { selections = validateDesignerSelections(body.selections, snapshot.catalog); }
         catch (error) { return jsonError(res, 422, error.message); }
@@ -449,6 +493,9 @@ export async function handleDesignerLaunch(res, body, {
             || JSON.stringify(current?.composition) !== JSON.stringify(snapshot.composition)) {
             return jsonError(res, 409, "Wizard pipeline or catalog changed; reopen the Designer setup");
         }
+        if (!outputsUnchanged(current, handoff.workflow.outputEvidence)) {
+            return jsonError(res, 409, "Wizard outputs changed or inference is incomplete; refresh outputs and reopen the Designer setup");
+        }
         try {
             if (await boundedReadiness(() => checkDesignerProvider(session.rpc),
                 READINESS_TIMEOUT_MS, "Canvas Designer readiness timed out. Inspect its extension log and retry.") === "disabled") {
@@ -463,6 +510,9 @@ export async function handleDesignerLaunch(res, body, {
             || JSON.stringify(designerPhaseIds(readyState)) !== JSON.stringify(phases)
             || JSON.stringify(readyState?.composition) !== JSON.stringify(snapshot.composition)) {
             return jsonError(res, 409, "Wizard pipeline or catalog changed; reopen the Designer setup");
+        }
+        if (!outputsUnchanged(readyState, handoff.workflow.outputEvidence)) {
+            return jsonError(res, 409, "Wizard outputs changed or inference is incomplete; refresh outputs and reopen the Designer setup");
         }
         // Local development sources point at arbitrary directories on disk,
         // not the Wizard's own state, so the fingerprint/phase re-checks

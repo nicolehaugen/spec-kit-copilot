@@ -17,8 +17,8 @@ from jsonschema import Draft202012Validator, ValidationError
 EXTENSIONS = Path(__file__).resolve().parents[1]
 EXTENSION_ID = "extension-canvas-design"
 PACKAGE = EXTENSIONS / EXTENSION_ID
-PAGE_NAMES = ("essentials", "artifacts", "appearance")
-PAGE_IDS = PAGE_NAMES
+PAGE_NAMES = ("essentials", "outputs", "appearance")
+PAGE_IDS = ("essentials", "artifacts", "appearance")
 FILES = {
     "extension.yml",
     "README.md",
@@ -50,10 +50,10 @@ FILES = {
     "shared-controls/stock-text/generated.mjs",
     "shared-controls/stock-checkbox/control.json",
     "shared-controls/stock-checkbox/designer.mjs",
-    "generated-host/workflow/workflow.json",
+    "generated-host/workflow-page/workflow.json",
     "generated-host/phase-control/phase-control.json",
     "generated-host/phase-control/generated-phase-adapter.mjs",
-    *(f"templates/generated-canvas/{name}" for name in (
+    *(f"generated-scaffold/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
@@ -120,7 +120,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 f"designer-host/appearance-settings/{mode}-{color}.json")
                for mode in ("light", "dark")
                for color in ("accent", "background", "surface", "secondary", "text")]
-            + [("generated-workflow", "generated-host/workflow/workflow.json"),
+            + [("generated-workflow", "generated-host/workflow-page/workflow.json"),
                ("generated-phase-control", "generated-host/phase-control/phase-control.json"),
                ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
@@ -198,7 +198,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 self.assertTrue(page["enabled"])
         self.assertEqual(
             [page["title"] for page in self.pages],
-            ["Essentials", "Artifacts", "Appearance"],
+            ["Essentials", "Outputs", "Appearance"],
         )
         self.assertEqual(
             self.pages[0]["fields"],
@@ -239,7 +239,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "designer.setting-definition": list(PACKAGE.glob("designer-host/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
             "generated.added-page-definition": preset_generated_pages,
-            "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow/workflow.json"],
+            "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow-page/workflow.json"],
             "shared.control-definition": list(PACKAGE.glob("shared-controls/*/control.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),

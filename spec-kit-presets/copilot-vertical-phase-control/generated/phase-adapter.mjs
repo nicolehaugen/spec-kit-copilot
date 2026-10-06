@@ -31,7 +31,10 @@ function validState(state) {
         && (state.status == null || typeof state.status === "object")
         && typeof state.draft === "string"
         && (state.output === null || typeof state.output === "string")
-        && Array.isArray(state.otherOutputs) && typeof state.sending === "boolean"
+        && Array.isArray(state.outputLinks)
+        && state.outputLinks.every((link) => link && typeof link.template === "string"
+            && typeof link.label === "string")
+        && typeof state.sending === "boolean"
         && (state.runLabel == null || typeof state.runLabel === "string");
 }
 
@@ -40,7 +43,6 @@ function render(state) {
     const phase = phases[current];
     const status = state.status?.status ?? "Not run";
     const output = state.output;
-    const otherOutputs = state.otherOutputs.join(", ");
     const available = output && output === state.status?.output
         && state.status?.artifactAvailability === "available";
     const autopilot = state.autopilot;
@@ -88,7 +90,11 @@ function render(state) {
             (available ? "" : output
                 ? `${output} is not available yet. Run the phase, then refresh to check again.`
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."))}</p>
-        <p class="muted" ${otherOutputs ? "" : "hidden"}>${otherOutputs ? `Other expected outputs: ${escapeHtml(otherOutputs)}` : ""}</p>
+        ${state.outputLinks.length ? `<div class="phase-output-list" aria-label="Phase outputs">
+            <strong>Outputs</strong>${state.outputLinks.map(({ template, label }) =>
+                `<button class="phase-artifact-link" type="button" data-action="output"
+                    data-output="${escapeHtml(template)}">${escapeHtml(label)}</button>`).join("")}
+        </div>` : ""}
         <label class="field"><span class="field-label">Phase input</span>
             <textarea class="phase-input-control" data-phase-draft placeholder="Add details or direction for this phase."
                 aria-label="Phase input">${escapeHtml(state.draft)}</textarea>
@@ -127,6 +133,7 @@ export function mount({ root, state, actions }) {
             await actions.runAt(Number(button.dataset.index));
         });
         else if (action === "view-row") invoke(() => actions.viewAt(Number(button.dataset.index)));
+        else if (action === "output") invoke(() => actions.viewAt(state.current, button.dataset.output));
         else if (action === "autopilot") invoke(() => {
             if (state.autopilot?.status === "Blocked"
                 && !root.ownerDocument.defaultView.confirm(

@@ -18,10 +18,10 @@ The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
 
 Replaceable templates are organized by host: `designer-host/` contains Designer
-tabs and settings, `generated-host/workflow/` contains the Workflow page, and
-`generated-host/phase-control/` contains the phase control with its placement
+tabs and settings, `generated-host/workflow-page/` contains the Workflow page,
+and `generated-host/phase-control/` contains the phase control with its placement
 and adapter. `shared-controls/` contains definitions and adapters used by both
-hosts. `templates/generated-canvas/` is the static app scaffold; Generate
+hosts. `generated-scaffold/` is the static app scaffold; Generate
 copies the resolved generated-host assets into its `pages/` directory, so the
 finished app does not depend on this extension at runtime.
 
@@ -50,19 +50,21 @@ finished app does not depend on this extension at runtime.
 | `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
 | `generated-control-adapter-image` | Generated app | Render packaged images in authorized slots |
 | `shared-controls-text` | Shared control | String value contract and adapter names |
-| `designer-control-adapter-text` | Designer | Edit text, including required Canvas ID and Title |
+| `designer-control-adapter-text` | Designer | Edit contributed text fields |
 | `generated-control-adapter-text` | Generated app | Render visible text in authorized placements |
 | `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
 | `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
-| `designer-artifacts` | Artifacts | Empty placeholder |
+| `designer-artifacts` | Outputs | Review fixed pipeline artifacts, add viewer links, and select the default viewer target |
 | `designer-appearance` | Appearance | Logos and per-mode palette colors |
 
 The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 `designer-essentials` is the template ID used for preset resolution.
-Its required Canvas ID and Title are fixed fields that share the `stock.text`
-editor with optional text contributions; a preset cannot remove them by
-omitting an optional contribution. Field-specific length, requiredness, and
-identifier rules are shown and validated by the Designer adapter at Generate;
+Its required Canvas ID and Title are rendered by the fixed identity control,
+while optional text contributions use the registered `stock.text` adapter.
+The Outputs tab uses a separate fixed phase-artifacts control. The Designer
+checks these core declarations before displaying either page; presets can
+still contribute to the `essentials.options` slot. Identity length, requiredness,
+and identifier rules are checked at Generate;
 the generator independently guards the generated extension path. Description and
 Workflow header use the packaged stock-text adapter for their visible
 generated presentation. Authors may set `"required": true` on a text field
@@ -160,6 +162,16 @@ shows phase names without run states; the selected phase card retains its status
 Dispatch success does not add a separate "Request sent" notice to the canvas.
 View artifact opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
+The Outputs tab shows one phase at a time, except Constitution. Wizard-inferred
+pipeline artifacts cannot be edited or removed; users can add and remove separate
+Markdown artifact links and choose the View artifact default. Adding a link does
+not create the file or change what the pipeline produces. Removing a selected
+addition restores the phase's original viewer default, or selects the first
+remaining link when there is no original default. The generated phase card
+lists all links and opens the selected one; View artifact is hidden when a phase
+has none. Constitution always opens `.specify/memory/constitution.md` and cannot
+be changed in the Designer. Existing header Save persists the viewer selections
+and additional links.
 
 ## Requirements
 
@@ -320,7 +332,7 @@ code.
 The Designer, generator, and standalone generated app apply the same object
 contract and value rules: 1-10 named properties, each with 1-20 distinct,
 nonempty string options of at most 80 characters. The canonical
-`templates/generated-canvas/control-contract.mjs` is copied into generated apps;
+`generated-scaffold/control-contract.mjs` is copied into generated apps;
 the Wizard provider includes a byte-checked copy, without a runtime dependency
 on the design-time extension.
 The browser reports incompatible `controlId` or `valueContract` exports,
@@ -433,7 +445,7 @@ The phase adapter exports `controlId = "workflow-phases"`,
 card within `root`. `state` supplies the phase list, current index, workflow
 identity, status, draft, output, other outputs, and sending status. The host
 supplies `actions.select(index)`,
-`actions.run(args)`, `actions.view()`, `actions.reveal()`,
+`actions.run(args)`, `actions.view(output?)`, `actions.reveal()`,
 `actions.draft(value)`, and `actions.error(error)`. The first four request
 host-validated operations; adapters do not call workflow endpoints directly.
 The host owns dispatch safeguards, persistence, and artifacts; it never

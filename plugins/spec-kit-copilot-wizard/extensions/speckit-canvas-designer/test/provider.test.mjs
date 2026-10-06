@@ -37,8 +37,139 @@ async function loadResolvedDesignerPages(handoff, project, entries, templates = 
 test("Designer packages the same control validator as the generated app", async () => {
     assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
         await readFile(new URL(
-            "../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+            "../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
             import.meta.url)));
+});
+
+test("Outputs persist with Designer settings and reject unsafe or stale edits", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.selectedPhases.unshift("constitution");
+    handoff.workflow.outputEvidence = {
+        constitution: { outputs: [], view: null },
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    await saveHandoff(workspace, handoff);
+    const model = { revision: "outputs-test", constraints: {}, values: {} };
+    const initial = await loadDesignerSettings(workspace, handoff, model);
+    const constitution = { outputs: [".specify/memory/constitution.md"],
+        view: ".specify/memory/constitution.md" };
+    assert.deepEqual(initial.outputs, { ...handoff.workflow.outputEvidence, constitution });
+    const outputs = { constitution, specify: { outputs: [
+        "specs/<slug>/spec.md", "specs/<slug>/research.md"],
+        view: "specs/<slug>/research.md" }, plan: { outputs: [], view: null } };
+    const saved = await saveDesignerSettings(workspace, handoff, initial,
+        { modelRevision: model.revision, revision: 0, values: {}, outputs });
+    assert.deepEqual(saved.outputs, outputs);
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, outputs);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, specify: { outputs: ["specs/<slug>/research.md"],
+            view: "specs/<slug>/research.md" } },
+    }), /Pipeline artifacts cannot be changed/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, specify: { outputs: [
+            "specs/<slug>/SPEC.md", "specs/<slug>/research.md"],
+        view: "specs/<slug>/research.md" } },
+    }), /Pipeline artifacts cannot be changed/);
+    const removed = { ...outputs, specify: { outputs: ["specs/<slug>/spec.md"],
+        view: "specs/<slug>/spec.md" } };
+    const restored = await saveDesignerSettings(workspace, handoff, saved,
+        { modelRevision: model.revision, revision: 1, values: {}, outputs: removed });
+    assert.deepEqual(restored.outputs, removed);
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, removed);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 2, values: {},
+        outputs: { ...outputs, constitution: { outputs: [], view: null } },
+    }), /Constitution output is fixed/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 2, values: {},
+        outputs: { ...outputs, plan: { outputs: ["../outside.md"], view: "../outside.md" } },
+    }), /Invalid outputs for phase plan/);
+    for (const path of [".GitHub/private.md", ".SPECIFY/templates/private.md"]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+            modelRevision: model.revision, revision: 2, values: {},
+            outputs: { ...outputs, plan: { outputs: [path], view: path } },
+        }), /Invalid outputs for phase plan/);
+    }
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 2, values: {},
+        outputs: { ...outputs, plan: { outputs: Array.from({ length: 101 },
+            (_, index) => `specs/<slug>/output-${index}.md`),
+        view: "specs/<slug>/output-0.md" } },
+    }), /Invalid outputs for phase plan/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 0, values: {}, outputs,
+    }), /changed elsewhere/);
+});
+
+test("Older saved output edits restore inferred artifacts without losing additions", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.outputEvidence = {
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    const directory = await saveHandoff(workspace, handoff);
+    const base = { revision: "legacy-outputs", constraints: {}, values: {} };
+    await writeFile(join(directory, "settings.json"), JSON.stringify({
+        schemaVersion: 1, handoffId: handoff.handoffId, modelRevision: base.revision,
+        revision: 1, values: {}, outputs: {
+            specify: { outputs: ["specs/<slug>/design-notes.md"],
+                view: "specs/<slug>/design-notes.md" },
+            plan: { outputs: [], view: null },
+        },
+    }));
+    const loaded = await loadDesignerSettings(workspace, handoff, base);
+    assert.deepEqual(loaded.outputs.specify, {
+        outputs: ["specs/<slug>/spec.md", "specs/<slug>/design-notes.md"],
+        view: "specs/<slug>/design-notes.md",
+    });
+    assert.equal(loaded.settingsRevision, 1);
+});
+
+test("Generation freezes the pipeline links and chosen additional viewer target", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.workflow.outputEvidence = {
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const pages = await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project));
+    const model = await loadDesignerSettings(workspace, handoff, pages);
+    const values = { ...model.values, "canvas.id": "links-canvas",
+        "canvas.displayName": "Links Canvas" };
+    const outputs = { ...model.outputs, specify: {
+        outputs: ["specs/<slug>/spec.md", "specs/<slug>/design-notes.md"],
+        view: "specs/<slug>/design-notes.md",
+    } };
+    await assert.rejects(freezeGeneration({ model, values, outputs: {
+        ...outputs, specify: { outputs: ["specs/<slug>/design-notes.md"],
+            view: "specs/<slug>/design-notes.md" },
+    }, handoff, project, workspace }), /Pipeline artifacts cannot be changed/);
+    const prepared = await freezeGeneration({ model, values, outputs, handoff, project, workspace });
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.workflow.phaseArtifacts, outputs);
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, prepared.target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.phaseArtifacts.specify, outputs.specify);
 });
 
 function validHandoff(id = ID) {
@@ -82,17 +213,17 @@ async function projectFixture(t, workspace) {
     await copyFile(join(source, "schemas", "designer.tab-definition.schema.json"),
         join(installed, "schemas", "designer.tab-definition.schema.json"));
     await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
-    const pages = ["essentials", "artifacts", "appearance"];
+    const pages = ["essentials", "outputs", "appearance"];
     const entries = [];
     for (const filename of pages) {
         const path = join(installed, "designer-host", "tabs", `${filename}.json`);
         await copyFile(join(source, "designer-host", "tabs", `${filename}.json`), path);
-        entries.push({ name: `designer-${filename}`, path,
+        entries.push({ name: filename === "outputs" ? "designer-artifacts" : `designer-${filename}`, path,
             kind: "designer.tab-definition", strategy: "replace" });
     }
     const scalar = [];
     for (const [name, directory, filename, kind] of [
-        ["generated-workflow", "workflow", "workflow.json", "generated.workflow-page-definition"],
+        ["generated-workflow", "workflow-page", "workflow.json", "generated.workflow-page-definition"],
         ["generated-phase-control", "phase-control", "phase-control.json", "generated.phase-control-definition"],
         ["generated-phase-adapter", "phase-control", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
@@ -281,7 +412,7 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     setup.fields[0].control = "stock.checkbox";
     await writeFile(entries[0].path, JSON.stringify(setup));
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
-    assert.match(invalid.pages[0].error.reason, /duplicate or invalid field canvas.id/);
+    assert.match(invalid.pages[0].error.reason, /required fixed Designer control/);
 });
 
 test("preset field placements resolve into Workflow and added-page slots", async (t) => {
@@ -445,9 +576,10 @@ test("Generate uses approved adapter validation and still guards extension paths
     const adapter = scalarFixtures.get(project).find((item) =>
         item.name === "designer-control-adapter-text");
     const original = await readFile(adapter.path, "utf8");
-    const load = () => loadResolvedDesignerPages(handoff, project, entries);
+    const templates = await stockTemplates(project);
+    const load = () => loadResolvedDesignerPages(handoff, project, entries, templates);
     const values = { ...(await load()).values, "canvas.id": "valid-canvas",
-        "canvas.displayName": "Valid Canvas" };
+        "canvas.displayName": "Valid Canvas", "canvas.description": "Description" };
     const replaceValidator = async (body) => {
         await writeFile(adapter.path, original.replace(
             "export function validate(value, field) {",
@@ -456,13 +588,13 @@ test("Generate uses approved adapter validation and still guards extension paths
     };
     let model = await replaceValidator("return false;");
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
-        /Invalid Canvas ID \(canvas.id\)/);
+        /Invalid Description \(canvas.description\)/);
     model = await replaceValidator('throw new Error("validator broke");');
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
-        /Canvas ID \(canvas.id\) validator failed: validator broke/);
+        /Description \(canvas.description\) validator failed: validator broke/);
     model = await replaceValidator('return "yes";');
     await assert.rejects(freezeGeneration({ model, values, handoff, project, workspace }),
-        /Canvas ID \(canvas.id\) validator must return a boolean/);
+        /Description \(canvas.description\) validator must return a boolean/);
     model = await replaceValidator("return true;");
     await assert.rejects(freezeGeneration({ model, values: { ...values, "canvas.id": "../escape" },
         handoff, project, workspace }), /Invalid Designer setting: canvas.id/);
@@ -610,7 +742,7 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     assert.equal(defaults.canvas.description, "Spec Kit workflow canvas.");
     assert.equal(defaults.canvas.workflowListName, "Workflows");
     assert.equal(defaults.userProvidesSlug, false);
-    const { renderHtml } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/server.mjs",
+    const { renderHtml } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/server.mjs",
         import.meta.url));
     const defaultHtml = renderHtml(defaults);
     assert.match(defaultHtml, /Workflows/);
@@ -618,6 +750,19 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     assert.doesNotMatch(defaultHtml, /id="workflow-slug"/);
     assert.equal(await readFile(join(project, next.target, "ui", "runtime.css"), "utf8"),
         await readFile(join(project, prepared.target, "ui", "runtime.css"), "utf8"));
+    const originalPages = await Promise.all(entries.slice(0, 2)
+        .map((entry) => readFile(entry.path, "utf8")));
+    for (const [index, contents] of originalPages.entries()) {
+        const page = JSON.parse(contents);
+        delete page.fixedControl;
+        await writeFile(entries[index].path, JSON.stringify(page));
+    }
+    const legacyPages = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.equal(legacyPages.pages[0].fixedControl, "designer.identity");
+    assert.equal(legacyPages.pages[1].fixedControl, "designer.outputs");
+    for (const [index, contents] of originalPages.entries()) {
+        await writeFile(entries[index].path, contents);
+    }
     const withoutSlug = await loadResolvedDesignerPages(handoff, project, entries, templates.slice(0, 2));
     assert.equal(Object.hasOwn(withoutSlug.values, "workflowSlug.userProvided"), false);
     await writeFile(templates[0].path, JSON.stringify({
@@ -638,10 +783,11 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     broken.fields.push({ id: "billing.required", label: "Required", type: "boolean" });
     await writeFile(entries[1].path, JSON.stringify(broken));
     const incomplete = await loadResolvedDesignerPages(handoff, project, entries);
+    assert.match(incomplete.pages[1].error.reason, /required fixed Designer control/);
     await assert.rejects(freezeGeneration({ model: incomplete,
-        values: { ...incomplete.values, ...minimum, "billing.required": "not a boolean" },
+        values: { ...incomplete.values, ...minimum },
         handoff, project, workspace }),
-    /Invalid Designer setting: billing.required/);
+    /Cannot generate while designer-artifacts is invalid/);
     await writeFile(entries[1].path, "{invalid");
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
     assert.ok(invalid.pages[1].error);
@@ -653,7 +799,7 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     const missingIdentity = await loadResolvedDesignerPages(handoff, project, entries);
     await assert.rejects(freezeGeneration({ model: missingIdentity,
         values: { ...missingIdentity.values, "canvas.id": "other" },
-        handoff, project, workspace }), /Canvas ID and Title/);
+        handoff, project, workspace }), /Essentials must load with Canvas ID and Title/);
 });
 
 test("Appearance palette colors persist and style both runtime themes without replacing defaults", async (t) => {
@@ -1517,9 +1663,9 @@ test("token-gated Save endpoint reports errors without losing the current values
     const handoff = validHandoff();
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
-    const changedPage = JSON.parse(await readFile(entries[1].path, "utf8"));
+    const changedPage = JSON.parse(await readFile(entries[0].path, "utf8"));
     changedPage.fields.push({ id: "changed", label: "Changed" });
-    await writeFile(entries[1].path, JSON.stringify(changedPage));
+    await writeFile(entries[0].path, JSON.stringify(changedPage));
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries));
     const shell = await startShell(handoff, model, { project, workspace });
@@ -1561,7 +1707,8 @@ test("Save accepts a bounded request and rejects one byte over the limit", async
     const handoff = validHandoff("a".repeat(128));
     const folder = await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
-    for (const [index, entry] of entries.slice(0, 3).entries()) {
+    for (const index of [0, 2]) {
+        const entry = entries[index];
         const page = JSON.parse(await readFile(entry.path, "utf8"));
         while (page.fields.length < 100) {
             const id = `custom.${index}.${page.fields.length}`;
@@ -1570,7 +1717,7 @@ test("Save accepts a bounded request and rejects one byte over the limit", async
         await writeFile(entry.path, JSON.stringify(page));
     }
     const model = await loadResolvedDesignerPages(handoff, project, entries);
-    assert.equal(Object.keys(model.constraints).length, 300);
+    assert.equal(Object.keys(model.constraints).length, 200);
     const values = { ...model.values, "canvas.id": "example", "canvas.displayName": "Example" };
     const payload = { revision: 0, modelRevision: model.revision, values };
     let remaining = SAVE_REQUEST_LIMIT - Buffer.byteLength(JSON.stringify(payload));
@@ -1679,11 +1826,11 @@ test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
-    const page = JSON.parse(await readFile(entries[1].path, "utf8"));
+    const page = JSON.parse(await readFile(entries[0].path, "utf8"));
     for (let index = 0; index < 20; index++) {
         page.fields.push({ id: `custom.${index}`, label: `Custom ${index}` });
     }
-    await writeFile(entries[1].path, JSON.stringify(page));
+    await writeFile(entries[0].path, JSON.stringify(page));
     const model = await loadResolvedDesignerPages(handoff, project, entries);
     const values = { ...model.values, "canvas.id": "large-canvas",
         "canvas.displayName": "Large Canvas" };
@@ -1781,11 +1928,11 @@ test("reads the complete effective page set from the child checkout without a sn
     const override = join(project, ".specify", "presets", "override.json");
     await mkdir(join(project, ".specify", "presets"));
     const changed = JSON.parse(await readFile(entries[0].path, "utf8"));
-    changed.fields[1].label = "Custom title";
+    changed.title = "Custom Essentials";
     await writeFile(override, JSON.stringify(changed));
     const effective = [{ ...entries[0], path: override }, ...entries.slice(1)];
     const model = await loadResolvedDesignerPages(handoff, project, effective);
-    assert.equal(model.pages[0].fields[1].label, "Custom title");
+    assert.equal(model.pages[0].title, "Custom Essentials");
     assert.equal(model.pages[0].provenance.path, override);
     assert.equal((await loadResolvedDesignerPages(handoff, project, effective)).revision, model.revision);
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries.slice(1)),
@@ -1802,7 +1949,7 @@ test("reads the complete effective page set from the child checkout without a sn
         [{ ...entries[0], path: missingParentPath }, ...entries.slice(1)]);
     assert.equal(missingParent.pages[0].error.path, missingParentPath);
     assert.match(missingParent.pages[0].error.reason, /missing/);
-    assert.equal(missingParent.pages[1].title, "Artifacts");
+    assert.equal(missingParent.pages[1].title, "Outputs");
     await writeFile(join(workspace, "outside.json"), JSON.stringify(changed));
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [{ ...entries[0], path: join(workspace, "outside.json") }, ...entries.slice(1)]),
@@ -1923,7 +2070,7 @@ test("registered contributions validate slots, sources, references and determini
                 const model = await loadResolvedDesignerPages(handoff, project,
                     [...entries, pageEntry], templates);
                 assert.deepEqual(model.pages.map((page) => page.title),
-                    ["Essentials", "Artifacts", "Appearance", "Billing"]);
+                    ["Essentials", "Outputs", "Appearance", "Billing"]);
                 assert.equal(model.pages.find((page) => page.fields.some((field) =>
                     field.id === "billing.costCode")).page,
                 slot === "essentials.options" ? "designer-essentials" : "canvas-settings-billing");
@@ -2147,7 +2294,7 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
     assert.match(broken.pages[0].error.reason, /Invalid Designer JSON/);
     assert.equal(broken.pages[0].error.path, entries[0].path);
     assert.equal(Object.hasOwn(broken.values, "canvas.id"), false);
-    assert.equal(broken.pages[1].title, "Artifacts");
+    assert.equal(broken.pages[1].title, "Outputs");
     const allMissing = await loadResolvedDesignerPages(handoff, project, entries.map((entry, i) =>
         ({ ...entry, path: join(project, ".specify", `missing-${i}.json`) })));
     assert.equal(allMissing.pages.length, 3);
@@ -3198,7 +3345,7 @@ test("paired control validates both adapters, typed values and portable generate
     const config = readConfig();
     assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
     assert.deepEqual(await readFile(join(portable, "control-contract.mjs")),
-        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/control-contract.mjs",
+        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
             import.meta.url)));
     const configPath = join(portable, "canvas-config.json");
     for (const invalidProperties of [
@@ -3267,7 +3414,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     await writeFile(entries[0].path, "{broken");
     const model = await loadResolvedDesignerPages(validHandoff(), project, entries);
     assert.match(model.pages[0].error.reason, /Invalid Designer JSON/);
-    assert.equal(model.pages[1].title, "Artifacts");
+    assert.equal(model.pages[1].title, "Outputs");
 });
 
 test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {
@@ -3303,7 +3450,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             join(shared, file));
     }
     await mkdir(join(extension, "ui"));
-    for (const file of ["index.html", "app.js", "styles.css"]) {
+    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
     const { project, entries } = await projectFixture(t, workspace);

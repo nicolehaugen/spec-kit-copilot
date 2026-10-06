@@ -1,10 +1,14 @@
 const token = new URL(location.href).searchParams.get("token");
+const [{ mountIdentity }, { mountOutputs }] = await Promise.all([
+    import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
+    import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
+]);
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
-let model, currentPage, draft, saving = false;
+let model, currentPage, draft, draftOutputs, saving = false;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
@@ -12,6 +16,11 @@ const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
 const mounted = new Map();
+
+function outputPathsReady() {
+    return Object.values(draftOutputs ?? {}).every((entry) =>
+        entry.outputs.every((path) => path.endsWith(".md")));
+}
 
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "designer-essentials");
@@ -24,7 +33,8 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = saving || activeUploads.size > 0 || generating || queued || !model?.handoffId
+    generate.disabled = saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
+        || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity;
 }
@@ -56,7 +66,7 @@ generate.addEventListener("click", async () => {
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
-                settingsRevision: model.settingsRevision, values,
+                settingsRevision: model.settingsRevision, values, outputs: draftOutputs,
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
@@ -129,8 +139,9 @@ function checkReady() {
 
 function updateSave() {
     const noChanges = model?.persisted
-        && JSON.stringify(draft) === JSON.stringify(model.values);
-    saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges;
+        && JSON.stringify(draft) === JSON.stringify(model.values)
+        && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs);
+    saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
@@ -152,7 +163,7 @@ saveButton.addEventListener("click", async () => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
-                revision: model.settingsRevision, values: draft }),
+                revision: model.settingsRevision, values: draft, outputs: draftOutputs }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Designer save failed (${response.status})`);
@@ -189,6 +200,12 @@ function renderPage(pageId, invalidFieldId) {
         root.setAttribute("aria-busy", "false");
         return true;
     }
+    if (page.fixedControl === "designer.outputs") {
+        mountOutputs({ root, page, phases: model.phases, draftOutputs,
+            pipelineOutputs: model.pipelineOutputs, onChange: updateSave });
+        root.setAttribute("aria-busy", "false");
+        return true;
+    }
     root.replaceChildren(element("h1", page.title), element("p", page.description ?? "", "muted"));
     const form = element("form");
     form.noValidate = true;
@@ -198,7 +215,19 @@ function renderPage(pageId, invalidFieldId) {
     });
     if (!page.fields.length) form.append(element("p", "This template defines no fields.", "settings-note"));
     root.append(form);
-    for (const field of page.fields) {
+    const identity = page.fixedControl === "designer.identity"
+        ? page.fields.filter((field) => ["canvas.id", "canvas.displayName"].includes(field.id)) : [];
+    if (identity.length) {
+        const handles = mountIdentity({ root: form, fields: identity, values: draft,
+            invalidFieldId, onChange(id, value) {
+                draft[id] = value;
+                messageBox.hidden = true;
+                showError("");
+                updateSave();
+            } });
+        for (const [id, handle] of handles) mounted.set(id, handle);
+    }
+    for (const field of page.fields.filter((item) => !identity.some((fixed) => fixed.id === item.id))) {
         const rules = model.constraints[field.id];
         const image = rules.type === "image";
         const object = rules.type === "object";
@@ -322,6 +351,8 @@ function applyState(next) {
     if (changed) {
         model = next;
         draft = structuredClone(model.values);
+        draftOutputs = structuredClone(model.outputs ?? Object.fromEntries(
+            (model.phases ?? []).map((id) => [id, { outputs: [], view: null }])));
         tabs.replaceChildren();
         for (const page of model.pages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,

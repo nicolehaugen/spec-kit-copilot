@@ -6,16 +6,17 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
-import { createRuntime } from "../extension-canvas-design/templates/generated-canvas/runtime.mjs";
-import { renderHtml } from "../extension-canvas-design/templates/generated-canvas/server.mjs";
+import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
+import { phaseContract } from "../extension-canvas-design/generated-scaffold/contract.mjs";
+import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
 import { isWindowsDeviceName as designerDeviceName } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
-import { isWindowsDeviceName as runtimeDeviceName } from "../extension-canvas-design/templates/generated-canvas/files.mjs";
+import { isWindowsDeviceName as runtimeDeviceName } from "../extension-canvas-design/generated-scaffold/files.mjs";
 
-const entryTemplate = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/extension.mjs",
+const entryTemplate = await readFile(new URL("../extension-canvas-design/generated-scaffold/extension.mjs",
     import.meta.url), "utf8");
 const model = {
     revision: "test-revision",
@@ -36,6 +37,107 @@ const model = {
 const values = { "canvas.id": "my-workflow", "canvas.displayName": "My Workflow",
     "canvas.description": "A workflow", "canvas.workflowListName": "Workflows",
     "workflowSlug.userProvided": false };
+
+test("confirmed outputs override legacy defaults, including an explicitly empty phase", () => {
+    const config = { phases: ["specify", "plan"], phaseOutputs: {
+        specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
+        plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" },
+    }, phaseArtifacts: {
+        specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
+            view: "specs/<slug>/research.md" },
+        plan: { outputs: [], view: null },
+    } };
+    const phases = phaseContract(config);
+    assert.equal(phases[0].output, "specs/<slug>/research.md");
+    assert.deepEqual(phases[0].outputs, config.phaseArtifacts.specify.outputs);
+    assert.equal(phases[1].output, null);
+    assert.deepEqual(phases[1].outputs, []);
+    assert.equal(phases[1].expectsArtifact, false);
+    for (const invalid of [
+        { outputs: [], view: "specs/<slug>/plan.md" },
+        { outputs: ["../bad.md"], view: "../bad.md" },
+        { outputs: ["specs/<slug>/plan.md", "specs/<slug>/plan.md"],
+            view: "specs/<slug>/plan.md" },
+    ]) {
+        assert.throws(() => phaseContract({ ...config, phaseArtifacts:
+            { ...config.phaseArtifacts, plan: invalid } }), /Invalid|outside|Duplicate/);
+    }
+});
+
+test("Constitution always opens its fixed artifact despite stale output mappings", () => {
+    const [phase] = phaseContract({ phases: ["constitution"], phaseOutputs: {
+        constitution: { expectsArtifact: false, outputPath: null },
+    }, phaseArtifacts: { constitution: { outputs: [], view: null } } });
+    assert.equal(phase.output, ".specify/memory/constitution.md");
+    assert.deepEqual(phase.outputs, [".specify/memory/constitution.md"]);
+    assert.equal(phase.expectsArtifact, true);
+});
+
+test("frozen Designer outputs become the generated viewer and link configuration", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const outputs = {
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
+        specify: { outputs: ["specs/<slug>/spec.md", "specs/<slug>/research.md"],
+            view: "specs/<slug>/research.md" },
+        plan: { outputs: [], view: null },
+    };
+    const prepared = await freezeGeneration({ project, workspace, model, values, handoff, outputs });
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.phaseArtifacts, outputs);
+    const steps = phaseContract(config);
+    assert.equal(steps.find((step) => step.id === "specify").output, "specs/<slug>/research.md");
+    assert.equal(steps.find((step) => step.id === "plan").output, null);
+    assert.equal(steps.find((step) => step.id === "constitution").output,
+        ".specify/memory/constitution.md");
+    await assert.rejects(freezeGeneration({ project, workspace, model, values, handoff,
+        outputs: { ...outputs, constitution: { outputs: [], view: null } } }),
+    /Constitution output is fixed/);
+    const directory = join(project, "specs", "demo");
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "spec.md"), "# Spec");
+    await writeFile(join(directory, "research.md"), "# Research");
+    const runtime = await createRuntime({ config, cwd: project, workspace,
+        session: { sessionId: "outputs-test", on: () => () => {},
+            getEvents: async () => [], log: async () => {} } });
+    t.after(() => runtime.close());
+    assert.equal((await runtime.artifact({ phase: "specify", itemId: "specs/demo" })).path,
+        "specs/demo/research.md");
+    assert.equal((await runtime.artifact({ phase: "specify", itemId: "specs/demo",
+        output: "specs/<slug>/spec.md" })).content, "# Spec");
+    await assert.rejects(runtime.artifact({ phase: "specify", itemId: "specs/demo",
+        output: ".github/private.md" }), /not declared/);
+    await assert.rejects(runtime.artifact({ phase: "plan", itemId: "specs/demo" }),
+        /No artifact is available/);
+});
+
+test("viewer-only roots do not create workflows and links resolve within the selected slug", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const config = {
+        canvas: { id: "viewer-roots", displayName: "Viewer roots" },
+        phases: ["specify"], phaseOutputs: {
+            specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
+        },
+        phaseArtifacts: { specify: {
+            outputs: ["specs/<slug>/spec.md", "reports/<slug>/notes.md"],
+            view: "specs/<slug>/spec.md",
+        } },
+    };
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await mkdir(join(project, "reports", "demo"), { recursive: true });
+    await writeFile(join(project, "specs", "demo", "spec.md"), "# Spec");
+    await writeFile(join(project, "reports", "demo", "notes.md"), "# Notes");
+    const runtime = await createRuntime({ config, cwd: project, workspace,
+        session: { sessionId: "viewer-roots", on: () => () => {},
+            getEvents: async () => [], log: async () => {} } });
+    t.after(() => runtime.close());
+    const state = await runtime.snapshot();
+    assert.deepEqual(state.items.map(({ id }) => id), ["specs/demo"]);
+    assert.equal((await runtime.artifact({ phase: "specify", itemId: "specs/demo",
+        output: "reports/<slug>/notes.md" })).content, "# Notes");
+});
 const handoff = { handoffId: "handoff-1", sourceFingerprint: "",
     selections: { presets: [], extensions: [], bundles: [] },
     workflow: { selectedPhases: ["constitution", "specify", "plan"],
@@ -1027,7 +1129,7 @@ test("custom slug toggle controls the field and View target preview; actual dire
             assert.match(collection, /id="workflow-slug-label">Artifact directory slug <span class="muted">\(optional\)<\/span>/);
             assert.match(collection, /id="workflow-slug"[^>]+placeholder="your-slug"/);
         } else assert.doesNotMatch(html, /id="workflow-slug"/);
-        const ui = await readFile(new URL("../extension-canvas-design/templates/generated-canvas/ui/app.js", import.meta.url), "utf8");
+        const ui = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js", import.meta.url), "utf8");
         assert.match(ui, /input\.placeholder = input\.readOnly \? "Automatically assigned" : "your-slug"/);
         assert.match(html, /<h2 id="workflow-heading">Workflows/);
         assert.match(renderHtml({ ...config, phases: ["constitution"] }), /id="workflow-name"/);

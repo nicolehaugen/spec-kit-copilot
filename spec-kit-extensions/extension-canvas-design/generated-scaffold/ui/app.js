@@ -553,8 +553,10 @@ function phaseState(pendingLabel = () => null) {
         status: status && output !== status.output
             ? { ...status, artifactAvailability: "unknown", artifactError: null } : status,
         draft: selected ? drafts.get(draftKey(selected)) ?? model.drafts[draftKey(selected)] ?? "" : "",
-        output: output ?? null, otherOutputs: selected
-            ? (selected.outputs ?? []).map(resolveOutput).filter((entry) => entry !== output) : [],
+        output: output ?? null, outputLinks: selected
+            ? (selected.outputs ?? []).map((template) => ({
+                template, label: resolveOutput(template),
+            })) : [],
         slugEditable: Boolean(model?.userProvidesSlug),
         sending: Boolean(selected && sending && sending.phase === selected.id
             && sending.item === model.selected),
@@ -798,7 +800,8 @@ async function refreshArtifact() {
     context.reading = true;
     message("Loading artifact...", "artifact-message");
     try {
-        const query = new URLSearchParams({ phase: context.phase, itemId: context.itemId });
+        const query = new URLSearchParams({ phase: context.phase, itemId: context.itemId,
+            ...(context.output !== undefined ? { output: context.output } : {}) });
         const result = await api(`/api/artifact?${query}`);
         if (viewer !== context) return;
         $("artifact-path").textContent = result.path;
@@ -812,9 +815,10 @@ async function refreshArtifact() {
     try { await refresh(); }
     catch (error) { message(`Could not refresh artifact availability: ${error.message}`, "canvas-message", true); }
 }
-async function openArtifact(step) {
+async function openArtifact(step, output) {
     if (!step) throw new Error("Wait for the canvas to connect, then try again.");
-    viewer = { phase: step.id, itemId: step.project ? "project" : model.selected, loaded: false };
+    viewer = { phase: step.id, itemId: step.project ? "project" : model.selected,
+        ...(output !== undefined ? { output } : {}), loaded: false };
     $("artifact-title").textContent = step.project ? "Constitution" : step.label;
     $("artifact-path").textContent = "";
     $("artifact-content").replaceChildren();
@@ -911,22 +915,22 @@ try {
     phaseControl = mount({ root: pipelineRoot, state: {
         phases: initialPhases, current: initialPhases.length ? 0 : -1,
         workflow: "__new__", status: null, draft: "",
-        output: initialPhases[0]?.output ?? null, otherOutputs: [],
+        output: initialPhases[0]?.output ?? null, outputLinks: [],
         slugEditable: Boolean($("workflow-slug")), sending: false, statuses: {}, autopilot: null,
     },
         actions: {
             select: (index) => { requireModel(); return selectPhase(index); },
             run: (value) => { requireModel(); return send(phase(), value); },
+            view: (output) => { requireModel(); return openArtifact(phase(), output); },
             runAt: async (index) => {
                 requireModel();
                 const step = workflowPhases()[index];
                 if (!step) throw new Error("This step is no longer configured.");
                 return send(step, drafts.get(draftKey(step)) ?? model.drafts[draftKey(step)] ?? "");
             },
-            view: () => { requireModel(); return openArtifact(phase()); },
-            viewAt: (index) => {
+            viewAt: (index, output) => {
                 requireModel();
-                return openArtifact(workflowPhases()[index]);
+                return openArtifact(workflowPhases()[index], output);
             },
             startManagedRun: async () => {
                 requireModel();
