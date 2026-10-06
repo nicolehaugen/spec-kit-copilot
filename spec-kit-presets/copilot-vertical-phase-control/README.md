@@ -27,8 +27,9 @@ session mode from before the original run when it finishes. If every step
 was already verified, there is no step to retry; check chat for the outcome.
 An active Autopilot workflow cannot be deleted until it stops or finishes.
 Its Stop action remains visible when a different workflow is selected; phase
-progress on that workflow is not attributed to the active run. Stop a blocked
-run before switching workflows if the Copilot session is still in Autopilot mode.
+progress on that workflow is not attributed to the active run. You can change
+the selection to reach Stop, but must stop a blocked run before starting
+Autopilot on another workflow if Copilot is still in Autopilot mode.
 The managed-run capability is declared in the preset's phase-control JSON and
 frozen into generated configuration. The server verifies both packaged hashes
 without executing the browser module.
