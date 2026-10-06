@@ -410,6 +410,12 @@ export const requiredCapabilities = getCapabilities();
 export function mount() {}`);
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /requiredCapabilities must be a literal string array/);
+    await writeFile(adapterFile, `export const controlId = "workflow-phases";
+export const contractVersion = 1;
+export const requiredCapabilities = ['workflow.managed-run.v1'] && [];
+export function mount() {}`);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /requiredCapabilities must be a literal string array/);
     await writeFile(adapterFile, originalAdapter);
     await assert.rejects(loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"

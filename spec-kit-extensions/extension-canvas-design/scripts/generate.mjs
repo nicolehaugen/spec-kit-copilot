@@ -293,7 +293,7 @@ function frozenWorkflowPage(page) {
         (part) => part.replace(/[^\r\n]/g, " "));
     const exportLocation = /^[ \t]*export\s+const\s+requiredCapabilities\b/m.exec(visibleSource);
     const declaration = exportLocation && module.slice(exportLocation.index)
-        .match(/^[ \t]*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;?/);
+        .match(/^[ \t]*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;/);
     let capabilities = [];
     if (declaration) {
         const entries = declaration[1].slice(1, -1).trim().replace(/,\s*$/, "");

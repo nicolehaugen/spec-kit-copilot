@@ -690,7 +690,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         (part) => part.replace(/[^\r\n]/g, " "));
     const exportLocation = /^[ \t]*export\s+const\s+requiredCapabilities\b/m.exec(visibleSource);
     const declaration = exportLocation && adapterSource.slice(exportLocation.index)
-        .match(/^[ \t]*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;?/);
+        .match(/^[ \t]*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;/);
     let managedRun = false;
     if (declaration) {
         const entries = declaration[1].slice(1, -1).trim().replace(/,\s*$/, "");

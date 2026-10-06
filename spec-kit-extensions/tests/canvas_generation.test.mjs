@@ -881,6 +881,25 @@ export function mount() {}`);
     }
 });
 
+test("generation rejects a computed capability expression starting with a literal array", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    const bytes = Buffer.from(`export const controlId = "workflow-phases";
+export const contractVersion = 1;
+export const requiredCapabilities = ['workflow.managed-run.v1'] && [];
+export function mount() {}`);
+    request.workflowPage.managedRun = true;
+    request.workflowPage.assets[2].content = bytes.toString("base64");
+    request.workflowPage.assets[2].hash = createHash("sha256").update(bytes).digest("hex");
+    const { integrity: _old, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen phase control capabilities/);
+});
+
 test("additional Workflow slots do not reorder the fixed shell", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",

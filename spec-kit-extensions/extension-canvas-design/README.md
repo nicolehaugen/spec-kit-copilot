@@ -455,7 +455,8 @@ them in `update` when the host supplies new state. A minimal phase list:
 The catalog-listed `copilot-vertical-phase-control` preset replaces the
 `generated-phase-adapter` named template. Adapters may export
 `requiredCapabilities` as a direct exported literal array of unique capability
-names (single- or double-quoted, on one or multiple lines); absent means no
+names (single- or double-quoted, on one or multiple lines, terminated by a
+semicolon); absent means no
 optional capabilities. Dynamic/computed declarations cannot authorize a
 managed run. The generated host rejects unknown requirements before calling
 `mount`. Currently supported optional capabilities are:
