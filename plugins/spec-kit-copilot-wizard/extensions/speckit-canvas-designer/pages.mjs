@@ -414,7 +414,8 @@ function validatePhaseControl(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).some((key) =>
-            !["adapter", "id", "placement", "schemaVersion", "viewLabels"].includes(key))
+            !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
+        || (document.managedRun !== undefined && typeof document.managedRun !== "boolean")
         || document.schemaVersion !== 1 || document.id !== "workflow-phases"
         || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
         || isWindowsDeviceName(document.adapter)
@@ -1152,7 +1153,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
-    model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
+    model.workflowPage = { name: workflowPage.name, ...workflowPage.document,
+        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-definition").document.managedRun === true };
     model.dialogDefinitions = loaded.filter((entry) => entry.kind === "generated.dialog-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.phaseDialogBindings = loaded.filter((entry) => entry.kind === "generated.phase-dialog-binding")

@@ -147,7 +147,7 @@ test("the adapter confirms only Autopilot transitions, never pending manual retr
     assert.deepEqual(calls.slice(1), [["stopManagedRun"], ["runAt", 1]]);
     assert.match(confirmations[0], /Stop it before starting this step manually/);
 
-    control.update({ ...initial, autopilot: { status: "Blocked", current: 1 } });
+    control.update({ ...initial, autopilot: { item: "demo", status: "Blocked", current: 1 } });
     root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return false; };
     click("autopilot");
     assert.equal(calls.at(-1)[0], "runAt");
@@ -156,4 +156,17 @@ test("the adapter confirms only Autopilot transitions, never pending manual retr
     assert.deepEqual(calls.at(-1), ["startManagedRun"]);
     assert.match(confirmations.at(-1), /Check chat and artifacts before resuming/);
     control.dispose();
+});
+
+test("vertical control keeps the other workflow's Stop action without borrowing its phase progress", () => {
+    const { root } = rootFixture();
+    const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
+        "startManagedRun", "stopManagedRun", "reveal", "error"].map((name) => [name, () => {}]));
+    mount({ root, definition, state: { ...initial, statuses: {}, autopilot: {
+        item: "specs/alpha", status: "Running", current: 0, message: "Running: step 1 of 2",
+    } }, actions });
+    assert.match(root.innerHTML, /data-action="stop">Stop/);
+    assert.match(root.innerHTML, /Autopilot for specs\/alpha: Running: step 1 of 2/);
+    assert.match(root.innerHTML, /data-status="Not run">pending/);
+    assert.doesNotMatch(root.innerHTML, /data-status="Running">running/);
 });

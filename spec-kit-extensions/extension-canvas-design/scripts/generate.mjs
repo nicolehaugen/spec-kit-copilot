@@ -240,8 +240,9 @@ const imageFile = (item) => `${item.page
 
 function frozenWorkflowPage(page, selectedPhases) {
     if (!Array.isArray(selectedPhases)
-        || !page || Object.keys(page).sort().join() !== "assets,id,order,slots,title"
+        || !page || Object.keys(page).sort().join() !== "assets,id,managedRun,order,slots,title"
         || page.id !== "workflow" || page.order !== 0
+        || typeof page.managedRun !== "boolean"
         || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
         || !Array.isArray(page.slots) || !page.slots.some((slot) => slot?.id === "workflow.phases")
         || page.slots.length > 30
@@ -279,7 +280,8 @@ function frozenWorkflowPage(page, selectedPhases) {
     try { control = withoutSchema(JSON.parse(Buffer.from(page.assets[1].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid frozen phase control definition"); }
     if (!control || Object.keys(control).some((key) =>
-        !["adapter", "id", "placement", "schemaVersion", "viewLabels"].includes(key))
+        !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
+        || (control.managedRun !== undefined && typeof control.managedRun !== "boolean")
         || control.schemaVersion !== 1 || control.id !== "workflow-phases"
         || control.adapter !== page.assets[2].name
         || !control.placement || Object.keys(control.placement).sort().join() !== "page,slot"
@@ -299,11 +301,15 @@ function frozenWorkflowPage(page, selectedPhases) {
     if (check.error || check.status !== 0) {
         throw new Error(`Invalid frozen phase control adapter: ${check.stderr || check.error || "module validation failed"}`);
     }
+    if (page.managedRun !== (control.managedRun === true)) {
+        throw new Error("Frozen phase control capabilities differ from its definition");
+    }
     return { title: page.title, order: page.order, slots: page.slots,
         phaseControl: page.assets[1].name,
         adapter: control.adapter, placement: control.placement,
         viewLabels: control.viewLabels ?? {}, definitionHash: page.assets[0].hash,
-        controlHash: page.assets[1].hash, hash: page.assets[2].hash };
+        controlHash: page.assets[1].hash, hash: page.assets[2].hash,
+        managedRun: page.managedRun };
 }
 
 function frozenPlacement(item, kind) {

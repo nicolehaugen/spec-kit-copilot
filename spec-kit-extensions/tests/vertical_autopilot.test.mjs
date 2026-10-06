@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -23,7 +23,7 @@ async function setup(t, vertical = true) {
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "SKILL.md"), `---\nname: speckit-${skill}\n---\n`);
     }
-    const sent = [], callbacks = new Map();
+    const sent = [], callbacks = new Map(), diagnostics = [];
     let events = [];
     const session = {
         sessionId: "test-session", rpc: { skills: { reload: async () => ({ errors: [] }) },
@@ -32,7 +32,7 @@ async function setup(t, vertical = true) {
         send: async (options) => { sent.push(options); return "message-1"; },
         abort: async () => { sent.push({ aborted: true }); },
         on: (name, listener) => { callbacks.set(name, listener); return () => callbacks.delete(name); },
-        getEvents: async () => events, log: async () => {},
+        getEvents: async () => events, log: async (message) => { diagnostics.push(message); },
     };
     const { createRuntime } = await import(pathToFileURL(join(target, "runtime.mjs")).href);
     const stateFile = join(root, "generated-canvases",
@@ -42,11 +42,11 @@ async function setup(t, vertical = true) {
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
             plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
         workflowPage: { adapter: "generated-phase-adapter",
-            hash: createHash("sha256").update(adapter).digest("hex") },
+            hash: createHash("sha256").update(adapter).digest("hex"), managedRun: vertical },
     }, cwd: project, workspace: root, session };
     let runtime = await createRuntime(options);
     t.after(() => runtime.close());
-    return { get runtime() { return runtime; }, project, sent, session,
+    return { get runtime() { return runtime; }, project, sent, session, diagnostics, stateFile, target, options,
         restart: async () => {
             runtime.close();
             runtime = await createRuntime(options);
@@ -244,6 +244,366 @@ test("an incomplete Copilot response blocks automatic progression and requires a
     await runtime.startAutopilot({ itemId: "__new__" }, "panel");
     assert.equal(sent.length, 2);
     assert.match(sent[1].prompt, /beginning with step 0/);
+});
+
+test("Autopilot remains stoppable while viewing another workflow without projecting its step progress", async (t) => {
+    const { runtime, project } = await setup(t);
+    await mkdir(join(project, "specs", "alpha"), { recursive: true });
+    await mkdir(join(project, "specs", "beta"), { recursive: true });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/alpha" });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/beta" });
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.autopilot.item, "specs/alpha");
+    assert.equal(snapshot.autopilot.status, "Running");
+    assert.equal(snapshot.statuses.specify.status, "Not run");
+    await assert.rejects(runtime.reportAutopilotStep(
+        { autopilotId, phase: "specify", action: "complete" }, "other-panel"), /inactive/);
+    assert.equal((await runtime.stopAutopilot({}, "other-panel")).stopped, true);
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+});
+
+test("switching a blocked run cannot capture transient Autopilot as the previous mode", async (t) => {
+    const { runtime, project, session, finish } = await setup(t);
+    await mkdir(join(project, "specs", "alpha"), { recursive: true });
+    await mkdir(join(project, "specs", "beta"), { recursive: true });
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal(await finish(false), "Blocked");
+    session.mode = "autopilot";
+    await assert.rejects(runtime.startAutopilot({ itemId: "specs/beta" }, "panel"),
+        /Stop the blocked Autopilot/);
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    await runtime.stopAutopilot({}, "panel");
+    assert.equal(session.mode, "interactive");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("completed Autopilot cannot seed another run with an unrestored session mode", async (t) => {
+    const { runtime, project, session, sent, finish } = await setup(t);
+    for (const name of ["alpha", "beta"]) {
+        await mkdir(join(project, "specs", name), { recursive: true });
+    }
+    let restorationAttempt;
+    const restoration = new Promise((resolve) => { restorationAttempt = resolve; });
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode === "interactive") {
+            restorationAttempt();
+            return { modeApplied: false };
+        }
+        return setMode(input);
+    };
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    for (const [phase, file] of [["specify", "spec.md"], ["plan", "plan.md"]]) {
+        const { phaseRunId } = await runtime.reportAutopilotStep(
+            { autopilotId, phase, action: "start" }, "panel");
+        await writeFile(join(project, "specs", "alpha", file), phase);
+        await runtime.report({ phaseRunId, path: `specs/alpha/${file}` }, "panel");
+        await runtime.reportAutopilotStep({ autopilotId, phase, action: "complete" }, "panel");
+    }
+    assert.equal(await finish(true), "Completed");
+    let timeout;
+    try {
+        await Promise.race([restoration, new Promise((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("Mode restoration was not attempted")), 5000);
+        })]);
+    } finally {
+        clearTimeout(timeout);
+    }
+    assert.equal(session.mode, "autopilot");
+    for (const itemId of ["specs/alpha", "specs/beta"]) {
+        await assert.rejects(runtime.startAutopilot({ itemId }, "panel"),
+            /Switch Copilot to interactive mode before starting another workflow/);
+    }
+    assert.equal(sent.length, 1);
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    session.rpc.mode.set = setMode;
+    session.mode = "interactive";
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    await runtime.stopAutopilot({}, "panel");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("a stale Paused run requires mode recovery before a new start", async (t) => {
+    const { runtime, project, session } = await setup(t);
+    for (const name of ["alpha", "beta"]) {
+        await mkdir(join(project, "specs", name), { recursive: true });
+    }
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    await runtime.stopAutopilot({}, "panel");
+    session.mode = "autopilot";
+    for (const itemId of ["specs/alpha", "specs/beta"]) {
+        await assert.rejects(runtime.startAutopilot({ itemId }, "panel"),
+            /Switch Copilot to interactive mode before starting another workflow/);
+    }
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    session.mode = "interactive";
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("an intentionally preexisting Autopilot mode remains the original mode", async (t) => {
+    const { runtime, project, session } = await setup(t);
+    for (const name of ["alpha", "beta"]) {
+        await mkdir(join(project, "specs", name), { recursive: true });
+    }
+    session.mode = "autopilot";
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
+    await runtime.stopAutopilot({}, "panel");
+    assert.equal(session.mode, "autopilot");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
+});
+
+test("Stop cannot pause a run while Copilot remains in Autopilot mode", async (t) => {
+    const { runtime, project, session, finish } = await setup(t);
+    await mkdir(join(project, "specs", "alpha"), { recursive: true });
+    await mkdir(join(project, "specs", "beta"), { recursive: true });
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal(await finish(false), "Blocked");
+    session.mode = "autopilot";
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => input.mode === "interactive"
+        ? { modeApplied: false } : setMode(input);
+    session.log = async () => { throw new Error("Logger unavailable"); };
+    await assert.rejects(runtime.stopAutopilot({}, "panel"),
+        /Switch Copilot to interactive mode manually before starting another workflow/);
+    assert.equal(session.mode, "autopilot");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    await assert.rejects(runtime.startAutopilot({ itemId: "specs/beta" }, "panel"),
+        /Stop the blocked Autopilot/);
+    session.rpc.mode.set = setMode;
+    assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
+    assert.equal(session.mode, "interactive");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("Stop accepts a concurrent mode change when restoration is unapplied", async (t) => {
+    const { runtime, session } = await setup(t);
+    await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode !== "interactive") return setMode(input);
+        session.mode = "interactive";
+        return { modeApplied: false };
+    };
+    session.log = async () => { throw new Error("Logger unavailable"); };
+    assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    assert.equal(session.mode, "interactive");
+});
+
+test("failed error persistence cannot skip mode restoration or dispatch cleanup", async (t) => {
+    const fixture = await setup(t);
+    const { runtime, session, stateFile, diagnostics } = fixture;
+    const directory = join(stateFile, "..");
+    const backup = `${directory}-backup`;
+    session.send = async () => {
+        await rename(directory, backup);
+        await writeFile(directory, "blocked");
+        throw new Error("Dispatch failed");
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"),
+        /state could not be saved/);
+    assert.equal(session.mode, "interactive");
+    assert.ok(diagnostics.some((message) => /Could not persist the Autopilot dispatch outcome/.test(message)));
+    await rm(directory);
+    await rename(backup, directory);
+    session.send = async () => "retry-message";
+    assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+});
+
+test("failed persistence and mode restoration report both failures and manual recovery", async (t) => {
+    const { runtime, session, stateFile, diagnostics } = await setup(t);
+    const directory = join(stateFile, "..");
+    const backup = `${directory}-backup`;
+    session.send = async () => {
+        await rename(directory, backup);
+        await writeFile(directory, "blocked");
+        throw new Error("Dispatch failed");
+    };
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode === "interactive") throw new Error("Mode service unavailable");
+        return setMode(input);
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+        assert.match(error.message, /state could not be saved/);
+        assert.match(error.message, /Mode restoration also failed: Mode service unavailable/);
+        assert.match(error.message, /Switch Copilot to interactive mode manually before retrying/);
+        return true;
+    });
+    assert.equal(session.mode, "autopilot");
+    assert.ok(diagnostics.some((message) => /Could not persist the Autopilot dispatch outcome/.test(message)));
+    assert.ok(diagnostics.some((message) => /Could not restore the Copilot session mode: Mode service unavailable/.test(message)));
+    await rm(directory);
+    await rename(backup, directory);
+    session.rpc.mode.set = setMode;
+    session.mode = "interactive";
+    session.send = async () => "retry-message";
+    assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+});
+
+test("failed mode restoration after saving Blocked state reports dispatch and recovery", async (t) => {
+    const { runtime, session, diagnostics } = await setup(t);
+    session.send = async () => { throw new Error("Dispatch failed"); };
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode === "interactive") throw new Error("Mode service unavailable");
+        return setMode(input);
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+        assert.match(error.message, /Autopilot failed: Dispatch failed/);
+        assert.match(error.message, /Mode restoration also failed: Mode service unavailable/);
+        assert.match(error.message, /Switch Copilot to interactive mode manually before retrying/);
+        return true;
+    });
+    assert.equal(session.mode, "autopilot");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    assert.equal((await runtime.snapshot()).autopilot.error, "Dispatch failed");
+    assert.ok(diagnostics.some((message) => /Could not restore the Copilot session mode: Mode service unavailable/.test(message)));
+    session.rpc.mode.set = setMode;
+    session.mode = "interactive";
+    session.send = async () => "retry-message";
+    assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+});
+
+test("an unapplied mode restoration cannot hide a session left in Autopilot", async (t) => {
+    const { runtime, session, diagnostics } = await setup(t);
+    session.send = async () => { throw new Error("Dispatch failed"); };
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => input.mode === "interactive"
+        ? { modeApplied: false } : setMode(input);
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+        assert.match(error.message, /Autopilot failed: Dispatch failed/);
+        assert.match(error.message, /Mode restoration also failed: Copilot did not restore the previous mode/);
+        assert.match(error.message, /Switch Copilot to interactive mode manually before retrying/);
+        return true;
+    });
+    assert.equal(session.mode, "autopilot");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    assert.ok(diagnostics.some((message) => /Could not restore the Copilot session mode/.test(message)));
+    session.rpc.mode.set = setMode;
+    session.mode = "interactive";
+    session.send = async () => "retry-message";
+    assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+});
+
+test("an unapplied restoration does not report failure when mode already changed", async (t) => {
+    const { runtime, session } = await setup(t);
+    session.send = async () => { throw new Error("Dispatch failed"); };
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode === "interactive") {
+            session.mode = "interactive";
+            return { modeApplied: false };
+        }
+        return setMode(input);
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"),
+        (error) => error.message === "Dispatch failed");
+    assert.equal(session.mode, "interactive");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+});
+
+test("rejected cleanup logging preserves dispatch failures and recovery guidance", async (t) => {
+    for (const { persistence, restore } of [
+        { persistence: true, restore: false },
+        { persistence: false, restore: true },
+        { persistence: true, restore: true },
+        { persistence: false, restore: "already changed" },
+    ]) {
+        await t.test(`persistence=${persistence}, restoration=${restore}`, async (t) => {
+            const { runtime, session, stateFile } = await setup(t);
+            const directory = join(stateFile, "..");
+            const backup = `${directory}-backup`;
+            let logCalls = 0;
+            session.log = async () => {
+                logCalls++;
+                throw new Error("Logger unavailable");
+            };
+            session.send = async () => {
+                if (persistence) {
+                    await rename(directory, backup);
+                    await writeFile(directory, "blocked");
+                }
+                throw new Error("Dispatch failed");
+            };
+            const setMode = session.rpc.mode.set;
+            if (restore) {
+                session.rpc.mode.set = async (input) => {
+                    if (input.mode !== "interactive") return setMode(input);
+                    if (restore === "already changed") session.mode = "interactive";
+                    return { modeApplied: false };
+                };
+            }
+            await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+                assert.match(error.message, /Dispatch failed/);
+                if (persistence || restore === true) assert.match(error.message, /Autopilot failed: Dispatch failed/);
+                if (persistence) assert.match(error.message, /state could not be saved/);
+                if (restore === true) {
+                    assert.match(error.message, /Mode restoration also failed: Copilot did not restore the previous mode/);
+                    assert.match(error.message, /Switch Copilot to interactive mode manually before retrying/);
+                } else {
+                    assert.doesNotMatch(error.message, /Mode restoration also failed/);
+                }
+                assert.doesNotMatch(error.message, /Logger unavailable/);
+                return true;
+            });
+            assert.equal(logCalls, Number(persistence) + Number(Boolean(restore)) + Number(restore === true));
+            assert.equal(session.mode, restore === true ? "autopilot" : "interactive");
+            if (!persistence) assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+            if (persistence) {
+                await rm(directory);
+                await rename(backup, directory);
+            }
+            session.rpc.mode.set = setMode;
+            session.mode = "interactive";
+            session.send = async () => "retry-message";
+            assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+        });
+    }
+});
+
+test("failed tracking after dispatch still directs the user to check chat when logging rejects", async (t) => {
+    const { runtime, session, stateFile } = await setup(t);
+    const directory = join(stateFile, "..");
+    const backup = `${directory}-backup`;
+    session.log = async () => { throw new Error("Logger unavailable"); };
+    session.send = async () => {
+        await rename(directory, backup);
+        await writeFile(directory, "blocked");
+        return "sent-message";
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+        assert.match(error.message, /state could not be saved/);
+        assert.match(error.message, /Autopilot was sent; check chat before retrying/);
+        assert.doesNotMatch(error.message, /Logger unavailable/);
+        return true;
+    });
+    assert.equal(session.mode, "autopilot");
+    await rm(directory);
+    await rename(backup, directory);
+});
+
+test("a packaged adapter never executes on the server even with a frozen managed-run flag", async (t) => {
+    const fixture = await setup(t);
+    const { target, options } = fixture;
+    const file = join(target, "pages", "generated-phase-adapter.mjs");
+    const module = Buffer.concat([await readFile(file), Buffer.from("\nglobalThis.__serverAdapterExecuted = true;\n")]);
+    await writeFile(file, module);
+    options.config.workflowPage.hash = createHash("sha256").update(module).digest("hex");
+    const runtime = await fixture.restart();
+    await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    assert.equal(globalThis.__serverAdapterExecuted, undefined);
 });
 
 test("a missing required artifact blocks the step rather than advancing", async (t) => {

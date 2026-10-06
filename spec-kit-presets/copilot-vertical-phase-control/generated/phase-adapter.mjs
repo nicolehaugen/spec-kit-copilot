@@ -46,6 +46,9 @@ function render(state, definition) {
     const available = output && output === state.status?.output
         && state.status?.artifactAvailability === "available";
     const autopilot = state.autopilot;
+    const sameWorkflow = autopilot?.item === state.workflow;
+    const target = autopilot && !sameWorkflow
+        ? `Autopilot for ${autopilot.item}: ` : "";
     return `${style}<nav class="phase-navigation vertical-phase-navigation" aria-label="Workflow phases">
         <p class="vertical-phase-intro">Review the workflow plan first. Each step produces its declared artifacts.
             Autopilot starts at the first step and stops at a blocker.</p>
@@ -54,11 +57,11 @@ function render(state, definition) {
                 ${!phases.length || ["Request sent", "Running", "Finishing"].includes(autopilot?.status) ? "disabled" : ""}>Autopilot</button>
             ${["Request sent", "Running", "Finishing", "Blocked"].includes(autopilot?.status)
                 ? '<button class="btn btn-secondary" type="button" data-action="stop">Stop</button>' : ""}
-            <span class="muted" role="status" aria-live="polite">${escapeHtml(autopilot?.message ?? "")}</span>
+            <span class="muted" role="status" aria-live="polite">${escapeHtml(target + (autopilot?.message ?? ""))}</span>
         </div>
         <ol class="vertical-phase-list">${phases.map((item, index) => {
             const result = state.statuses?.[item.id];
-            const itemStatus = autopilot?.current === index && autopilot.status === "Running"
+            const itemStatus = sameWorkflow && autopilot?.current === index && autopilot.status === "Running"
                 ? "Running" : result?.status ?? "Not run";
             const ready = result?.artifactAvailability === "available";
             const label = Object.hasOwn(definition.viewLabels, item.id) ? definition.viewLabels[item.id]
@@ -143,7 +146,9 @@ export function mount({ root, definition, state, actions }) {
         else if (action === "autopilot") invoke(() => {
             if (state.autopilot?.status === "Blocked"
                 && !root.ownerDocument.defaultView.confirm(
-                    "The previous Autopilot outcome is unconfirmed. Check chat and artifacts before resuming. Resume?")) return;
+                    state.autopilot.item === state.workflow
+                        ? "The previous Autopilot outcome is unconfirmed. Check chat and artifacts before resuming. Resume?"
+                        : "The previous Autopilot outcome is unconfirmed. Check chat and artifacts before starting another workflow. Continue?")) return;
             return actions.startManagedRun();
         });
         else if (action === "stop") invoke(() => actions.stopManagedRun());

@@ -233,7 +233,8 @@ export function readConfig() {
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.hash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.definitionHash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.controlHash)
-        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,order,phaseControl,placement,slots,title,viewLabels"
+        || typeof config.workflowPage.managedRun !== "boolean"
+        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,managedRun,order,phaseControl,placement,slots,title,viewLabels"
         || (config.generatedPages !== undefined
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
@@ -410,7 +411,9 @@ function readWorkflowPage(page) {
     if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
         || registration.adapter !== page.adapter
         || Object.keys(registration).filter((key) => key !== "$schema")
-            .some((key) => !["adapter", "id", "placement", "schemaVersion", "viewLabels"].includes(key))
+            .some((key) => !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
+        || (registration.managedRun !== undefined && typeof registration.managedRun !== "boolean")
+        || page.managedRun !== (registration.managedRun === true)
         || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
         || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases"
         || !isDeepStrictEqual(registration.placement, page.placement)

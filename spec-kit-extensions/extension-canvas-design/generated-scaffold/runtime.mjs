@@ -133,11 +133,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
     const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
-    async function restoreMode(automation) {
+    const cleanupDiagnostic = async (message) => {
+        try { await diagnostic(message); } catch { /* Cleanup reporting must not mask the original failure. */ }
+    };
+    async function restoreMode(automation, log = diagnostic) {
         if (!automation?.previousMode || automation.previousMode === "autopilot") return;
         if (await session.rpc.mode.get() !== "autopilot") return;
         const result = await session.rpc.mode.set({ mode: automation.previousMode, expectedMode: "autopilot" });
-        if (result.modeApplied === false) await diagnostic("Copilot session mode changed; Autopilot did not restore the previous mode.");
+        if (result.modeApplied === false) await log("Copilot session mode changed; Autopilot did not restore the previous mode.");
     }
     const update = (fn, uiChange = false, announce = true) => {
         const pending = writes.then(async () => {
@@ -331,7 +334,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
-        const automation = view.autopilot?.item === item
+        const automation = view.autopilot
             ? { ...view.autopilot, message: view.autopilot.error
                 ?? `${view.autopilot.status}: step ${Math.min(view.autopilot.current + 1, workflowSteps.length)} of ${workflowSteps.length}` }
             : null;
@@ -398,16 +401,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (result?.errors?.length) throw new UserError("Session skills could not reload. Check Copilot's skill diagnostics and retry.");
     }
     async function enabledAutopilot() {
+        if (!config.workflowPage.managedRun) {
+            throw new UserError("This phase control does not provide Autopilot.");
+        }
         const module = config.workflowPage.adapter;
         const bytes = await readBoundedBytes(fileURLToPath(new URL(".", import.meta.url)),
             `pages/${module}.mjs`, 128 * 1024);
         if (createHash("sha256").update(bytes).digest("hex") !== config.workflowPage.hash) {
             throw new UserError("Packaged phase control changed; restore the generated canvas files.");
-        }
-        const adapter = await import(new URL(`./pages/${module}.mjs`, import.meta.url));
-        if (!Array.isArray(adapter.requiredCapabilities)
-            || !adapter.requiredCapabilities.includes("workflow.managed-run.v1")) {
-            throw new UserError("This phase control does not provide Autopilot.");
         }
     }
     async function startAutopilot(input, instanceId) {
@@ -438,8 +439,16 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("All Autopilot steps were verified. Check chat for the final outcome; no step remains to retry.");
             }
             const start = resuming ? prior.current : 0;
-            id = randomUUID();
             const currentMode = await session.rpc.mode.get();
+            if (currentMode === "autopilot" && prior) {
+                if (prior.item !== input.itemId && prior.status === "Blocked") {
+                    throw new UserError("Stop the blocked Autopilot run before starting another workflow.");
+                }
+                if (prior.previousMode !== "autopilot" && !(resuming && prior.status === "Blocked")) {
+                    throw new UserError(`Copilot is still in Autopilot mode after the previous run. Switch Copilot to ${prior.previousMode} mode before starting another workflow.`, 409);
+                }
+            }
+            id = randomUUID();
             previousMode = resuming ? prior.previousMode : currentMode;
             if (currentMode !== "autopilot") {
                 const changed = await session.rpc.mode.set({
@@ -485,26 +494,56 @@ Steps:\n${instructions}` });
             });
             return { ok: true, autopilotId: id };
         } catch (error) {
-            if (id) await update((next) => {
-                if (next.autopilot?.id === id) {
-                    next.autopilot.status = "Blocked";
-                    next.autopilot.error = sent
-                        ? "Autopilot was sent but tracking failed. Check chat before retrying."
-                        : error.message;
+            let persistenceError;
+            try {
+                if (id) await update((next) => {
+                    if (next.autopilot?.id === id) {
+                        next.autopilot.status = "Blocked";
+                        next.autopilot.error = sent
+                            ? "Autopilot was sent but tracking failed. Check chat before retrying."
+                            : error.message;
+                    }
+                });
+            } catch (failure) {
+                persistenceError = failure;
+            }
+            let restoreError;
+            try {
+                if (modeChanged && !sent) {
+                    await restoreMode({ previousMode }, cleanupDiagnostic);
+                    if (await session.rpc.mode.get() === "autopilot") {
+                        throw new Error("Copilot did not restore the previous mode.");
+                    }
                 }
-            });
-            if (modeChanged && !sent) await restoreMode({ previousMode });
-            if (!sent) {
-                liveRuns.delete(id);
-                busy.value = false;
+            } catch (failure) {
+                restoreError = failure;
+            } finally {
+                if (!sent) {
+                    liveRuns.delete(id);
+                    busy.value = false;
+                }
+            }
+            if (persistenceError) await cleanupDiagnostic(
+                `Could not persist the Autopilot dispatch outcome: ${persistenceError.message}`);
+            if (restoreError) await cleanupDiagnostic(
+                `Could not restore the Copilot session mode: ${restoreError.message}`);
+            if (persistenceError || restoreError) {
+                const details = [`Autopilot failed: ${error.message}`];
+                if (persistenceError) details.push(`Its state could not be saved: ${persistenceError.message}`);
+                if (restoreError) {
+                    details.push(`Mode restoration also failed: ${restoreError.message}`);
+                    details.push(`Switch Copilot to ${previousMode} mode manually before retrying`);
+                }
+                if (sent) details.push("Autopilot was sent; check chat before retrying");
+                throw new UserError(`${details.join(". ")}.`, 500);
             }
             throw error;
         } finally { autopilotDispatching = false; }
     }
-    async function stopAutopilot(input, instanceId) {
+    async function stopAutopilot(input) {
         if (!input || Object.keys(input).length) throw new UserError("Invalid stop request.");
         const automation = state.autopilot;
-        if (!automation || automation.instanceId !== instanceId || automation.sessionId !== session.sessionId
+        if (!automation || automation.sessionId !== session.sessionId
             || !["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)) {
             throw new UserError("No active Autopilot run is available to stop.");
         }
@@ -513,7 +552,10 @@ Steps:\n${instructions}` });
         }
         if (typeof session.abort !== "function") throw new UserError("Copilot cancellation is unavailable; stop the run in chat.");
         await session.abort();
-        await restoreMode(automation);
+        await restoreMode(automation, cleanupDiagnostic);
+        if (automation.previousMode !== "autopilot" && await session.rpc.mode.get() === "autopilot") {
+            throw new UserError(`Copilot could not restore the previous mode. Switch Copilot to ${automation.previousMode} mode manually before starting another workflow.`, 500);
+        }
         await update((next) => {
             if (next.autopilot?.id === automation.id) {
                 next.autopilot.status = "Paused";
