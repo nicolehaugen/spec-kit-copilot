@@ -542,7 +542,10 @@ Steps:\n${instructions}` });
         }
         if (typeof session.abort !== "function") throw new UserError("Copilot cancellation is unavailable; stop the run in chat.");
         await session.abort();
-        await restoreMode(automation);
+        await restoreMode(automation, cleanupDiagnostic);
+        if (automation.previousMode !== "autopilot" && await session.rpc.mode.get() === "autopilot") {
+            throw new UserError(`Copilot could not restore the previous mode. Switch Copilot to ${automation.previousMode} mode manually before starting another workflow.`, 500);
+        }
         await update((next) => {
             if (next.autopilot?.id === automation.id) {
                 next.autopilot.status = "Paused";

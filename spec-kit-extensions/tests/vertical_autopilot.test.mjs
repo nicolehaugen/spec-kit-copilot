@@ -279,6 +279,46 @@ test("switching a blocked run cannot capture transient Autopilot as the previous
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
 });
 
+test("Stop cannot pause a run while Copilot remains in Autopilot mode", async (t) => {
+    const { runtime, project, session, finish } = await setup(t);
+    await mkdir(join(project, "specs", "alpha"), { recursive: true });
+    await mkdir(join(project, "specs", "beta"), { recursive: true });
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal(await finish(false), "Blocked");
+    session.mode = "autopilot";
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => input.mode === "interactive"
+        ? { modeApplied: false } : setMode(input);
+    session.log = async () => { throw new Error("Logger unavailable"); };
+    await assert.rejects(runtime.stopAutopilot({}, "panel"),
+        /Switch Copilot to interactive mode manually before starting another workflow/);
+    assert.equal(session.mode, "autopilot");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    await assert.rejects(runtime.startAutopilot({ itemId: "specs/beta" }, "panel"),
+        /Stop the blocked Autopilot/);
+    session.rpc.mode.set = setMode;
+    assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
+    assert.equal(session.mode, "interactive");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("Stop accepts a concurrent mode change when restoration is unapplied", async (t) => {
+    const { runtime, session } = await setup(t);
+    await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode !== "interactive") return setMode(input);
+        session.mode = "interactive";
+        return { modeApplied: false };
+    };
+    session.log = async () => { throw new Error("Logger unavailable"); };
+    assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
+    assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    assert.equal(session.mode, "interactive");
+});
+
 test("failed error persistence cannot skip mode restoration or dispatch cleanup", async (t) => {
     const fixture = await setup(t);
     const { runtime, session, stateFile, diagnostics } = fixture;
