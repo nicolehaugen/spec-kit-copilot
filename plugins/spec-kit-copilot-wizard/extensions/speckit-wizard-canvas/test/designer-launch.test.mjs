@@ -17,7 +17,7 @@ import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, HANDOFF_LIMIT, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
-import { resolveRuntimeInstallLocators } from "../server/runtime-provenance.mjs";
+import { buildPortableRuntimeSetup, resolveRuntimeInstallLocators } from "../server/runtime-provenance.mjs";
 import { prepareHandoff, preflight, verifyHostedCanvasDesign, verifyLocalInstall } from "../server/designer-launch-check.mjs";
 import { buildAugmentedPath } from "../env/resolve-path.mjs";
 import releaseCatalog from "../../../../../spec-kit-extensions/catalog.json" with { type: "json" };
@@ -498,7 +498,8 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
             ...installed, presets: [{ ...installed.presets[0], source: "local" }],
         }, sources, undefined, process.cwd());
         const prompt = buildDesignerLaunchPrompt(buildDesignerHandoff(snapshot, empty,
-            undefined, { ...installed, presets: [{ ...installed.presets[0], source: "local" }] },
+            undefined, { ...installed, presets: [{ ...installed.presets[0], source: "local",
+                path: join(process.cwd(), ".specify", "presets", "pirate-full-preset") }] },
             randomUUID(), localLocators));
         assert.match(prompt, /specify preset add --dev <path>/);
         assert.match(prompt, /not a catalog match/);
@@ -620,6 +621,11 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
     assert.deepEqual(handoff.workflow.installLocators.presets[0], {
         installedId: "copilot-sub-agents", source: "copilot",
         catalogId: "copilot-sub-agents", downloadUrl: "https://example.org/sub-agents.zip",
+    });
+    assert.deepEqual(handoff.workflow.runtimeSetup.presets[0], {
+        id: "copilot-sub-agents", version: "1.0.0", enabled: true, priority: 1,
+        locator: { installedId: "copilot-sub-agents", source: "copilot",
+            catalogId: "copilot-sub-agents", downloadUrl: "https://example.org/sub-agents.zip" },
     });
     assert.match(runtime.sent[0].prompt, /--priority.*set-priority/);
     assert.match(runtime.sent[0].prompt, /including entries not tagged canvas-design/);
@@ -1073,9 +1079,73 @@ test("runtime package locators are carried into the child installation instructi
     const handoff = buildDesignerHandoff(snapshot, empty, undefined, installed, randomUUID(), locators);
     assert.deepEqual(handoff.workflow.installed, installed);
     const prompt = buildDesignerLaunchPrompt(handoff);
+    assert.deepEqual(handoff.workflow.runtimeSetup.presets[0], {
+        id: "local-runtime", version: "1.0.0", priority: 2, enabled: true,
+        locator: locators.presets[0],
+    });
     assert.match(prompt, /runtime presets or extensions.*installLocator.*source "local"/);
-    assert.match(prompt, /specify preset add --dev <path>.*specify extension add <path> --dev --force/);
-    assert.match(prompt, /Verify the installed ID and the local manifest version after each add/);
+});
+
+test("portable runtime setup excludes tagged packages, local design choices, and opaque mixed bundles", () => {
+    const installed = {
+        presets: [
+            { id: "runtime-manifest", version: "2.0.0", source: "community",
+                enabled: false, priority: 6 },
+            { id: "design-manifest", version: "1.0.0", source: "community",
+                enabled: true, priority: 3 },
+            { id: "local-design", version: "1.0.0", source: "local",
+                enabled: true, priority: 4 },
+        ],
+        extensions: [
+            { id: "extension-canvas-design", version: hostedBase.version, source: "copilot",
+                enabled: true, priority: 1 },
+            { id: "runtime-extension", version: "3.0.0", source: "default",
+                enabled: true, priority: 8 },
+        ],
+        bundles: [{ id: "mixed-bundle", version: "1.0.0" }],
+    };
+    const sources = { presets: [
+        { id: "runtime-catalog", installedId: "runtime-manifest", version: "2.0.0",
+            source: "community", downloadUrl: "https://example.org/runtime.zip" },
+        { id: "design-catalog", installedId: "design-manifest", version: "1.0.0",
+            source: "community", tags: ["canvas-design"],
+            downloadUrl: "https://example.org/design.zip" },
+    ], extensions: [
+        { ...hostedBase, installedId: "extension-canvas-design" },
+        { id: "runtime-extension", installedId: "runtime-extension", version: "3.0.0",
+            source: "default", downloadUrl: null },
+    ], bundles: [
+        { id: "mixed-bundle", installedId: "mixed-bundle", version: "1.0.0",
+            source: "community", downloadUrl: "https://example.org/mixed.zip" },
+    ] };
+    const local = { presets: [{ id: "local-design", source: "local", approved: true,
+        path: LOCAL_PRESET_PATH }] };
+    const locators = resolveRuntimeInstallLocators(installed, sources, local, process.cwd());
+    const recipe = buildPortableRuntimeSetup(installed, locators, sources, empty, local);
+    assert.deepEqual(recipe, { presets: [
+        { id: "runtime-manifest", version: "2.0.0", enabled: false, priority: 6,
+            locator: { installedId: "runtime-manifest", catalogId: "runtime-catalog",
+                source: "community", downloadUrl: "https://example.org/runtime.zip" } },
+    ], extensions: [
+        { id: "runtime-extension", version: "3.0.0", enabled: true, priority: 8,
+            locator: { installedId: "runtime-extension", catalogId: "runtime-extension",
+                source: "default", downloadUrl: null } },
+    ], bundles: [] });
+    const handoff = buildDesignerHandoff({ ...snapshot, catalog: { ...sources,
+        designerFingerprint: "catalog-v1" } }, empty, local, installed, randomUUID(), locators);
+    assert.deepEqual(handoff.workflow.runtimeSetup, recipe);
+    assert.throws(() => buildPortableRuntimeSetup({
+        ...installed, presets: [{ ...installed.presets[0], source: "local" }],
+    }, { ...locators, presets: [{ installedId: "runtime-manifest", source: "local",
+        path: LOCAL_PRESET_PATH }, ...locators.presets.slice(1)] }, sources, empty, local),
+    /verified installed path is unavailable/);
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
+    const altered = structuredClone(handoff);
+    altered.workflow.runtimeSetup.presets[0].priority = 9;
+    altered.sourceFingerprint = fingerprint({ workflow: altered.workflow,
+        selections: altered.selections, localSelections: altered.localSelections,
+        canvasDesign: altered.canvasDesign });
+    assert.throws(() => validateHandoff(altered, altered.handoffId), /Invalid Designer handoff/);
 });
 
 test("buildDesignerLaunchPrompt documents local-wins precedence, including the extension-canvas-design special case", () => {

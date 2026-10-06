@@ -12,6 +12,7 @@ const state = {
     phases, current: 0, workflow: "demo", status: null, draft: "initial",
     output: phases[0].output, outputLinks: [], sending: false, runLabel: null,
 };
+const definition = { id: "workflow-phases", viewLabels: { plan: "Inspect Plan" } };
 
 for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
     test(`${name} phase control mounts, updates a focused draft, dispatches actions and disposes`, async (t) => {
@@ -26,7 +27,7 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         const initial = name === "stock" ? {
             ...state, phases: [], current: -1, output: null,
         } : state;
-        const control = adapter.mount({ root: dom.root, state: initial, actions });
+        const control = adapter.mount({ root: dom.root, definition, state: initial, actions });
         assert.equal(adapter.controlId, "workflow-phases");
         assert.equal(adapter.contractVersion, 1);
         if (name === "stock") {
@@ -34,6 +35,7 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
             assert.equal(dom.root.querySelectorAll("[data-phase-index]").length, 0);
             control.update(state);
         }
+
         assert.match(dom.root.innerHTML, /aria-label="Workflow phases"/);
         assert.match(dom.root.innerHTML, /aria-label="Selected phase"/);
         assert.equal(dom.root.querySelectorAll("[data-phase-index]").length, 2);
@@ -101,9 +103,17 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         control.update({ ...state, current: 1, draft: "plan details", output: phases[1].output,
             status: { status: "Running" } });
         assert.match(dom.root.innerHTML, /<h2>Plan<\/h2>/);
+        assert.equal(dom.root.querySelector(name === "stock" ? "#view-artifact"
+            : '[data-action="view-row"][data-index="1"]').textContent, "Inspect Plan");
         assert.equal(dom.root.querySelectorAll("[data-phase-index]")[1].hasAttribute("aria-current"), true);
         assert.equal(dom.root.querySelector(name === "stock" ? "#phase-args" : "[data-phase-draft]").value,
             "plan details");
+        control.update({ ...state, current: 0 });
+        assert.equal(dom.root.querySelector(name === "stock" ? "#view-artifact"
+            : '[data-action="view-row"][data-index="0"]').textContent, "View artifact");
+        control.update({ ...state, phases: [{ ...phases[0], id: "constructor" }, phases[1]] });
+        assert.equal(dom.root.querySelector(name === "stock" ? "#view-artifact"
+            : '[data-action="view-row"][data-index="0"]').textContent, "View artifact");
         control.dispose();
         const count = calls.length;
         dom.root.dispatch("input", input);
@@ -111,3 +121,27 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         assert.equal(dom.listeners.size, 0);
     });
 }
+
+test("stock phase Run confirms only when an optional callback is supplied", async (t) => {
+    const dom = phaseControlDom();
+    const previousDocument = globalThis.document;
+    globalThis.document = dom.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const calls = [];
+    let decision = false;
+    const actions = Object.fromEntries(["select", "draft", "view", "reveal", "error"]
+        .map((name) => [name, () => {}]));
+    actions.run = (input) => calls.push(["run", input]);
+    actions.confirmRun = (phase) => { calls.push(["confirm", phase.id]); return decision; };
+    const control = stock.mount({ root: dom.root, definition, state, actions });
+    const run = dom.root.querySelector("#run-phase");
+    dom.root.querySelector("#phase-args").value = "details";
+    dom.root.dispatch("click", run);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [["confirm", "specify"]]);
+    decision = true;
+    dom.root.dispatch("click", run);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [["confirm", "specify"], ["confirm", "specify"], ["run", "details"]]);
+    control.dispose();
+});

@@ -19,6 +19,9 @@ const FIXED_PAGE_CONTROLS = {
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
+const DIALOG_KINDS = ["generated.dialog-definition", "generated.dialog-adapter",
+    "generated.phase-dialog-binding", "generated.button-control-definition",
+    "generated.button-adapter", "generated.button-placement"];
 const contractKeys = (document) => Object.keys(document).filter((key) => key !== "$schema");
 function schemaMetadata(document, name) {
     if (document && typeof document === "object"
@@ -351,7 +354,7 @@ function validateGeneratedPage(document, name) {
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "order", "values", "slots"].includes(key))
         || document.schemaVersion !== 1 || document.id !== name
-        || document.id === RESERVED_GENERATED_PAGE_ID || isWindowsDeviceName(document.id)
+        || [RESERVED_GENERATED_PAGE_ID, "setup"].includes(document.id) || isWindowsDeviceName(document.id)
         || typeof document.title !== "string" || !document.title.trim()
         || (document.order !== undefined && (!Number.isInteger(document.order)
             || document.order < -100000 || document.order > 100000))
@@ -410,7 +413,8 @@ function validateFieldPlacement(document, name) {
 function validatePhaseControl(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "adapter,id,placement,schemaVersion"
+        || contractKeys(document).some((key) =>
+            !["adapter", "id", "placement", "schemaVersion", "viewLabels"].includes(key))
         || document.schemaVersion !== 1 || document.id !== "workflow-phases"
         || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
         || isWindowsDeviceName(document.adapter)
@@ -418,8 +422,103 @@ function validatePhaseControl(document, name) {
         || Array.isArray(document.placement)
         || Object.keys(document.placement).sort().join() !== "page,slot"
         || document.placement.page !== "workflow"
-        || document.placement.slot !== "workflow.phases") {
+        || document.placement.slot !== "workflow.phases"
+        || (document.viewLabels !== undefined && (
+            !document.viewLabels || typeof document.viewLabels !== "object" || Array.isArray(document.viewLabels)
+            || Object.keys(document.viewLabels).length > 40
+            || Object.entries(document.viewLabels).some(([id, label]) =>
+                !/^(?:speckit\.)?[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(id)
+                || typeof label !== "string" || !label.trim() || label.length > 80
+                || /[\x00-\x1f\x7f]/.test(label))))) {
         throw new Error(`${name}: invalid phase control definition`);
+    }
+}
+
+function validLabel(value, max = 500) {
+    return typeof value === "string" && !!value.trim() && value.length <= max;
+}
+
+export function validateDialog(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).sort().join() !== "adapter,blocks,buttons,id,schemaVersion,title"
+        || document.schemaVersion !== 1 || document.id !== name
+        || !PAGE_PATTERN.test(document.adapter) || isWindowsDeviceName(document.adapter)
+        || !validLabel(document.title)
+        || !Array.isArray(document.blocks) || document.blocks.length < 1 || document.blocks.length > 20
+        || !document.buttons || typeof document.buttons !== "object"
+        || Array.isArray(document.buttons)
+        || Object.keys(document.buttons).sort().join() !== "cancel,confirm"
+        || !validLabel(document.buttons.cancel) || !validLabel(document.buttons.confirm)) {
+        throw new Error(`${name}: invalid generated dialog definition`);
+    }
+    const slots = new Set();
+    for (const block of document.blocks) {
+        if (!block || typeof block !== "object" || Array.isArray(block)) {
+            throw new Error(`${name}: invalid dialog block`);
+        }
+        const keys = Object.keys(block).sort().join();
+        if (["heading", "paragraph", "warning"].includes(block.type)
+            ? keys !== "text,type" || !validLabel(block.text)
+            : block.type === "list" ? keys !== "items,type"
+                || !Array.isArray(block.items) || !block.items.length || block.items.length > 20
+                || block.items.some((item) => !validLabel(item))
+                : block.type === "link" ? keys !== "href,text,type"
+                    || !validLabel(block.text) || typeof block.href !== "string"
+                    || block.href.length > 2048 || !/^https:\/\/[^\s]+$/.test(block.href)
+                    : block.type === "slot" ? keys !== "name,type"
+                        || !["pending-packages", "phase"].includes(block.name)
+                        || slots.has(block.name)
+                        : true) {
+            throw new Error(`${name}: invalid dialog block`);
+        }
+        if (block.type === "slot") slots.add(block.name);
+    }
+    if (name === "generated-setup-dialog" && !slots.has("pending-packages")) {
+        throw new Error(`${name}: setup dialog must show all pending packages`);
+    }
+}
+
+export function validatePhaseDialogBinding(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).sort().join() !== "dialog,id,phase,schemaVersion"
+        || document.schemaVersion !== 1 || document.id !== name
+        || !/^speckit\.[a-z][a-z0-9.-]{0,79}$/.test(document.phase)
+        || !PAGE_PATTERN.test(document.dialog)) {
+        throw new Error(`${name}: invalid phase dialog binding`);
+    }
+}
+
+export function validateButtonControl(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).sort().join() !== "adapter,id,schemaVersion"
+        || document.schemaVersion !== 1
+        || !((name === "generated-setup-button-control" && document.id === "project.setup-button")
+            || (document.id === "dialog.trigger" && PAGE_PATTERN.test(name)))
+        || !PAGE_PATTERN.test(document.adapter)) {
+        throw new Error(`${name}: invalid generated button control`);
+    }
+}
+
+export function validateButtonPlacement(document, name) {
+    schemaMetadata(document, name);
+    if (!document || typeof document !== "object" || Array.isArray(document)
+        || contractKeys(document).sort().join() !== "action,control,dialog,id,label,order,page,presentation,schemaVersion,slot"
+        || document.schemaVersion !== 1 || document.id !== name
+        || !["workflow", "setup"].includes(document.page)
+        || document.slot !== `${document.page}.actions`
+        || document.control !== (name === "generated-setup-button" ? "project.setup-button" : "dialog.trigger")
+        || !Number.isInteger(document.order) || document.order < -100000 || document.order > 100000
+        || !validLabel(document.label, 120)
+        || !["primary", "secondary"].includes(document.presentation)
+        || !PAGE_PATTERN.test(document.dialog)
+        || !document.action || typeof document.action !== "object"
+        || Array.isArray(document.action) || Object.keys(document.action).join() !== "type"
+        || document.action.type !== (name === "generated-setup-button" ? "project.setup" : "dialog.result")
+        || (name === "generated-setup-button") !== (document.page === "setup")) {
+        throw new Error(`${name}: invalid generated button placement`);
     }
 }
 
@@ -543,7 +642,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 "generated.phase-control-adapter",
                 "generated.field-placement",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
-                "generated.value-definition", "generated.computed-value-provider"].includes(item.kind)
+                "generated.value-definition", "generated.computed-value-provider",
+                ...DIALOG_KINDS].includes(item.kind)
             || item.strategy !== "replace") {
             throw new Error(`Invalid or duplicate Canvas Design template: ${item?.name ?? ""}`);
         }
@@ -552,7 +652,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         const extension = extname(path).toLowerCase();
         const executable = ["generated.added-page-renderer", "generated.phase-control-adapter",
             "designer.control-adapter", "generated.control-adapter",
-            "generated.computed-value-provider"].includes(item.kind);
+            "generated.computed-value-provider", "generated.dialog-adapter",
+            "generated.button-adapter"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
@@ -593,6 +694,18 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             } else if (item.kind === "generated.field-placement") {
                 validateFieldPlacement(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: field placement exceeds 32 KiB`);
+            } else if (item.kind === "generated.dialog-definition") {
+                validateDialog(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: dialog definition exceeds 32 KiB`);
+            } else if (item.kind === "generated.phase-dialog-binding") {
+                validatePhaseDialogBinding(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: phase binding exceeds 32 KiB`);
+            } else if (item.kind === "generated.button-control-definition") {
+                validateButtonControl(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: button control exceeds 32 KiB`);
+            } else if (item.kind === "generated.button-placement") {
+                validateButtonPlacement(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: button placement exceeds 32 KiB`);
             } else if (item.kind === "shared.control-definition") {
                 validateControl(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: control definition exceeds 32 KiB`);
@@ -626,6 +739,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (!exports.some((entry) => entry.n === requiredExport)) {
                     throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
+                }
+                if (["generated.dialog-adapter", "generated.button-adapter"].includes(item.kind)
+                    && (!exports.some((entry) => entry.n === "contractVersion")
+                        || !exports.some((entry) => entry.n === (item.kind === "generated.dialog-adapter"
+                            ? "dialogId" : "controlId")))) {
+                    throw new Error(`${item.name}: adapter is missing contractVersion or identity export`);
                 }
                 if (item.kind === "generated.phase-control-adapter"
                     && (!exports.some((entry) => entry.n === "controlId")
@@ -681,8 +800,66 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         throw new Error(`${workflowPages[0].name}: missing or unreferenced phase control definition`);
     }
     const phaseAdapters = loaded.filter((item) => item.kind === "generated.phase-control-adapter");
-    if (phaseAdapters.length !== 1 || phaseAdapters[0].name !== phaseControls[0].document.adapter) {
+    if (!phaseAdapters.some((entry) => entry.name === phaseControls[0].document.adapter)) {
         throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
+    }
+    const dialogs = loaded.filter((entry) => entry.kind === "generated.dialog-definition");
+    const dialogAdapters = loaded.filter((entry) => entry.kind === "generated.dialog-adapter");
+    for (const dialog of dialogs) {
+        if (!dialogAdapters.some((entry) => entry.name === dialog.document.adapter)) {
+            throw new Error(`${dialog.name}: missing registered dialog adapter ${dialog.document.adapter}`);
+        }
+    }
+    for (const adapter of dialogAdapters) {
+        if (!dialogs.some((entry) => entry.document.adapter === adapter.name)) {
+            throw new Error(`${adapter.name}: unreferenced dialog adapter`);
+        }
+    }
+    const phaseBindings = loaded.filter((entry) => entry.kind === "generated.phase-dialog-binding");
+    const boundPhases = new Set();
+    for (const binding of phaseBindings) {
+        if (boundPhases.has(binding.document.phase)) {
+            throw new Error(`${binding.name}: duplicate phase dialog binding ${binding.document.phase}`);
+        }
+        boundPhases.add(binding.document.phase);
+        if (!dialogs.some((dialog) => dialog.name === binding.document.dialog)) {
+            throw new Error(`${binding.name}: missing registered dialog ${binding.document.dialog}`);
+        }
+    }
+    const buttons = loaded.filter((entry) => entry.kind === "generated.button-placement");
+    const buttonControls = loaded.filter((entry) => entry.kind === "generated.button-control-definition");
+    const buttonAdapters = loaded.filter((entry) => entry.kind === "generated.button-adapter");
+    if ((buttons.length || buttonControls.length || buttonAdapters.length)
+        && (buttonControls.length < 1 || buttonControls.length > 2
+            || new Set(buttonControls.map((entry) => entry.document.id)).size !== buttonControls.length
+            || new Set(buttonControls.map((entry) => entry.document.adapter)).size !== buttonControls.length
+            || !buttonControls.some((entry) => entry.name === "generated-setup-button-control")
+            || !buttons.some((entry) => entry.name === "generated-setup-button")
+            || buttonControls.some((entry) => !buttonAdapters.some((adapter) =>
+                adapter.name === entry.document.adapter))
+            || buttonControls.some((entry) => !buttons.some((button) =>
+                button.document.control === entry.document.id))
+            || buttons.some((entry) => !buttonControls.some((control) =>
+                control.document.id === entry.document.control)))) {
+        throw new Error("Generated buttons require registered controls and compatible adapters");
+    }
+    const occupiedButtons = new Set();
+    for (const button of buttons) {
+        const { page, slot, order, dialog } = button.document;
+        if (page === "workflow" && !workflowPages[0].document.slots.some((entry) => entry.id === slot)) {
+            throw new Error(`${button.name}: missing Workflow action slot ${slot}`);
+        }
+        const resolvedDialog = dialogs.find((entry) => entry.name === dialog);
+        if (!resolvedDialog) {
+            throw new Error(`${button.name}: missing registered dialog ${dialog}`);
+        }
+        if (page === "setup" && !resolvedDialog.document.blocks.some((entry) =>
+            entry.type === "slot" && entry.name === "pending-packages")) {
+            throw new Error(`${button.name}: setup dialog must show all pending packages`);
+        }
+        const key = `${page}:${slot}:${order}`;
+        if (occupiedButtons.has(key)) throw new Error(`${button.name}: conflicting button placement ${key}`);
+        occupiedButtons.add(key);
     }
     const sources = loaded.filter((entry) => entry.kind === "generated.value-definition");
     const addedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition");
@@ -698,7 +875,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         placementIds.add(entry.document.id);
         const page = pageId === "workflow" ? workflowPages[0]
             : addedPages.find((candidate) => candidate.document.id === pageId);
-        if (!page?.document.slots?.some((candidate) => candidate.id === slot)) {
+        if (slot === "workflow.actions" || !page?.document.slots?.some((candidate) => candidate.id === slot)) {
             throw new Error(`${entry.name}: unknown generated page slot ${pageId}.${slot}`);
         }
         const key = `${pageId}:${slot}:${fieldId}`;
@@ -976,6 +1153,24 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
     model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
+    model.dialogDefinitions = loaded.filter((entry) => entry.kind === "generated.dialog-definition")
+        .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
+    model.phaseDialogBindings = loaded.filter((entry) => entry.kind === "generated.phase-dialog-binding")
+        .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
+    if (model.phaseDialogBindings.length) {
+        const selected = new Set((handoff.workflow?.selectedPhases ?? []).map((id) =>
+            id.startsWith("speckit.") ? id : `speckit.${id}`));
+        for (const binding of model.phaseDialogBindings) {
+            if (!selected.has(binding.phase)) {
+                throw new Error(`${binding.name}: phase ${binding.phase} is not selected in the workflow`);
+            }
+        }
+    }
+    model.buttonControls = loaded.filter((entry) => entry.kind === "generated.button-control-definition")
+        .map(({ name, document }) => ({ name, ...document }));
+    model.buttonPlacements = loaded.filter((entry) => entry.kind === "generated.button-placement")
+        .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }))
+        .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
     model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
         .map(({ name, sourceId, document }) =>
             ({ name, sourceId, ...document, control: placementControls.get(name) }))

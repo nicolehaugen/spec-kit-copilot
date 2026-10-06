@@ -4,5 +4,5 @@
   "id": "workflow",
   "title": "Workflow",
   "order": 0,
-  "slots": [{"id": "workflow.phases"}]
+  "slots": [{"id": "workflow.phases"}, {"id": "workflow.actions"}]
 }

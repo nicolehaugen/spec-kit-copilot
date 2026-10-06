@@ -133,6 +133,38 @@ function validInstallLocators(workflow) {
     });
 }
 
+function validRuntimeSetup(workflow) {
+    const setup = workflow.runtimeSetup;
+    if (setup === undefined) return true;
+    if (!workflow.installLocators || !record(setup)
+        || Object.keys(setup).sort().join() !== "bundles,extensions,presets"
+        || !Array.isArray(setup.bundles)
+        || setup.bundles.length !== 0) return false;
+    return LOCAL_KINDS.every((kind) => {
+        if (!Array.isArray(setup[kind]) || setup[kind].length > workflow.installed[kind].length) {
+            return false;
+        }
+        const seen = new Set();
+        return setup[kind].every((entry) => {
+            if (!record(entry) || seen.has(entry.id)
+                || entry.id === "extension-canvas-design"
+                || Object.keys(entry).sort().join() !== "enabled,id,locator,priority,version"
+                || !record(entry.locator)) return false;
+            seen.add(entry.id);
+            const installed = workflow.installed[kind].find((item) => item.id === entry.id);
+            const locator = workflow.installLocators[kind].find((item) =>
+                item.installedId === entry.id);
+            if (!installed || !locator || installed.version !== entry.version
+                || installed.enabled !== entry.enabled || installed.priority !== entry.priority
+                || (entry.locator.source === "local" && installed.source === "local"
+                    && installed.path !== entry.locator.path)) {
+                return false;
+            }
+            return JSON.stringify(entry.locator) === JSON.stringify(locator);
+        });
+    });
+}
+
 export function validateHandoffId(id) {
     if (typeof id !== "string" || !ID.test(id)) throw new Error("Invalid Designer handoff ID");
     return id;
@@ -151,7 +183,7 @@ export function validateHandoff(handoff, id) {
         || handoff.schemaVersion !== 1 || handoff.handoffId !== id
         || !record(handoff.workflow)
         || Object.keys(handoff.workflow).some((key) =>
-            !["selectedPhases", "outputEvidence", "installed", "installLocators"].includes(key))
+            !["selectedPhases", "outputEvidence", "installed", "installLocators", "runtimeSetup"].includes(key))
         || !Array.isArray(handoff.workflow.selectedPhases)
         || handoff.workflow.selectedPhases.length > 30
         || !handoff.workflow.selectedPhases.every((phase) => typeof phase === "string" && PACKAGE.test(phase))
@@ -226,6 +258,7 @@ export function validateHandoff(handoff, id) {
     if (handoff.workflow.outputEvidence !== undefined) {
         validatePhaseOutputs(handoff.workflow.outputEvidence, handoff.workflow.selectedPhases);
     }
+    if (!validRuntimeSetup(handoff.workflow)) throw new Error("Invalid Designer handoff");
     return handoff;
 }
 

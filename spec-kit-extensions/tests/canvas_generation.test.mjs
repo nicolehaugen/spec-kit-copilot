@@ -660,6 +660,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.match(await (await fetch(opened.url)).text(), /My Workflow/);
     const state = await (await fetch(new URL(`/api/state?token=${new URL(opened.url).searchParams.get("token")}`,
         opened.url))).json();
+    assert.ok(state.phases, JSON.stringify(state));
     assert.deepEqual(state.phases.map((phase) => phase.id), handoff.workflow.selectedPhases);
     await canvas.onClose({ instanceId: "generated-test" });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId));
@@ -826,6 +827,51 @@ test("Workflow layout and phase control freeze, validate and package independent
         Buffer.from(original.workflowPage.assets[1].content, "base64"));
     await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), "export function mount() {}");
     assert.throws(() => readConfig(), /phase control|Invalid generated canvas/);
+});
+
+test("phase view label preset and differently named adapter survive generation", async (t) => {
+    const { project, workspace, sdk } = await fixture(t);
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    const preset = JSON.parse(await readFile(new URL(
+        "../../spec-kit-presets/copilot-phase-view-label-test/generated/phase-control.json", import.meta.url)));
+    const control = model.templates.find((item) => item.name === "generated-phase-control");
+    const adapter = model.templates.find((item) => item.name === "generated-phase-adapter");
+    const presetBytes = Buffer.from(JSON.stringify(preset));
+    await writeFile(control.path, presetBytes);
+    const presetModel = { ...model, templates: model.templates.map((item) =>
+        item === control ? { ...item, sourceId: "copilot-phase-view-label-test", hash: digest(presetBytes) } : item) };
+    const presetFrozen = await freezeGeneration({ project, workspace, model: presetModel, values, handoff });
+    const presetRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", presetFrozen.requestId, "request.json"), "utf8"));
+    assert.deepEqual(JSON.parse(Buffer.from(presetRequest.workflowPage.assets[1].content, "base64")), preset);
+    assert.equal(presetRequest.workflowPage.assets[2].name, "generated-phase-adapter");
+    const renamed = "custom-phase-adapter";
+    preset.adapter = renamed;
+    const controlBytes = Buffer.from(JSON.stringify(preset));
+    const adapterBytes = await readFile(adapter.path);
+    const adapterPath = join(project, ".specify", "templates", `${renamed}.mjs`);
+    await writeFile(control.path, controlBytes);
+    await writeFile(adapterPath, adapterBytes);
+    const customModel = { ...model, templates: [...model.templates.map((item) =>
+        item === control ? { ...item, sourceId: "copilot-phase-view-label-test", hash: digest(controlBytes) }
+            : item), { ...adapter, name: renamed, path: adapterPath, hash: digest(adapterBytes) }] };
+    const frozen = await freezeGeneration({ project, workspace, model: customModel, values, handoff });
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    const { readConfig, renderHtml: renderPackaged } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    const config = readConfig();
+    assert.equal(config.workflowPage.adapter, renamed);
+    assert.deepEqual(config.workflowPage.viewLabels, { plan: "View Plan" });
+    assert.deepEqual(await readFile(join(sdk, "pages", `${renamed}.mjs`)), adapterBytes);
+    assert.match(renderPackaged(config), /data-module="\/pages\/custom-phase-adapter.mjs"/);
+    assert.match(renderPackaged(config), /data-view-labels="\{&quot;plan&quot;:&quot;View Plan&quot;\}"/);
+
+    const unknown = { ...preset, viewLabels: { unknown: "View unknown" } };
+    const unknownBytes = Buffer.from(JSON.stringify(unknown));
+    await writeFile(control.path, unknownBytes);
+    const invalidModel = { ...customModel, templates: customModel.templates.map((item) =>
+        item.name === "generated-phase-control" ? { ...item, hash: digest(unknownBytes) } : item) };
+    await assert.rejects(freezeGeneration({ project, workspace, model: invalidModel, values, handoff }),
+        /Missing validated Workflow page, phase control, or adapter/);
 });
 
 test("additional Workflow slots do not reorder the fixed shell", async (t) => {

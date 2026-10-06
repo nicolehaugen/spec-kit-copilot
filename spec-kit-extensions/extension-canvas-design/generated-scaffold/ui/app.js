@@ -49,6 +49,122 @@ async function mountGeneratedControl(root) {
     }
 }
 const $ = (id) => document.getElementById(id);
+const dialogContracts = $("generated-dialog-contracts");
+const dialogs = JSON.parse(dialogContracts?.dataset.dialogs ?? "[]");
+const phaseDialogs = JSON.parse(dialogContracts?.dataset.phaseDialogs ?? "[]");
+const buttons = JSON.parse(dialogContracts?.dataset.buttons ?? "[]");
+const buttonControls = JSON.parse(dialogContracts?.dataset.buttonControls ?? "[]");
+const dialogCache = new Map();
+let buttonMounts = [], setupBusy = false, activeSetupPlan = null;
+
+async function showGeneratedDialog(name, context = {}) {
+    const registration = dialogs.find((item) => item.id === name);
+    if (!registration) throw new Error(`Unregistered generated dialog: ${name}`);
+    let entry = dialogCache.get(name);
+    if (!entry) {
+        const response = await fetch(`/dialogs/${name}.json?token=${encodeURIComponent(token)}`);
+        if (!response.ok) throw new Error(`Could not load generated dialog ${name} (${response.status})`);
+        const definition = await response.json();
+        const module = await import(`/dialogs/${registration.adapter}.mjs?token=${encodeURIComponent(token)}`);
+        if (definition.id !== name || definition.adapter !== registration.adapter
+            || module.dialogId !== "stock.dialog" || module.contractVersion !== 1
+            || typeof module.mount !== "function") throw new Error(`Incompatible generated dialog: ${name}`);
+        entry = { definition, mount: module.mount };
+        dialogCache.set(name, entry);
+    }
+    if ($("generated-dialog-root").childElementCount) throw new Error("A generated dialog is already open");
+    const instance = entry.mount({ root: $("generated-dialog-root"), definition: entry.definition,
+        context, onDecision: () => {} });
+    if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
+        throw new Error(`Invalid dialog adapter result: ${name}`);
+    }
+    const result = await instance.result;
+    if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
+    return result === "confirmed";
+}
+
+async function mountGeneratedButtons() {
+    if (!buttons.length) return;
+    for (const definition of [...buttons].sort((a, b) => a.order - b.order)) {
+        const control = buttonControls.find((item) => item.id === definition.control);
+        if (!control) throw new Error(`Missing button control: ${definition.control}`);
+        const module = await import(`/buttons/${control.adapter}.mjs?token=${encodeURIComponent(token)}`);
+        if (module.controlId !== control.id || module.contractVersion !== 1
+            || typeof module.mount !== "function") throw new Error(`Incompatible button adapter: ${control.id}`);
+        const root = definition.page === "setup" ? $("setup-actions")
+            : document.querySelector(`[data-workflow-slot="${definition.slot}"]`);
+        if (!root) throw new Error(`Missing generated button slot: ${definition.slot}`);
+        const mountRoot = document.createElement("span");
+        root.append(mountRoot);
+        const activate = async () => {
+            try {
+                if (definition.control === "project.setup-button") {
+                    if (setupBusy) return;
+                    setupBusy = true;
+                    try { await api("/api/setup/start", {}); await refresh(); }
+                    finally {
+                        setupBusy = false;
+                        const button = $("setup-actions").querySelector("button");
+                        if (button) button.disabled = ["initializing", "installing"]
+                            .includes(model?.setup?.stage);
+                    }
+                } else if (definition.control === "dialog.trigger") {
+                    if (await showGeneratedDialog(definition.dialog)) {
+                        message(`${definition.label} confirmed.`, "canvas-message");
+                    }
+                } else throw new Error("Unknown generated button action");
+            } catch (error) {
+                message(error.message, definition.page === "setup" ? "setup-status" : "canvas-message", true);
+            }
+        };
+        const instance = module.mount({ root: mountRoot, definition,
+            ...(definition.control === "project.setup-button" ? { onSetup: activate } : { onTrigger: activate }) });
+        if (typeof instance?.dispose !== "function") throw new Error("Invalid button instance");
+        buttonMounts.push(instance);
+    }
+}
+
+function renderSetup() {
+    const setup = model?.setup;
+    const visible = model?.showSetup && !setup?.ready;
+    $("setup-surface").hidden = !visible;
+    if (!visible) { activeSetupPlan = null; return; }
+    const status = $("setup-status");
+    status.textContent = setup.error ?? ({
+        initializing: "Initializing Specify in Copilot skills mode. Check chat for progress.",
+        "awaiting-confirmation": "Review the complete package batch before installation.",
+        installing: "Installing confirmed packages. Check chat for progress.",
+        failed: "Setup failed. Check chat, then retry.",
+        cancelled: "Installation cancelled. No additional packages were installed. Select setup to try again.",
+    }[setup.stage] ?? "");
+    status.hidden = !status.textContent;
+    status.classList.toggle("workflow-error", Boolean(setup.error));
+    const button = $("setup-actions").querySelector("button");
+    if (button) button.disabled = setupBusy || ["initializing", "installing"].includes(setup.stage);
+    if (setup.stage === "awaiting-confirmation" && setup.planId
+        && activeSetupPlan !== setup.planId) {
+        activeSetupPlan = setup.planId;
+        const setupButton = buttons.find((item) => item.id === "generated-setup-button");
+        if (!setupButton) throw new Error("The setup button registration is missing");
+        void (async () => {
+            try {
+                const approved = await showGeneratedDialog(setupButton.dialog, {
+                    pendingPackages: setup.pending.map((entry) => ({
+                        name: `${entry.kind.slice(0, -1)}: ${entry.id}`,
+                        version: entry.version,
+                        source: entry.source === "local" ? entry.path
+                            : `${entry.source}: ${entry.downloadUrl ?? entry.catalogId}`,
+                        community: entry.source !== "default",
+                    })),
+                });
+                await api("/api/setup/confirm", { planId: setup.planId, confirmed: approved });
+                await refresh();
+            } catch (error) {
+                message(`Setup confirmation failed: ${error.message}`, "setup-status", true);
+            } finally { activeSetupPlan = null; }
+        })();
+    }
+}
 let phaseControl;
 const drafts = new Map();
 const failedValueDrafts = new Map();
@@ -580,6 +696,17 @@ function renderStatus() {
         }
     }
     phaseControl?.update(phaseState(pendingLabel));
+    const setupPending = model.showSetup && !model.setup?.ready;
+    const run = $("run-phase");
+    if (run) {
+        run.disabled = setupPending;
+        run.title = setupPending ? "Available after setup" : "";
+        $("phase-args").readOnly = setupPending;
+        if (setupPending) {
+            const notice = $("phase-message");
+            notice.textContent = [notice.textContent, "Available after setup"].filter(Boolean).join(" — ");
+        }
+    }
     if (constitution()) {
         const status = model.statuses[constitution().id];
         artifactAction("view-constitution", "constitution-artifact-status", status);
@@ -593,6 +720,9 @@ function renderStatus() {
         $("constitution-status").textContent = statusText;
         $("run-constitution").textContent = pendingLabel(constitution()) ?? "Create / update";
         $("send-constitution").textContent = pendingLabel(constitution()) ?? "Run phase";
+        $("run-constitution").disabled = setupPending;
+        $("run-constitution").title = setupPending ? "Available after setup" : "";
+        $("send-constitution").disabled = setupPending;
     }
     renderName();
     renderSlug();
@@ -691,6 +821,7 @@ async function refresh(reconcile = false) {
     if (sequence !== refreshSequence) return;
     const previous = model;
     model = next;
+    renderSetup();
     if (!previous) current = Math.max(0, workflowPhases().findIndex((step) => step.id === model.phase));
     // Do not replace live input text during events or background refresh.
     if (previous && (timer || saveFailure)) {
@@ -912,7 +1043,9 @@ try {
         throw new Error("Phase control adapter requires unavailable host capabilities");
     }
     const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
-    phaseControl = mount({ root: pipelineRoot, state: {
+    phaseControl = mount({ root: pipelineRoot,
+        definition: { id: controlId, viewLabels: JSON.parse(pipelineRoot.dataset.viewLabels) },
+        state: {
         phases: initialPhases, current: initialPhases.length ? 0 : -1,
         workflow: "__new__", status: null, draft: "",
         output: initialPhases[0]?.output ?? null, outputLinks: [],
@@ -943,6 +1076,14 @@ try {
                 await api("/api/autopilot/stop", {});
                 await refresh();
             },
+            confirmRun: async (selected) => {
+                requireModel();
+                const binding = phaseDialogs.find((item) =>
+                    item.phase === `speckit.${selected?.id?.replace(/^speckit\./, "")}`);
+                return !binding || showGeneratedDialog(binding.dialog, {
+                    phase: { id: selected.id, label: selected.label },
+                });
+            },
             reveal: async () => {
                 requireModel();
                 await flush();
@@ -963,6 +1104,10 @@ try {
 }
 wireThemeToggle();
 wireGeneratedPages();
+await mountGeneratedButtons().catch((error) => {
+    message(`Generated buttons could not render: ${error.message}`, "canvas-message", true);
+    throw error;
+});
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {
@@ -980,6 +1125,7 @@ window.addEventListener("beforeunload", (event) => {
 window.addEventListener("pagehide", () => {
     events.close();
     phaseControl?.dispose();
+    buttonMounts.forEach((instance) => instance.dispose());
     disposeFieldMounts(mountedPage);
 });
 await refresh().catch((error) => message(error.message, "canvas-message", true));

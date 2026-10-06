@@ -1,0 +1,325 @@
+import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { test } from "node:test";
+import { runInNewContext } from "node:vm";
+import { createSetup, validateRuntimeSetup } from "../extension-canvas-design/generated-scaffold/setup.mjs";
+import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
+import { createWorkflowRoutes } from "../extension-canvas-design/generated-scaffold/server.mjs";
+import { createServer } from "node:http";
+
+const phase = { skill: "speckit-specify" };
+const preset = { id: "real-preset", version: "1.0.0", enabled: true, priority: 12,
+    locator: { installedId: "real-preset", catalogId: "catalog-preset",
+        source: "copilot", downloadUrl: "https://example.org/preset.zip" } };
+const extension = { id: "extension-one", version: "3.0.0", enabled: true, priority: 0,
+    locator: { installedId: "extension-one", catalogId: "extension-one",
+        source: "default", downloadUrl: null } };
+const recipe = { presets: [preset], bundles: [], extensions: [extension] };
+
+function harness(t, { init = false, installed = false, skill = false, configured = true,
+    empty = false } = {}) {
+    const root = mkdtemp(join(process.cwd(), ".generated-setup-test-"));
+    t.after(async () => rm(await root, { recursive: true, force: true }));
+    const calls = [], sent = [], events = [];
+    let installedNow = installed, cliNow = init, reloads = 0;
+    const session = { send: async ({ prompt }) => { sent.push(prompt); return `message-${sent.length}`; },
+        getEvents: async () => events, rpc: { skills: { reload: async () => { reloads++; return { errors: [] }; } } } };
+    const command = async (_exe, args, options) => {
+        calls.push({ args, options });
+        if (args[0] === "--version") {
+            if (!cliNow) throw Object.assign(new Error("Missing"), { code: "ENOENT" });
+            return { stdout: "specify 1.0.7\n" };
+        }
+        const entries = {
+            extension: [{ id: "extension-one", version: "3.0.0", priority: 0,
+                enabled: true, source: { kind: "catalog", catalog: "default" } }],
+            preset: [{ id: "real-preset", version: "1.0.0", priority: 12,
+                enabled: true, source: { kind: "catalog", catalog: "copilot" } }],
+        };
+        return { stdout: JSON.stringify(installedNow ? entries[args[0]] : []) };
+    };
+    const ready = async () => {
+        const cwd = await root;
+        await mkdir(join(cwd, ".specify"), { recursive: true });
+        await mkdir(join(cwd, ".github", "skills", phase.skill), { recursive: true });
+        await writeFile(join(cwd, ".github", "skills", phase.skill, "SKILL.md"), `---\nname: ${phase.skill}\n---\n`);
+        cliNow = true;
+    };
+    const complete = (index) => {
+        const interactionId = `interaction-${index}`;
+        events.push({ type: "user.message", data: { messageId: `message-${index}`, interactionId } },
+            { type: "assistant.turn_start", data: { interactionId, turnId: `turn-${index}` } },
+            { type: "assistant.message", data: { interactionId, turnId: `turn-${index}`,
+                content: "Done.", phase: "final" } },
+            { type: "assistant.turn_end", data: { interactionId, turnId: `turn-${index}` } });
+    };
+    const setup = async () => {
+        const cwd = await root;
+        if (init) await ready();
+        if (skill && !init) await ready();
+        return createSetup({ config: { runtimeSetup: configured
+            ? empty ? { bundles: [], extensions: [], presets: [] } : recipe
+            : undefined }, cwd,
+            session, phases: [phase], command });
+    };
+    return { setup, ready, complete, calls, sent, events, session,
+        setInstalled: (value) => { installedNow = value; }, reloads: () => reloads };
+}
+
+test("init precedes full pending dialog; cancel cannot dispatch installation", async (t) => {
+    const h = harness(t);
+    const setup = await h.setup();
+    const initial = await setup.status();
+    assert.equal(initial.ready, false);
+    assert.deepEqual(initial.checks, {
+        cli: "Not installed", project: "Needs setup", packages: "Waiting for project",
+    });
+    assert.equal((await setup.start({})).stage, "initializing");
+    assert.match(h.sent[0], /--integration-options="--skills"/);
+    assert.doesNotMatch(h.sent[0], /Install ONLY the following confirmed/);
+    await h.ready();
+    h.complete(1);
+    const review = await setup.status();
+    assert.equal(review.stage, "awaiting-confirmation");
+    assert.deepEqual(review.pending.map((item) => item.kind), ["extensions", "presets"]);
+    assert.deepEqual(review.pending.map((item) => item.installedId),
+        ["extension-one", "real-preset"]);
+    assert.equal(review.pending.at(-1).downloadUrl, preset.locator.downloadUrl);
+    assert.equal(review.pending.at(-1).source, "copilot");
+    assert.deepEqual(review.pending.at(-1).locator, preset.locator);
+    assert.equal((await setup.confirm({ planId: review.planId, confirmed: false })).stage, "cancelled");
+    assert.equal(h.sent.length, 1);
+    await assert.rejects(setup.confirm({ planId: review.planId, confirmed: true }), /changed/);
+});
+
+test("confirmed batch verifies inventory, supports partial retry and reloads only on readiness", async (t) => {
+    const h = harness(t, { init: true });
+    const setup = await h.setup();
+    const review = await setup.start({});
+    assert.equal(review.stage, "awaiting-confirmation");
+    assert.deepEqual(review.checks, { cli: "Ready", project: "Ready", packages: "2 to install" });
+    await assert.rejects(setup.confirm({ planId: "wrong", confirmed: true }), /changed/);
+    assert.equal((await setup.confirm({ planId: review.planId, confirmed: true })).stage, "installing");
+    assert.match(h.sent[0], /extension-one/);
+    assert.match(h.sent[0], /catalog-preset/);
+    h.complete(1);
+    assert.equal((await setup.status()).stage, "failed");
+    assert.equal(h.reloads(), 0);
+    h.setInstalled(true);
+    assert.equal((await setup.start({})).stage, "ready");
+    assert.equal(h.reloads(), 1);
+    assert.equal((await setup.status()).ready, true);
+    assert.ok(h.calls.some(({ args }) => args.join(" ") === "preset list --json"));
+    assert.ok(h.calls.every(({ options }) => options.timeout === 10000 && options.maxBuffer === 128 * 1024));
+});
+
+test("failed init cannot expose a confirmation plan", async (t) => {
+    const h = harness(t);
+    const setup = await h.setup();
+    await setup.start({});
+    h.complete(1);
+    const state = await setup.status();
+    assert.equal(state.stage, "failed");
+    assert.deepEqual(state.pending, []);
+    assert.equal(state.planId, null);
+    assert.equal(h.sent.length, 1);
+});
+
+test("setup event transport failures remain visible and retryable", async (t) => {
+    const h = harness(t);
+    const setup = await h.setup();
+    assert.equal((await setup.start({})).stage, "initializing");
+    h.session.getEvents = async () => { throw new Error("transport unavailable"); };
+    const failed = await setup.status();
+    assert.equal(failed.stage, "failed");
+    assert.match(failed.error, /transport unavailable.*retry setup/);
+    h.session.getEvents = async () => h.events;
+    assert.equal((await setup.start({})).stage, "initializing");
+    assert.equal(h.sent.length, 2);
+});
+
+test("init without pending runtime packages verifies and reloads directly", async (t) => {
+    const h = harness(t, { empty: true });
+    const setup = await h.setup();
+    await setup.start({});
+    await h.ready();
+    h.complete(1);
+    const state = await setup.status();
+    assert.equal(state.stage, "ready");
+    assert.equal(state.planId, null);
+    assert.equal(h.reloads(), 1);
+    assert.equal(h.sent.length, 1);
+});
+
+test("ready projects skip dialog and invalid runtime recipes are rejected", async (t) => {
+    const h = harness(t, { init: true, installed: true });
+    const setup = await h.setup();
+    assert.equal((await setup.status()).ready, true);
+    assert.equal((await setup.start({})).stage, "ready");
+    assert.equal(h.sent.length, 0);
+    assert.equal(validateRuntimeSetup({ ...recipe, presets: [{ ...preset,
+        locator: { installedId: preset.id, source: "local", path: "relative" } }] }), false);
+    assert.equal(validateRuntimeSetup({ ...recipe, presets: [preset, preset] }), false);
+    assert.equal(validateRuntimeSetup({ ...recipe, schemaVersion: 1 }), false);
+    assert.equal(validateRuntimeSetup(undefined), true);
+});
+
+test("nested frozen recipe preserves catalog aliases and rejects changed local manifests", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-local-setup-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const local = join(cwd, "approved-preset");
+    const nested = { presets: [
+        { id: preset.id, version: preset.version, enabled: preset.enabled,
+            priority: preset.priority, locator: { installedId: preset.id,
+                source: "local", path: local } },
+        { id: "second-preset", version: "1.0.0", enabled: true, priority: 0,
+            locator: { installedId: "second-preset", source: "copilot",
+                catalogId: "second-preset", downloadUrl: "https://example.org/second.zip" } },
+    ], extensions: [], bundles: [] };
+    assert.equal(validateRuntimeSetup(nested), true);
+    assert.equal(validateRuntimeSetup({ ...nested, presets: [
+        { ...nested.presets[0], locator: { ...nested.presets[0].locator, path: "relative" } }] }), false);
+    await mkdir(local);
+    await writeFile(join(local, "preset.yml"),
+        "schema_version: \"1.0\"\npreset:\n  id: real-preset\n  version: 1.0.0\n");
+    await mkdir(join(cwd, ".specify"));
+    await mkdir(join(cwd, ".github", "skills", phase.skill), { recursive: true });
+    await writeFile(join(cwd, ".github", "skills", phase.skill, "SKILL.md"),
+        `---\nname: ${phase.skill}\n---\n`);
+    const sent = [];
+    const setup = createSetup({ cwd, phases: [phase], config: { runtimeSetup: nested },
+        session: { send: async ({ prompt }) => { sent.push(prompt); return "message"; },
+            rpc: { skills: { reload: async () => ({ errors: [] }) } } },
+        command: async (_exe, args) => ({ stdout: args[0] === "--version" ? "specify 1.0.7" : "[]" }) });
+    const review = await setup.start({});
+    assert.equal(review.stage, "awaiting-confirmation");
+    assert.equal(review.pending.at(-1).source, "copilot");
+    await writeFile(join(local, "preset.yml"),
+        "schema_version: \"1.0\"\npreset:\n  id: other-preset\n  version: 1.0.0\n");
+    await assert.rejects(setup.confirm({ planId: review.planId, confirmed: true }),
+        /Frozen local presets real-preset is unavailable or changed/);
+    assert.deepEqual(sent, []);
+});
+
+test("frozen local extension reads its nested manifest identity", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-local-extension-test-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const local = join(cwd, "approved-extension");
+    await mkdir(local);
+    await writeFile(join(local, "extension.yml"),
+        "schema_version: \"1.0\"\nextension:\n  id: extension-one\n  version: \"3.0.0\"\nrequires:\n  id: unrelated\n  version: \"9.9.9\"\n");
+    await mkdir(join(cwd, ".specify"));
+    await mkdir(join(cwd, ".github", "skills", phase.skill), { recursive: true });
+    await writeFile(join(cwd, ".github", "skills", phase.skill, "SKILL.md"),
+        `---\nname: ${phase.skill}\n---\n`);
+    const setup = createSetup({ cwd, phases: [phase], config: { runtimeSetup: {
+        bundles: [], presets: [], extensions: [{ ...extension,
+            locator: { installedId: extension.id, source: "local", path: local } }],
+    } }, session: { send: async () => "message" }, command: async (_exe, args) => ({
+        stdout: args[0] === "--version" ? "specify 1.0.7" : "[]",
+    }) });
+    assert.equal((await setup.start({})).stage, "awaiting-confirmation");
+});
+
+test("setup card keeps the workflow visible while gating phase runs until ready", async () => {
+    const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
+        import.meta.url), "utf8");
+    const setupCode = source.slice(source.indexOf("function renderSetup()"), source.indexOf("let phaseControl;"));
+    const statusCode = source.slice(source.indexOf("function renderStatus()"), source.indexOf("function renderPhase()"));
+    const nodes = new Map(["setup-surface", "workflow-surface", "setup-status", "setup-actions", "run-phase", "phase-args",
+        "phase-message"].map((id) => [id, { hidden: false, disabled: false, readOnly: false,
+        textContent: "", title: "", classList: { toggle() {} }, querySelector: () => null }]));
+    const context = { model: { showSetup: true, setup: { stage: "needs-setup", ready: false,
+        checks: { cli: "Ready", project: "Ready", packages: "1 to install" } } },
+    setupBusy: false, activeSetupPlan: null, buttons: [], phaseControl: { update: () => {
+        nodes.get("phase-message").textContent = "";
+    } }, phaseState: () => ({}), constitution: () => null, renderName() {}, renderSlug() {},
+    $: (id) => nodes.get(id), Map, Object, Boolean };
+    runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);
+    context.render();
+    assert.equal(nodes.get("setup-surface").hidden, false);
+    assert.equal(nodes.get("workflow-surface").hidden, false);
+    assert.equal(nodes.get("setup-status").hidden, true);
+    assert.equal(nodes.get("run-phase").disabled, true);
+    assert.equal(nodes.get("phase-args").readOnly, true);
+    assert.match(nodes.get("phase-message").textContent, /Available after setup/);
+    context.model.setup = { stage: "failed", ready: false, error: "Install failed; retry." };
+    context.render();
+    assert.equal(nodes.get("setup-status").hidden, false);
+    assert.equal(nodes.get("setup-status").textContent, "Install failed; retry.");
+    context.model.setup = { stage: "installing", ready: false };
+    context.render();
+    assert.match(nodes.get("setup-status").textContent, /Installing confirmed packages/);
+    context.model.setup = { stage: "ready", ready: true };
+    context.render();
+    assert.equal(nodes.get("setup-surface").hidden, true);
+    assert.equal(nodes.get("workflow-surface").hidden, false);
+    assert.equal(nodes.get("run-phase").disabled, false);
+    assert.equal(nodes.get("phase-args").readOnly, false);
+    context.model = { showSetup: false, setup: { stage: "needs-setup", ready: false } };
+    context.render();
+    assert.equal(nodes.get("setup-surface").hidden, true);
+    assert.equal(nodes.get("run-phase").disabled, false);
+});
+
+test("phase dispatch is gated on readiness even when showSetup is false; legacy runs retain skill checks", async (t) => {
+    const h = harness(t);
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-setup-runtime-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const config = { canvas: { id: "test" }, phases: ["specify"],
+        phaseOutputs: { specify: { outputPath: "specs/<slug>/spec.md", expectsArtifact: true } },
+        userProvidesSlug: false, showSetup: false, runtimeSetup: recipe };
+    const runtime = await createRuntime({ config, cwd, workspace: cwd, session: {
+        ...h.session, sessionId: "test", log: async () => {}, on: () => () => {} } });
+    try {
+        await assert.rejects(runtime.run({ phase: "specify", args: "" }, "panel"), /setup is not ready/);
+        assert.equal(h.sent.length, 0);
+        const snapshot = await runtime.snapshot();
+        assert.equal(snapshot.setup.ready, false);
+        assert.equal(snapshot.setup.stage, "needs-setup");
+        assert.equal(snapshot.showSetup, false);
+    } finally { runtime.close(); }
+    const oldRuntime = await createRuntime({ config: { ...config, showSetup: undefined, runtimeSetup: undefined },
+        cwd, workspace: cwd, session: { ...h.session, sessionId: "test", log: async () => {},
+            on: () => () => {}, rpc: { skills: { reload: async () => ({ errors: [] }) } } } });
+    try {
+        await assert.rejects(oldRuntime.run({ phase: "specify", args: "" }, "panel"), /Installed skill/);
+    } finally { oldRuntime.close(); }
+});
+
+test("setup routes require canvas token, origin and the current plan", async (t) => {
+    const h = harness(t, { init: true });
+    const setup = await h.setup();
+    const config = { canvas: { id: "route", displayName: "Route",
+        workflowListName: "Workflows", description: "Setup route" }, phases: ["specify"],
+    phaseOutputs: { specify: { outputPath: "specs/<slug>/spec.md", expectsArtifact: true } },
+    installed: { presets: [], extensions: [], bundles: [] },
+    userProvidesSlug: false, workflowPage: { adapter: "generated-phase-adapter",
+        viewLabels: {}, slots: [{ id: "workflow.phases" }] } };
+    const runtime = { setupStart: setup.start, setupConfirm: setup.confirm };
+    let server;
+    const routes = createWorkflowRoutes(config, { runtime, instanceId: "panel", token: "test-token",
+        port: () => server.address().port });
+    server = createServer((request, response) => { void routes.handle(request, response); });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(async () => { routes.close(); await new Promise((resolve) => server.close(resolve)); });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const post = (route, body, headers = {}) => fetch(`${base}${route}`, { method: "POST",
+        headers: { "content-type": "application/json", "x-canvas-token": "test-token", ...headers },
+        body: JSON.stringify(body) });
+    assert.equal((await fetch(`${base}/api/setup/start`)).status, 401);
+    const html = await (await fetch(`${base}/?token=test-token`)).text();
+    assert.match(html, /<main id="workflow-surface" class="app-body workflow-surface">/);
+    assert.match(html, /<main id="workflow-surface"[^>]*>[\s\S]*?<section id="setup-surface"[^>]*hidden>/);
+    assert.match(html, /Set up this project[\s\S]*?Set up Spec Kit and install the selected presets, extensions, and bundles\.[\s\S]*?id="setup-actions"/);
+    assert.doesNotMatch(html, /id="setup-(?:cli|project|packages)"/);
+    assert.equal((await post("/api/setup/start", {}, { origin: "https://elsewhere.example" })).status, 403);
+    const response = await post("/api/setup/start", {});
+    assert.equal(response.status, 200);
+    const review = await response.json();
+    assert.equal(review.stage, "awaiting-confirmation");
+    assert.equal((await post("/api/setup/confirm", { planId: "stale", confirmed: true })).status, 409);
+    assert.equal((await post("/api/setup/confirm", { planId: review.planId, confirmed: false })).status, 200);
+    assert.equal(h.sent.length, 0);
+});

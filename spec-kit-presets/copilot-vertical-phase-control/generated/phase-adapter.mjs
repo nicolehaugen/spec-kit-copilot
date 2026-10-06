@@ -38,7 +38,7 @@ function validState(state) {
         && (state.runLabel == null || typeof state.runLabel === "string");
 }
 
-function render(state) {
+function render(state, definition) {
     const { phases, current } = state;
     const phase = phases[current];
     const status = state.status?.status ?? "Not run";
@@ -61,7 +61,8 @@ function render(state) {
             const itemStatus = autopilot?.current === index && autopilot.status === "Running"
                 ? "Running" : result?.status ?? "Not run";
             const ready = result?.artifactAvailability === "available";
-            const label = item.id.replace(/^speckit\./, "").endsWith("plan") ? "View Plan" : "View artifact";
+            const label = Object.hasOwn(definition.viewLabels, item.id) ? definition.viewLabels[item.id]
+                : item.id.replace(/^speckit\./, "").endsWith("plan") ? "View Plan" : "View artifact";
             return `<li class="vertical-phase-row">
                 <div class="vertical-phase-summary">
                     <button class="vertical-phase-select" type="button" data-phase-index="${index}"
@@ -108,8 +109,10 @@ function render(state) {
         </footer>` : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>`;
 }
 
-export function mount({ root, state, actions }) {
+export function mount({ root, definition, state, actions }) {
     if (!root || typeof root.replaceChildren !== "function" || !validState(state)
+        || definition?.id !== controlId || !definition.viewLabels
+        || typeof definition.viewLabels !== "object" || Array.isArray(definition.viewLabels)
         || !actions || ["select", "draft", "runAt", "viewAt", "reveal", "startManagedRun", "stopManagedRun", "error"]
             .some((key) => typeof actions[key] !== "function")) throw new Error("Invalid vertical phase control context");
     let disposed = false;
@@ -130,7 +133,10 @@ export function mount({ root, state, actions }) {
                     "Autopilot is running. Stop it before starting this step manually?")) return;
                 await actions.stopManagedRun();
             }
-            await actions.runAt(Number(button.dataset.index));
+            const index = Number(button.dataset.index);
+            if (typeof actions.confirmRun === "function"
+                && await actions.confirmRun(state.phases[index]) !== true) return;
+            await actions.runAt(index);
         });
         else if (action === "view-row") invoke(() => actions.viewAt(Number(button.dataset.index)));
         else if (action === "output") invoke(() => actions.viewAt(state.current, button.dataset.output));
@@ -159,7 +165,7 @@ export function mount({ root, state, actions }) {
                     ? "" : `[data-index="${focused.dataset.index}"]`}` : null;
         const cursor = focused?.hasAttribute("data-phase-draft")
             ? [focused.selectionStart, focused.selectionEnd] : null;
-        root.innerHTML = render(state);
+        root.innerHTML = render(state, definition);
         if (selector) {
             const replacement = root.querySelector(selector);
             replacement?.focus({ preventScroll: true });

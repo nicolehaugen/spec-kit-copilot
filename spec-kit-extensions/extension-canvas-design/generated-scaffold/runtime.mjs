@@ -9,6 +9,7 @@ import { UserError, confined, readBounded, readBoundedBytes, directories, atomic
     deleteConfinedDirectory } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
+import { createSetup } from "./setup.mjs";
 
 const PROVIDER_REFRESH_LIMIT_MS = 3000;
 const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
@@ -74,6 +75,7 @@ const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
+    const setup = createSetup({ config, cwd, session, phases, notify });
     const key = createHash("sha256").update(JSON.stringify([cwd, config.canvas.id])).digest("hex");
     const statePath = `generated-canvases/${key}/state.json`;
     let state;
@@ -339,8 +341,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             automation.message = "Autopilot outcome is unconfirmed. Check chat before resuming.";
         }
         return { ...view, userProvidesSlug: config.userProvidesSlug, autopilot: automation,
+            showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
-            phases, items: entries, statuses, valueFields: visibleValues, pageValues, valueErrors };
+            phases, items: entries, statuses, valueFields: visibleValues, pageValues, valueErrors,
+            setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
+                : { stage: "legacy", ready: true, pending: [], planId: null, error: null } };
     }
     async function saveValue(input) {
         if (!input || Object.keys(input).sort().join() !== "id,revision,value"
@@ -598,6 +603,9 @@ Steps:\n${instructions}` });
         return { accepted: true, nextPhase: workflowSteps[state.autopilot.current]?.id ?? null };
     }
     async function run(input, instanceId) {
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status()).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry this phase.", 409);
+        }
         if (deleting) throw new UserError("A workflow is being deleted. Refresh and try again.", 409);
         if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
             && liveRuns.has(state.autopilot.id)) throw new UserError("Stop Autopilot before starting a manual step.", 409);
@@ -874,5 +882,6 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     }
     return { snapshot, refresh, save, saveValue, run, startAutopilot, stopAutopilot, reportAutopilotStep,
         report, reportSlug, artifact, reveal, deleteWorkflow,
+        setupStart: setup.start, setupConfirm: setup.confirm, setupStatus: setup.status,
         close() { if (closed) return; closed = true; subscriptions.forEach((unsubscribe) => unsubscribe?.()); } };
 }

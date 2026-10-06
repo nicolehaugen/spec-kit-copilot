@@ -14,7 +14,7 @@ export function resolveRuntimeInstallLocators(installed, catalog, localSelection
             }
             if (item.source === "local" && kind !== "bundles" && workspacePath) {
                 locators[kind].push({ installedId: item.id, source: "local",
-                    path: join(workspacePath, ".specify", kind, item.id) });
+                    path: item.path ?? join(workspacePath, ".specify", kind, item.id) });
                 continue;
             }
             if ((!item.source && kind !== "bundles") || item.source === "local") {
@@ -46,4 +46,37 @@ export function resolveRuntimeInstallLocators(installed, catalog, localSelection
         }
     }
     return locators;
+}
+
+export function buildPortableRuntimeSetup(installed, installLocators, catalog, selections, localSelections) {
+    const designIds = { presets: new Set(), extensions: new Set() };
+    designIds.extensions.add("extension-canvas-design");
+    for (const kind of ["presets", "extensions"]) {
+        for (const entry of catalog?.[kind] ?? []) {
+            if (entry.tags?.includes("canvas-design")) {
+                designIds[kind].add(entry.id);
+                if (entry.installedId) designIds[kind].add(entry.installedId);
+            }
+        }
+        for (const entry of [...(selections?.[kind] ?? []), ...(localSelections?.[kind] ?? [])]) {
+            designIds[kind].add(entry.id);
+        }
+    }
+    const setup = { presets: [], extensions: [], bundles: [] };
+    for (const kind of ["presets", "extensions"]) {
+        for (const item of installed[kind]) {
+            const locator = installLocators[kind].find((entry) => entry.installedId === item.id);
+            if (!locator) throw new Error(`Missing verified runtime source for ${kind} ${item.id}`);
+            if (designIds[kind].has(item.id) || designIds[kind].has(locator.catalogId)) continue;
+            if (locator.source === "local" && item.source === "local"
+                && (!item.path || item.path !== locator.path)) {
+                throw new Error(`Cannot reproduce local runtime ${kind} ${item.id}: verified installed path is unavailable`);
+            }
+            setup[kind].push({ id: item.id, version: item.version,
+                enabled: item.enabled, priority: item.priority, locator });
+        }
+    }
+    // A bundle ZIP can contain design-time members even when the bundle itself
+    // has no design tag. Reinstall its verified runtime members individually.
+    return setup;
 }

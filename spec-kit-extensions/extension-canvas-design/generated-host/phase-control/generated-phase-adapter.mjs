@@ -28,8 +28,10 @@ function card(phase) {
     </footer>`;
 }
 
-export function mount({ root, state, actions }) {
+export function mount({ root, definition, state, actions }) {
     if (!root || typeof root.replaceChildren !== "function" || !actions
+        || definition?.id !== controlId || !definition.viewLabels
+        || typeof definition.viewLabels !== "object" || Array.isArray(definition.viewLabels)
         || ["select", "draft", "run", "view", "reveal", "error"].some((key) =>
             typeof actions[key] !== "function")) throw new Error("Invalid phase control context");
     const listeners = new AbortController();
@@ -96,6 +98,8 @@ export function mount({ root, state, actions }) {
         const artifact = $("#phase-artifact-status");
         const available = next.output === status?.output && status?.artifactAvailability === "available";
         $("#view-artifact").hidden = !available;
+        $("#view-artifact").textContent = Object.hasOwn(definition.viewLabels, phase.id)
+            ? definition.viewLabels[phase.id] : "View artifact";
         artifact.textContent = available ? "" : (status?.artifactError
             ?? (next.output ? `${next.output} is not available yet. Run the phase, then refresh to check again.`
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."));
@@ -137,7 +141,14 @@ export function mount({ root, state, actions }) {
                         root.querySelector(`#${button.id}`)?.focus({ preventScroll: true });
                     }
                 });
-            } else if (button.id === "run-phase") action = actions.run($("#phase-args").value);
+            } else if (button.id === "run-phase") {
+                const input = $("#phase-args").value;
+                const phase = currentState.phases[currentState.current];
+                action = typeof actions.confirmRun === "function"
+                    ? Promise.resolve(actions.confirmRun(phase)).then((confirmed) =>
+                        confirmed === true ? actions.run(input) : undefined)
+                    : actions.run(input);
+            }
             else if (button.id === "view-artifact") action = actions.view();
             else if (button.hasAttribute("data-output")) action = actions.view(button.dataset.output);
             else if (button.id === "browse-output-folder") action = actions.reveal();

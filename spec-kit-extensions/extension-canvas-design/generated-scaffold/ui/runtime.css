@@ -10,6 +10,26 @@ dialog {
     overflow: auto;
 }
 dialog::backdrop { background: rgb(0 0 0 / 45%); }
+#setup-surface[hidden] { display: none !important; }
+#setup-surface { align-items: flex-start; gap: .75rem; margin-bottom: 1.5rem; }
+.setup-copy { min-width: 0; }
+.setup-copy > p { margin: .5rem 0 0; }
+#setup-actions { display: flex; }
+#setup-actions button { min-height: 44px; }
+#setup-status { margin: 0; }
+.generated-dialog-backdrop {
+    position: fixed; inset: 0; z-index: 100;
+    display: grid; place-items: center; padding: 16px;
+    background: rgb(0 0 0 / 50%);
+}
+.generated-dialog {
+    width: min(620px, 100%); max-height: calc(100dvh - 32px); overflow: auto;
+    padding: 24px; border-radius: 8px;
+    background: var(--background-color-default, #fff);
+    color: var(--text-color-default, #1f2328);
+    border: 1px solid var(--border-color-default, #d0d7de);
+}
+.generated-dialog li { overflow-wrap: anywhere; margin-block: 6px; }
 .viewer-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .viewer-head h2 { flex: 1; overflow-wrap: anywhere; }
 dialog.artifact-viewer {
