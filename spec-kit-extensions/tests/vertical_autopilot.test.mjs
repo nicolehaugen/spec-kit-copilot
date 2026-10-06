@@ -392,6 +392,86 @@ test("an unapplied restoration does not report failure when mode already changed
     assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
 });
 
+test("rejected cleanup logging preserves dispatch failures and recovery guidance", async (t) => {
+    for (const { persistence, restore } of [
+        { persistence: true, restore: false },
+        { persistence: false, restore: true },
+        { persistence: true, restore: true },
+        { persistence: false, restore: "already changed" },
+    ]) {
+        await t.test(`persistence=${persistence}, restoration=${restore}`, async (t) => {
+            const { runtime, session, stateFile } = await setup(t);
+            const directory = join(stateFile, "..");
+            const backup = `${directory}-backup`;
+            let logCalls = 0;
+            session.log = async () => {
+                logCalls++;
+                throw new Error("Logger unavailable");
+            };
+            session.send = async () => {
+                if (persistence) {
+                    await rename(directory, backup);
+                    await writeFile(directory, "blocked");
+                }
+                throw new Error("Dispatch failed");
+            };
+            const setMode = session.rpc.mode.set;
+            if (restore) {
+                session.rpc.mode.set = async (input) => {
+                    if (input.mode !== "interactive") return setMode(input);
+                    if (restore === "already changed") session.mode = "interactive";
+                    return { modeApplied: false };
+                };
+            }
+            await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+                assert.match(error.message, /Dispatch failed/);
+                if (persistence || restore === true) assert.match(error.message, /Autopilot failed: Dispatch failed/);
+                if (persistence) assert.match(error.message, /state could not be saved/);
+                if (restore === true) {
+                    assert.match(error.message, /Mode restoration also failed: Copilot did not restore the previous mode/);
+                    assert.match(error.message, /Switch Copilot to interactive mode manually before retrying/);
+                } else {
+                    assert.doesNotMatch(error.message, /Mode restoration also failed/);
+                }
+                assert.doesNotMatch(error.message, /Logger unavailable/);
+                return true;
+            });
+            assert.equal(logCalls, Number(persistence) + Number(Boolean(restore)) + Number(restore === true));
+            assert.equal(session.mode, restore === true ? "autopilot" : "interactive");
+            if (!persistence) assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+            if (persistence) {
+                await rm(directory);
+                await rename(backup, directory);
+            }
+            session.rpc.mode.set = setMode;
+            session.mode = "interactive";
+            session.send = async () => "retry-message";
+            assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+        });
+    }
+});
+
+test("failed tracking after dispatch still directs the user to check chat when logging rejects", async (t) => {
+    const { runtime, session, stateFile } = await setup(t);
+    const directory = join(stateFile, "..");
+    const backup = `${directory}-backup`;
+    session.log = async () => { throw new Error("Logger unavailable"); };
+    session.send = async () => {
+        await rename(directory, backup);
+        await writeFile(directory, "blocked");
+        return "sent-message";
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+        assert.match(error.message, /state could not be saved/);
+        assert.match(error.message, /Autopilot was sent; check chat before retrying/);
+        assert.doesNotMatch(error.message, /Logger unavailable/);
+        return true;
+    });
+    assert.equal(session.mode, "autopilot");
+    await rm(directory);
+    await rename(backup, directory);
+});
+
 test("a packaged adapter never executes on the server even with a frozen managed-run flag", async (t) => {
     const fixture = await setup(t);
     const { target, options } = fixture;

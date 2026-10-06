@@ -131,11 +131,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
     const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
-    async function restoreMode(automation) {
+    const cleanupDiagnostic = async (message) => {
+        try { await diagnostic(message); } catch { /* Cleanup reporting must not mask the original failure. */ }
+    };
+    async function restoreMode(automation, log = diagnostic) {
         if (!automation?.previousMode || automation.previousMode === "autopilot") return;
         if (await session.rpc.mode.get() !== "autopilot") return;
         const result = await session.rpc.mode.set({ mode: automation.previousMode, expectedMode: "autopilot" });
-        if (result.modeApplied === false) await diagnostic("Copilot session mode changed; Autopilot did not restore the previous mode.");
+        if (result.modeApplied === false) await log("Copilot session mode changed; Autopilot did not restore the previous mode.");
     }
     const update = (fn, uiChange = false, announce = true) => {
         const pending = writes.then(async () => {
@@ -497,7 +500,7 @@ Steps:\n${instructions}` });
             let restoreError;
             try {
                 if (modeChanged && !sent) {
-                    await restoreMode({ previousMode });
+                    await restoreMode({ previousMode }, cleanupDiagnostic);
                     if (await session.rpc.mode.get() === "autopilot") {
                         throw new Error("Copilot did not restore the previous mode.");
                     }
@@ -510,19 +513,19 @@ Steps:\n${instructions}` });
                     busy.value = false;
                 }
             }
-            if (persistenceError) {
-                await diagnostic(`Could not persist the Autopilot dispatch outcome: ${persistenceError.message}`);
-            }
-            if (restoreError) {
-                await diagnostic(`Could not restore the Copilot session mode: ${restoreError.message}`);
-                const failure = persistenceError
-                    ? `Autopilot failed and its state could not be saved: ${persistenceError.message}.`
-                    : `Autopilot failed: ${error.message}.`;
-                throw new UserError(`${failure} Mode restoration also failed: ${restoreError.message}. `
-                    + `Switch Copilot to ${previousMode} mode manually before retrying.`, 500);
-            }
-            if (persistenceError) {
-                throw new UserError(`Autopilot failed and its state could not be saved: ${persistenceError.message}`, 500);
+            if (persistenceError) await cleanupDiagnostic(
+                `Could not persist the Autopilot dispatch outcome: ${persistenceError.message}`);
+            if (restoreError) await cleanupDiagnostic(
+                `Could not restore the Copilot session mode: ${restoreError.message}`);
+            if (persistenceError || restoreError) {
+                const details = [`Autopilot failed: ${error.message}`];
+                if (persistenceError) details.push(`Its state could not be saved: ${persistenceError.message}`);
+                if (restoreError) {
+                    details.push(`Mode restoration also failed: ${restoreError.message}`);
+                    details.push(`Switch Copilot to ${previousMode} mode manually before retrying`);
+                }
+                if (sent) details.push("Autopilot was sent; check chat before retrying");
+                throw new UserError(`${details.join(". ")}.`, 500);
             }
             throw error;
         } finally { autopilotDispatching = false; }
