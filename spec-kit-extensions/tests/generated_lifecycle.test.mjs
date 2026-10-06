@@ -24,6 +24,7 @@ test("closing the last started panel while another opens retains the shared runt
         canvas: { id: "lifecycle", displayName: "Lifecycle",
             description: "Test canvas", workflowListName: "Workflows" },
         workflowPage: { title: JSON.parse(definition).title, order: JSON.parse(definition).order,
+            managedRun: false,
             slots: JSON.parse(definition).slots,
             phaseControl: "generated-phase-control", adapter: "generated-phase-adapter",
             definitionHash: createHash("sha256").update(definition).digest("hex"),

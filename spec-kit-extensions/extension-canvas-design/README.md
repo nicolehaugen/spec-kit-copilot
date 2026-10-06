@@ -453,15 +453,19 @@ reaches into the adapter's DOM. An adapter renders its own controls and updates
 them in `update` when the host supplies new state. A minimal phase list:
 
 The catalog-listed `copilot-vertical-phase-control` preset replaces the
-`generated-phase-adapter` named template. Adapters may export
-`requiredCapabilities` (an array of unique names); absent means no optional
-capabilities. The generated host rejects unknown requirements before calling
-`mount`. Currently supported optional capabilities are:
+`generated-phase-adapter` and `generated-phase-control` named templates.
+Adapters may export `requiredCapabilities` as an array of unique capability
+names; absent means no optional capabilities. For managed runs, the resolved
+`generated-phase-control` JSON must additionally declare `"managedRun": true`.
+Designer freezes that declaration with the definition's hash; the generated
+server never imports the browser adapter to determine its privileges. The
+browser rejects unknown requirements before calling `mount`. Currently
+supported optional capabilities are:
 
 | Requirement | Additional state and actions |
 | --- | --- |
 | `workflow.rows.v1` | `state.statuses` maps phase IDs to host-verified status, output, artifact availability and error. `actions.runAt(index)` submits the configured phase with its saved draft; `actions.viewAt(index)` opens its authorized artifact. Invalid indexes and unavailable artifacts fail visibly. |
-| `workflow.managed-run.v1` | `state.autopilot` contains the selected workflow's persisted status, current step and progress message (or `null`). `actions.startManagedRun()` preflights and starts the attached Copilot session's ordered workflow; `actions.stopManagedRun()` cancels it. Failures are reported through `actions.error` or the host's canvas message. The runtime verifies the packaged adapter's hash and declared capability before starting a run. |
+| `workflow.managed-run.v1` | `state.autopilot` contains the session's persisted run status, target workflow ID, current step and progress message (or `null`). `actions.startManagedRun()` preflights and starts the attached Copilot session's ordered workflow; `actions.stopManagedRun()` cancels it from any open panel. Failures are reported through `actions.error` or the host's canvas message. The runtime verifies the packaged adapter's hash and the capability frozen from its phase-control definition before starting a run. |
 
 These actions are stable host operations, not preset-specific buttons. The
 vertical adapter owns its entire layout, row selection and confirmation flow;

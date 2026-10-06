@@ -410,7 +410,9 @@ function validateFieldPlacement(document, name) {
 function validatePhaseControl(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "adapter,id,placement,schemaVersion"
+        || contractKeys(document).sort().join() !== (document.managedRun === undefined
+            ? "adapter,id,placement,schemaVersion" : "adapter,id,managedRun,placement,schemaVersion")
+        || (document.managedRun !== undefined && typeof document.managedRun !== "boolean")
         || document.schemaVersion !== 1 || document.id !== "workflow-phases"
         || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
         || isWindowsDeviceName(document.adapter)
@@ -975,7 +977,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
-    model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
+    model.workflowPage = { name: workflowPage.name, ...workflowPage.document,
+        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-definition").document.managedRun === true };
     model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
         .map(({ name, sourceId, document }) =>
             ({ name, sourceId, ...document, control: placementControls.get(name) }))

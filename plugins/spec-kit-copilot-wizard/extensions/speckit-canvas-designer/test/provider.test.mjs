@@ -384,6 +384,22 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /missing mount export/);
     await writeFile(adapterFile, originalAdapter);
+    assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, false);
+    await writeFile(adapterFile, `export const controlId = "workflow-phases";
+export const contractVersion = 1;
+const regex = /\`/;
+const example = \`
+export const requiredCapabilities = ['workflow.managed-run.v1'];
+\`;
+export function mount() {}`);
+    assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, false);
+    await writeFile(controlFile, JSON.stringify({ ...JSON.parse(originalControl), managedRun: true }));
+    assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, true);
+    await writeFile(controlFile, JSON.stringify({ ...JSON.parse(originalControl), managedRun: "true" }));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid phase control definition/);
+    await writeFile(controlFile, originalControl);
+    await writeFile(adapterFile, originalAdapter);
     await assert.rejects(loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
             || item.kind === "generated.phase-control-definition"
@@ -687,7 +703,8 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     const phaseRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
     assert.deepEqual(Object.keys(phaseRequest.workflowPage).sort(),
-        ["assets", "id", "order", "slots", "title"]);
+        ["assets", "id", "managedRun", "order", "slots", "title"]);
+    assert.equal(phaseRequest.workflowPage.managedRun, false);
     assert.equal(phaseRequest.workflowPage.id, "workflow");
     assert.equal(phaseRequest.phasePlacement, undefined);
     assert.deepEqual(JSON.parse(Buffer.from(phaseRequest.workflowPage.assets[1].content, "base64")).placement,
