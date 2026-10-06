@@ -78,9 +78,13 @@ async function showGeneratedDialog(name, context = {}) {
     if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
         throw new Error(`Invalid dialog adapter result: ${name}`);
     }
-    const result = await instance.result;
-    if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
-    return result === "confirmed";
+    try {
+        const result = await instance.result;
+        if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
+        return result === "confirmed";
+    } finally {
+        instance.dispose();
+    }
 }
 
 async function mountGeneratedButtons() {
@@ -674,6 +678,7 @@ function phaseState(pendingLabel = () => null) {
                 template, label: resolveOutput(template),
             })) : [],
         slugEditable: Boolean(model?.userProvidesSlug),
+        setupPending: Boolean(model?.showSetup && !model?.setup?.ready),
         sending: Boolean(selected && sending && sending.phase === selected.id
             && sending.item === model.selected),
         runLabel: selected ? pendingLabel(selected) : null };
@@ -697,16 +702,6 @@ function renderStatus() {
     }
     phaseControl?.update(phaseState(pendingLabel));
     const setupPending = model.showSetup && !model.setup?.ready;
-    const run = $("run-phase");
-    if (run) {
-        run.disabled = setupPending;
-        run.title = setupPending ? "Available after setup" : "";
-        $("phase-args").readOnly = setupPending;
-        if (setupPending) {
-            const notice = $("phase-message");
-            notice.textContent = [notice.textContent, "Available after setup"].filter(Boolean).join(" — ");
-        }
-    }
     if (constitution()) {
         const status = model.statuses[constitution().id];
         artifactAction("view-constitution", "constitution-artifact-status", status);
@@ -1050,6 +1045,7 @@ try {
         workflow: "__new__", status: null, draft: "",
         output: initialPhases[0]?.output ?? null, outputLinks: [],
         slugEditable: Boolean($("workflow-slug")), sending: false, statuses: {}, autopilot: null,
+        setupPending: false,
     },
         actions: {
             select: (index) => { requireModel(); return selectPhase(index); },

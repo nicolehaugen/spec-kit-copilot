@@ -75,7 +75,12 @@ const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
-    const setup = createSetup({ config, cwd, session, phases, notify });
+    const setup = createSetup({ config, cwd, session, phases, notify,
+        approvedSources: () => state.approvedUrlSources ?? [],
+        saveApprovedSources: (receipts) => update((next) => {
+            next.approvedUrlSources = [...new Set([...(next.approvedUrlSources ?? []), ...receipts])]
+                .slice(-80);
+        }) });
     const key = createHash("sha256").update(JSON.stringify([cwd, config.canvas.id])).digest("hex");
     const statePath = `generated-canvases/${key}/state.json`;
     let state;
@@ -84,6 +89,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (state.version !== 1 || !Number.isSafeInteger(state.revision) || !Array.isArray(state.runs)
             || typeof state.drafts !== "object" || !state.drafts || Array.isArray(state.drafts)
             || typeof state.selected !== "string" || typeof state.slug !== "string"
+            || (state.approvedUrlSources !== undefined
+                && (!Array.isArray(state.approvedUrlSources) || state.approvedUrlSources.length > 80
+                    || state.approvedUrlSources.some((receipt) =>
+                        typeof receipt !== "string" || receipt.length > 8192)))
             || (state.name !== undefined && (typeof state.name !== "string" || state.name.length > 120))
             || (state.names !== undefined && (!state.names || typeof state.names !== "object"
                 || Array.isArray(state.names) || Object.values(state.names).some((name) =>
@@ -414,6 +423,9 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     async function startAutopilot(input, instanceId) {
         if (!input || Object.keys(input).some((key) => !["itemId"].includes(key))
             || typeof input.itemId !== "string") throw new UserError("Select a workflow for Autopilot.");
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status()).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry Autopilot.", 409);
+        }
         if (dispatching || autopilotDispatching || deleting) throw new UserError("A workflow request is being sent. Retry after it finishes.", 409);
         if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
             && liveRuns.has(state.autopilot.id)) throw new UserError("Autopilot is already running. Stop it before retrying.", 409);

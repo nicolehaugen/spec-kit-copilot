@@ -419,6 +419,7 @@ function frozenDialogs(request, workflowLayout, phases) {
         const doc = frozenNamedAsset(item, ["generated.phase-dialog-binding"], item.id);
         if (Object.keys(doc).sort().join() !== "dialog,hash,id,phase"
             || !/^speckit\.[a-z][a-z0-9.-]{0,79}$/.test(doc.phase)
+            || doc.phase === "speckit.constitution"
             || !phases.some((phase) => `speckit.${phase.replace(/^speckit\./, "")}` === doc.phase)
             || !dialogs.some((dialog) => dialog.id === doc.dialog)) {
             throw new Error(`Invalid phase dialog binding ${doc.id}`);

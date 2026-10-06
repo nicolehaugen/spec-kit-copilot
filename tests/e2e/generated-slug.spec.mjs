@@ -15,9 +15,12 @@ const phaseControlDefinition = await readFile(new URL("phase-control.json", phas
 const phaseAdapter = await readFile(new URL("generated-phase-adapter.mjs", phaseControlSource));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const { title, order, slots } = JSON.parse(workflowDefinition);
+const control = JSON.parse(phaseControlDefinition);
 const workflowPage = { title, order, slots, phaseControl: "generated-phase-control",
     adapter: "generated-phase-adapter", definitionHash: digest(workflowDefinition),
-    controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter) };
+    controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter),
+    placement: control.placement, viewLabels: control.viewLabels ?? {},
+    managedRun: control.managedRun === true };
 
 test("phase actions report connecting before the first state refresh", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
@@ -56,10 +59,10 @@ test("vertical phase adapter keeps the numbered step list and manual retry acces
         await expect(page.locator('[data-action="autopilot"]')).toBeVisible();
         await expect(page.locator('[data-action="start"]')).toHaveCount(2);
         await page.locator('.vertical-phase-list [data-phase-index="1"]').click();
-        await expect(page.locator(".phase-card h2")).toHaveText("Plan");
+        await expect(page.locator(".vertical-phase-detail h2")).toHaveText("Plan");
         await expect(page.locator('[data-action="start"]').first()).toBeEnabled();
         await page.locator('[data-action="previous"]').click();
-        await expect(page.locator(".phase-card h2")).toHaveText("Specify");
+        await expect(page.locator(".vertical-phase-detail h2")).toHaveText("Specify");
         await page.locator("[data-phase-draft]").fill("Vertical proof");
         const skill = join(canvas.root, ".github", "skills", "speckit-specify");
         await mkdir(skill, { recursive: true });
@@ -940,8 +943,8 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await page.goto(canvas.url);
         expect(await page.evaluate(() => {
             const body = document.querySelector("main");
-            return [...body.children].slice(0, 2).map((child) => child.id);
-        })).toEqual(["instance-collection", "constitution-card"]);
+            return [...body.children].slice(0, 3).map((child) => child.id);
+        })).toEqual(["setup-surface", "instance-collection", "constitution-card"]);
         await expect(page.locator("#instance-collection .collection-description")).toHaveText("Workflow canvas.");
         await expect(page.locator("#current-workflow-title")).toHaveCount(0);
         await expect(page.locator("#feature-select")).toHaveCount(0);

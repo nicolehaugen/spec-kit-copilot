@@ -85,6 +85,7 @@ export function mount({ root, definition, state, actions }) {
             ? `Next: ${next.phases[next.current + 1].label} ▶` : "Complete";
         const input = $("#phase-args");
         if (changed || document.activeElement !== input) input.value = next.draft;
+        input.readOnly = Boolean(next.setupPending);
         $(".phase-notice").textContent = status?.status ?? "Not run";
         const output = next.output ?? "No declared output";
         const browse = $("#browse-output-folder");
@@ -122,8 +123,11 @@ export function mount({ root, definition, state, actions }) {
         others.hidden = !next.outputLinks.length;
         $("#run-phase").textContent = next.runLabel
             ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
+        $("#run-phase").disabled = Boolean(next.setupPending);
+        $("#run-phase").title = next.setupPending ? "Available after setup" : "";
         const notice = $("#phase-message");
-        notice.textContent = status?.error ?? "";
+        notice.textContent = [status?.error, next.setupPending ? "Available after setup" : ""]
+            .filter(Boolean).join(" — ");
         notice.classList.toggle("workflow-error", Boolean(status?.error));
     }
     root.addEventListener("click", (event) => {

@@ -486,6 +486,7 @@ export function validatePhaseDialogBinding(document, name) {
         || contractKeys(document).sort().join() !== "dialog,id,phase,schemaVersion"
         || document.schemaVersion !== 1 || document.id !== name
         || !/^speckit\.[a-z][a-z0-9.-]{0,79}$/.test(document.phase)
+        || document.phase === "speckit.constitution"
         || !PAGE_PATTERN.test(document.dialog)) {
         throw new Error(`${name}: invalid phase dialog binding`);
     }
@@ -1163,8 +1164,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         const selected = new Set((handoff.workflow?.selectedPhases ?? []).map((id) =>
             id.startsWith("speckit.") ? id : `speckit.${id}`));
         for (const binding of model.phaseDialogBindings) {
-            if (!selected.has(binding.phase)) {
-                throw new Error(`${binding.name}: phase ${binding.phase} is not selected in the workflow`);
+            if (!selected.has(binding.phase) || binding.phase === "speckit.constitution") {
+                throw new Error(`${binding.name}: phase ${binding.phase} cannot use a generated phase dialog`);
             }
         }
     }

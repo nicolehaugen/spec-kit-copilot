@@ -15,6 +15,28 @@ const state = {
 const definition = { id: "workflow-phases", viewLabels: { plan: "Inspect Plan" } };
 
 for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
+    test(`${name} preview disables phase execution and restores pending-turn retries after setup`, (t) => {
+        const dom = phaseControlDom();
+        const previousDocument = globalThis.document;
+        globalThis.document = dom.document;
+        t.after(() => { globalThis.document = previousDocument; });
+        const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt", "viewAt",
+            "startManagedRun", "stopManagedRun", "reveal", "error"].map((action) => [action, () => {}]));
+        const control = adapter.mount({ root: dom.root, definition,
+            state: { ...state, setupPending: true }, actions });
+        const selector = name === "stock" ? "#run-phase" : '[data-action="start"]';
+        const input = dom.root.querySelector(name === "stock" ? "#phase-args" : "[data-phase-draft]");
+        assert.equal(dom.root.querySelector(selector).disabled, true);
+        assert.equal(name === "stock" ? input.readOnly : input.hasAttribute("readonly"), true);
+        if (name === "vertical") assert.equal(dom.root.querySelector('[data-action="autopilot"]').disabled, true);
+        assert.match(name === "stock" ? dom.root.querySelector("#phase-message").textContent
+            : dom.root.innerHTML, /Available after setup/);
+        control.update({ ...state, setupPending: false, status: { status: "Running" } });
+        assert.equal(dom.root.querySelector(selector).disabled, false);
+        if (name === "vertical") assert.equal(dom.root.querySelector('[data-action="autopilot"]').disabled, false);
+        control.dispose();
+    });
+
     test(`${name} phase control mounts, updates a focused draft, dispatches actions and disposes`, async (t) => {
         const dom = phaseControlDom();
         const previousDocument = globalThis.document;

@@ -54,7 +54,8 @@ function render(state, definition) {
             Autopilot starts at the first step and stops at a blocker.</p>
         <div class="vertical-phase-toolbar">
             <button class="btn btn-primary" type="button" data-action="autopilot"
-                ${!phases.length || ["Request sent", "Running", "Finishing"].includes(autopilot?.status) ? "disabled" : ""}>Autopilot</button>
+                ${state.setupPending || !phases.length || ["Request sent", "Running", "Finishing"].includes(autopilot?.status) ? "disabled" : ""}
+                ${state.setupPending ? 'title="Available after setup"' : ""}>Autopilot</button>
             ${["Request sent", "Running", "Finishing", "Blocked"].includes(autopilot?.status)
                 ? '<button class="btn btn-secondary" type="button" data-action="stop">Stop</button>' : ""}
             <span class="muted" role="status" aria-live="polite">${escapeHtml(target + (autopilot?.message ?? ""))}</span>
@@ -78,7 +79,8 @@ function render(state, definition) {
                 <div class="vertical-phase-actions">
                     <button class="btn btn-secondary" type="button" data-action="view-row" data-index="${index}"
                         ${ready ? "" : `disabled title="No verified artifact is available yet"`}>${label}</button>
-                    <button class="btn btn-primary" type="button" data-action="start" data-index="${index}">Start Step ${index}</button>
+                    <button class="btn btn-primary" type="button" data-action="start" data-index="${index}"
+                        ${state.setupPending ? 'disabled title="Available after setup"' : ""}>Start Step ${index}</button>
                 </div>
             </li>`;
         }).join("")}</ol>
@@ -101,9 +103,11 @@ function render(state, definition) {
         </div>` : ""}
         <label class="field"><span class="field-label">Phase input</span>
             <textarea class="phase-input-control" data-phase-draft placeholder="Add details or direction for this phase."
+                ${state.setupPending ? "readonly" : ""}
                 aria-label="Phase input">${escapeHtml(state.draft)}</textarea>
         </label>
-        <div class="muted${state.status?.error ? " workflow-error" : ""}" role="status">${escapeHtml(state.status?.error)}</div>
+        <div class="muted${state.status?.error ? " workflow-error" : ""}" role="status">${escapeHtml(
+            [state.status?.error, state.setupPending ? "Available after setup" : ""].filter(Boolean).join(" — "))}</div>
         <footer class="phase-actions phase-actions-nav">
             <div class="phase-actions-left"><button class="btn btn-secondary" data-action="previous" type="button"
                 ${current === 0 ? "disabled" : ""}>&#9664; Back</button></div>

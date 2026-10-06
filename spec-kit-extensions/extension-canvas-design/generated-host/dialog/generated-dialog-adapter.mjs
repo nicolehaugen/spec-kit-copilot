@@ -104,12 +104,14 @@ export function mount({ root, definition, context = {}, onDecision }) {
     });
     const onKey = (event) => {
         if (event.key === "Escape") { event.preventDefault(); finish("cancelled"); }
-        if (event.key === "Tab" && !event.shiftKey && doc.activeElement === confirm) {
+        if (event.key !== "Tab") return;
+        const focusable = [...dialog.querySelectorAll("a[href], button:not([disabled])")];
+        if (!event.shiftKey && doc.activeElement === focusable.at(-1)) {
             event.preventDefault();
-            cancel.focus();
-        } else if (event.key === "Tab" && event.shiftKey && doc.activeElement === cancel) {
+            focusable[0].focus();
+        } else if (event.shiftKey && doc.activeElement === focusable[0]) {
             event.preventDefault();
-            confirm.focus();
+            focusable.at(-1).focus();
         }
     };
     dialog.addEventListener("keydown", onKey);

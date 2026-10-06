@@ -85,19 +85,19 @@ test("vertical phase adapter owns full navigation and card and dispatches the co
     assert.match(root.innerHTML, /No declared output/);
     assert.match(root.innerHTML, /No artifact is available for this phase yet/);
     control.update({ ...initial, sending: true, status: { status: "Running" }, runLabel: "Sending..." });
-    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    assert.match(root.innerHTML, /data-action="start" data-index="0"[^>]*>Start Step 0/);
     click([], { action: "start", index: "0" });
     assert.deepEqual(calls.at(-1), ["runAt", 0]);
     control.update({ ...initial, status: { status: "Request sent" },
         statuses: { specify: { status: "Request sent" } }, runLabel: "Request sent..." });
     assert.match(root.innerHTML, /Request sent/);
     assert.match(root.innerHTML, /data-status="Request sent">request sent/);
-    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    assert.match(root.innerHTML, /data-action="start" data-index="0"[^>]*>Start Step 0/);
     click([], { action: "start", index: "0" });
     assert.deepEqual(calls.at(-1), ["runAt", 0]);
     control.update({ ...initial, status: { status: "Running" },
         statuses: { specify: { status: "Running" } }, runLabel: "Running..." });
-    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    assert.match(root.innerHTML, /data-action="start" data-index="0"[^>]*>Start Step 0/);
     click([], { action: "start", index: "0" });
     assert.deepEqual(calls.at(-1), ["runAt", 0]);
     control.update({ ...initial, status: { status: "Completed" }, runLabel: null });

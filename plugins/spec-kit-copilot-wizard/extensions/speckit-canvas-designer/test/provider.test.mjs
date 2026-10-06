@@ -398,7 +398,7 @@ test("Generate freezes winning dialog and button assets with their registrations
     const { readConfig, renderHtml, createWorkflowRoutes } = await import(
         pathToFileURL(join(generated, "server.mjs")).href);
     const html = renderHtml(readConfig(), "test-token");
-    assert.match(html, /id="setup-surface" hidden/);
+    assert.match(html, /id="setup-surface"[^>]*\shidden>/);
     assert.match(html, /id="workflow-surface"/);
     assert.match(html, /data-workflow-slot="workflow\.actions"/);
     assert.match(html, /id="generated-dialog-contracts"/);

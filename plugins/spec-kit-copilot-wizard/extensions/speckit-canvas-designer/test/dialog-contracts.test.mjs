@@ -85,4 +85,6 @@ test("rejects unsafe or ambiguous dialog and button definitions", async () => {
         button.id), /invalid generated button placement/);
     assert.throws(() => validatePhaseDialogBinding({ ...binding, phase: "implement" },
         binding.id), /invalid phase dialog binding/);
+    assert.throws(() => validatePhaseDialogBinding({ ...binding, phase: "speckit.constitution" },
+        binding.id), /invalid phase dialog binding/);
 });

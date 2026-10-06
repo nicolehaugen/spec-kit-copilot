@@ -188,6 +188,11 @@ normal page remains visible but phase runs are blocked with a setup-required
 error until the project's
 prerequisites are met; no automatic install runs.
 
+Specify may report an approved direct-URL package as a local source. The
+generated canvas accepts that inventory only after the confirmed URL install
+completes with the frozen identity and settings, and retains an approval receipt
+across restarts. A preexisting unconfirmed local installation remains pending.
+
 Only the frozen **workflow runtime** package inventory is considered for
 installation. The Canvas Design extension, `canvas-design`-tagged presets,
 and local design-time customizations are already represented by their packaged
@@ -199,8 +204,9 @@ Dialog and button definitions/adapters use the same named-template resolution
 and packaging as generated pages and controls. The Setup button has a dedicated
 `generated-host/setup-button-control/` with a fixed setup callback; the
 test preset's Workflow-page button uses a separate `dialog.trigger` control.
-A preset can also bind a confirmation dialog to one selected phase without replacing the
-phase card or changing other phases.
+A preset can also bind a confirmation dialog to one selected workflow phase without replacing
+the phase card or changing other phases. Project-scoped Constitution does not
+support generated phase confirmations.
 
 The named contracts are `schemas/generated.dialog-definition.schema.json`,
 `generated.phase-dialog-binding.schema.json`, `generated.button-control-definition.schema.json`,

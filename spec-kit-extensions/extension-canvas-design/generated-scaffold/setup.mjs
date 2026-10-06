@@ -81,16 +81,19 @@ function inventoryEntries(value) {
 }
 
 export function createSetup({ config, cwd, session, phases, notify = () => {}, command = exec,
-    now = () => Date.now() }) {
+    now = () => Date.now(), approvedSources = () => [], saveApprovedSources = async () => {} }) {
     if (!validateRuntimeSetup(config.runtimeSetup)) throw new UserError("Invalid runtime setup recipe.");
     const recipe = normalized(config.runtimeSetup);
     let stage = "needs-setup", error = null, plan = null, turn = null, sending = false;
     let lastProbe = null;
     const cli = process.platform === "win32" ? "specify.exe" : "specify";
+    const urlReceipt = (kind, item, found) => JSON.stringify([kind, item.installedId,
+        item.source, item.catalogId, item.downloadUrl, item.version, item.enabled, item.priority,
+        found.source.path ?? null]);
     async function runCli(args) {
         try {
             const { stdout } = await command(cli, args, { cwd, env: await cliEnvironment(),
-                shell: process.platform === "win32", windowsHide: true, timeout: 10000, maxBuffer: 128 * 1024 });
+                windowsHide: true, timeout: 10000, maxBuffer: 128 * 1024 });
             if (typeof stdout !== "string" || stdout.length > 128 * 1024) throw new Error("Output limit exceeded");
             return stdout;
         } catch (cause) {
@@ -134,12 +137,15 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             for (const item of recipe[kind]) {
                 const found = inventory.find((entry) => entry?.id === item.installedId
                     || kind === "bundles" && entry?.bundle_id === item.installedId);
+                const sourceMatches = item.source === "local"
+                    ? found?.source?.kind === "local"
+                        && (!found.source.path || found.source.path === item.path)
+                    : (found?.source?.kind === "catalog" && found.source.catalog === item.source)
+                        || (Boolean(item.downloadUrl) && found?.source?.kind === "local"
+                            && approvedSources().includes(urlReceipt(kind, item, found)));
                 if (!found || found.version !== item.version
-                    || kind !== "bundles" && (found.enabled !== item.enabled || found.priority !== item.priority
-                        || found.source?.kind !== (item.source === "local" ? "local" : "catalog")
-                        || item.source === "local" && found.source?.path
-                            && found.source.path !== item.path
-                        || item.source !== "local" && found.source?.catalog !== item.source)) {
+                    || kind !== "bundles" && (found.enabled !== item.enabled
+                        || found.priority !== item.priority || !sourceMatches)) {
                     const locator = item.source === "local"
                         ? { installedId: item.installedId, source: item.source, path: item.path }
                         : { installedId: item.installedId, source: item.source,
@@ -161,6 +167,23 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
         lastProbe = { cliReady, cliInstalled, initialized, coreSkillReady, pending, skillsReady };
         return { cliReady, cliInstalled, initialized, coreSkillReady, pending, skillsReady,
             ready: !pending.length && skillsReady };
+    }
+    async function recordApprovedUrls(pending) {
+        const receipts = [];
+        for (const kind of ["extensions", "presets"]) {
+            const urls = pending.filter((item) => item.kind === kind && item.downloadUrl
+                && item.source !== "local");
+            if (!urls.length) continue;
+            const inventory = inventoryEntries(JSON.parse(await runCli([kinds[kind], "list", "--json"])));
+            for (const item of urls) {
+                const found = inventory.find((entry) => entry?.id === item.installedId);
+                if (found?.source?.kind === "local" && found.version === item.version
+                    && found.enabled === item.enabled && found.priority === item.priority) {
+                    receipts.push(urlReceipt(kind, item, found));
+                }
+            }
+        }
+        if (receipts.length) await saveApprovedSources(receipts);
     }
     async function reload() {
         if (!session.rpc?.skills?.reload) throw new UserError("Session skills reload is unavailable. Reload skills in Copilot and retry setup.");
@@ -217,6 +240,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             notify(); return;
         }
         try {
+            if (current.kind === "install") await recordApprovedUrls(current.pending);
             const checked = await probe();
             if (!checked.cliReady || !checked.initialized || !checked.coreSkillReady) {
                 throw new UserError("Setup did not create a usable Specify CLI, .specify directory and Copilot skills-mode scaffolding. Check chat and retry.");
@@ -258,13 +282,13 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             },
             planId: plan?.planId ?? null, error };
     }
-    async function send(prompt, kind) {
+    async function send(prompt, kind, pending = []) {
         if (sending || turn) throw new UserError("Setup is already running. Check chat before retrying.", 409);
         sending = true; stage = kind === "init" ? "initializing" : "installing"; error = null; notify();
         try {
             const messageId = await session.send({ prompt });
             if (!messageId || typeof messageId !== "string") throw new Error("No setup dispatch message ID");
-            turn = { messageId, kind, since: now() };
+            turn = { messageId, kind, pending, since: now() };
             return status();
         } catch (cause) {
             stage = "failed"; error = `Could not send setup agent request: ${cause.message}. Check chat and retry.`;
@@ -325,7 +349,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             + "and restore the frozen priority and enabled state. For bundles with a URL download the ZIP into the checkout, "
             + "install it from that path, then remove the downloaded ZIP. Stop on any failure or composition warning. "
             + "Verify actual IDs, versions, settings and source with each specify <kind> list --json; do not claim completion on warnings. "
-            + `Confirmed batch: ${JSON.stringify(packages)}`, "install");
+            + `Confirmed batch: ${JSON.stringify(packages)}`, "install", packages);
     }
     return { status, start, confirm, probe };
 }

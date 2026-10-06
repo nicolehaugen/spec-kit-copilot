@@ -18,15 +18,15 @@ const extension = { id: "extension-one", version: "3.0.0", enabled: true, priori
 const recipe = { presets: [preset], bundles: [], extensions: [extension] };
 
 function harness(t, { init = false, installed = false, skill = false, configured = true,
-    empty = false } = {}) {
+    empty = false, urlLocal = false } = {}) {
     const root = mkdtemp(join(process.cwd(), ".generated-setup-test-"));
     t.after(async () => rm(await root, { recursive: true, force: true }));
-    const calls = [], sent = [], events = [];
+    const calls = [], sent = [], events = [], approved = [];
     let installedNow = installed, cliNow = init, reloads = 0;
     const session = { send: async ({ prompt }) => { sent.push(prompt); return `message-${sent.length}`; },
         getEvents: async () => events, rpc: { skills: { reload: async () => { reloads++; return { errors: [] }; } } } };
-    const command = async (_exe, args, options) => {
-        calls.push({ args, options });
+    const command = async (exe, args, options) => {
+        calls.push({ exe, args, options });
         if (args[0] === "--version") {
             if (!cliNow) throw Object.assign(new Error("Missing"), { code: "ENOENT" });
             return { stdout: "specify 1.0.7\n" };
@@ -35,7 +35,8 @@ function harness(t, { init = false, installed = false, skill = false, configured
             extension: [{ id: "extension-one", version: "3.0.0", priority: 0,
                 enabled: true, source: { kind: "catalog", catalog: "default" } }],
             preset: [{ id: "real-preset", version: "1.0.0", priority: 12,
-                enabled: true, source: { kind: "catalog", catalog: "copilot" } }],
+                enabled: true, source: urlLocal ? { kind: "local" }
+                    : { kind: "catalog", catalog: "copilot" } }],
         };
         return { stdout: JSON.stringify(installedNow ? entries[args[0]] : []) };
     };
@@ -61,9 +62,10 @@ function harness(t, { init = false, installed = false, skill = false, configured
         return createSetup({ config: { runtimeSetup: configured
             ? empty ? { bundles: [], extensions: [], presets: [] } : recipe
             : undefined }, cwd,
-            session, phases: [phase], command });
+            session, phases: [phase], command, approvedSources: () => approved,
+            saveApprovedSources: async (receipts) => { approved.push(...receipts); } });
     };
-    return { setup, ready, complete, calls, sent, events, session,
+    return { setup, ready, complete, calls, sent, events, session, approved,
         setInstalled: (value) => { installedNow = value; }, reloads: () => reloads };
 }
 
@@ -112,6 +114,23 @@ test("confirmed batch verifies inventory, supports partial retry and reloads onl
     assert.equal((await setup.status()).ready, true);
     assert.ok(h.calls.some(({ args }) => args.join(" ") === "preset list --json"));
     assert.ok(h.calls.every(({ options }) => options.timeout === 10000 && options.maxBuffer === 128 * 1024));
+    assert.ok(h.calls.every(({ exe, options }) =>
+        exe === (process.platform === "win32" ? "specify.exe" : "specify") && options.shell !== true));
+});
+
+test("approved URL install reported as local needs a confirmed install receipt", async (t) => {
+    const h = harness(t, { init: true, installed: true, urlLocal: true });
+    const setup = await h.setup();
+    assert.equal((await setup.status()).ready, false);
+    const review = await setup.start({});
+    assert.deepEqual(review.pending.map((item) => item.installedId), ["real-preset"]);
+    await setup.confirm({ planId: review.planId, confirmed: true });
+    h.complete(1);
+    assert.equal((await setup.status()).ready, true);
+    assert.equal(h.approved.length, 1);
+    assert.equal((await (await h.setup()).status()).ready, true);
+    const unrelated = harness(t, { init: true, installed: true, urlLocal: true });
+    assert.equal((await (await unrelated.setup()).status()).ready, false);
 });
 
 test("failed init cannot expose a confirmation plan", async (t) => {
@@ -230,20 +249,20 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     const nodes = new Map(["setup-surface", "workflow-surface", "setup-status", "setup-actions", "run-phase", "phase-args",
         "phase-message"].map((id) => [id, { hidden: false, disabled: false, readOnly: false,
         textContent: "", title: "", classList: { toggle() {} }, querySelector: () => null }]));
+    let phasePending;
     const context = { model: { showSetup: true, setup: { stage: "needs-setup", ready: false,
         checks: { cli: "Ready", project: "Ready", packages: "1 to install" } } },
-    setupBusy: false, activeSetupPlan: null, buttons: [], phaseControl: { update: () => {
-        nodes.get("phase-message").textContent = "";
-    } }, phaseState: () => ({}), constitution: () => null, renderName() {}, renderSlug() {},
+    setupBusy: false, activeSetupPlan: null, buttons: [], phaseControl: { update: (state) => {
+        phasePending = state.setupPending;
+    } }, phaseState: () => ({ setupPending: Boolean(context.model.showSetup && !context.model.setup?.ready) }),
+    constitution: () => null, renderName() {}, renderSlug() {},
     $: (id) => nodes.get(id), Map, Object, Boolean };
     runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, false);
     assert.equal(nodes.get("workflow-surface").hidden, false);
     assert.equal(nodes.get("setup-status").hidden, true);
-    assert.equal(nodes.get("run-phase").disabled, true);
-    assert.equal(nodes.get("phase-args").readOnly, true);
-    assert.match(nodes.get("phase-message").textContent, /Available after setup/);
+    assert.equal(phasePending, true);
     context.model.setup = { stage: "failed", ready: false, error: "Install failed; retry." };
     context.render();
     assert.equal(nodes.get("setup-status").hidden, false);
@@ -255,12 +274,11 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, true);
     assert.equal(nodes.get("workflow-surface").hidden, false);
-    assert.equal(nodes.get("run-phase").disabled, false);
-    assert.equal(nodes.get("phase-args").readOnly, false);
+    assert.equal(phasePending, false);
     context.model = { showSetup: false, setup: { stage: "needs-setup", ready: false } };
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, true);
-    assert.equal(nodes.get("run-phase").disabled, false);
+    assert.equal(phasePending, false);
 });
 
 test("phase dispatch is gated on readiness even when showSetup is false; legacy runs retain skill checks", async (t) => {
@@ -274,6 +292,8 @@ test("phase dispatch is gated on readiness even when showSetup is false; legacy 
         ...h.session, sessionId: "test", log: async () => {}, on: () => () => {} } });
     try {
         await assert.rejects(runtime.run({ phase: "specify", args: "" }, "panel"), /setup is not ready/);
+        await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"),
+            /setup is not ready/);
         assert.equal(h.sent.length, 0);
         const snapshot = await runtime.snapshot();
         assert.equal(snapshot.setup.ready, false);
