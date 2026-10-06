@@ -332,7 +332,6 @@ export function readConfig() {
     if (config.imageControl) readImageControl(config.imageControl);
     if (config.textControl) readTextControl(config.textControl);
     readWorkflowPage(config.workflowPage);
-    readPhasePlacement(config.phasePlacement, config.workflowPage);
     for (const item of config.fieldPlacements ?? []) {
         readFieldPlacement(item);
         if (item.adapter) readPlacementControl(item);
@@ -349,22 +348,6 @@ export function readConfig() {
     phaseContract(config);
     valueContract(config);
     return config;
-}
-
-function readPhasePlacement(placement, page) {
-    if (!placement || Object.keys(placement).sort().join() !== "control,hash,id,page,slot"
-        || placement.id !== "generated-phase-placement" || placement.page !== "workflow"
-        || placement.slot !== "workflow.phases" || placement.control !== page.phaseControl
-        || !/^[a-f0-9]{64}$/.test(placement.hash)) {
-        throw new Error("Invalid required phase placement");
-    }
-    const bytes = readPackagedFile(new URL("./pages/generated-phase-placement.json", import.meta.url));
-    const { $schema, ...definition } = JSON.parse(bytes);
-    if (createHash("sha256").update(bytes).digest("hex") !== placement.hash
-        || !isDeepStrictEqual(definition, { schemaVersion: 1,
-            id: placement.id, page: placement.page, slot: placement.slot, control: placement.control })) {
-        throw new Error("Packaged phase placement differs from its frozen contract");
-    }
 }
 
 function readFieldPlacement(placement) {
@@ -411,7 +394,9 @@ function readWorkflowPage(page) {
     const registration = JSON.parse(control);
     if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
         || registration.adapter !== page.adapter
-        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,schemaVersion") {
+        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,placement,schemaVersion"
+        || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
+        || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases") {
         throw new Error("Packaged phase control definition differs from its frozen contract");
     }
     const bytes = readPackagedFile(new URL(`./pages/${page.adapter}.mjs`, import.meta.url));
@@ -707,7 +692,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             if (request.method === "GET" && url.pathname === "/api/artifact") return json(response, 200, await runtime.artifact({
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
             }));
-            if (request.method !== "POST" || !["/api/run", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
+            if (request.method !== "POST" || !["/api/run", "/api/autopilot/start", "/api/autopilot/stop", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;
             if (origin && origin !== `http://127.0.0.1:${port()}`) throw new UserError("Untrusted request origin.", 403);
             if (!request.headers["content-type"]?.startsWith("application/json")) throw new UserError("Expected a JSON request.", 415);
@@ -722,12 +707,14 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             try { input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); } catch { throw new UserError("Invalid JSON request."); }
             if (!input || typeof input !== "object" || Array.isArray(input)) throw new UserError("Expected a JSON object.");
             const result = url.pathname === "/api/run" ? await runtime.run(input, instanceId)
+                : url.pathname === "/api/autopilot/start" ? await runtime.startAutopilot(input, instanceId)
+                    : url.pathname === "/api/autopilot/stop" ? await runtime.stopAutopilot(input, instanceId)
                 : url.pathname === "/api/state" ? await runtime.save(input)
                     : url.pathname === "/api/values" ? await runtime.saveValue(input)
                     : url.pathname === "/api/reveal" ? await runtime.reveal(input)
                         : url.pathname === "/api/workflow/delete" ? await runtime.deleteWorkflow(input)
                             : await runtime.refresh();
-            return json(response, url.pathname === "/api/run" ? 202 : 200, result);
+            return json(response, ["/api/run", "/api/autopilot/start"].includes(url.pathname) ? 202 : 200, result);
         } catch (error) {
             if (!(error instanceof UserError)) await log("Generated canvas request failed. Check the local runtime and state permissions.");
             json(response, error instanceof UserError ? error.status : 500, {

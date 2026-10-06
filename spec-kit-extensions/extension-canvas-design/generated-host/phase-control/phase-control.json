@@ -2,5 +2,6 @@
   "$schema": "../../schemas/generated.phase-control-definition.schema.json",
   "schemaVersion": 1,
   "id": "workflow-phases",
-  "adapter": "generated-phase-adapter"
+  "adapter": "generated-phase-adapter",
+  "placement": {"page": "workflow", "slot": "workflow.phases"}
 }

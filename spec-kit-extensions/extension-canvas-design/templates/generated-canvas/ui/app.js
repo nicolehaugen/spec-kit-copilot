@@ -548,6 +548,7 @@ function phaseState(pendingLabel = () => null) {
         ? (model.selected === "__new__" && selected.output
             ? resolveOutput(selected.output) : status?.output ?? resolveOutput(selected.output)) : null;
     return { phases: phases.map(({ id, label, output, outputs }) => ({ id, label, output, outputs })),
+        statuses: model?.statuses ?? {}, autopilot: model?.autopilot ?? null,
         current: selected ? current : -1, workflow: model?.selected ?? "__new__",
         status: status && output !== status.output
             ? { ...status, artifactAvailability: "unknown", artifactError: null } : status,
@@ -814,7 +815,7 @@ async function refreshArtifact() {
 async function openArtifact(step) {
     if (!step) throw new Error("Wait for the canvas to connect, then try again.");
     viewer = { phase: step.id, itemId: step.project ? "project" : model.selected, loaded: false };
-    $("artifact-title").textContent = step.project ? "Constitution" : phase().label;
+    $("artifact-title").textContent = step.project ? "Constitution" : step.label;
     $("artifact-path").textContent = "";
     $("artifact-content").replaceChildren();
     $("artifact-viewer").showModal();
@@ -895,22 +896,49 @@ document.addEventListener("click", (event) => {
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 const pipelineRoot = $("workflow-pipeline");
 try {
-    const { mount, controlId, contractVersion } = await import(
+    const { mount, controlId, contractVersion, requiredCapabilities = [] } = await import(
         `${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
     if (controlId !== "workflow-phases" || contractVersion !== 1 || typeof mount !== "function") {
         throw new Error("Incompatible phase control adapter");
+    }
+    const capabilities = new Set(["workflow.rows.v1", "workflow.managed-run.v1"]);
+    if (!Array.isArray(requiredCapabilities)
+        || requiredCapabilities.some((name) => !capabilities.has(name))
+        || new Set(requiredCapabilities).size !== requiredCapabilities.length) {
+        throw new Error("Phase control adapter requires unavailable host capabilities");
     }
     const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
     phaseControl = mount({ root: pipelineRoot, state: {
         phases: initialPhases, current: initialPhases.length ? 0 : -1,
         workflow: "__new__", status: null, draft: "",
         output: initialPhases[0]?.output ?? null, otherOutputs: [],
-        slugEditable: Boolean($("workflow-slug")), sending: false,
+        slugEditable: Boolean($("workflow-slug")), sending: false, statuses: {}, autopilot: null,
     },
         actions: {
             select: (index) => { requireModel(); return selectPhase(index); },
             run: (value) => { requireModel(); return send(phase(), value); },
+            runAt: async (index) => {
+                requireModel();
+                const step = workflowPhases()[index];
+                if (!step) throw new Error("This step is no longer configured.");
+                return send(step, drafts.get(draftKey(step)) ?? model.drafts[draftKey(step)] ?? "");
+            },
             view: () => { requireModel(); return openArtifact(phase()); },
+            viewAt: (index) => {
+                requireModel();
+                return openArtifact(workflowPhases()[index]);
+            },
+            startManagedRun: async () => {
+                requireModel();
+                await flush();
+                await api("/api/autopilot/start", { itemId: model.selected });
+                await refresh();
+            },
+            stopManagedRun: async () => {
+                requireModel();
+                await api("/api/autopilot/stop", {});
+                await refresh();
+            },
             reveal: async () => {
                 requireModel();
                 await flush();

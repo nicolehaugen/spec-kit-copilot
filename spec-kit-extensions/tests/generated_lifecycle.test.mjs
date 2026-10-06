@@ -13,13 +13,10 @@ test("closing the last started panel while another opens retains the shared runt
     await cp(new URL("../extension-canvas-design/templates/generated-canvas/", import.meta.url),
         target, { recursive: true });
     const definition = await readFile(new URL("../extension-canvas-design/generated-host/workflow/workflow.json", import.meta.url));
-    const placement = await readFile(new URL(
-        "../extension-canvas-design/generated-host/workflow/generated-phase-placement.json", import.meta.url));
     const control = await readFile(new URL("../extension-canvas-design/generated-host/phase-control/phase-control.json", import.meta.url));
     const adapter = await readFile(new URL("../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs", import.meta.url));
     await mkdir(join(target, "pages"), { recursive: true });
     await writeFile(join(target, "pages", "workflow.json"), definition);
-    await writeFile(join(target, "pages", "generated-phase-placement.json"), placement);
     await writeFile(join(target, "pages", "phase-control.json"), control);
     await writeFile(join(target, "pages", "generated-phase-adapter.mjs"), adapter);
     await writeFile(join(target, "canvas-config.json"), JSON.stringify({
@@ -32,9 +29,6 @@ test("closing the last started panel while another opens retains the shared runt
             definitionHash: createHash("sha256").update(definition).digest("hex"),
             controlHash: createHash("sha256").update(control).digest("hex"),
             hash: createHash("sha256").update(adapter).digest("hex") },
-        phasePlacement: { id: "generated-phase-placement", page: "workflow",
-            slot: "workflow.phases", control: "generated-phase-control",
-            hash: createHash("sha256").update(placement).digest("hex") },
         phases: ["specify"],
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" } },
         phaseArtifacts: {}, installed: { presets: [], extensions: [], bundles: [] },

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { controlId, contractVersion, mount } from "../../spec-kit-presets/copilot-vertical-pipeline-test/generated/phase-adapter.mjs";
+import { controlId, contractVersion, mount } from "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs";
 
 const phases = [
     { id: "specify", label: "Specify", output: "specs/demo/spec.md" },
@@ -14,8 +14,10 @@ const initial = {
 
 function rootFixture() {
     const listeners = new Map();
+    const confirmations = [];
     const root = {
-        innerHTML: "", ownerDocument: { activeElement: null },
+        innerHTML: "", ownerDocument: { activeElement: null,
+            defaultView: { confirm: (text) => { confirmations.push(text); return true; } } },
         addEventListener(type, listener) { listeners.set(type, listener); },
         removeEventListener(type) { listeners.delete(type); },
         replaceChildren() { this.innerHTML = ""; },
@@ -24,7 +26,7 @@ function rootFixture() {
             return selector === "[data-phase-draft]" ? { value: "Edited draft" } : null;
         },
     };
-    return { root, listeners };
+    return { root, listeners, confirmations };
 }
 
 test("vertical phase adapter owns full navigation and card and dispatches the contracted actions", () => {
@@ -32,12 +34,15 @@ test("vertical phase adapter owns full navigation and card and dispatches the co
     assert.equal(contractVersion, 1);
     const { root, listeners } = rootFixture();
     const calls = [];
-    const actions = Object.fromEntries(["select", "draft", "run", "view", "reveal", "error"]
+    const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
+        "startManagedRun", "stopManagedRun", "reveal", "error"]
         .map((name) => [name, (...args) => calls.push([name, ...args])]));
     const control = mount({ root, state: initial, actions });
     assert.match(root.innerHTML, /vertical-phase-list/);
+    assert.match(root.innerHTML, /Autopilot/);
+    assert.match(root.innerHTML, /Start Step 0/);
     assert.match(root.innerHTML, /aria-current="step"/);
-    assert.match(root.innerHTML, /<section class="phase-card"/);
+    assert.match(root.innerHTML, /<section class="phase-card vertical-phase-detail"/);
     assert.match(root.innerHTML, /Initial &lt;input&gt;/);
     assert.doesNotMatch(root.innerHTML, /<script>/);
     assert.match(root.innerHTML, /Other expected outputs: specs\/demo\/checklist.md/);
@@ -48,39 +53,42 @@ test("vertical phase adapter owns full navigation and card and dispatches the co
         }) },
     });
     click(["data-phase-index"], { phaseIndex: "1" });
-    click([], { action: "run" });
+    click([], { action: "start", index: "0" });
+    click([], { action: "autopilot" });
     click([], { action: "reveal" });
     listeners.get("input")({ target: {
         matches: () => true, value: "New direction",
     } });
     assert.deepEqual(calls, [
-        ["select", 1], ["run", "Edited draft"], ["reveal"], ["draft", "New direction"],
+        ["select", 1], ["runAt", 0], ["startManagedRun"], ["reveal"], ["draft", "New direction"],
     ]);
     control.update({ ...initial, current: 1, output: phases[1].output,
         status: { status: "Complete", output: phases[1].output, artifactAvailability: "available" },
         draft: "Done", otherOutputs: [] });
     assert.match(root.innerHTML, /Plan &lt;script&gt;/);
     assert.match(root.innerHTML, /class="phase-notice">Complete/);
-    assert.match(root.innerHTML, /data-action="view" type="button"\s*>View artifact/);
-    click([], { action: "view" });
-    assert.deepEqual(calls.at(-1), ["view"]);
+    assert.match(root.innerHTML, /data-action="view-row"/);
     control.update({ ...initial, output: null, status: null, otherOutputs: [] });
     assert.match(root.innerHTML, /No declared output/);
     assert.match(root.innerHTML, /No artifact is available for this phase yet/);
     control.update({ ...initial, sending: true, status: { status: "Running" }, runLabel: "Sending..." });
-    assert.match(root.innerHTML, /data-action="run" type="button"\s*>Sending\.\.\./);
-    click([], { action: "run" });
-    assert.deepEqual(calls.at(-1), ["run", "Edited draft"]);
-    control.update({ ...initial, status: { status: "Request sent" }, runLabel: "Request sent..." });
-    assert.match(root.innerHTML, /data-action="run" type="button"\s*>Request sent\.\.\./);
-    click([], { action: "run" });
-    assert.deepEqual(calls.at(-1), ["run", "Edited draft"]);
-    control.update({ ...initial, status: { status: "Running" }, runLabel: "Running..." });
-    assert.match(root.innerHTML, /data-action="run" type="button"\s*>Running\.\.\./);
-    click([], { action: "run" });
-    assert.deepEqual(calls.at(-1), ["run", "Edited draft"]);
+    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    click([], { action: "start", index: "0" });
+    assert.deepEqual(calls.at(-1), ["runAt", 0]);
+    control.update({ ...initial, status: { status: "Request sent" },
+        statuses: { specify: { status: "Request sent" } }, runLabel: "Request sent..." });
+    assert.match(root.innerHTML, /Request sent/);
+    assert.match(root.innerHTML, /data-status="Request sent">request sent/);
+    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    click([], { action: "start", index: "0" });
+    assert.deepEqual(calls.at(-1), ["runAt", 0]);
+    control.update({ ...initial, status: { status: "Running" },
+        statuses: { specify: { status: "Running" } }, runLabel: "Running..." });
+    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    click([], { action: "start", index: "0" });
+    assert.deepEqual(calls.at(-1), ["runAt", 0]);
     control.update({ ...initial, status: { status: "Completed" }, runLabel: null });
-    assert.match(root.innerHTML, /data-action="run" type="button"\s*>Run again/);
+    assert.match(root.innerHTML, /Start Step 0/);
     control.dispose();
     assert.equal(root.innerHTML, "");
     assert.equal(listeners.size, 0);
@@ -88,11 +96,51 @@ test("vertical phase adapter owns full navigation and card and dispatches the co
 
 test("vertical phase adapter handles empty workflows without host phase markup", () => {
     const { root } = rootFixture();
-    const actions = Object.fromEntries(["select", "draft", "run", "view", "reveal", "error"]
+    const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
+        "startManagedRun", "stopManagedRun", "reveal", "error"]
         .map((name) => [name, () => {}]));
     mount({ root, state: {
         phases: [], current: -1, workflow: "__new__", status: null, draft: "",
         output: null, otherOutputs: [], sending: false, runLabel: null,
     }, actions });
     assert.match(root.innerHTML, /No workflow phases are configured/);
+});
+
+test("the adapter confirms only Autopilot transitions, never pending manual retries", async () => {
+    const { root, listeners, confirmations } = rootFixture();
+    const calls = [];
+    const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
+        "startManagedRun", "stopManagedRun", "reveal", "error"]
+        .map((name) => [name, (...args) => { calls.push([name, ...args]); }]));
+    const control = mount({ root, state: { ...initial, status: { status: "Request sent" } }, actions });
+    const click = (action, index) => listeners.get("click")({
+        target: { closest: () => ({
+            disabled: false, dataset: { action, ...(index === undefined ? {} : { index: String(index) }) },
+            hasAttribute: () => false,
+        }) },
+    });
+    click("start", 1);
+    assert.deepEqual(calls, [["runAt", 1]]);
+    assert.equal(confirmations.length, 0);
+
+    control.update({ ...initial, autopilot: { status: "Running", current: 0 } });
+    root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return false; };
+    click("start", 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, [["runAt", 1]]);
+    root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return true; };
+    click("start", 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls.slice(1), [["stopManagedRun"], ["runAt", 1]]);
+    assert.match(confirmations[0], /Stop it before starting this step manually/);
+
+    control.update({ ...initial, autopilot: { status: "Blocked", current: 1 } });
+    root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return false; };
+    click("autopilot");
+    assert.equal(calls.at(-1)[0], "runAt");
+    root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return true; };
+    click("autopilot");
+    assert.deepEqual(calls.at(-1), ["startManagedRun"]);
+    assert.match(confirmations.at(-1), /Check chat and artifacts before resuming/);
+    control.dispose();
 });

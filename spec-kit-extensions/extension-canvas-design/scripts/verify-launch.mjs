@@ -10,7 +10,7 @@ const NAME = /^[a-z][a-z0-9-]{0,79}$/;
 const KINDS = new Set(["designer.setting-definition",
     "generated.workflow-page-definition", "generated.phase-control-definition",
     "generated.phase-control-adapter",
-    "generated.phase-control-placement", "generated.field-placement",
+    "generated.field-placement",
     "generated.added-page-definition", "generated.added-page-renderer",
     "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
     "generated.value-definition", "generated.computed-value-provider"]);

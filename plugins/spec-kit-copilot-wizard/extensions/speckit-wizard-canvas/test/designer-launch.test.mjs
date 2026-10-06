@@ -274,8 +274,14 @@ test("hosted Canvas Design handoff verifies the installed package", async (t) =>
         /    - name: generated-(?:workflow|phase-placement|phase-control|phase-adapter)\r?\n      file: [^\r\n]+\r?\n      description: [^\r\n]+\r?\n/g,
         ""));
     await assert.rejects(verifyHostedCanvasDesign(root, handoff, run),
-        /lacks required Workflow registrations\/files: generated-workflow, generated-phase-placement, generated-phase-control, generated-phase-adapter.*approved local-source override/);
+        /lacks required Workflow registrations\/files: generated-workflow, generated-phase-control, generated-phase-adapter.*approved local-source override/);
     await writeFile(manifestPath, manifest);
+    const controlPath = join(path, "generated-host", "phase-control", "phase-control.json");
+    const control = await readFile(controlPath, "utf8");
+    await writeFile(controlPath, control.replace('"workflow.phases"', '"workflow.missing"'));
+    await assert.rejects(verifyHostedCanvasDesign(root, handoff, run),
+        /lacks the required Workflow phase placement/);
+    await writeFile(controlPath, control);
     await rm(join(path, "generated-host", "phase-control", "generated-phase-adapter.mjs"));
     await assert.rejects(verifyHostedCanvasDesign(root, handoff, run),
         /lacks required Workflow registrations\/files: generated-phase-adapter/);

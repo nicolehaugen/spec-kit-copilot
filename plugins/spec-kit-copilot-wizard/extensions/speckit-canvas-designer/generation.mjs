@@ -255,27 +255,23 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         - (b.order ?? defaultPageOrder.get(b.id)) || a.id.localeCompare(b.id));
     const workflowDefinition = model.templates?.find((item) =>
         item.name === model.workflowPage?.name && item.kind === "generated.workflow-page-definition");
-    const placementDefinition = model.templates?.find((item) =>
-        item.name === model.phasePlacement?.name && item.kind === "generated.phase-control-placement");
     const controlDefinition = model.templates?.find((item) =>
-        item.name === model.phasePlacement?.control && item.kind === "generated.phase-control-definition");
+        item.name === "generated-phase-control" && item.kind === "generated.phase-control-definition");
     const controlBytes = controlDefinition && await readFrozenAsset(controlDefinition, specify);
     let phaseControl;
     try { phaseControl = controlBytes && JSON.parse(controlBytes.toString("utf8")); }
     catch { throw new Error("Invalid frozen phase control definition"); }
     const adapter = model.templates?.find((item) =>
         item.name === phaseControl?.adapter && item.kind === "generated.phase-control-adapter");
-    if (!workflowDefinition || !placementDefinition || !controlDefinition || !adapter
+    if (!workflowDefinition || !controlDefinition || !adapter
         || phaseControl?.id !== "workflow-phases"
-        || model.phasePlacement?.page !== "workflow" || model.phasePlacement?.slot !== "workflow.phases") {
-        throw new Error("Missing validated Workflow page, phase placement, phase control, or adapter");
+        || phaseControl?.placement?.page !== "workflow"
+        || phaseControl?.placement?.slot !== "workflow.phases") {
+        throw new Error("Missing validated Workflow page, phase control, or adapter");
     }
     const workflowPage = { id: "workflow", title: model.workflowPage.title,
         order: model.workflowPage.order, slots: model.workflowPage.slots,
         assets: await Promise.all([workflowDefinition, controlDefinition, adapter].map(asset)) };
-    const phasePlacement = { id: model.phasePlacement.id, page: model.phasePlacement.page,
-        slot: model.phasePlacement.slot, control: model.phasePlacement.control,
-        assets: [await asset(placementDefinition)] };
     const designerFields = new Map();
     const fieldPlacements = await Promise.all((model.fieldPlacements ?? []).map(async (placement) => {
         const definition = model.templates.find((item) => item.name === placement.name
@@ -387,7 +383,6 @@ export async function freezeGeneration({ model, values, handoff, project, worksp
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         workflowPage,
-        phasePlacement,
         ...(fieldPlacements.length ? { fieldPlacements } : {}),
         ...(designerFields.size ? { designerFields: [...designerFields.values()] } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),
