@@ -387,35 +387,18 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, false);
     await writeFile(adapterFile, `export const controlId = "workflow-phases";
 export const contractVersion = 1;
-  export const requiredCapabilities = [
-    'workflow.rows.v1',
-    'workflow.managed-run.v1',
-  ];
+const regex = /\`/;
+const example = \`
+export const requiredCapabilities = ['workflow.managed-run.v1'];
+\`;
 export function mount() {}`);
+    assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, false);
+    await writeFile(controlFile, JSON.stringify({ ...JSON.parse(originalControl), managedRun: true }));
     assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, true);
-    for (const fake of [
-        "/*\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n*/",
-        "const example = `\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n`;",
-    ]) {
-        await writeFile(adapterFile, `export const controlId = "workflow-phases";
-export const contractVersion = 1;
-${fake}
-export function mount() {}`);
-        assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun,
-            false);
-    }
-    await writeFile(adapterFile, `export const controlId = "workflow-phases";
-export const contractVersion = 1;
-export const requiredCapabilities = getCapabilities();
-export function mount() {}`);
+    await writeFile(controlFile, JSON.stringify({ ...JSON.parse(originalControl), managedRun: "true" }));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
-        /requiredCapabilities must be a literal string array/);
-    await writeFile(adapterFile, `export const controlId = "workflow-phases";
-export const contractVersion = 1;
-export const requiredCapabilities = ['workflow.managed-run.v1'] && [];
-export function mount() {}`);
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
-        /requiredCapabilities must be a literal string array/);
+        /invalid phase control definition/);
+    await writeFile(controlFile, originalControl);
     await writeFile(adapterFile, originalAdapter);
     await assert.rejects(loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"

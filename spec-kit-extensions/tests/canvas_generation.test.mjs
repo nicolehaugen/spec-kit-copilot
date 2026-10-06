@@ -803,18 +803,25 @@ test("Workflow layout and phase control freeze, validate and package independent
         /Invalid frozen phase control definition/);
     await rewrite((request) => { request.workflowPage.managedRun = true; });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-        /Frozen phase control capabilities differ from its adapter/);
+        /Frozen phase control capabilities differ from its definition/);
     const replacement = await readFile(new URL(
         "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url));
+    const control = await readFile(new URL(
+        "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-control.json", import.meta.url));
     const presetPath = join(project, ".specify", "templates", "generated-phase-adapter.mjs");
+    const controlPath = join(project, ".specify", "templates", "phase-control.json");
     await writeFile(presetPath, replacement);
+    await writeFile(controlPath, control);
     const presetModel = { ...model, workflowPage: { ...model.workflowPage, managedRun: true },
         templates: model.templates.map((entry) =>
-        entry.name === "generated-phase-adapter"
+        entry.name === "generated-phase-control"
+            ? { ...entry, sourceId: "copilot-vertical-phase-control", hash: digest(control) }
+            : entry.name === "generated-phase-adapter"
             ? { ...entry, sourceId: "copilot-vertical-phase-control", hash: digest(replacement) }
             : entry) };
     const frozen = await freezeGeneration({ model: presetModel, values, handoff, project, workspace });
     await rm(presetPath);
+    await rm(controlPath);
     await materialize(project, workspace, handoff.handoffId, frozen.requestId);
     assert.deepEqual(await readFile(join(sdk, "pages", "generated-phase-adapter.mjs")), replacement);
     const { readConfig, renderHtml: renderPackaged } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
@@ -827,77 +834,40 @@ test("Workflow layout and phase control freeze, validate and package independent
     assert.match(renderPackaged(readConfig()), /data-module="\/pages\/generated-phase-adapter.mjs"/);
     await writeFile(join(sdk, "pages", "phase-control.json"), '{"schemaVersion":1,"id":"workflow-phases","adapter":"wrong"}');
     assert.throws(() => readConfig(), /phase control/);
-    await writeFile(join(sdk, "pages", "phase-control.json"),
-        Buffer.from(original.workflowPage.assets[1].content, "base64"));
+    await writeFile(join(sdk, "pages", "phase-control.json"), control);
     await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), "export function mount() {}");
     assert.throws(() => readConfig(), /phase control|Invalid generated canvas/);
 });
 
-test("generation accepts a frozen, indented multiline single-quoted capability array", async (t) => {
+test("generation authorizes managed runs from the frozen definition, never adapter source text", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
-    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    const original = JSON.parse(await readFile(requestPath, "utf8"));
     const bytes = Buffer.from(`export const controlId = "workflow-phases";
 export const contractVersion = 1;
-  export const requiredCapabilities = [
-    'workflow.rows.v1',
-    'workflow.managed-run.v1',
-  ];
+const regex = /\`/;
+const example = \`
+export const requiredCapabilities = ['workflow.managed-run.v1'];
+\`;
 export function mount() {}`);
-    request.workflowPage.managedRun = true;
-    request.workflowPage.assets[2].content = bytes.toString("base64");
-    request.workflowPage.assets[2].hash = createHash("sha256").update(bytes).digest("hex");
-    const { integrity: _old, ...payload } = request;
-    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-    await writeFile(requestPath, JSON.stringify(request));
-    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
-    assert.equal(readConfig().workflowPage.managedRun, true);
-});
-
-test("generation ignores fake capability exports in comments and template strings", async (t) => {
-    const { project, workspace, prepared } = await fixture(t);
-    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
-        handoff.handoffId, "generations", prepared.requestId, "request.json");
-    const original = JSON.parse(await readFile(requestPath, "utf8"));
-    for (const fake of [
-        "/*\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n*/",
-        "const example = `\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n`;",
-    ]) {
+    for (const managedRun of [false, true]) {
         const request = structuredClone(original);
-        const bytes = Buffer.from(`export const controlId = "workflow-phases";
-export const contractVersion = 1;
-${fake}
-export function mount() {}`);
-        request.workflowPage.managedRun = true;
+        request.workflowPage.managedRun = managedRun;
         request.workflowPage.assets[2].content = bytes.toString("base64");
         request.workflowPage.assets[2].hash = createHash("sha256").update(bytes).digest("hex");
         const { integrity: _old, ...payload } = request;
         request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
         await writeFile(requestPath, JSON.stringify(request));
-        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-            /Frozen phase control capabilities differ from its adapter/);
+        if (managedRun) {
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /Frozen phase control capabilities differ from its definition/);
+        } else {
+            await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+            const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+            assert.equal(readConfig().workflowPage.managedRun, false);
+        }
     }
-});
-
-test("generation rejects a computed capability expression starting with a literal array", async (t) => {
-    const { project, workspace, prepared } = await fixture(t);
-    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
-        handoff.handoffId, "generations", prepared.requestId, "request.json");
-    const request = JSON.parse(await readFile(requestPath, "utf8"));
-    const bytes = Buffer.from(`export const controlId = "workflow-phases";
-export const contractVersion = 1;
-export const requiredCapabilities = ['workflow.managed-run.v1'] && [];
-export function mount() {}`);
-    request.workflowPage.managedRun = true;
-    request.workflowPage.assets[2].content = bytes.toString("base64");
-    request.workflowPage.assets[2].hash = createHash("sha256").update(bytes).digest("hex");
-    const { integrity: _old, ...payload } = request;
-    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-    await writeFile(requestPath, JSON.stringify(request));
-    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-        /Invalid frozen phase control capabilities/);
 });
 
 test("additional Workflow slots do not reorder the fixed shell", async (t) => {

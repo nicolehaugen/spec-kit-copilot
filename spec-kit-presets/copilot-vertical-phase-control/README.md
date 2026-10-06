@@ -4,7 +4,8 @@ This Specify preset replaces the generated Canvas Design Workflow page's phase
 adapter with a vertical, numbered step list and a Copilot Autopilot action.
 The Wizard and Designer do not gain a new appearance setting: select this preset
 alongside `extension-canvas-design` before Generate. The generated app packages
-the selected adapter and runs without the design-time preset installed.
+the selected adapter and its managed-run phase-control definition, and runs
+without the design-time preset installed.
 
 In local development, add it from this checkout using
 `specify preset add --dev ./spec-kit-presets/copilot-vertical-phase-control`.
@@ -28,9 +29,9 @@ An active Autopilot workflow cannot be deleted until it stops or finishes.
 Its Stop action remains visible when a different workflow is selected; phase
 progress on that workflow is not attributed to the active run. Stop a blocked
 run before switching workflows if the Copilot session is still in Autopilot mode.
-The managed-run capability is frozen from the validated adapter into generated
-configuration, and the server verifies the packaged adapter's hash without
-executing that browser module.
+The managed-run capability is declared in the preset's phase-control JSON and
+frozen into generated configuration. The server verifies both packaged hashes
+without executing the browser module.
 
 This preset depends on the Copilot Canvas Design runtime and its Copilot
 session APIs. Its packaged adapter requires `workflow.rows.v1` and

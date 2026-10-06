@@ -410,7 +410,9 @@ function validateFieldPlacement(document, name) {
 function validatePhaseControl(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "adapter,id,placement,schemaVersion"
+        || contractKeys(document).sort().join() !== (document.managedRun === undefined
+            ? "adapter,id,placement,schemaVersion" : "adapter,id,managedRun,placement,schemaVersion")
+        || (document.managedRun !== undefined && typeof document.managedRun !== "boolean")
         || document.schemaVersion !== 1 || document.id !== "workflow-phases"
         || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
         || isWindowsDeviceName(document.adapter)
@@ -684,29 +686,6 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     if (phaseAdapters.length !== 1 || phaseAdapters[0].name !== phaseControls[0].document.adapter) {
         throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
     }
-    const adapterSource = phaseAdapters[0].document;
-    const visibleSource = adapterSource.replace(
-        /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g,
-        (part) => part.replace(/[^\r\n]/g, " "));
-    const exportLocation = /^[ \t]*export\s+const\s+requiredCapabilities\b/m.exec(visibleSource);
-    const declaration = exportLocation && adapterSource.slice(exportLocation.index)
-        .match(/^[ \t]*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;/);
-    let managedRun = false;
-    if (declaration) {
-        const entries = declaration[1].slice(1, -1).trim().replace(/,\s*$/, "");
-        const capabilities = entries ? entries.split(",").map((entry) => {
-            const match = /^\s*(["'])([a-zA-Z0-9._-]+)\1\s*$/.exec(entry);
-            if (!match) throw new Error(`${phaseAdapters[0].name}: requiredCapabilities must be a literal string array`);
-            return match[2];
-        }) : [];
-        if (new Set(capabilities).size !== capabilities.length) {
-            throw new Error(`${phaseAdapters[0].name}: requiredCapabilities must be a literal string array`);
-        }
-        managedRun = capabilities.includes("workflow.managed-run.v1");
-    } else if (exportLocation) {
-        throw new Error(`${phaseAdapters[0].name}: requiredCapabilities must be a literal string array`);
-    }
-    phaseAdapters[0].managedRun = managedRun;
     const sources = loaded.filter((entry) => entry.kind === "generated.value-definition");
     const addedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition");
     const fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement");
@@ -999,7 +978,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
     model.workflowPage = { name: workflowPage.name, ...workflowPage.document,
-        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-adapter").managedRun };
+        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-definition").document.managedRun === true };
     model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
         .map(({ name, sourceId, document }) =>
             ({ name, sourceId, ...document, control: placementControls.get(name) }))

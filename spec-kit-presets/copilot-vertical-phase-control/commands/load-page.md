@@ -2,6 +2,7 @@
 ## Additional Canvas Design templates
 
 - `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
+- `generated-phase-control` — `generated.phase-control-definition`, `replace`
 
 ## Vertical phase control registration
 
