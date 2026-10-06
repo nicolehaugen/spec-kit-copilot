@@ -74,6 +74,16 @@ bindings retain their separate slots; a field placement cannot occupy one.
 - `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-accent` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-background` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-surface` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-secondary` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-text` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-accent` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-background` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-surface` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-secondary` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-text` — `designer.setting-definition`, `replace`
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
 - `generated-phase-placement` — `generated.phase-control-placement`, `replace`
 - `generated-phase-control` — `generated.phase-control-definition`, `replace`

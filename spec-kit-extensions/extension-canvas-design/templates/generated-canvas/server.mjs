@@ -159,6 +159,19 @@ function validRuntimeConfig(config) {
             && typeof output.expectsArtifact === "boolean"
             && (output.outputPath === null || typeof output.outputPath === "string"))
         && (config.theme === undefined || ["light", "dark"].includes(config.theme))
+        && (config.appearance === undefined || (config.appearance
+            && typeof config.appearance === "object" && !Array.isArray(config.appearance)
+            && Object.keys(config.appearance).length > 0
+            && Object.keys(config.appearance).every((mode) => ["light", "dark"].includes(mode)
+                && (typeof config.appearance[mode] === "string"
+                    ? /^#[0-9a-fA-F]{6}$/.test(config.appearance[mode])
+                    : config.appearance[mode] && typeof config.appearance[mode] === "object"
+                        && !Array.isArray(config.appearance[mode])
+                        && Object.keys(config.appearance[mode]).length > 0
+                        && Object.keys(config.appearance[mode]).every((key) =>
+                            Object.hasOwn(APPEARANCE_PROPERTIES, key)
+                            && typeof config.appearance[mode][key] === "string"
+                            && /^#[0-9a-fA-F]{6}$/.test(config.appearance[mode][key]))))))
         && config.installed && ["presets", "extensions", "bundles"].every((kind) =>
             Array.isArray(config.installed[kind]) && config.installed[kind].every((item) =>
                 item && typeof item === "object" && !Array.isArray(item)
@@ -489,7 +502,26 @@ function readTextControl(control) {
     }
     return bytes;
 }
+const APPEARANCE_PROPERTIES = {
+    accent: "--accent-color",
+    background: "--background-color-default",
+    surface: "--background-color-elevated",
+    secondary: "--background-color-secondary",
+    text: "--text-color-default",
+};
+
 export function renderHtml(config, token = "") {
+    if (!validRuntimeConfig(config)) throw new Error("Invalid generated canvas configuration");
+    const appearanceCss = Object.entries(config.appearance ?? {}).map(([mode, options]) => {
+        const colors = typeof options === "string" ? { accent: options } : options;
+        const rule = Object.entries(colors).map(([key, value]) =>
+            `${APPEARANCE_PROPERTIES[key]}: ${value};`).join(" ")
+            + (colors.accent
+                ? ` --grad-primary: linear-gradient(135deg, ${colors.accent}, color-mix(in srgb, ${colors.accent} 75%, black));`
+                : "");
+        return `:root[data-theme="${mode}"] { ${rule} }
+@media (prefers-color-scheme: ${mode}) { :root:not([data-theme]) { ${rule} } }`;
+    }).join("\n");
     const { canvas } = config;
     const isConstitution = (phase) => phase.replace(/^speckit\./, "") === "constitution";
     const phases = config.phases.filter((phase) => !isConstitution(phase));
@@ -558,7 +590,7 @@ export function renderHtml(config, token = "") {
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}</style></head>
+<title>${escapeHtml(canvas.displayName)}</title><style>${styles}\n${runtimeStyles}\n${appearanceCss}</style></head>
 <body>
 <header class="app-header">
     <div class="brand"><span class="brand-mark${config.brandAsset ? " brand-image" : ""}"${config.brandAsset

@@ -69,6 +69,10 @@ test("composed verification resolves every name, rejects warnings and native scr
         "designer-essentials-custom-slug": join(installed, "designer-host", "essentials-settings", "custom-slug.json"),
         "designer-essentials-header-logo": join(installed, "designer-host", "essentials-settings", "header-logo.json"),
         "designer-essentials-main-page-logo": join(installed, "designer-host", "essentials-settings", "main-page-logo.json"),
+        ...Object.fromEntries(["light", "dark"].flatMap((mode) =>
+            ["accent", "background", "surface", "secondary", "text"].map((color) =>
+                [`designer-appearance-${mode}-${color}`,
+                    join(installed, "designer-host", "appearance-settings", `${mode}-${color}.json`)]))),
         "generated-workflow": join(installed, "generated-host", "workflow", "workflow.json"),
         "generated-phase-placement": join(installed, "generated-host", "workflow", "generated-phase-placement.json"),
         "generated-phase-control": join(installed, "generated-host", "phase-control", "phase-control.json"),

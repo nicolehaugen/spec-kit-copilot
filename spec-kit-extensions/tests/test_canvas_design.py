@@ -40,6 +40,9 @@ FILES = {
     *(f"designer-host/essentials-settings/{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "header-logo", "main-page-logo",
     )),
+    *(f"designer-host/appearance-settings/{mode}-{color}.json"
+      for mode in ("light", "dark")
+      for color in ("accent", "background", "surface", "secondary", "text")),
     "shared-controls/stock-image/control.json",
     "shared-controls/stock-image/designer.mjs",
     "shared-controls/stock-image/generated.mjs",
@@ -115,6 +118,10 @@ class CanvasDesignPackageTests(unittest.TestCase):
             + [(f"designer-essentials-{filename}", f"designer-host/essentials-settings/{filename}.json")
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
+            + [(f"designer-appearance-{mode}-{color}",
+                f"designer-host/appearance-settings/{mode}-{color}.json")
+               for mode in ("light", "dark")
+               for color in ("accent", "background", "surface", "secondary", "text")]
             + [("generated-workflow", "generated-host/workflow/workflow.json"),
                ("generated-phase-placement", "generated-host/workflow/generated-phase-placement.json"),
                ("generated-phase-control", "generated-host/phase-control/phase-control.json"),

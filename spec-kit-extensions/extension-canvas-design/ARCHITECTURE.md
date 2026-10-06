@@ -293,8 +293,9 @@ spec-kit-extensions/extension-canvas-design/
   commands/generate.md
   designer-host/tabs/essentials.json        required identity fields and an optional-field slot
   designer-host/tabs/artifacts.json         currently empty placeholder
-  designer-host/tabs/appearance.json        currently empty placeholder
+  designer-host/tabs/appearance.json        Appearance slot for logo and palette contributions
   designer-host/essentials-settings/*.json  optional Essentials fields
+  designer-host/appearance-settings/*.json  optional per-mode palette fields
   generated-host/workflow/workflow.json      required Workflow page definition
   generated-host/workflow/generated-phase-placement.json  phase control placement
   generated-host/phase-control/phase-control.json  phase control identity
@@ -676,35 +677,35 @@ The appended command matches the base `load-page` command by its `type: command`
 
 ## 16. How Artifacts and Appearance fit
 
-The existing `designer-artifacts` and `designer-appearance` JSON files are currently **enabled Designer pages with empty `fields` arrays**. Their intended behavior fits the same page, slot, control, value, and generated-binding architecture. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
+The `designer-artifacts` and `designer-appearance` JSON files are enabled Designer pages. Artifacts is an empty placeholder with no contribution slot; Appearance has a slot for optional light/dark accent, background, surface, secondary surface, and text fields plus two logos. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
 
 | Page | Proposed stock Designer contribution | What Generate packages into the app |
 | --- | --- | --- |
-| **Artifacts** | A structured **phase-output editor** in an Artifacts page slot. It starts with output information handed off from the Wizard Canvas. The person configuring the canvas can remove an incorrect expected output, add a missing one, and select the default reader target for each phase with outputs. | Validated expected-output lists and one selected default viewer target per phase. The generated shell still owns artifact-path authorization, placeholder resolution, and file reads. |
-| **Appearance** | A **palette editor/preview** in an Appearance page slot. It configures colors for the overall Generated Workflow Canvas app; Logo can remain on Essentials. | Validated palette/theme values and any needed packaged assets. The generated app applies them without reinstalling Canvas Design Presets. |
+| **Artifacts** | Planned: a structured **phase-output editor** in an Artifacts page slot, starting with output information handed off from the Wizard Canvas. The person configuring the canvas would be able to remove an incorrect expected output, add a missing one, and select the default reader target for each phase with outputs. | Planned: validated expected-output lists and one selected default viewer target per phase. The generated shell would still own artifact-path authorization, placeholder resolution, and file reads. |
+| **Appearance** | Optional per-mode accent, page background, card surface, secondary surface, and main text hex fields plus Header/Main page logos. | Validated per-mode palette overrides and packaged logo assets; blank fields preserve each existing color. |
 
 ### Artifacts: handoff and separate-PR dependency
 
 The **Wizard output list is being added in a separate PR**. This architecture **consumes that handoff information once available**; it does not assign this plan ownership of producing or inferring the Wizard’s output list. The initial Billing and generated-only-page fixture milestones keep the Wizard code and handoff unchanged and do not depend on live output-list data. Integrate the Artifacts editor only after the separate PR's handoff contract lands; it must specify phase IDs, expected output paths or patterns, any recommended default, and provenance. Contract tests can use fixtures before integration, but fixture outputs must never be presented as production Wizard output.
 
-The Artifacts editor shows **expected outputs**, not files that necessarily exist already. For each Wizard-selected phase, the person configuring the Designer Canvas can correct the incoming list:
+When implemented, the Artifacts editor will show **expected outputs**, not files that necessarily exist already. For each Wizard-selected phase, the person configuring the Designer Canvas will be able to correct the incoming list:
 
 - Remove an incorrect entry.
 - Add a missing output, subject to path/type validation.
 - Select **one default reader target** from that phase’s remaining outputs.
 - Leave a phase with no outputs and therefore no viewer default.
 
-Removing the selected default clears that selection; if outputs remain, another default must be selected before Generate. The generated app’s existing per-phase `phaseArtifacts` concept (`outputs` plus `view`) is a suitable target for the confirmed result, but the generator currently writes an empty mapping. The generated shell must continue to confine paths to the appropriate project/workflow and report when a confirmed expected artifact has not yet been created.
+In the proposed editor, removing the selected default would clear that selection; if outputs remain, another default would be required before Generate. The generated app’s existing per-phase `phaseArtifacts` concept (`outputs` plus `view`) is a suitable target for the confirmed result, but the generator currently writes an empty mapping. The generated shell must continue to confine paths to the appropriate project/workflow and report when a confirmed expected artifact has not yet been created.
 
-**Acceptance:** Artifacts displays the output list received through the Wizard handoff rather than independently inventing one in Designer or Generate. Edits and per-phase defaults survive Generate. The generated reader opens the confirmed default when it exists; unsafe paths or a default not in the phase’s output list are rejected.
+**Proposed acceptance:** Artifacts displays the output list received through the Wizard handoff rather than independently inventing one in Designer or Generate. Edits and per-phase defaults survive Generate. The generated reader opens the confirmed default when it exists; unsafe paths or a default not in the phase’s output list are rejected.
 
 ### Appearance: palette and existing light/dark button
 
 The **Generated Workflow Canvas app already has a light/dark button in its header**. That is an end-user runtime theme choice, not an Appearance page setting.
 
-The proposed Appearance editor lets the canvas creator select or configure a validated **palette for the app**. Its contract must say how that palette applies in **both light and dark modes**, so the existing button can still switch modes without discarding the chosen visual identity. A preset could contribute another palette or a compatible palette-editing control. The editor should preview the resulting colors in Designer; Generate freezes the chosen tokens/assets into the app.
+The Appearance editor lets the canvas creator enter optional six-digit accent, page background, card surface, secondary surface, and main text colors for light and dark modes with or without `#`. It validates the hex syntax at Generate, saves incomplete drafts, and packages valid overrides as `#RRGGBB` under `appearance.light` and `appearance.dark` in `canvas-config.json` alongside the existing independent logos. Blank fields preserve the current per-mode colors. The existing viewer button still switches modes; the MVP has no preview or contrast gate, so creators must select readable text and surface combinations.
 
-**Acceptance:** Palette choices survive Generate and reopen, apply consistently throughout the app in light and dark mode, retain readable contrast, and do not require the originating Canvas Design Preset in the project running the finished app.
+**Acceptance:** Accent choices survive Generate and reopen, apply to their respective modes without changing an unselected mode's default, and do not require Canvas Design in the project running the finished app.
 
 ## 17. Implementation and verification implications
 

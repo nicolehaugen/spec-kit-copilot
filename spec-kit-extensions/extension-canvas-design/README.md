@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.19** registers three JSON page templates, five ordered
+Canvas Design **0.1.19** registers three JSON page templates, fifteen ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition, required phase placement, phase control definition,
@@ -31,8 +31,18 @@ finished app does not depend on this extension at runtime.
 | `designer-essentials-description` | Essentials slot | Optional Description |
 | `designer-essentials-workflow-heading` | Essentials slot | Optional Workflow header |
 | `designer-essentials-custom-slug` | Essentials slot | Optional Allow custom slug |
-| `designer-essentials-header-logo` | Essentials slot | Optional small header logo |
-| `designer-essentials-main-page-logo` | Essentials slot | Optional larger main-page logo |
+| `designer-essentials-header-logo` | Appearance slot | Optional small header logo (existing template name retained) |
+| `designer-essentials-main-page-logo` | Appearance slot | Optional larger main-page logo (existing template name retained) |
+| `designer-appearance-light-accent` | Appearance slot | Optional light-mode accent hex |
+| `designer-appearance-light-background` | Appearance slot | Optional light-mode page background |
+| `designer-appearance-light-surface` | Appearance slot | Optional light-mode card surface |
+| `designer-appearance-light-secondary` | Appearance slot | Optional light-mode secondary surface |
+| `designer-appearance-light-text` | Appearance slot | Optional light-mode main text |
+| `designer-appearance-dark-accent` | Appearance slot | Optional dark-mode accent hex |
+| `designer-appearance-dark-background` | Appearance slot | Optional dark-mode page background |
+| `designer-appearance-dark-surface` | Appearance slot | Optional dark-mode card surface |
+| `designer-appearance-dark-secondary` | Appearance slot | Optional dark-mode secondary surface |
+| `designer-appearance-dark-text` | Appearance slot | Optional dark-mode main text |
 | `generated-workflow` | Generated Workflow page | Required page metadata and named slots; host shell stays fixed |
 | `generated-phase-placement` | Generated Workflow page | Required phase control placement in `workflow.phases` |
 | `generated-phase-control` | Generated Workflow page | Phase control identity and adapter reference |
@@ -46,7 +56,7 @@ finished app does not depend on this extension at runtime.
 | `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
 | `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
 | `designer-artifacts` | Artifacts | Empty placeholder |
-| `designer-appearance` | Appearance | Empty placeholder |
+| `designer-appearance` | Appearance | Logos and per-mode palette colors |
 
 The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 `designer-essentials` is the template ID used for preset resolution.
@@ -64,13 +74,13 @@ Allow custom slug uses the stock-checkbox editor
 but only its boolean value is consumed by the generated shell; it does not
 need an empty generated visual adapter. A future Setup confirm checkbox can
 reuse this pattern without moving privileged setup into an adapter.
-The composed load-page command explicitly resolves each stock contribution into
-`essentials.options` in the order shown. Omitting or replacing a stock contribution
+The composed load-page command explicitly resolves stock contributions into
+`essentials.options` or `appearance.options` in their declared order. Omitting or replacing a stock contribution
 does not remove the required Canvas ID and Title. If absent, generated description
 defaults to `Spec Kit workflow canvas.`, heading to `Workflows`, and custom slug
 to off. Generate validates all enabled Designer pages, including custom fields;
 an invalid page blocks generation until repaired.
-The independent Header logo and Main page logo controls accept PNG, JPEG, GIF,
+Appearance's independent Header logo and Main page logo controls accept PNG, JPEG, GIF,
 or WebP images up to 32 KiB each. Upload, preview, replace, and remove are
 available for both in Designer. The smaller header logo replaces the existing
 brand mark; the optional larger main-page logo appears next to the workflow
@@ -111,9 +121,17 @@ are needed at runtime.
 The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
 runtime package inventory from the Wizard handoff. Designer-only `canvas-design`
-selections are not runtime canvas configuration. Artifacts and Appearance
-settings are not yet used for generation; existing generated canvases are not
-updated. Result badges are deferred; generation does not configure or render them.
+selections are not runtime canvas configuration. Artifacts remains a placeholder;
+Appearance exposes per-mode accent, page background, card surface, secondary
+surface, and main text colors. Each optional setting accepts `RRGGBB` or
+`#RRGGBB` (case-insensitive), or blank. Generate validates and freezes nonblank
+values as `#RRGGBB` under `appearance.light` and `appearance.dark` in the
+generated canvas's `canvas-config.json`. Each blank setting retains its existing
+theme color. Viewers can still switch between light and dark mode. Invalid hex
+blocks Generate, but incomplete drafts may be saved. There is no color preview
+or contrast warning; choose contrasting text and surfaces. Existing generated
+canvases are not updated. Result badges are deferred; generation does not
+configure or render them.
 
 The Workflow header names the collection with the description just below it.
 The generated canvas groups the New action in that header; a bounded, searchable
