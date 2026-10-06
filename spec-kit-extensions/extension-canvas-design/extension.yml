@@ -31,7 +31,7 @@ provides:
       description: Artifacts settings placeholder.
     - name: designer-appearance
       file: designer/tabs/appearance.json
-      description: Appearance settings placeholder.
+      description: Generated canvas logos and per-mode palette colors.
 
     # designer.setting-definition: fields placed in Designer tab slots
     - name: designer-essentials-description
@@ -49,6 +49,36 @@ provides:
     - name: designer-essentials-main-page-logo
       file: designer/essentials-settings/main-page-logo.json
       description: Optional independent larger logo for the generated workflow page.
+    - name: designer-appearance-light-accent
+      file: designer/appearance-settings/light-accent.json
+      description: Optional generated canvas light-mode accent color.
+    - name: designer-appearance-light-background
+      file: designer/appearance-settings/light-background.json
+      description: Optional generated canvas light-mode page background.
+    - name: designer-appearance-light-surface
+      file: designer/appearance-settings/light-surface.json
+      description: Optional generated canvas light-mode card surface.
+    - name: designer-appearance-light-secondary
+      file: designer/appearance-settings/light-secondary.json
+      description: Optional generated canvas light-mode secondary surface.
+    - name: designer-appearance-light-text
+      file: designer/appearance-settings/light-text.json
+      description: Optional generated canvas light-mode main text color.
+    - name: designer-appearance-dark-accent
+      file: designer/appearance-settings/dark-accent.json
+      description: Optional generated canvas dark-mode accent color.
+    - name: designer-appearance-dark-background
+      file: designer/appearance-settings/dark-background.json
+      description: Optional generated canvas dark-mode page background.
+    - name: designer-appearance-dark-surface
+      file: designer/appearance-settings/dark-surface.json
+      description: Optional generated canvas dark-mode card surface.
+    - name: designer-appearance-dark-secondary
+      file: designer/appearance-settings/dark-secondary.json
+      description: Optional generated canvas dark-mode secondary surface.
+    - name: designer-appearance-dark-text
+      file: designer/appearance-settings/dark-text.json
+      description: Optional generated canvas dark-mode main text color.
 
     # Workflow page: required regions and the generated phase presentation.
     - name: generated-workflow

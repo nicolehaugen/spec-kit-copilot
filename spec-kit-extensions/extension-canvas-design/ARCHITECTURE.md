@@ -288,7 +288,7 @@ spec-kit-extensions/extension-canvas-design/
   commands/generate.md
   designer/tabs/essentials.json        required identity fields and an optional-field slot
   designer/tabs/artifacts.json         currently empty placeholder
-  designer/tabs/appearance.json        currently empty placeholder
+  designer/tabs/appearance.json        Appearance slot for logo and palette contributions
   designer/essentials-settings/*.json  optional Essentials fields
   schemas/designer.tab-definition.schema.json  currently string/boolean fields
   scripts/generate.mjs
@@ -666,12 +666,12 @@ The appended command matches the base `load-page` command by its `type: command`
 
 ## 16. How Artifacts and Appearance fit
 
-The existing `designer-artifacts` and `designer-appearance` JSON files are currently **enabled Designer pages with empty `fields` arrays**. Their intended behavior fits the same page, slot, control, value, and generated-binding architecture. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
+The `designer-artifacts` and `designer-appearance` JSON files are enabled Designer pages with slots for stock contributions. Artifacts remains an empty placeholder; Appearance receives optional light/dark accent, background, surface, secondary surface, and text fields plus two logos. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
 
 | Page | Proposed stock Designer contribution | What Generate packages into the app |
 | --- | --- | --- |
 | **Artifacts** | A structured **phase-output editor** in an Artifacts page slot. It starts with output information handed off from the Wizard Canvas. The person configuring the canvas can remove an incorrect expected output, add a missing one, and select the default reader target for each phase with outputs. | Validated expected-output lists and one selected default viewer target per phase. The generated shell still owns artifact-path authorization, placeholder resolution, and file reads. |
-| **Appearance** | A **palette editor/preview** in an Appearance page slot. It configures colors for the overall Generated Workflow Canvas app; Logo can remain on Essentials. | Validated palette/theme values and any needed packaged assets. The generated app applies them without reinstalling Canvas Design Presets. |
+| **Appearance** | Optional per-mode accent, page background, card surface, secondary surface, and main text hex fields plus Header/Main page logos. | Validated per-mode palette overrides and packaged logo assets; blank fields preserve each existing color. |
 
 ### Artifacts: handoff and separate-PR dependency
 
@@ -692,9 +692,9 @@ Removing the selected default clears that selection; if outputs remain, another 
 
 The **Generated Workflow Canvas app already has a light/dark button in its header**. That is an end-user runtime theme choice, not an Appearance page setting.
 
-The proposed Appearance editor lets the canvas creator select or configure a validated **palette for the app**. Its contract must say how that palette applies in **both light and dark modes**, so the existing button can still switch modes without discarding the chosen visual identity. A preset could contribute another palette or a compatible palette-editing control. The editor should preview the resulting colors in Designer; Generate freezes the chosen tokens/assets into the app.
+The Appearance editor lets the canvas creator enter optional six-digit accent, page background, card surface, secondary surface, and main text colors for light and dark modes with or without `#`. It validates the hex syntax at Generate, saves incomplete drafts, and packages valid overrides as `#RRGGBB` under `appearance.light` and `appearance.dark` in `canvas-config.json` alongside the existing independent logos. Blank fields preserve the current per-mode colors. The existing viewer button still switches modes; the MVP has no preview or contrast gate, so creators must select readable text and surface combinations.
 
-**Acceptance:** Palette choices survive Generate and reopen, apply consistently throughout the app in light and dark mode, retain readable contrast, and do not require the originating Canvas Design Preset in the project running the finished app.
+**Acceptance:** Accent choices survive Generate and reopen, apply to their respective modes without changing an unselected mode's default, and do not require Canvas Design in the project running the finished app.
 
 ## 17. Implementation and verification implications
 

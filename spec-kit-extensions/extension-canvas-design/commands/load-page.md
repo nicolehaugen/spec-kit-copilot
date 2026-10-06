@@ -60,6 +60,16 @@ Computed-value providers are packaged, never evaluated by Designer.
 - `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-accent` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-background` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-surface` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-secondary` — `designer.setting-definition`, `replace`
+- `designer-appearance-light-text` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-accent` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-background` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-surface` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-secondary` — `designer.setting-definition`, `replace`
+- `designer-appearance-dark-text` — `designer.setting-definition`, `replace`
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
 - `generated-pipeline` — `generated.pipeline-renderer`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`

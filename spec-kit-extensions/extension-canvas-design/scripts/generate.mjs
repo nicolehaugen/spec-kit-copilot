@@ -283,6 +283,21 @@ function configuration(request) {
         generatedPages, generatedControls, generatedAssets, generatedImageControl,
         generatedTextControl, generatedTextPlacements, controlAssets, valueSources, workflowPage } = request;
     validateFrozenValues(values, fieldConstraints);
+    const appearance = {};
+    for (const [mode, suffix] of [["light", "Light"], ["dark", "Dark"]]) {
+        const colors = {};
+        for (const key of ["accent", "background", "surface", "secondary", "text"]) {
+            const id = `canvas.${key}${suffix}`;
+            if (!Object.hasOwn(values, id)) continue;
+            if (fieldConstraints[id]?.type !== "string"
+                || typeof values[id] !== "string"
+                || !/^(?:#?[0-9a-fA-F]{6})?$/.test(values[id])) {
+                throw new Error(`Invalid frozen appearance color: ${id}`);
+            }
+            if (values[id]) colors[key] = `#${values[id].replace(/^#/, "")}`;
+        }
+        if (Object.keys(colors).length) appearance[mode] = colors;
+    }
     const workflowLayout = frozenWorkflowPage(workflowPage);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || isWindowsDeviceName(canvas.id)
@@ -630,6 +645,7 @@ function configuration(request) {
     const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
+        ...(Object.keys(appearance).length ? { appearance } : {}),
         workflowPage: workflowLayout,
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
         ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
