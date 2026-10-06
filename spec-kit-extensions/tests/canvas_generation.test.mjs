@@ -633,7 +633,7 @@ test("generated page IDs cannot overwrite fixed page assets before target creati
         name, kind, sourceId: "copilot-generated-page-test",
         hash: digest(content), content: Buffer.from(content).toString("base64"),
     });
-    for (const id of ["phase-control", "generated-phase-placement"]) {
+    for (const id of ["phase-control"]) {
         const request = structuredClone(original);
         const renderer = "unique-page-renderer";
         request.generatedPages = [{
@@ -689,14 +689,16 @@ test("Workflow layout and phase control freeze, validate and package independent
             /Invalid frozen Workflow page assets|Frozen Workflow page definition|Invalid frozen phase control/);
         await assert.rejects(readFile(join(sdk, "extension.mjs")), { code: "ENOENT" });
     }
-    for (const edit of [
-        (placement) => { placement.slot = "workflow.missing"; },
-        (placement) => { placement.assets[0].hash = "0".repeat(64); },
-    ]) {
-        await rewrite((request) => edit(request.phasePlacement));
-        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-            /frozen generated.phase-control-placement|Invalid required phase placement/i);
-    }
+    await rewrite((request) => {
+        const bytes = Buffer.from(JSON.stringify({
+            schemaVersion: 1, id: "workflow-phases", adapter: "generated-phase-adapter",
+            placement: { page: "workflow", slot: "workflow.missing" },
+        }));
+        request.workflowPage.assets[1].content = bytes.toString("base64");
+        request.workflowPage.assets[1].hash = digest(bytes);
+    });
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Invalid frozen phase control definition/);
     const replacement = await readFile(new URL(
         "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url));
     const presetPath = join(project, ".specify", "templates", "generated-phase-adapter.mjs");
@@ -713,7 +715,7 @@ test("Workflow layout and phase control freeze, validate and package independent
     assert.equal(readConfig().workflowPage.hash, digest(replacement));
     assert.equal(readConfig().workflowPage.phaseControl, "generated-phase-control");
     assert.deepEqual(await readdir(join(sdk, "pages")), [
-        "generated-phase-adapter.mjs", "generated-phase-placement.json", "phase-control.json", "workflow.json",
+        "generated-phase-adapter.mjs", "phase-control.json", "workflow.json",
     ]);
     assert.match(renderPackaged(readConfig()), /data-module="\/pages\/generated-phase-adapter.mjs"/);
     await writeFile(join(sdk, "pages", "phase-control.json"), '{"schemaVersion":1,"id":"workflow-phases","adapter":"wrong"}');
@@ -795,7 +797,6 @@ test("field placement IDs cannot overwrite fixed page assets before target creat
     const digest = (content) => createHash("sha256").update(content).digest("hex");
     for (const [id, error] of [
         ["phase-control", /Invalid generated field placement: phase-control/],
-        ["generated-phase-placement", /Conflicting generated page asset: generated-phase-placement\.json/],
     ]) {
         const request = structuredClone(original);
         request.workflowPage.slots.push({ id: "workflow.summary" });

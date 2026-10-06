@@ -29,7 +29,7 @@ templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.setting-definition`,
 `generated.workflow-page-definition`, `generated.phase-control-definition`,
-`generated.phase-control-adapter`, `generated.phase-control-placement`,
+`generated.phase-control-adapter`,
 `generated.field-placement`,
 `generated.added-page-definition`, `generated.added-page-renderer`, `shared.control-definition`,
 `designer.control-adapter`, `generated.control-adapter`, `generated.value-definition`, or
@@ -48,7 +48,6 @@ Providers are packaged, never evaluated by Designer.
 ## Canvas Design templates
 
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
-- `generated-phase-placement` — `generated.phase-control-placement`, `replace`
 - `generated-phase-control` — `generated.phase-control-definition`, `replace`
 - `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
 - `shared-controls-text` — `shared.control-definition`, `replace`

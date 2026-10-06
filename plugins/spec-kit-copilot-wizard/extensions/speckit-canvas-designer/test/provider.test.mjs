@@ -93,7 +93,6 @@ async function projectFixture(t, workspace) {
     const scalar = [];
     for (const [name, directory, filename, kind] of [
         ["generated-workflow", "workflow", "workflow.json", "generated.workflow-page-definition"],
-        ["generated-phase-placement", "workflow", "generated-phase-placement.json", "generated.phase-control-placement"],
         ["generated-phase-control", "phase-control", "phase-control.json", "generated.phase-control-definition"],
         ["generated-phase-adapter", "phase-control", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
@@ -242,6 +241,11 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(controlFile, JSON.stringify(changedControl));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /invalid phase control definition/);
+    changedControl.id = "workflow-phases";
+    changedControl.placement.slot = "workflow.unknown";
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid phase control definition/);
     await writeFile(controlFile, originalControl);
     const adapterFile = scalar.find((item) => item.name === "generated-phase-adapter").path;
     const originalAdapter = await readFile(adapterFile, "utf8");
@@ -251,7 +255,6 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(adapterFile, originalAdapter);
     await assert.rejects(loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
-            || item.kind === "generated.phase-control-placement"
             || item.kind === "generated.phase-control-definition"
             || item.kind === "generated.phase-control-adapter"), verify),
         /missing shared control definition for canvas.id/);
@@ -553,8 +556,9 @@ test("stock contributions retain the five-field layout and minimal replaced Esse
     assert.deepEqual(Object.keys(phaseRequest.workflowPage).sort(),
         ["assets", "id", "order", "slots", "title"]);
     assert.equal(phaseRequest.workflowPage.id, "workflow");
-    assert.equal(phaseRequest.phasePlacement.control, "generated-phase-control");
-    assert.equal(phaseRequest.phasePlacement.slot, "workflow.phases");
+    assert.equal(phaseRequest.phasePlacement, undefined);
+    assert.deepEqual(JSON.parse(Buffer.from(phaseRequest.workflowPage.assets[1].content, "base64")).placement,
+        { page: "workflow", slot: "workflow.phases" });
     assert.deepEqual(phaseRequest.workflowPage.assets.map(({ name, kind }) => [name, kind]), [
         ["generated-workflow", "generated.workflow-page-definition"],
         ["generated-phase-control", "generated.phase-control-definition"],
@@ -3208,7 +3212,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.deepEqual(canvas.inputSchema.properties.templates.items.properties.kind.enum,
         ["designer.setting-definition", "generated.workflow-page-definition",
             "generated.phase-control-definition", "generated.phase-control-adapter",
-            "generated.phase-control-placement", "generated.field-placement",
+            "generated.field-placement",
             "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",
             "designer.control-adapter", "generated.control-adapter",

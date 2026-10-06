@@ -221,12 +221,12 @@ At **each milestone**, preserve the unchanged Wizard code, behavior, and handoff
 `generated-workflow` page declares its title, order, and named slots; the
 generated host owns the fixed shell rather than taking an ordered list of
 shell regions from the page JSON. The required `workflow.phases` slot has a
-separately registered phase placement referencing `generated-phase-control`.
+`generated-phase-control` definition placing itself in that slot.
 Additional Workflow slots share an ordered contributions area; added page
 renderers expose declared mount points. Separate field placements target
 those slots without duplicating field values. The control definition identifies
 `workflow-phases` and references the replaceable `generated-phase-adapter`.
-The generated host validates and packages all four resolved assets. The
+The generated host validates and packages all three resolved assets. The
 adapter owns its DOM and exposes `mount({ root, state, actions })` with
 `update(state)` and `dispose()`; the host retains phase execution,
 persistence, and artifact routes. `copilot-vertical-phase-control` replaces
@@ -238,7 +238,10 @@ rejects unsupported capability requirements at mount, verifies the packaged
 adapter's declared managed-run capability before exposing Autopilot,
 dispatches one Copilot autopilot-mode turn, and accepts in-order step reports
 only after required artifacts are present. An interrupted or unconfirmed turn
-blocks further automatic progress until the user deliberately resumes. The
+is persisted as blocked on reopen; after checking chat and outputs, the user
+can deliberately resume from the first unverified step. A finishing run with
+every step verified cannot replay its final step, and an active run prevents
+deletion of its workflow. The
 stock control and default presentation remain unchanged.
 
 An **adapter** is JavaScript supplied for a particular control or presentation **in one canvas**. A control definition describes its stable ID, supported value schema, host capabilities, and adapter IDs. Multiple fields can reuse one control and adapter; a new field does not necessarily need new JavaScript.
@@ -305,8 +308,7 @@ spec-kit-extensions/extension-canvas-design/
   designer-host/tabs/appearance.json        currently empty placeholder
   designer-host/essentials-settings/*.json  optional Essentials fields
   generated-host/workflow/workflow.json      required Workflow page definition
-  generated-host/workflow/generated-phase-placement.json  phase control placement
-  generated-host/phase-control/phase-control.json  phase control identity
+  generated-host/phase-control/phase-control.json  phase control identity and placement
   generated-host/phase-control/generated-phase-adapter.mjs  phase UI adapter
   shared-controls/stock-{text,checkbox,image}/  cross-host definitions and adapters
   schemas/designer.tab-definition.schema.json  currently string/boolean fields

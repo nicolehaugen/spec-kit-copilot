@@ -26,7 +26,6 @@ test("generated skill declarations include appended pages and templates anywhere
     const names = declarations(appended).map((entry) => entry.name);
     assert.ok(names.includes("designer-essentials"));
     assert.ok(names.includes("designer-essentials-description"));
-    assert.ok(names.includes("generated-phase-placement"));
     assert.ok(names.includes("generated-phase-control"));
     assert.ok(names.includes("generated-phase-adapter"));
     assert.ok(names.includes("sample-renderer"));
@@ -70,7 +69,6 @@ test("composed verification resolves every name, rejects warnings and native scr
         "designer-essentials-header-logo": join(installed, "designer-host", "essentials-settings", "header-logo.json"),
         "designer-essentials-main-page-logo": join(installed, "designer-host", "essentials-settings", "main-page-logo.json"),
         "generated-workflow": join(installed, "generated-host", "workflow", "workflow.json"),
-        "generated-phase-placement": join(installed, "generated-host", "workflow", "generated-phase-placement.json"),
         "generated-phase-control": join(installed, "generated-host", "phase-control", "phase-control.json"),
         "generated-phase-adapter": join(installed, "generated-host", "phase-control", "generated-phase-adapter.mjs"),
         "shared-controls-image": join(installed, "shared-controls", "stock-image", "control.json"),

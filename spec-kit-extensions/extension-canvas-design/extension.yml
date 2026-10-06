@@ -50,16 +50,13 @@ provides:
       file: designer-host/essentials-settings/main-page-logo.json
       description: Optional independent larger logo for the generated workflow page.
 
-    # Workflow page and its required phase-control placement.
+    # Workflow page and its required phase control.
     - name: generated-workflow
       file: generated-host/workflow/workflow.json
       description: Required Workflow page definition and declared contribution slots.
-    - name: generated-phase-placement
-      file: generated-host/workflow/generated-phase-placement.json
-      description: Required Workflow phase-control placement.
     - name: generated-phase-control
       file: generated-host/phase-control/phase-control.json
-      description: Workflow phase control identity and adapter reference.
+      description: Workflow phase control identity, placement, and adapter reference.
     - name: generated-phase-adapter
       file: generated-host/phase-control/generated-phase-adapter.mjs
       description: Workflow phase navigation and card adapter.

@@ -150,6 +150,17 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         writes = pending.catch(() => {});
         return pending;
     };
+    if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)) {
+        await update((next) => {
+            next.autopilot.status = "Blocked";
+            next.autopilot.error = "Autopilot was interrupted. Check chat and outputs before resuming.";
+            for (const run of next.runs.filter((run) => run.autopilotId === next.autopilot.id
+                && run.status === "Running")) {
+                run.status = "Unconfirmed";
+                run.error = "This step was interrupted before verification. Check its output before retrying.";
+            }
+        }, false, false);
+    }
     const phaseFor = (id) => {
         const step = phases.find((phase) => phase.id === id);
         if (!step) throw new UserError("Select a configured phase.");
@@ -410,13 +421,17 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("Copilot mode switching is unavailable. Update Copilot before using Autopilot.");
             }
             const prior = state.autopilot;
-            const start = prior?.item === input.itemId && ["Blocked", "Paused"].includes(prior.status)
-                ? Math.min(prior.current, workflowSteps.length - 1) : 0;
+            const resuming = prior?.item === input.itemId && ["Blocked", "Paused"].includes(prior.status);
+            if (resuming && prior.current === workflowSteps.length) {
+                throw new UserError("All Autopilot steps were verified. Check chat for the final outcome; no step remains to retry.");
+            }
+            const start = resuming ? prior.current : 0;
             id = randomUUID();
-            previousMode = await session.rpc.mode.get();
-            if (previousMode !== "autopilot") {
+            const currentMode = await session.rpc.mode.get();
+            previousMode = resuming ? prior.previousMode : currentMode;
+            if (currentMode !== "autopilot") {
                 const changed = await session.rpc.mode.set({
-                    mode: "autopilot", expectedMode: previousMode,
+                    mode: "autopilot", expectedMode: currentMode,
                 });
                 if (changed.modeApplied === false || await session.rpc.mode.get() !== "autopilot") {
                     throw new UserError("Copilot could not enter Autopilot mode. Check its mode or confirmation request.");
@@ -505,30 +520,35 @@ Steps:\n${instructions}` });
     async function reportAutopilotStep(input, instanceId) {
         if (!input || Object.keys(input).sort().join() !== "action,autopilotId,phase"
             || !["start", "complete"].includes(input.action)) throw new UserError("Invalid Autopilot step report.");
-        const automation = state.autopilot;
-        if (!automation || automation.id !== input.autopilotId || automation.instanceId !== instanceId
-            || automation.sessionId !== session.sessionId || !liveRuns.has(automation.id)
-            || !["Request sent", "Running"].includes(automation.status)) {
-            throw new UserError("Unknown or inactive Autopilot run.");
-        }
-        const step = workflowSteps[automation.current];
-        if (!step || step.id !== input.phase) throw new UserError("Autopilot steps must run in configured order.");
-        if (input.action === "start") {
-            if (state.runs.some((run) => run.autopilotId === automation.id && run.phase === step.id)) {
-                throw new UserError("This Autopilot step was already started. Check chat before retrying.");
+        const activeStep = (view) => {
+            const automation = view.autopilot;
+            if (!automation || automation.id !== input.autopilotId || automation.instanceId !== instanceId
+                || automation.sessionId !== session.sessionId || !liveRuns.has(automation.id)
+                || !["Request sent", "Running"].includes(automation.status)) {
+                throw new UserError("Unknown or inactive Autopilot run.");
             }
+            const step = workflowSteps[automation.current];
+            if (!step || step.id !== input.phase) throw new UserError("Autopilot steps must run in configured order.");
+            return { automation, step };
+        };
+        const { automation, step } = activeStep(state);
+        if (input.action === "start") {
             const before = await items();
             const runId = randomUUID();
             await update((next) => {
-                next.autopilot.status = "Running";
-                next.runs.push({ runId, autopilotId: automation.id, instanceId,
-                    phase: step.id, item: automation.item, args: next.drafts[JSON.stringify([automation.item, step.id])] ?? "",
+                const { automation: current, step: currentStep } = activeStep(next);
+                if (next.runs.some((run) => run.autopilotId === current.id && run.phase === currentStep.id)) {
+                    throw new UserError("This Autopilot step was already started. Check chat before retrying.");
+                }
+                current.status = "Running";
+                next.runs.push({ runId, autopilotId: current.id, instanceId,
+                    phase: currentStep.id, item: current.item, args: next.drafts[JSON.stringify([current.item, currentStep.id])] ?? "",
                     slug: null, name: next.name ?? "", before: before.map((entry) => entry.id),
-                    sessionId: session.sessionId, messageId: automation.messageId,
+                    sessionId: session.sessionId, messageId: current.messageId,
                     status: "Running", artifact: null, artifacts: [], error: null });
             });
             liveRuns.add(runId);
-            return { phaseRunId: runId, itemId: automation.item };
+            return { phaseRunId: runId, itemId: state.autopilot.item };
         }
         const run = state.runs.findLast((entry) => entry.autopilotId === automation.id && entry.phase === step.id);
         if (!run || run.status !== "Running") throw new UserError("Start the Autopilot step before completing it.");
@@ -544,22 +564,28 @@ Steps:\n${instructions}` });
             }
         } catch (error) {
             await update((next) => {
+                const record = next.runs.find((entry) => entry.runId === run.runId);
+                if (next.autopilot?.id !== automation.id || next.autopilot.current !== automation.current
+                    || record?.status !== "Running") return false;
                 next.autopilot.status = "Blocked";
                 next.autopilot.error = error.message;
-                const record = next.runs.find((entry) => entry.runId === run.runId);
                 record.status = "Unconfirmed";
                 record.error = error.message;
             });
-            liveRuns.delete(automation.id);
-            liveRuns.delete(run.runId);
+            if (state.autopilot?.id === automation.id && state.autopilot.status === "Blocked") {
+                liveRuns.delete(automation.id);
+                liveRuns.delete(run.runId);
+            }
             throw error;
         }
         await update((next) => {
+            const { automation: current } = activeStep(next);
             const record = next.runs.find((entry) => entry.runId === run.runId);
+            if (record?.status !== "Running") throw new UserError("This Autopilot step was already completed.");
             record.status = "Completed";
-            next.autopilot.item = record.item;
-            next.autopilot.current++;
-            if (next.autopilot.current === workflowSteps.length) next.autopilot.status = "Finishing";
+            current.item = record.item;
+            current.current++;
+            if (current.current === workflowSteps.length) current.status = "Finishing";
         });
         liveRuns.delete(run.runId);
         return { accepted: true, nextPhase: workflowSteps[state.autopilot.current]?.id ?? null };
@@ -787,7 +813,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         if (!input || Object.keys(input).some((key) => !["itemId", "confirmation", "revision"].includes(key))
             || typeof input.itemId !== "string" || typeof input.confirmation !== "string"
             || !Number.isSafeInteger(input.revision)) throw new UserError("Invalid workflow deletion request.");
-        if (deleting || dispatching) throw new UserError("A workflow operation is in progress. Try again after it finishes.", 409);
+        if (deleting || dispatching || autopilotDispatching) throw new UserError("A workflow operation is in progress. Try again after it finishes.", 409);
         deleting = true;
         let removed = false;
         try {
@@ -795,6 +821,11 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             if (input.revision !== state.revision) throw new UserError("Canvas state changed. Refresh before deleting.", 409);
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
+            if (state.autopilot?.item === item.id
+                && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
+                && liveRuns.has(state.autopilot.id)) {
+                throw new UserError("Stop Autopilot before deleting this workflow.", 409);
+            }
             if (state.runs.some((run) => (run.item === item.id
                 || (run.item === "__new__" && !run.before.includes(item.id)))
                 && !["Completed", "Failed"].includes(run.status))) {

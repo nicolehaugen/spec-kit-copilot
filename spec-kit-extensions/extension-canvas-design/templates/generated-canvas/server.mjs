@@ -319,7 +319,6 @@ export function readConfig() {
     if (config.imageControl) readImageControl(config.imageControl);
     if (config.textControl) readTextControl(config.textControl);
     readWorkflowPage(config.workflowPage);
-    readPhasePlacement(config.phasePlacement, config.workflowPage);
     for (const item of config.fieldPlacements ?? []) {
         readFieldPlacement(item);
         if (item.adapter) readPlacementControl(item);
@@ -336,22 +335,6 @@ export function readConfig() {
     phaseContract(config);
     valueContract(config);
     return config;
-}
-
-function readPhasePlacement(placement, page) {
-    if (!placement || Object.keys(placement).sort().join() !== "control,hash,id,page,slot"
-        || placement.id !== "generated-phase-placement" || placement.page !== "workflow"
-        || placement.slot !== "workflow.phases" || placement.control !== page.phaseControl
-        || !/^[a-f0-9]{64}$/.test(placement.hash)) {
-        throw new Error("Invalid required phase placement");
-    }
-    const bytes = readPackagedFile(new URL("./pages/generated-phase-placement.json", import.meta.url));
-    const { $schema, ...definition } = JSON.parse(bytes);
-    if (createHash("sha256").update(bytes).digest("hex") !== placement.hash
-        || !isDeepStrictEqual(definition, { schemaVersion: 1,
-            id: placement.id, page: placement.page, slot: placement.slot, control: placement.control })) {
-        throw new Error("Packaged phase placement differs from its frozen contract");
-    }
 }
 
 function readFieldPlacement(placement) {
@@ -398,7 +381,9 @@ function readWorkflowPage(page) {
     const registration = JSON.parse(control);
     if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
         || registration.adapter !== page.adapter
-        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,schemaVersion") {
+        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,placement,schemaVersion"
+        || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
+        || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases") {
         throw new Error("Packaged phase control definition differs from its frozen contract");
     }
     const bytes = readPackagedFile(new URL(`./pages/${page.adapter}.mjs`, import.meta.url));

@@ -42,7 +42,6 @@ function scalarRegistrations(resolve) {
 function workflowRegistrations(resolve) {
     return [
         ["generated-workflow", "generated.workflow-page-definition"],
-        ["generated-phase-placement", "generated.phase-control-placement"],
         ["generated-phase-control", "generated.phase-control-definition"],
         ["generated-phase-adapter", "generated.phase-control-adapter"],
     ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));

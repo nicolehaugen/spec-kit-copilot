@@ -273,9 +273,11 @@ function frozenWorkflowPage(page) {
     let control;
     try { control = withoutSchema(JSON.parse(Buffer.from(page.assets[1].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid frozen phase control definition"); }
-    if (!control || Object.keys(control).sort().join() !== "adapter,id,schemaVersion"
+    if (!control || Object.keys(control).sort().join() !== "adapter,id,placement,schemaVersion"
         || control.schemaVersion !== 1 || control.id !== "workflow-phases"
-        || control.adapter !== page.assets[2].name) {
+        || control.adapter !== page.assets[2].name
+        || !control.placement || Object.keys(control.placement).sort().join() !== "page,slot"
+        || control.placement.page !== "workflow" || control.placement.slot !== "workflow.phases") {
         throw new Error("Invalid frozen phase control definition");
     }
     const module = Buffer.from(page.assets[2].content, "base64").toString("utf8");
@@ -316,14 +318,9 @@ function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
         generatedPages, generatedControls, generatedAssets, generatedImageControl,
         generatedTextControl, generatedTextPlacements, controlAssets, valueSources, workflowPage,
-        phasePlacement, fieldPlacements, designerFields } = request;
+        fieldPlacements, designerFields } = request;
     validateFrozenValues(values, fieldConstraints);
     const workflowLayout = frozenWorkflowPage(workflowPage);
-    const phase = frozenPlacement(phasePlacement, "generated.phase-control-placement");
-    if (phase.id !== "generated-phase-placement" || phase.page !== "workflow"
-        || phase.slot !== "workflow.phases" || phase.control !== workflowLayout.phaseControl) {
-        throw new Error("Invalid required phase placement");
-    }
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -742,7 +739,6 @@ function configuration(request) {
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
     return { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
         workflowPage: workflowLayout,
-        phasePlacement: phase,
         ...(placements.length ? { fieldPlacements: placements } : {}),
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
         ...(mainImage ? { mainPageAsset: imageConfig(mainImage) } : {}),
@@ -890,8 +886,6 @@ export async function materialize(project, workspace, handoffId, requestId) {
     ]);
     pageFiles.push(
         { filename: "workflow.json", bytes: Buffer.from(request.workflowPage.assets[0].content, "base64") },
-        { filename: "generated-phase-placement.json",
-            bytes: Buffer.from(request.phasePlacement.assets[0].content, "base64") },
         { filename: "phase-control.json",
             bytes: Buffer.from(request.workflowPage.assets[1].content, "base64") },
         { filename: `${config.workflowPage.adapter}.mjs`,

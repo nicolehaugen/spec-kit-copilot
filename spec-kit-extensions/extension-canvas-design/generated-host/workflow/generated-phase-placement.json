@@ -1,8 +1,0 @@
-{
-  "$schema": "../../schemas/generated.phase-control-placement.schema.json",
-  "schemaVersion": 1,
-  "id": "generated-phase-placement",
-  "page": "workflow",
-  "slot": "workflow.phases",
-  "control": "generated-phase-control"
-}

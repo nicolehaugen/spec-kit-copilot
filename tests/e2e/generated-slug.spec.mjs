@@ -11,7 +11,6 @@ const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-desig
 const phaseControlSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/phase-control/", import.meta.url);
 const scaffoldSource = new URL("../../spec-kit-extensions/extension-canvas-design/templates/generated-canvas/", import.meta.url);
 const workflowDefinition = await readFile(new URL("workflow.json", workflowSource));
-const phasePlacementDefinition = await readFile(new URL("generated-phase-placement.json", workflowSource));
 const phaseControlDefinition = await readFile(new URL("phase-control.json", phaseControlSource));
 const phaseAdapter = await readFile(new URL("generated-phase-adapter.mjs", phaseControlSource));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -19,9 +18,6 @@ const { title, order, slots } = JSON.parse(workflowDefinition);
 const workflowPage = { title, order, slots, phaseControl: "generated-phase-control",
     adapter: "generated-phase-adapter", definitionHash: digest(workflowDefinition),
     controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter) };
-const phasePlacement = { id: "generated-phase-placement", page: "workflow",
-    slot: "workflow.phases", control: "generated-phase-control",
-    hash: digest(phasePlacementDefinition) };
 
 test("phase actions report connecting before the first state refresh", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
@@ -192,7 +188,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         : phaseAdapter;
     const config = {
         schemaVersion: 1, userProvidesSlug,
-        workflowPage: { ...workflowPage, hash: digest(selectedAdapter) }, phasePlacement,
+        workflowPage: { ...workflowPage, hash: digest(selectedAdapter) },
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
@@ -218,7 +214,6 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         await mkdir(join(sdk, "pages"), { recursive: true });
         await Promise.all([
             ["workflow.json", workflowSource],
-            ["generated-phase-placement.json", workflowSource],
             ["phase-control.json", phaseControlSource],
         ].map(([file, source]) => copyFile(new URL(file, source), join(sdk, "pages", file))));
         await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), selectedAdapter);

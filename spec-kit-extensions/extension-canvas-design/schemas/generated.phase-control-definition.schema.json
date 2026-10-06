@@ -2,11 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "id", "adapter"],
+  "required": ["schemaVersion", "id", "adapter", "placement"],
   "properties": {
     "$schema": {"type": "string"},
     "schemaVersion": {"const": 1},
     "id": {"const": "workflow-phases"},
-    "adapter": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"}
+    "adapter": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"},
+    "placement": {"type": "object", "additionalProperties": false, "required": ["page", "slot"],
+      "properties": {"page": {"const": "workflow"}, "slot": {"const": "workflow.phases"}}}
   }
 }

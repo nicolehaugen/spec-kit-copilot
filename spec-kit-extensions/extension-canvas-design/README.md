@@ -8,7 +8,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 Canvas Design **0.1.19** registers three JSON page templates, five ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
-Workflow page definition, required phase placement, phase control definition,
+Workflow page definition, phase control definition with its required placement,
 and phase adapter, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
@@ -18,8 +18,8 @@ The second writes a maintained SDK entry point and workflow modules into a new
 project extension directory, then validates the result in place.
 
 Replaceable templates are organized by host: `designer-host/` contains Designer
-tabs and settings, `generated-host/workflow/` contains the Workflow page and
-phase placement, and `generated-host/phase-control/` contains the phase control
+tabs and settings, `generated-host/workflow/` contains the Workflow page, and
+`generated-host/phase-control/` contains the phase control with its placement
 and adapter. `shared-controls/` contains definitions and adapters used by both
 hosts. `templates/generated-canvas/` is the static app scaffold; Generate
 copies the resolved generated-host assets into its `pages/` directory, so the
@@ -34,8 +34,7 @@ finished app does not depend on this extension at runtime.
 | `designer-essentials-header-logo` | Essentials slot | Optional small header logo |
 | `designer-essentials-main-page-logo` | Essentials slot | Optional larger main-page logo |
 | `generated-workflow` | Generated Workflow page | Required page metadata and named slots; host shell stays fixed |
-| `generated-phase-placement` | Generated Workflow page | Required phase control placement in `workflow.phases` |
-| `generated-phase-control` | Generated Workflow page | Phase control identity and adapter reference |
+| `generated-phase-control` | Generated Workflow page | Phase control identity, placement, and adapter reference |
 | `generated-phase-adapter` | Generated Workflow page | Replaceable phase navigation and card presentation |
 | `shared-controls-image` | Shared control | Image value contract and paired adapter names |
 | `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
@@ -357,9 +356,8 @@ not the JSON document. No kind is inferred from a filename.
 | `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
 | `generated.workflow-page-definition` | Required generated Workflow page and slots | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
-| `generated.phase-control-placement` | Required phase control placement | [phase placement](schemas/generated.phase-control-placement.schema.json) |
 | `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/generated.field-placement.schema.json) |
-| `generated.phase-control-definition` | Required phase control identity and adapter reference | [phase control](schemas/generated.phase-control-definition.schema.json) |
+| `generated.phase-control-definition` | Required phase control identity, placement, and adapter reference | [phase control](schemas/generated.phase-control-definition.schema.json) |
 | `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
@@ -393,12 +391,11 @@ owns its header, collection, details, values, controls, page navigation,
 constitution, messages, and artifact viewer in a fixed shell. Presets may
 replace the Workflow page JSON to add slots; additional slots render together
 in one ordered contributions area. They cannot remove `workflow.phases` or
-reorder the shell. The separately registered `generated-phase-placement`
-targets `workflow.phases` and references `generated-phase-control`, keeping
-the phase navigation and card at their fixed location. The phase control definition
-has `schemaVersion: 1`, `id: "workflow-phases"`, and
-`adapter: "generated-phase-adapter"`. Designer freezes those definitions,
-the required placement, and the adapter as integrity-checked assets.
+reorder the shell. The `generated-phase-control` definition has
+`schemaVersion: 1`, `id: "workflow-phases"`, a placement targeting
+`workflow.phases` on the Workflow page, and
+`adapter: "generated-phase-adapter"`. Designer freezes the page, control
+definition, and adapter as integrity-checked assets.
 
 Like Designer settings, separately registered generated field placements
 target a page and one of its declared slots, identify a field and display

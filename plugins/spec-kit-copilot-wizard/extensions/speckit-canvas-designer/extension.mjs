@@ -78,7 +78,7 @@ const session = await joinSession({
                         sourceId: { type: "string", minLength: 1, maxLength: 160 },
                         kind: { type: "string", enum: ["designer.setting-definition",
                             "generated.workflow-page-definition", "generated.phase-control-definition",
-                            "generated.phase-control-adapter", "generated.phase-control-placement",
+                            "generated.phase-control-adapter",
                             "generated.field-placement",
                             "generated.added-page-definition", "generated.added-page-renderer",
                             "shared.control-definition", "designer.control-adapter", "generated.control-adapter",

@@ -35,15 +35,21 @@ async function setup(t, vertical = true) {
         getEvents: async () => events, log: async () => {},
     };
     const { createRuntime } = await import(pathToFileURL(join(target, "runtime.mjs")).href);
-    const runtime = await createRuntime({ config: {
+    const options = { config: {
         canvas: { id: "test-autopilot" }, phases: ["specify", "plan"],
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
             plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
         workflowPage: { adapter: "generated-phase-adapter",
             hash: createHash("sha256").update(adapter).digest("hex") },
-    }, cwd: project, workspace: root, session });
+    }, cwd: project, workspace: root, session };
+    let runtime = await createRuntime(options);
     t.after(() => runtime.close());
-    return { runtime, project, sent, session,
+    return { get runtime() { return runtime; }, project, sent, session,
+        restart: async () => {
+            runtime.close();
+            runtime = await createRuntime(options);
+            return runtime;
+        },
         finish: async (success) => {
             events = [
                 { type: "user.message", data: { messageId: "message-1", interactionId: "turn-1" } },
@@ -88,6 +94,123 @@ test("vertical Autopilot starts first, verifies each artifact and refuses skippe
     assert.equal(session.mode, "interactive");
     await assert.rejects(runtime.reportAutopilotStep(
         { autopilotId, phase: "plan", action: "start" }, "panel"), /inactive/);
+});
+
+test("concurrent Autopilot reports cannot start twice or skip a step", async (t) => {
+    const fixture = await setup(t);
+    const { runtime, project } = fixture;
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/demo" });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    const started = await Promise.allSettled([
+        runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel"),
+        runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel"),
+    ]);
+    assert.deepEqual(started.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
+    assert.match(started.find((result) => result.status === "rejected").reason.message, /already started/);
+    const { phaseRunId } = started.find((result) => result.status === "fulfilled").value;
+    await writeFile(join(project, "specs", "demo", "spec.md"), "Specification");
+    await runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel");
+    const completed = await Promise.allSettled([
+        runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "complete" }, "panel"),
+        runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "complete" }, "panel"),
+    ]);
+    assert.deepEqual(completed.map((result) => result.status).sort(), ["fulfilled", "rejected"]);
+    assert.equal(completed.find((result) => result.status === "fulfilled").value.nextPhase, "plan");
+    assert.equal((await runtime.snapshot()).autopilot.current, 1);
+    assert.ok((await runtime.reportAutopilotStep(
+        { autopilotId, phase: "plan", action: "start" }, "panel")).phaseRunId);
+});
+
+test("an active workflow cannot be deleted before a report or while finishing", async (t) => {
+    const { runtime, project } = await setup(t);
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/demo" });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    const deletion = async () => runtime.deleteWorkflow({
+        itemId: "specs/demo", confirmation: "demo", revision: (await runtime.snapshot()).revision,
+    });
+    await assert.rejects(deletion(), /Stop Autopilot/);
+    const first = await runtime.reportAutopilotStep(
+        { autopilotId, phase: "specify", action: "start" }, "panel");
+    await writeFile(join(project, "specs", "demo", "spec.md"), "Specification");
+    await runtime.report({ phaseRunId: first.phaseRunId, path: "specs/demo/spec.md" }, "panel");
+    await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "complete" }, "panel");
+    const second = await runtime.reportAutopilotStep(
+        { autopilotId, phase: "plan", action: "start" }, "panel");
+    await writeFile(join(project, "specs", "demo", "plan.md"), "Plan");
+    await runtime.report({ phaseRunId: second.phaseRunId, path: "specs/demo/plan.md" }, "panel");
+    await runtime.reportAutopilotStep({ autopilotId, phase: "plan", action: "complete" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Finishing");
+    await assert.rejects(deletion(), /Stop Autopilot/);
+});
+
+test("deletion waits for Autopilot preflight before touching its workflow", async (t) => {
+    const { runtime, project, session } = await setup(t);
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    let release, entered;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    const ready = new Promise((resolve) => { entered = resolve; });
+    session.rpc.skills.reload = async () => { entered(); await waiting; return { errors: [] }; };
+    const starting = runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    try {
+        await ready;
+        await assert.rejects(runtime.deleteWorkflow({
+            itemId: "specs/demo", confirmation: "demo", revision: (await runtime.snapshot()).revision,
+        }), /operation is in progress/);
+    } finally {
+        release();
+    }
+    await starting;
+});
+
+test("restart persists an interrupted checkpoint and retry restores the original mode", async (t) => {
+    const fixture = await setup(t);
+    const { project, sent, session } = fixture;
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    let runtime = fixture.runtime;
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/demo" });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    const { phaseRunId } = await runtime.reportAutopilotStep(
+        { autopilotId, phase: "specify", action: "start" }, "panel");
+    await writeFile(join(project, "specs", "demo", "spec.md"), "Specification");
+    await runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel");
+    await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "complete" }, "panel");
+    runtime = await fixture.restart();
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    runtime = await fixture.restart();
+    assert.equal((await runtime.snapshot()).autopilot.current, 1);
+    const retried = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    assert.match(sent[1].prompt, /beginning with step 1/);
+    assert.equal(session.mode, "autopilot");
+    const next = await runtime.reportAutopilotStep(
+        { autopilotId: retried.autopilotId, phase: "plan", action: "start" }, "panel");
+    await writeFile(join(project, "specs", "demo", "plan.md"), "Plan");
+    await runtime.report({ phaseRunId: next.phaseRunId, path: "specs/demo/plan.md" }, "panel");
+    await runtime.reportAutopilotStep(
+        { autopilotId: retried.autopilotId, phase: "plan", action: "complete" }, "panel");
+    assert.equal(await fixture.finish(true), "Completed");
+    assert.equal(session.mode, "interactive");
+});
+
+test("restart after the last verified step does not replay it", async (t) => {
+    const fixture = await setup(t);
+    const { project, sent } = fixture;
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    let runtime = fixture.runtime;
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/demo" });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    for (const [phase, filename] of [["specify", "spec.md"], ["plan", "plan.md"]]) {
+        const { phaseRunId } = await runtime.reportAutopilotStep(
+            { autopilotId, phase, action: "start" }, "panel");
+        await writeFile(join(project, "specs", "demo", filename), phase);
+        await runtime.report({ phaseRunId, path: `specs/demo/${filename}` }, "panel");
+        await runtime.reportAutopilotStep({ autopilotId, phase, action: "complete" }, "panel");
+    }
+    runtime = await fixture.restart();
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    await assert.rejects(runtime.startAutopilot({ itemId: "specs/demo" }, "panel"), /no step remains to retry/);
+    assert.equal(sent.length, 1);
 });
 
 test("Autopilot can be stopped without an automatic replay and stock adapters cannot opt in", async (t) => {

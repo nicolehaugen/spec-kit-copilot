@@ -19,6 +19,12 @@ workflow pending for an explicit retry. Like the stock control, a manual retry
 while a prior turn is pending may duplicate work; check chat first. Project
 Constitution remains a separate, project-scoped action; the default generated app retains its
 horizontal control when this preset is not selected.
+After a generated app restart, an unfinished Autopilot run is persisted as
+blocked. Check chat and outputs before retrying: the next request starts at
+the first unverified step, never replays a verified step, and restores the
+session mode from before the original run when it finishes. If every step
+was already verified, there is no step to retry; check chat for the outcome.
+An active Autopilot workflow cannot be deleted until it stops or finishes.
 
 This preset depends on the Copilot Canvas Design runtime and its Copilot
 session APIs. Its packaged adapter requires `workflow.rows.v1` and

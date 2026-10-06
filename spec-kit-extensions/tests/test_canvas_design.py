@@ -32,7 +32,6 @@ FILES = {
     "schemas/generated.added-page-definition.schema.json",
     "schemas/generated.workflow-page-definition.schema.json",
     "schemas/generated.phase-control-definition.schema.json",
-    "schemas/generated.phase-control-placement.schema.json",
     "schemas/generated.field-placement.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
@@ -49,7 +48,6 @@ FILES = {
     "shared-controls/stock-checkbox/control.json",
     "shared-controls/stock-checkbox/designer.mjs",
     "generated-host/workflow/workflow.json",
-    "generated-host/workflow/generated-phase-placement.json",
     "generated-host/phase-control/phase-control.json",
     "generated-host/phase-control/generated-phase-adapter.mjs",
     *(f"templates/generated-canvas/{name}" for name in (
@@ -116,7 +114,6 @@ class CanvasDesignPackageTests(unittest.TestCase):
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
             + [("generated-workflow", "generated-host/workflow/workflow.json"),
-               ("generated-phase-placement", "generated-host/workflow/generated-phase-placement.json"),
                ("generated-phase-control", "generated-host/phase-control/phase-control.json"),
                ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
@@ -338,7 +335,6 @@ class CanvasDesignPackageTests(unittest.TestCase):
         )
         self.assertEqual(registrations, [
             ("generated-workflow", "generated.workflow-page-definition", "replace"),
-            ("generated-phase-placement", "generated.phase-control-placement", "replace"),
             ("generated-phase-control", "generated.phase-control-definition", "replace"),
             ("generated-phase-adapter", "generated.phase-control-adapter", "replace"),
             ("shared-controls-text", "shared.control-definition", "replace"),
