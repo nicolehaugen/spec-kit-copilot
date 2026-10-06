@@ -666,27 +666,27 @@ The appended command matches the base `load-page` command by its `type: command`
 
 ## 16. How Artifacts and Appearance fit
 
-The `designer-artifacts` and `designer-appearance` JSON files are enabled Designer pages with slots for stock contributions. Artifacts remains an empty placeholder; Appearance receives optional light/dark accent, background, surface, secondary surface, and text fields plus two logos. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
+The `designer-artifacts` and `designer-appearance` JSON files are enabled Designer pages. Artifacts is an empty placeholder with no contribution slot; Appearance has a slot for optional light/dark accent, background, surface, secondary surface, and text fields plus two logos. They are Designer pages—not automatically pages in the Generated Workflow Canvas app.
 
 | Page | Proposed stock Designer contribution | What Generate packages into the app |
 | --- | --- | --- |
-| **Artifacts** | A structured **phase-output editor** in an Artifacts page slot. It starts with output information handed off from the Wizard Canvas. The person configuring the canvas can remove an incorrect expected output, add a missing one, and select the default reader target for each phase with outputs. | Validated expected-output lists and one selected default viewer target per phase. The generated shell still owns artifact-path authorization, placeholder resolution, and file reads. |
+| **Artifacts** | Planned: a structured **phase-output editor** in an Artifacts page slot, starting with output information handed off from the Wizard Canvas. The person configuring the canvas would be able to remove an incorrect expected output, add a missing one, and select the default reader target for each phase with outputs. | Planned: validated expected-output lists and one selected default viewer target per phase. The generated shell would still own artifact-path authorization, placeholder resolution, and file reads. |
 | **Appearance** | Optional per-mode accent, page background, card surface, secondary surface, and main text hex fields plus Header/Main page logos. | Validated per-mode palette overrides and packaged logo assets; blank fields preserve each existing color. |
 
 ### Artifacts: handoff and separate-PR dependency
 
 The **Wizard output list is being added in a separate PR**. This architecture **consumes that handoff information once available**; it does not assign this plan ownership of producing or inferring the Wizard’s output list. The initial Billing and generated-only-page fixture milestones keep the Wizard code and handoff unchanged and do not depend on live output-list data. Integrate the Artifacts editor only after the separate PR's handoff contract lands; it must specify phase IDs, expected output paths or patterns, any recommended default, and provenance. Contract tests can use fixtures before integration, but fixture outputs must never be presented as production Wizard output.
 
-The Artifacts editor shows **expected outputs**, not files that necessarily exist already. For each Wizard-selected phase, the person configuring the Designer Canvas can correct the incoming list:
+When implemented, the Artifacts editor will show **expected outputs**, not files that necessarily exist already. For each Wizard-selected phase, the person configuring the Designer Canvas will be able to correct the incoming list:
 
 - Remove an incorrect entry.
 - Add a missing output, subject to path/type validation.
 - Select **one default reader target** from that phase’s remaining outputs.
 - Leave a phase with no outputs and therefore no viewer default.
 
-Removing the selected default clears that selection; if outputs remain, another default must be selected before Generate. The generated app’s existing per-phase `phaseArtifacts` concept (`outputs` plus `view`) is a suitable target for the confirmed result, but the generator currently writes an empty mapping. The generated shell must continue to confine paths to the appropriate project/workflow and report when a confirmed expected artifact has not yet been created.
+In the proposed editor, removing the selected default would clear that selection; if outputs remain, another default would be required before Generate. The generated app’s existing per-phase `phaseArtifacts` concept (`outputs` plus `view`) is a suitable target for the confirmed result, but the generator currently writes an empty mapping. The generated shell must continue to confine paths to the appropriate project/workflow and report when a confirmed expected artifact has not yet been created.
 
-**Acceptance:** Artifacts displays the output list received through the Wizard handoff rather than independently inventing one in Designer or Generate. Edits and per-phase defaults survive Generate. The generated reader opens the confirmed default when it exists; unsafe paths or a default not in the phase’s output list are rejected.
+**Proposed acceptance:** Artifacts displays the output list received through the Wizard handoff rather than independently inventing one in Designer or Generate. Edits and per-phase defaults survive Generate. The generated reader opens the confirmed default when it exists; unsafe paths or a default not in the phase’s output list are rejected.
 
 ### Appearance: palette and existing light/dark button
 

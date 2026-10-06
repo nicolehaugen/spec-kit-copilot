@@ -5,7 +5,7 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.19** registers three JSON page templates, seven ordered
+Canvas Design **0.1.19** registers three JSON page templates, fifteen ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition and pipeline renderer, plus the

@@ -37,6 +37,9 @@ FILES = {
     *(f"designer/essentials-settings/{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "header-logo", "main-page-logo",
     )),
+    *(f"designer/appearance-settings/{mode}-{color}.json"
+      for mode in ("light", "dark")
+      for color in ("accent", "background", "surface", "secondary", "text")),
     "controls/stock-image/control.json",
     "controls/stock-image/designer.mjs",
     "controls/stock-image/generated.mjs",
@@ -110,6 +113,10 @@ class CanvasDesignPackageTests(unittest.TestCase):
             + [(f"designer-essentials-{filename}", f"designer/essentials-settings/{filename}.json")
                for filename in ("description", "workflow-heading", "custom-slug",
                                 "header-logo", "main-page-logo")]
+            + [(f"designer-appearance-{mode}-{color}",
+                f"designer/appearance-settings/{mode}-{color}.json")
+               for mode in ("light", "dark")
+               for color in ("accent", "background", "surface", "secondary", "text")]
             + [("generated-workflow", "generated/pages/workflow.json"),
                ("generated-pipeline", "generated/pages/generated-pipeline.mjs")]
             + [(name, f"controls/stock-{control}/{filename}")
