@@ -141,8 +141,13 @@ export function mount({ root, definition, state, actions }) {
                 await actions.stopManagedRun();
             }
             const index = Number(button.dataset.index);
+            const workflow = state.workflow;
+            const phase = state.phases[index];
             if (typeof actions.confirmRun === "function"
-                && await actions.confirmRun(state.phases[index]) !== true) return;
+                && await actions.confirmRun(phase) !== true) return;
+            if (state.workflow !== workflow || state.phases[index]?.id !== phase?.id) {
+                throw new Error("Selected workflow or phase changed. Select the phase and retry.");
+            }
             await actions.runAt(index);
         });
         else if (action === "view-row") invoke(() => actions.viewAt(Number(button.dataset.index)));

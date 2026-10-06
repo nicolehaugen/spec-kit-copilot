@@ -148,9 +148,17 @@ export function mount({ root, definition, state, actions }) {
             } else if (button.id === "run-phase") {
                 const input = $("#phase-args").value;
                 const phase = currentState.phases[currentState.current];
+                const workflow = currentState.workflow;
+                const index = currentState.current;
                 action = typeof actions.confirmRun === "function"
-                    ? Promise.resolve(actions.confirmRun(phase)).then((confirmed) =>
-                        confirmed === true ? actions.run(input) : undefined)
+                    ? Promise.resolve(actions.confirmRun(phase)).then((confirmed) => {
+                        if (confirmed !== true) return;
+                        if (currentState.workflow !== workflow || currentState.current !== index
+                            || currentState.phases[index]?.id !== phase.id) {
+                            throw new Error("Selected workflow or phase changed. Select the phase and retry.");
+                        }
+                        return actions.run(input);
+                    })
                     : actions.run(input);
             }
             else if (button.id === "view-artifact") action = actions.view();

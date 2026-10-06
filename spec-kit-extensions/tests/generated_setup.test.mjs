@@ -23,10 +23,12 @@ function harness(t, { init = false, installed = false, skill = false, configured
     t.after(async () => rm(await root, { recursive: true, force: true }));
     const calls = [], sent = [], events = [], approved = [];
     let installedNow = installed, cliNow = init, reloads = 0;
+    let beforeCommand = async () => {};
     const session = { send: async ({ prompt }) => { sent.push(prompt); return `message-${sent.length}`; },
         getEvents: async () => events, rpc: { skills: { reload: async () => { reloads++; return { errors: [] }; } } } };
     const command = async (exe, args, options) => {
         calls.push({ exe, args, options });
+        await beforeCommand(args);
         if (args[0] === "--version") {
             if (!cliNow) throw Object.assign(new Error("Missing"), { code: "ENOENT" });
             return { stdout: "specify 1.0.7\n" };
@@ -66,7 +68,8 @@ function harness(t, { init = false, installed = false, skill = false, configured
             saveApprovedSources: async (receipts) => { approved.push(...receipts); } });
     };
     return { setup, ready, complete, calls, sent, events, session, approved,
-        setInstalled: (value) => { installedNow = value; }, reloads: () => reloads };
+        setInstalled: (value) => { installedNow = value; }, reloads: () => reloads,
+        beforeCommand: (callback) => { beforeCommand = callback; } };
 }
 
 test("init precedes full pending dialog; cancel cannot dispatch installation", async (t) => {
@@ -116,6 +119,42 @@ test("confirmed batch verifies inventory, supports partial retry and reloads onl
     assert.ok(h.calls.every(({ options }) => options.timeout === 10000 && options.maxBuffer === 128 * 1024));
     assert.ok(h.calls.every(({ exe, options }) =>
         exe === (process.platform === "win32" ? "specify.exe" : "specify") && options.shell !== true));
+});
+
+test("concurrent completion checks share one stable confirmation plan", async (t) => {
+    const h = harness(t);
+    const setup = await h.setup();
+    await setup.start({});
+    await h.ready();
+    h.complete(1);
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let reads = 0;
+    h.session.getEvents = async () => { reads++; await gate; return h.events; };
+    const first = setup.status(), second = setup.status();
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(reads, 1);
+    assert.equal(a.stage, "awaiting-confirmation");
+    assert.equal(a.planId, b.planId);
+});
+
+test("cancelling during the confirmation probe prevents installation", async (t) => {
+    const h = harness(t, { init: true });
+    const setup = await h.setup();
+    const review = await setup.start({});
+    let entered, release;
+    const probing = new Promise((resolve) => { entered = resolve; });
+    const gate = new Promise((resolve) => { release = resolve; });
+    h.beforeCommand(async (args) => {
+        if (args[0] === "--version") { entered(); await gate; }
+    });
+    const confirming = setup.confirm({ planId: review.planId, confirmed: true });
+    await probing;
+    assert.equal((await setup.confirm({ planId: review.planId, confirmed: false })).stage, "cancelled");
+    release();
+    await assert.rejects(confirming, /Setup plan changed/);
+    assert.equal(h.sent.length, 0);
 });
 
 test("approved URL install reported as local needs a confirmed install receipt", async (t) => {
@@ -279,6 +318,17 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, true);
     assert.equal(phasePending, false);
+});
+
+test("setup activation errors unhide the status even after an idle render", async () => {
+    const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
+        import.meta.url), "utf8");
+    const messageCode = source.slice(source.indexOf("function message("), source.indexOf("function displayValue("));
+    const status = { hidden: true, textContent: "", classList: { toggle() {} } };
+    const context = { $: () => status };
+    runInNewContext(`${messageCode}\nmessage("Specify probe failed", "setup-status", true);`, context);
+    assert.equal(status.hidden, false);
+    assert.equal(status.textContent, "Specify probe failed");
 });
 
 test("phase dispatch is gated on readiness even when showSetup is false; legacy runs retain skill checks", async (t) => {

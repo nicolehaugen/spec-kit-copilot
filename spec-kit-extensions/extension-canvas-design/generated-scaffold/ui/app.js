@@ -425,6 +425,7 @@ function setConnectionStatus(status) {
 function message(text, id = "canvas-message", error = false) {
     $(id).textContent = text;
     $(id).classList.toggle("workflow-error", error);
+    if (id === "setup-status") $(id).hidden = false;
 }
 function displayValue(value) {
     return typeof value === "object" ? JSON.stringify(value) : String(value);

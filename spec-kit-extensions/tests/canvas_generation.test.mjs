@@ -165,6 +165,24 @@ async function fixture(t, selectedHandoff = handoff, selectedValues = values, ru
     return { project, workspace, prepared, sdk };
 }
 
+test("generation cannot omit the handoff runtime setup when Show setup is off", async (t) => {
+    const selectedHandoff = structuredClone(handoff);
+    selectedHandoff.workflow.runtimeSetup = { presets: [], extensions: [], bundles: [] };
+    selectedHandoff.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: selectedHandoff.workflow, selections: selectedHandoff.selections,
+    })).digest("hex");
+    const { project, workspace, prepared } = await fixture(t, selectedHandoff);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        selectedHandoff.handoffId, "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    delete request.runtimeSetup;
+    delete request.integrity;
+    request.integrity = createHash("sha256").update(JSON.stringify(request)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, selectedHandoff.handoffId,
+        prepared.requestId), /Runtime setup recipe differs/);
+});
+
 test("Specify inventories supply observed package versions and reject invalid responses", async () => {
     const lists = {
         preset: [{ id: "copilot-sub-agents", version: "1.2.3", priority: 4 }],

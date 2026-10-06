@@ -1086,7 +1086,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
         }
     }
     const config = configuration({ ...request, installed: request.actualInstalled ?? request.installed });
-    if (request.runtimeSetup && !isDeepStrictEqual(request.runtimeSetup, handoff.workflow.runtimeSetup)) {
+    if (!isDeepStrictEqual(request.runtimeSetup, handoff.workflow.runtimeSetup)) {
         throw new Error("Runtime setup recipe differs from the Wizard handoff");
     }
     if (config.showSetup && !request.runtimeSetup) {

@@ -15,6 +15,30 @@ const state = {
 const definition = { id: "workflow-phases", viewLabels: { plan: "Inspect Plan" } };
 
 for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
+    test(`${name} does not dispatch a confirmed selection after navigation`, async (t) => {
+        const dom = phaseControlDom();
+        const previousDocument = globalThis.document;
+        globalThis.document = dom.document;
+        t.after(() => { globalThis.document = previousDocument; });
+        const calls = [];
+        let confirm;
+        const decision = new Promise((resolve) => { confirm = resolve; });
+        const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt", "viewAt",
+            "startManagedRun", "stopManagedRun", "reveal", "error"]
+            .map((action) => [action, (...args) => { calls.push([action, ...args]); }]));
+        actions.confirmRun = () => decision;
+        const control = adapter.mount({ root: dom.root, definition, state, actions });
+        dom.root.dispatch("click", dom.root.querySelector(name === "stock" ? "#run-phase"
+            : '[data-action="start"]'));
+        control.update(name === "stock" ? { ...state, current: 1, output: phases[1].output }
+            : { ...state, workflow: "another-workflow" });
+        confirm(true);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.deepEqual(calls.map(([action]) => action), ["error"]);
+        assert.match(calls[0][1].message, /workflow or phase changed/);
+        control.dispose();
+    });
+
     test(`${name} preview disables phase execution and restores pending-turn retries after setup`, (t) => {
         const dom = phaseControlDom();
         const previousDocument = globalThis.document;

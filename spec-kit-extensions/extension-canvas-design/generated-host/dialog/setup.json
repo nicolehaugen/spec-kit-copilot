@@ -5,7 +5,7 @@
   "adapter": "generated-dialog-adapter",
   "title": "Install workflow packages?",
   "blocks": [
-    {"type": "paragraph", "text": "Review the packages and their frozen sources before installation."},
+    {"type": "paragraph", "text": "Review the packages and where they come from before installing."},
     {"type": "slot", "name": "pending-packages"}
   ],
   "buttons": {"cancel": "Cancel", "confirm": "Install packages"}

@@ -85,6 +85,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
     if (!validateRuntimeSetup(config.runtimeSetup)) throw new UserError("Invalid runtime setup recipe.");
     const recipe = normalized(config.runtimeSetup);
     let stage = "needs-setup", error = null, plan = null, turn = null, sending = false;
+    let advancing = null;
     let lastProbe = null;
     const cli = process.platform === "win32" ? "specify.exe" : "specify";
     const urlReceipt = (kind, item, found) => JSON.stringify([kind, item.installedId,
@@ -216,7 +217,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             }
         }
     }
-    async function advance() {
+    async function reconcileTurn() {
         if (!turn) return;
         const current = turn;
         if (now() - current.since > TIMEOUT_MS) {
@@ -258,6 +259,12 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             error = null;
         } catch (cause) { stage = "failed"; error = cause.message; }
         notify();
+    }
+    function advance() {
+        if (!advancing) {
+            advancing = reconcileTurn().finally(() => { advancing = null; });
+        }
+        return advancing;
     }
     async function status() {
         await advance();
@@ -319,16 +326,22 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
         return status();
     }
     async function confirm(input) {
+        const activePlan = () => {
+            if (stage !== "awaiting-confirmation" || !plan || input?.planId !== plan.planId) {
+                throw new UserError("Setup plan changed or is no longer awaiting confirmation. Refresh before confirming.", 409);
+            }
+        };
         if (!input || Object.keys(input).sort().join() !== "confirmed,planId"
-            || typeof input.confirmed !== "boolean" || typeof input.planId !== "string"
-            || stage !== "awaiting-confirmation" || !plan || input.planId !== plan.planId) {
-            throw new UserError("Setup plan changed or is no longer awaiting confirmation. Refresh before confirming.", 409);
+            || typeof input.confirmed !== "boolean" || typeof input.planId !== "string") {
+            throw new UserError("Invalid setup confirmation.", 400);
         }
+        activePlan();
         if (!input.confirmed) {
             plan = null; stage = "cancelled"; error = null; notify();
             return status();
         }
         const checked = await probe();
+        activePlan();
         if (!checked.cliReady || !checked.initialized || !checked.coreSkillReady) {
             plan = null; stage = "failed";
             throw new UserError("Specify setup changed before confirmation. Start setup again.", 409);
@@ -339,6 +352,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
         }
         const packages = plan.pending;
         await verifyLocalSources(packages);
+        activePlan();
         plan = null;
         const firstSkill = { bundles: "speckit-bundle", extensions: "speckit-extension", presets: "speckit-preset" }[packages[0].kind];
         return send(`/${firstSkill}\nInstall ONLY the following confirmed runtime package batch in this checkout. `
