@@ -354,6 +354,44 @@ test("failed mode restoration after saving Blocked state reports dispatch and re
     assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
 });
 
+test("an unapplied mode restoration cannot hide a session left in Autopilot", async (t) => {
+    const { runtime, session, diagnostics } = await setup(t);
+    session.send = async () => { throw new Error("Dispatch failed"); };
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => input.mode === "interactive"
+        ? { modeApplied: false } : setMode(input);
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+        assert.match(error.message, /Autopilot failed: Dispatch failed/);
+        assert.match(error.message, /Mode restoration also failed: Copilot did not restore the previous mode/);
+        assert.match(error.message, /Switch Copilot to interactive mode manually before retrying/);
+        return true;
+    });
+    assert.equal(session.mode, "autopilot");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    assert.ok(diagnostics.some((message) => /Could not restore the Copilot session mode/.test(message)));
+    session.rpc.mode.set = setMode;
+    session.mode = "interactive";
+    session.send = async () => "retry-message";
+    assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+});
+
+test("an unapplied restoration does not report failure when mode already changed", async (t) => {
+    const { runtime, session } = await setup(t);
+    session.send = async () => { throw new Error("Dispatch failed"); };
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode === "interactive") {
+            session.mode = "interactive";
+            return { modeApplied: false };
+        }
+        return setMode(input);
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"),
+        (error) => error.message === "Dispatch failed");
+    assert.equal(session.mode, "interactive");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+});
+
 test("a packaged adapter never executes on the server even with a frozen managed-run flag", async (t) => {
     const fixture = await setup(t);
     const { target, options } = fixture;

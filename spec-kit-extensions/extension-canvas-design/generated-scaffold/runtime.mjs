@@ -496,7 +496,12 @@ Steps:\n${instructions}` });
             }
             let restoreError;
             try {
-                if (modeChanged && !sent) await restoreMode({ previousMode });
+                if (modeChanged && !sent) {
+                    await restoreMode({ previousMode });
+                    if (await session.rpc.mode.get() === "autopilot") {
+                        throw new Error("Copilot did not restore the previous mode.");
+                    }
+                }
             } catch (failure) {
                 restoreError = failure;
             } finally {
