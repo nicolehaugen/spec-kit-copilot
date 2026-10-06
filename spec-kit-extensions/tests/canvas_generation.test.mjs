@@ -856,6 +856,31 @@ export function mount() {}`);
     assert.equal(readConfig().workflowPage.managedRun, true);
 });
 
+test("generation ignores fake capability exports in comments and template strings", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(requestPath, "utf8"));
+    for (const fake of [
+        "/*\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n*/",
+        "const example = `\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n`;",
+    ]) {
+        const request = structuredClone(original);
+        const bytes = Buffer.from(`export const controlId = "workflow-phases";
+export const contractVersion = 1;
+${fake}
+export function mount() {}`);
+        request.workflowPage.managedRun = true;
+        request.workflowPage.assets[2].content = bytes.toString("base64");
+        request.workflowPage.assets[2].hash = createHash("sha256").update(bytes).digest("hex");
+        const { integrity: _old, ...payload } = request;
+        request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(request));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Frozen phase control capabilities differ from its adapter/);
+    }
+});
+
 test("additional Workflow slots do not reorder the fixed shell", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",

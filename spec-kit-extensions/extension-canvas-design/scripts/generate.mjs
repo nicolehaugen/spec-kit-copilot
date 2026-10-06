@@ -288,7 +288,12 @@ function frozenWorkflowPage(page) {
     if (check.error || check.status !== 0) {
         throw new Error(`Invalid frozen phase control adapter: ${check.stderr || check.error || "module validation failed"}`);
     }
-    const declaration = module.match(/^\s*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;?/m);
+    const visibleSource = module.replace(
+        /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g,
+        (part) => part.replace(/[^\r\n]/g, " "));
+    const exportLocation = /^[ \t]*export\s+const\s+requiredCapabilities\b/m.exec(visibleSource);
+    const declaration = exportLocation && module.slice(exportLocation.index)
+        .match(/^[ \t]*export\s+const\s+requiredCapabilities\s*=\s*(\[[^\]]*\])\s*;?/);
     let capabilities = [];
     if (declaration) {
         const entries = declaration[1].slice(1, -1).trim().replace(/,\s*$/, "");
@@ -300,7 +305,7 @@ function frozenWorkflowPage(page) {
         if (new Set(capabilities).size !== capabilities.length) {
             throw new Error("Invalid frozen phase control capabilities");
         }
-    } else if (/\bexport\s+const\s+requiredCapabilities\b/.test(module)) {
+    } else if (exportLocation) {
         throw new Error("Invalid frozen phase control capabilities");
     }
     if (page.managedRun !== capabilities.includes("workflow.managed-run.v1")) {

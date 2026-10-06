@@ -393,6 +393,17 @@ export const contractVersion = 1;
   ];
 export function mount() {}`);
     assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun, true);
+    for (const fake of [
+        "/*\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n*/",
+        "const example = `\nexport const requiredCapabilities = ['workflow.managed-run.v1'];\n`;",
+    ]) {
+        await writeFile(adapterFile, `export const controlId = "workflow-phases";
+export const contractVersion = 1;
+${fake}
+export function mount() {}`);
+        assert.equal((await loadResolvedDesignerPages(handoff, project, entries, fields)).workflowPage.managedRun,
+            false);
+    }
     await writeFile(adapterFile, `export const controlId = "workflow-phases";
 export const contractVersion = 1;
 export const requiredCapabilities = getCapabilities();
