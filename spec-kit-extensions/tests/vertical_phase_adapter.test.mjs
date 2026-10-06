@@ -41,6 +41,17 @@ test("vertical phase adapter owns full navigation and card and dispatches the co
     assert.match(root.innerHTML, /Initial &lt;input&gt;/);
     assert.doesNotMatch(root.innerHTML, /<script>/);
     assert.match(root.innerHTML, /Other expected outputs: specs\/demo\/checklist.md/);
+    control.update({ ...initial, outputLinks: [
+        { template: "reports/<slug>/notes.md", label: "reports/demo/notes.md" },
+    ] });
+    assert.match(root.innerHTML, /data-action="output" data-output="reports\/&lt;slug&gt;\/notes.md"/);
+    assert.match(root.innerHTML, /reports\/demo\/notes.md/);
+    listeners.get("click")({ target: { closest: () => ({
+        disabled: false, dataset: { action: "output", output: "reports/<slug>/notes.md" },
+        hasAttribute: () => false,
+    }) } });
+    assert.deepEqual(calls.at(-1), ["view", "reports/<slug>/notes.md"]);
+    calls.length = 0;
 
     const click = (attributes, dataset = {}) => listeners.get("click")({
         target: { closest: () => ({

@@ -146,7 +146,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             throw error;
         }
     }
-    const roots = [...new Set(["specs", ...phases.flatMap((step) => step.outputs)
+    const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
+        ? [config.phaseOutputs?.[step.id]?.outputPath].filter(Boolean) : step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
     async function items(view = state) {
         const found = [];
@@ -167,8 +168,6 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (!path.endsWith(".md")) throw new UserError("Reported artifact must be Markdown.");
         if (step.configuredArtifacts && step.outputs.some((output) =>
             output.replace("<slug>", item.split("/").at(-1)) === path)) {
-            if (!step.project && step.outputs.some((output) => output.includes("<slug>") && output.replace("<slug>", item.split("/").at(-1)) === path)
-                && !path.startsWith(`${item}/`)) throw new UserError("This phase output belongs to a different workflow.");
             return;
         }
         if (step.project || (step.output && !step.output.includes("<"))) {
@@ -196,7 +195,9 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             const slug = selected?.slug ?? (item === "__new__" && config.userProvidesSlug && validSlug(view.slug) ? view.slug : null);
             if (!slug) return null;
             path = path.replace("<slug>", slug);
-            if (selected && !path.startsWith(`${selected.id}/`)) throw new UserError("This phase output belongs to a different workflow.");
+            if (selected && !step.configuredArtifacts && !path.startsWith(`${selected.id}/`)) {
+                throw new UserError("This phase output belongs to a different workflow.");
+            }
         }
         if (path.endsWith("<name>.md")) {
             const parent = posix.dirname(path);

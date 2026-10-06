@@ -91,6 +91,12 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
         modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, plan: { outputs: ["../outside.md"], view: "../outside.md" } },
     }), /Invalid outputs for phase plan/);
+    for (const path of [".GitHub/private.md", ".SPECIFY/templates/private.md"]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+            modelRevision: model.revision, revision: 2, values: {},
+            outputs: { ...outputs, plan: { outputs: [path], view: path } },
+        }), /Invalid outputs for phase plan/);
+    }
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
         modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, plan: { outputs: Array.from({ length: 101 },

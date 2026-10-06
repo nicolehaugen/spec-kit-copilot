@@ -75,7 +75,7 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         assert.deepEqual(calls[0], ["select", 1]);
         assert.deepEqual(calls[2], ["run", "run this"]);
         if (name === "stock") {
-            control.update({ ...state, otherOutputs: [
+            control.update({ ...state, otherOutputs: ["specs/demo/spec.md"], outputLinks: [
                 { template: "specs/<slug>/spec.md", label: "specs/demo/spec.md" },
             ] });
             const link = dom.root.querySelector("#phase-other-outputs").children

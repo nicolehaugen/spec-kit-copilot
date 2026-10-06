@@ -553,6 +553,8 @@ function phaseState(pendingLabel = () => null) {
             ? { ...status, artifactAvailability: "unknown", artifactError: null } : status,
         draft: selected ? drafts.get(draftKey(selected)) ?? model.drafts[draftKey(selected)] ?? "" : "",
         output: output ?? null, otherOutputs: selected
+            ? (selected.outputs ?? []).map((template) => resolveOutput(template)) : [],
+        outputLinks: selected
             ? (selected.outputs ?? []).map((template) => ({
                 template, label: resolveOutput(template),
             })) : [],

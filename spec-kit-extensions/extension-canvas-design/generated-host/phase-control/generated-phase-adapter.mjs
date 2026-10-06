@@ -101,12 +101,13 @@ export function mount({ root, state, actions }) {
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."));
         artifact.hidden = !artifact.textContent;
         const others = $("#phase-other-outputs");
+        const links = next.outputLinks ?? next.otherOutputs;
         others.replaceChildren();
-        if (next.otherOutputs.length) {
+        if (links.length) {
             const heading = document.createElement("strong");
             heading.textContent = "Outputs";
             others.append(heading);
-            for (const output of next.otherOutputs) {
+            for (const output of links) {
                 const button = document.createElement("button");
                 button.type = "button";
                 button.className = "phase-artifact-link";
@@ -115,7 +116,7 @@ export function mount({ root, state, actions }) {
                 others.append(button);
             }
         }
-        others.hidden = !next.otherOutputs.length;
+        others.hidden = !links.length;
         $("#run-phase").textContent = next.runLabel
             ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
         const notice = $("#phase-message");

@@ -46,7 +46,7 @@ export function validatePhaseOutputs(value, phases) {
             || !Array.isArray(entry.outputs) || entry.outputs.length > 100
             || entry.outputs.some((path) => typeof path !== "string"
                 || path.length > 1000 || !path.endsWith(".md")
-                || !/^(?!\.git(?:\/|$)|\.github(?:\/|$)|node_modules(?:\/|$)|\.speckit-canvas(?:\/|$)|\.speckit-wizard(?:\/|$)|\.specify\/(?:extensions|presets|templates)\/)[^\\\x00-\x1f\x7f]+$/.test(path)
+                || !/^(?!\.git(?:\/|$)|\.github(?:\/|$)|node_modules(?:\/|$)|\.speckit-canvas(?:\/|$)|\.speckit-wizard(?:\/|$)|\.specify\/(?:extensions|presets|templates)\/)[^\\\x00-\x1f\x7f]+$/i.test(path)
                 || path.split("/").some((part) => !part || part === "." || part === ".."
                     || /[. ]$/.test(part) || (part !== "<slug>" && /[<>:"|?*]/.test(part))
                     || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))

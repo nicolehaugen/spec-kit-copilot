@@ -180,6 +180,15 @@ test("Outputs page keeps pipeline artifacts fixed and restores the viewer defaul
         await expect(page.getByRole("radio", { name: "Open specs/<slug>/spec.md by default" })).toBeChecked();
         await page.getByRole("textbox", { name: "Artifact path" }).fill("draft.txt");
         await expect(page.getByRole("button", { name: "Add artifact" })).toBeDisabled();
+        await expect(page.locator("#artifact-path-error")).toContainText("Markdown");
+        for (const path of ["../outside.md", ".GitHub/private.md", "specs//bad.md",
+            "specs/<slug>/CON.md", "reports/<slug>/../bad.md"]) {
+            await page.getByRole("textbox", { name: "Artifact path" }).fill(path);
+            await expect(page.getByRole("button", { name: "Add artifact" })).toBeDisabled();
+            await expect(page.locator("#artifact-path-error")).toContainText("safe relative");
+        }
+        await expect(page.getByRole("textbox", { name: "Artifact path" }))
+            .toHaveAttribute("aria-describedby", "artifact-path-error artifact-path-hint");
         await page.getByRole("textbox", { name: "Artifact path" }).fill("specs/<slug>/design-notes.md");
         await page.getByRole("button", { name: "Add artifact" }).click();
         await expect(page.locator(".output-list").last().getByRole("button", { name: "Remove" })).toHaveCount(1);
@@ -206,6 +215,15 @@ test("Outputs page keeps pipeline artifacts fixed and restores the viewer defaul
         await expect(page.getByRole("radio", { name: "Open specs/<slug>/assessment.md by default" })).toBeChecked();
         await page.getByRole("button", { name: "Remove specs/<slug>/assessment.md" }).click();
         await expect(page.getByText("will not have a View artifact button", { exact: false })).toBeVisible();
+        for (const name of ["first", "second"]) {
+            await page.getByRole("textbox", { name: "Artifact path" }).fill(`specs/<slug>/${name}.md`);
+            await page.getByRole("button", { name: "Add artifact" }).click();
+        }
+        await page.getByRole("radio", { name: "Open specs/<slug>/first.md by default" }).check();
+        await page.getByRole("button", { name: "Remove specs/<slug>/first.md" }).click();
+        await expect(page.getByRole("radio", { name: "Open specs/<slug>/second.md by default" })).toBeChecked();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.getByText("Settings saved.")).toBeVisible();
     } finally {
         await shell.close();
     }

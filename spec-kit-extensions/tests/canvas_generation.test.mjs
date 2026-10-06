@@ -112,6 +112,32 @@ test("frozen Designer outputs become the generated viewer and link configuration
     await assert.rejects(runtime.artifact({ phase: "plan", itemId: "specs/demo" }),
         /No artifact is available/);
 });
+
+test("viewer-only roots do not create workflows and links resolve within the selected slug", async (t) => {
+    const { project, workspace } = await fixture(t);
+    const config = {
+        canvas: { id: "viewer-roots", displayName: "Viewer roots" },
+        phases: ["specify"], phaseOutputs: {
+            specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
+        },
+        phaseArtifacts: { specify: {
+            outputs: ["specs/<slug>/spec.md", "reports/<slug>/notes.md"],
+            view: "specs/<slug>/spec.md",
+        } },
+    };
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await mkdir(join(project, "reports", "demo"), { recursive: true });
+    await writeFile(join(project, "specs", "demo", "spec.md"), "# Spec");
+    await writeFile(join(project, "reports", "demo", "notes.md"), "# Notes");
+    const runtime = await createRuntime({ config, cwd: project, workspace,
+        session: { sessionId: "viewer-roots", on: () => () => {},
+            getEvents: async () => [], log: async () => {} } });
+    t.after(() => runtime.close());
+    const state = await runtime.snapshot();
+    assert.deepEqual(state.items.map(({ id }) => id), ["specs/demo"]);
+    assert.equal((await runtime.artifact({ phase: "specify", itemId: "specs/demo",
+        output: "reports/<slug>/notes.md" })).content, "# Notes");
+});
 const handoff = { handoffId: "handoff-1", sourceFingerprint: "",
     selections: { presets: [], extensions: [], bundles: [] },
     workflow: { selectedPhases: ["constitution", "specify", "plan"],

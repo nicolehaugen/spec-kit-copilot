@@ -76,7 +76,7 @@ export function mountOutputs({ root, page, phases, draftOutputs, pipelineOutputs
             remove.setAttribute("aria-label", `Remove ${path}`);
             remove.addEventListener("click", () => {
                 entry.outputs.splice(position, 1);
-                if (entry.view === path) entry.view = originalView;
+                if (entry.view === path) entry.view = originalView ?? entry.outputs[0] ?? null;
                 render();
                 onChange();
             });
@@ -120,14 +120,29 @@ export function mountOutputs({ root, page, phases, draftOutputs, pipelineOutputs
     add.type = "submit";
     const hint = element("p", "Adding an artifact here doesn’t create the file.", "settings-note");
     const inputError = element("p", undefined, "output-warning");
+    inputError.id = "artifact-path-error";
+    inputError.setAttribute("role", "alert");
+    input.setAttribute("aria-describedby", `${inputError.id} artifact-path-hint`);
+    hint.id = "artifact-path-hint";
     const validateInput = () => {
         const path = input.value.trim();
         const duplicate = entry.outputs.some((item) => item.toLowerCase() === path.toLowerCase());
-        add.disabled = !path.endsWith(".md") || duplicate || entry.outputs.length >= 100;
+        const segments = path.split("/");
+        const invalidPath = path && (path.length > 1000
+            || /^(?:\.git|\.github|node_modules|\.speckit-canvas|\.speckit-wizard)(?:\/|$)/i.test(path)
+            || /^\.specify\/(?:extensions|presets|templates)(?:\/|$)/i.test(path)
+            || /[\\\x00-\x1f\x7f]/.test(path)
+            || segments.some((part) => !part || part === "." || part === ".."
+                || /[. ]$/.test(part) || (part !== "<slug>" && /[<>:"|?*]/.test(part))
+                || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))
+            || segments.filter((part) => part === "<slug>").length > 1
+            || path.startsWith("<slug>/"));
+        add.disabled = !path.endsWith(".md") || duplicate || invalidPath || entry.outputs.length >= 100;
         inputError.textContent = entry.outputs.length >= 100
             ? "A phase can list at most 100 artifacts."
             : duplicate ? "This artifact is already listed."
-                : path && !path.endsWith(".md") ? "Enter a Markdown (.md) artifact path."
+                : invalidPath ? "Enter a safe relative artifact path."
+                    : path && !path.endsWith(".md") ? "Enter a Markdown (.md) artifact path."
                     : "";
         inputError.hidden = !inputError.textContent;
     };

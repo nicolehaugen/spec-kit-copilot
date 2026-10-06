@@ -149,7 +149,8 @@ The Outputs tab shows one phase at a time, except Constitution. Wizard-inferred
 pipeline artifacts cannot be edited or removed; users can add and remove separate
 Markdown artifact links and choose the View artifact default. Adding a link does
 not create the file or change what the pipeline produces. Removing a selected
-addition restores the phase's original viewer default. The generated phase card
+addition restores the phase's original viewer default, or selects the first
+remaining link when there is no original default. The generated phase card
 lists all links and opens the selected one; View artifact is hidden when a phase
 has none. Constitution always opens `.specify/memory/constitution.md` and cannot
 be changed in the Designer. Existing header Save persists the viewer selections
