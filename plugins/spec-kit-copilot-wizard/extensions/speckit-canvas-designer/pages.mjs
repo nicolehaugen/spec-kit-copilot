@@ -684,6 +684,21 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     if (phaseAdapters.length !== 1 || phaseAdapters[0].name !== phaseControls[0].document.adapter) {
         throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
     }
+    const adapterSource = phaseAdapters[0].document;
+    const declaration = adapterSource.match(/^export const requiredCapabilities = (\[[^\]\r\n]*\]);?\s*$/m);
+    let managedRun = false;
+    if (declaration) {
+        let capabilities;
+        try { capabilities = JSON.parse(declaration[1]); }
+        catch { throw new Error(`${phaseAdapters[0].name}: invalid requiredCapabilities declaration`); }
+        if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== "string")) {
+            throw new Error(`${phaseAdapters[0].name}: requiredCapabilities must be a literal string array`);
+        }
+        managedRun = capabilities.includes("workflow.managed-run.v1");
+    } else if (/\bexport\s+const\s+requiredCapabilities\b/.test(adapterSource)) {
+        throw new Error(`${phaseAdapters[0].name}: requiredCapabilities must be a literal string array`);
+    }
+    phaseAdapters[0].managedRun = managedRun;
     const sources = loaded.filter((entry) => entry.kind === "generated.value-definition");
     const addedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition");
     const fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement");
@@ -975,7 +990,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
-    model.workflowPage = { name: workflowPage.name, ...workflowPage.document };
+    model.workflowPage = { name: workflowPage.name, ...workflowPage.document,
+        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-adapter").managedRun };
     model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
         .map(({ name, sourceId, document }) =>
             ({ name, sourceId, ...document, control: placementControls.get(name) }))

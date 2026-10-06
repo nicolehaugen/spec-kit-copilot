@@ -219,7 +219,8 @@ export function readConfig() {
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.hash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.definitionHash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.controlHash)
-        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,order,phaseControl,slots,title"
+        || typeof config.workflowPage.managedRun !== "boolean"
+        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,managedRun,order,phaseControl,slots,title"
         || (config.generatedPages !== undefined
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length

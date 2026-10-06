@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -23,7 +23,7 @@ async function setup(t, vertical = true) {
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "SKILL.md"), `---\nname: speckit-${skill}\n---\n`);
     }
-    const sent = [], callbacks = new Map();
+    const sent = [], callbacks = new Map(), diagnostics = [];
     let events = [];
     const session = {
         sessionId: "test-session", rpc: { skills: { reload: async () => ({ errors: [] }) },
@@ -32,7 +32,7 @@ async function setup(t, vertical = true) {
         send: async (options) => { sent.push(options); return "message-1"; },
         abort: async () => { sent.push({ aborted: true }); },
         on: (name, listener) => { callbacks.set(name, listener); return () => callbacks.delete(name); },
-        getEvents: async () => events, log: async () => {},
+        getEvents: async () => events, log: async (message) => { diagnostics.push(message); },
     };
     const { createRuntime } = await import(pathToFileURL(join(target, "runtime.mjs")).href);
     const stateFile = join(root, "generated-canvases",
@@ -42,11 +42,11 @@ async function setup(t, vertical = true) {
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
             plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
         workflowPage: { adapter: "generated-phase-adapter",
-            hash: createHash("sha256").update(adapter).digest("hex") },
+            hash: createHash("sha256").update(adapter).digest("hex"), managedRun: vertical },
     }, cwd: project, workspace: root, session };
     let runtime = await createRuntime(options);
     t.after(() => runtime.close());
-    return { get runtime() { return runtime; }, project, sent, session,
+    return { get runtime() { return runtime; }, project, sent, session, diagnostics, stateFile, target, options,
         restart: async () => {
             runtime.close();
             runtime = await createRuntime(options);
@@ -244,6 +244,68 @@ test("an incomplete Copilot response blocks automatic progression and requires a
     await runtime.startAutopilot({ itemId: "__new__" }, "panel");
     assert.equal(sent.length, 2);
     assert.match(sent[1].prompt, /beginning with step 0/);
+});
+
+test("Autopilot remains stoppable while viewing another workflow without projecting its step progress", async (t) => {
+    const { runtime, project } = await setup(t);
+    await mkdir(join(project, "specs", "alpha"), { recursive: true });
+    await mkdir(join(project, "specs", "beta"), { recursive: true });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/alpha" });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/beta" });
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.autopilot.item, "specs/alpha");
+    assert.equal(snapshot.autopilot.status, "Running");
+    assert.equal(snapshot.statuses.specify.status, "Not run");
+    assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
+});
+
+test("switching a blocked run cannot capture transient Autopilot as the previous mode", async (t) => {
+    const { runtime, project, session, finish } = await setup(t);
+    await mkdir(join(project, "specs", "alpha"), { recursive: true });
+    await mkdir(join(project, "specs", "beta"), { recursive: true });
+    await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
+    assert.equal(await finish(false), "Blocked");
+    session.mode = "autopilot";
+    await assert.rejects(runtime.startAutopilot({ itemId: "specs/beta" }, "panel"),
+        /Stop the blocked Autopilot/);
+    await runtime.stopAutopilot({}, "panel");
+    assert.equal(session.mode, "interactive");
+    await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
+    assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+});
+
+test("failed error persistence cannot skip mode restoration or dispatch cleanup", async (t) => {
+    const fixture = await setup(t);
+    const { runtime, session, stateFile, diagnostics } = fixture;
+    const directory = join(stateFile, "..");
+    const backup = `${directory}-backup`;
+    session.send = async () => {
+        await rename(directory, backup);
+        await writeFile(directory, "blocked");
+        throw new Error("Dispatch failed");
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"),
+        /state could not be saved/);
+    assert.equal(session.mode, "interactive");
+    assert.ok(diagnostics.some((message) => /Could not persist the Autopilot dispatch outcome/.test(message)));
+    await rm(directory);
+    await rename(backup, directory);
+    session.send = async () => "retry-message";
+    assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+});
+
+test("a packaged adapter never executes on the server even with a frozen managed-run flag", async (t) => {
+    const fixture = await setup(t);
+    const { target, options } = fixture;
+    const file = join(target, "pages", "generated-phase-adapter.mjs");
+    const module = Buffer.concat([await readFile(file), Buffer.from("\nglobalThis.__serverAdapterExecuted = true;\n")]);
+    await writeFile(file, module);
+    options.config.workflowPage.hash = createHash("sha256").update(module).digest("hex");
+    const runtime = await fixture.restart();
+    await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    assert.equal(globalThis.__serverAdapterExecuted, undefined);
 });
 
 test("a missing required artifact blocks the step rather than advancing", async (t) => {

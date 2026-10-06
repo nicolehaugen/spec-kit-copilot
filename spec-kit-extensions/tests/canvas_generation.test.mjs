@@ -801,11 +801,15 @@ test("Workflow layout and phase control freeze, validate and package independent
     });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
         /Invalid frozen phase control definition/);
+    await rewrite((request) => { request.workflowPage.managedRun = true; });
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Frozen phase control capabilities differ from its adapter/);
     const replacement = await readFile(new URL(
         "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url));
     const presetPath = join(project, ".specify", "templates", "generated-phase-adapter.mjs");
     await writeFile(presetPath, replacement);
-    const presetModel = { ...model, templates: model.templates.map((entry) =>
+    const presetModel = { ...model, workflowPage: { ...model.workflowPage, managedRun: true },
+        templates: model.templates.map((entry) =>
         entry.name === "generated-phase-adapter"
             ? { ...entry, sourceId: "copilot-vertical-phase-control", hash: digest(replacement) }
             : entry) };
@@ -815,6 +819,7 @@ test("Workflow layout and phase control freeze, validate and package independent
     assert.deepEqual(await readFile(join(sdk, "pages", "generated-phase-adapter.mjs")), replacement);
     const { readConfig, renderHtml: renderPackaged } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     assert.equal(readConfig().workflowPage.hash, digest(replacement));
+    assert.equal(readConfig().workflowPage.managedRun, true);
     assert.equal(readConfig().workflowPage.phaseControl, "generated-phase-control");
     assert.deepEqual(await readdir(join(sdk, "pages")), [
         "generated-phase-adapter.mjs", "phase-control.json", "workflow.json",

@@ -238,8 +238,9 @@ const imageFile = (item) => `${item.page
 }[item.mime]}`;
 
 function frozenWorkflowPage(page) {
-    if (!page || Object.keys(page).sort().join() !== "assets,id,order,slots,title"
+    if (!page || Object.keys(page).sort().join() !== "assets,id,managedRun,order,slots,title"
         || page.id !== "workflow" || page.order !== 0
+        || typeof page.managedRun !== "boolean"
         || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
         || !Array.isArray(page.slots) || !page.slots.some((slot) => slot?.id === "workflow.phases")
         || page.slots.length > 30
@@ -287,10 +288,24 @@ function frozenWorkflowPage(page) {
     if (check.error || check.status !== 0) {
         throw new Error(`Invalid frozen phase control adapter: ${check.stderr || check.error || "module validation failed"}`);
     }
+    const declaration = module.match(/^export const requiredCapabilities = (\[[^\]\r\n]*\]);?\s*$/m);
+    let capabilities = [];
+    if (declaration) {
+        try { capabilities = JSON.parse(declaration[1]); }
+        catch { throw new Error("Invalid frozen phase control capabilities"); }
+        if (!Array.isArray(capabilities) || capabilities.some((value) => typeof value !== "string")) {
+            throw new Error("Invalid frozen phase control capabilities");
+        }
+    } else if (/\bexport\s+const\s+requiredCapabilities\b/.test(module)) {
+        throw new Error("Invalid frozen phase control capabilities");
+    }
+    if (page.managedRun !== capabilities.includes("workflow.managed-run.v1")) {
+        throw new Error("Frozen phase control capabilities differ from its adapter");
+    }
     return { title: page.title, order: page.order, slots: page.slots,
         phaseControl: page.assets[1].name,
         adapter: control.adapter, definitionHash: page.assets[0].hash,
-        controlHash: page.assets[1].hash, hash: page.assets[2].hash };
+        controlHash: page.assets[1].hash, hash: page.assets[2].hash, managedRun: page.managedRun };
 }
 
 function frozenPlacement(item, kind) {

@@ -25,6 +25,12 @@ the first unverified step, never replays a verified step, and restores the
 session mode from before the original run when it finishes. If every step
 was already verified, there is no step to retry; check chat for the outcome.
 An active Autopilot workflow cannot be deleted until it stops or finishes.
+Its Stop action remains visible when a different workflow is selected; phase
+progress on that workflow is not attributed to the active run. Stop a blocked
+run before switching workflows if the Copilot session is still in Autopilot mode.
+The managed-run capability is frozen from the validated adapter into generated
+configuration, and the server verifies the packaged adapter's hash without
+executing that browser module.
 
 This preset depends on the Copilot Canvas Design runtime and its Copilot
 session APIs. Its packaged adapter requires `workflow.rows.v1` and

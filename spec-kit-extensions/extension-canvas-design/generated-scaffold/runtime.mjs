@@ -329,7 +329,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
-        const automation = view.autopilot?.item === item
+        const automation = view.autopilot
             ? { ...view.autopilot, message: view.autopilot.error
                 ?? `${view.autopilot.status}: step ${Math.min(view.autopilot.current + 1, workflowSteps.length)} of ${workflowSteps.length}` }
             : null;
@@ -393,16 +393,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (result?.errors?.length) throw new UserError("Session skills could not reload. Check Copilot's skill diagnostics and retry.");
     }
     async function enabledAutopilot() {
+        if (!config.workflowPage.managedRun) {
+            throw new UserError("This phase control does not provide Autopilot.");
+        }
         const module = config.workflowPage.adapter;
         const bytes = await readBoundedBytes(fileURLToPath(new URL(".", import.meta.url)),
             `pages/${module}.mjs`, 128 * 1024);
         if (createHash("sha256").update(bytes).digest("hex") !== config.workflowPage.hash) {
             throw new UserError("Packaged phase control changed; restore the generated canvas files.");
-        }
-        const adapter = await import(new URL(`./pages/${module}.mjs`, import.meta.url));
-        if (!Array.isArray(adapter.requiredCapabilities)
-            || !adapter.requiredCapabilities.includes("workflow.managed-run.v1")) {
-            throw new UserError("This phase control does not provide Autopilot.");
         }
     }
     async function startAutopilot(input, instanceId) {
@@ -433,8 +431,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("All Autopilot steps were verified. Check chat for the final outcome; no step remains to retry.");
             }
             const start = resuming ? prior.current : 0;
-            id = randomUUID();
             const currentMode = await session.rpc.mode.get();
+            if (prior?.item !== input.itemId && prior?.status === "Blocked" && currentMode === "autopilot") {
+                throw new UserError("Stop the blocked Autopilot run before starting another workflow.");
+            }
+            id = randomUUID();
             previousMode = resuming ? prior.previousMode : currentMode;
             if (currentMode !== "autopilot") {
                 const changed = await session.rpc.mode.set({
@@ -480,19 +481,35 @@ Steps:\n${instructions}` });
             });
             return { ok: true, autopilotId: id };
         } catch (error) {
-            if (id) await update((next) => {
-                if (next.autopilot?.id === id) {
-                    next.autopilot.status = "Blocked";
-                    next.autopilot.error = sent
-                        ? "Autopilot was sent but tracking failed. Check chat before retrying."
-                        : error.message;
-                }
-            });
-            if (modeChanged && !sent) await restoreMode({ previousMode });
-            if (!sent) {
-                liveRuns.delete(id);
-                busy.value = false;
+            let persistenceError;
+            try {
+                if (id) await update((next) => {
+                    if (next.autopilot?.id === id) {
+                        next.autopilot.status = "Blocked";
+                        next.autopilot.error = sent
+                            ? "Autopilot was sent but tracking failed. Check chat before retrying."
+                            : error.message;
+                    }
+                });
+            } catch (failure) {
+                persistenceError = failure;
             }
+            let restoreError;
+            try {
+                if (modeChanged && !sent) await restoreMode({ previousMode });
+            } catch (failure) {
+                restoreError = failure;
+            } finally {
+                if (!sent) {
+                    liveRuns.delete(id);
+                    busy.value = false;
+                }
+            }
+            if (persistenceError) {
+                await diagnostic(`Could not persist the Autopilot dispatch outcome: ${persistenceError.message}`);
+                throw new UserError(`Autopilot failed and its state could not be saved: ${persistenceError.message}`, 500);
+            }
+            if (restoreError) throw restoreError;
             throw error;
         } finally { autopilotDispatching = false; }
     }
