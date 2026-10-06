@@ -330,6 +330,30 @@ test("failed persistence and mode restoration report both failures and manual re
     assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
 });
 
+test("failed mode restoration after saving Blocked state reports dispatch and recovery", async (t) => {
+    const { runtime, session, diagnostics } = await setup(t);
+    session.send = async () => { throw new Error("Dispatch failed"); };
+    const setMode = session.rpc.mode.set;
+    session.rpc.mode.set = async (input) => {
+        if (input.mode === "interactive") throw new Error("Mode service unavailable");
+        return setMode(input);
+    };
+    await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"), (error) => {
+        assert.match(error.message, /Autopilot failed: Dispatch failed/);
+        assert.match(error.message, /Mode restoration also failed: Mode service unavailable/);
+        assert.match(error.message, /Switch Copilot to interactive mode manually before retrying/);
+        return true;
+    });
+    assert.equal(session.mode, "autopilot");
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    assert.equal((await runtime.snapshot()).autopilot.error, "Dispatch failed");
+    assert.ok(diagnostics.some((message) => /Could not restore the Copilot session mode: Mode service unavailable/.test(message)));
+    session.rpc.mode.set = setMode;
+    session.mode = "interactive";
+    session.send = async () => "retry-message";
+    assert.ok((await runtime.startAutopilot({ itemId: "__new__" }, "panel")).autopilotId);
+});
+
 test("a packaged adapter never executes on the server even with a frozen managed-run flag", async (t) => {
     const fixture = await setup(t);
     const { target, options } = fixture;
