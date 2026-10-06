@@ -35,6 +35,8 @@ async function setup(t, vertical = true) {
         getEvents: async () => events, log: async () => {},
     };
     const { createRuntime } = await import(pathToFileURL(join(target, "runtime.mjs")).href);
+    const stateFile = join(root, "generated-canvases",
+        createHash("sha256").update(JSON.stringify([project, "test-autopilot"])).digest("hex"), "state.json");
     const options = { config: {
         canvas: { id: "test-autopilot" }, phases: ["specify", "plan"],
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
@@ -59,8 +61,12 @@ async function setup(t, vertical = true) {
             ];
             callbacks.get("session.idle")();
             for (let count = 0; count < 200; count++) {
-                const status = (await runtime.snapshot()).autopilot.status;
-                if (["Completed", "Blocked"].includes(status)) return status;
+                // A snapshot started before reconciliation can project its stale run as Blocked.
+                const saved = JSON.parse(await readFile(stateFile, "utf8"));
+                if (["Completed", "Blocked"].includes(saved.autopilot.status)) {
+                    assert.equal((await runtime.snapshot()).autopilot.status, saved.autopilot.status);
+                    return saved.autopilot.status;
+                }
                 await new Promise((resolve) => setTimeout(resolve, 25));
             }
             throw new Error("Autopilot completion was not reconciled");
