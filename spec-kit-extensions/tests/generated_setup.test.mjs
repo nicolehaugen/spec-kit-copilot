@@ -344,16 +344,17 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
         import.meta.url), "utf8");
     const setupCode = source.slice(source.indexOf("function renderSetup()"), source.indexOf("let phaseControl;"));
     const statusCode = source.slice(source.indexOf("function renderStatus()"), source.indexOf("function renderPhase()"));
-    const nodes = new Map(["setup-surface", "workflow-surface", "setup-status", "setup-actions", "run-phase", "phase-args",
+    const nodes = new Map(["setup-surface", "workflow-surface", "workflow-pipeline", "setup-status", "setup-actions", "run-phase", "phase-args",
         "phase-message"].map((id) => [id, { hidden: false, disabled: false, readOnly: false,
-        textContent: "", title: "", classList: { toggle() {} }, querySelector: () => null }]));
+        textContent: "", title: "", classList: { toggle() {} }, querySelector: () => null,
+        querySelectorAll: () => [] }]));
     let phasePending;
     const context = { model: { showSetup: true, setup: { stage: "needs-setup", ready: false,
         checks: { cli: "Ready", project: "Ready", packages: "1 to install" } } },
     setupBusy: false, activeSetupPlan: null, buttons: [], phaseControl: { update: (state) => {
         phasePending = state.setupPending;
     } }, phaseState: () => ({ setupPending: Boolean(context.model.showSetup && !context.model.setup?.ready) }),
-    constitution: () => null, renderName() {}, renderSlug() {},
+    constitution: () => null, hasSelectedWorkflow: () => false, renderName() {}, renderSlug() {},
     $: (id) => nodes.get(id), Map, Object, Boolean };
     runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);
     context.render();

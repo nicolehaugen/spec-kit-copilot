@@ -30,7 +30,6 @@ finished app does not depend on this extension at runtime.
 | `designer-essentials` | Essentials | Required Canvas ID and Title |
 | `designer-essentials-description` | Essentials slot | Optional Description |
 | `designer-essentials-workflow-heading` | Essentials slot | Optional Workflow header |
-| `designer-essentials-custom-slug` | Essentials slot | Optional Allow custom slug |
 | `designer-essentials-header-logo` | Appearance slot | Optional small header logo (existing template name retained) |
 | `designer-essentials-main-page-logo` | Appearance slot | Optional larger main-page logo (existing template name retained) |
 | `designer-appearance-light-accent` | Appearance slot | Optional light-mode accent hex |
@@ -71,15 +70,14 @@ generated presentation. Authors may set `"required": true` on a text field
 in a page or a field contribution to reject empty or whitespace-only values.
 The shared Designer adapter shows the field's syntax guidance; Generate verifies
 the constraint independently. Omitted `required` preserves optional text.
-Allow custom slug uses the stock-checkbox editor
-but only its boolean value is consumed by the generated shell; it does not
-need an empty generated visual adapter. A future Setup confirm checkbox can
-reuse this pattern without moving privileged setup into an adapter.
+The artifact folder name (slug) is collected in the generated workflow shell,
+not as a Designer setting. The optional Show setup checkbox uses the stock
+checkbox pattern; privileged setup stays in the generated host.
 The composed load-page command explicitly resolves stock contributions into
 `essentials.options` or `appearance.options` in their declared order. Omitting or replacing a stock contribution
 does not remove the required Canvas ID and Title. If absent, generated description
-defaults to `Spec Kit workflow canvas.`, heading to `Workflows`, and custom slug
-to off. Generate validates all enabled Designer pages, including custom fields;
+defaults to `Spec Kit workflow canvas.` and heading to `Workflows`.
+Generate validates all enabled Designer pages, including custom fields;
 an invalid page blocks generation until repaired.
 Appearance's independent Header logo and Main page logo controls accept PNG, JPEG, GIF,
 or WebP images up to 32 KiB each. Upload, preview, replace, and remove are
@@ -135,41 +133,41 @@ canvases are not updated. Result badges are deferred; generation does not
 configure or render them.
 
 The Workflow header names the collection with the description just below it.
-The generated canvas groups the New action in that header; a bounded, searchable
-workflow list is the selector. Project Constitution follows the workflow list
-when selected. Before any workflows exist, a bordered first-workflow row takes
-the list's place and starts a new workflow without leaving a detached status
-message.
-Each row offers a confirmed Delete action that permanently removes that
+The generated canvas keeps New workflow in the header and shows a bordered,
+searchable workflow list immediately, with "No workflows yet" inside the empty
+list. New adds a selected **Not started** row in the list, prefilled with
+**Workflow 1** and **workflow-1** (then Workflow 2/workflow-2, and so on). Its
+editable Workflow name comes before its required Artifact folder name (slug).
+The name labels the list row; the slug previews artifact output paths and names
+the directory where Specify will write them. No directory is created until
+Specify runs; its scripts may add a numeric prefix to the actual directory name.
+New stays available while editing, and Remove discards an unstarted row without
+deleting any directory. Pending rows and their phase drafts survive a reload.
+Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
 Deletion verifies the directory and its parent, moves it to a temporary
 location, and checks the moved directory's identity before removing it. If
 the parent changes during deletion, the moved directory is retained for manual
 recovery at the path shown in the error.
-An optional **Workflow name**
-appears just below it while creating a workflow; it labels the workflow in
-the canvas (falling back to the actual directory name when blank) and does not
-affect paths.
-Essentials' **Allow custom slug** setting is off by default. When enabled,
-an optional **Artifact directory slug** field sits beside Workflow name. Typing a slug
-updates View target to preview that folder; leaving it blank, or leaving
-the setting off, lets the installed Specify skill choose the directory name.
-The actual directory name, including any numeric prefix, binds artifacts.
-Project Constitution appears as a compact status row, expanding when setup
-needs action. On narrow screens, a phase chooser shows the current step and
-the next phase instead of a horizontally clipped step ribbon. Phase navigation
+A missing project Constitution must be created before running a
+workflow, with project principles required for first-time creation; an existing `.specify/memory/constitution.md` is recognized even if
+created outside the canvas, with View and Update actions. The compact project
+constitution follows the workflow list and applies to every workflow. The horizontal phase ribbon remains
+visible, scrolling on narrow screens, even before a new workflow is started;
+phase details appear when a row is selected. Phase navigation
 shows phase names without run states; the selected phase card retains its status.
 Dispatch success does not add a separate "Request sent" notice to the canvas.
-View artifact opens a full-page viewer with a return-to-canvas action and no
+View output opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
 The Outputs tab shows one phase at a time, except Constitution. Wizard-inferred
 pipeline artifacts cannot be edited or removed; users can add and remove separate
 Markdown artifact links and choose the View artifact default. Adding a link does
 not create the file or change what the pipeline produces. Removing a selected
 addition restores the phase's original viewer default, or selects the first
-remaining link when there is no original default. The generated phase card
-lists all links and opens the selected one; View artifact is hidden when a phase
-has none. Constitution always opens `.specify/memory/constitution.md` and cannot
+remaining link when there is no original default. The generated phase card shows the default output first and collapses additional
+links behind a count; View output is hidden when a phase has none. Running
+Specify creates the workflow. Constitution always
+opens `.specify/memory/constitution.md` and cannot
 be changed in the Designer. Existing header Save persists the viewer selections
 and additional links.
 

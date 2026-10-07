@@ -40,9 +40,6 @@ provides:
     - name: designer-essentials-workflow-heading
       file: designer-host/essentials-settings/workflow-heading.json
       description: Optional Essentials workflow heading.
-    - name: designer-essentials-custom-slug
-      file: designer-host/essentials-settings/custom-slug.json
-      description: Optional Essentials custom slug option.
     - name: designer-essentials-show-setup
       file: designer-host/essentials-settings/show-setup.json
       description: Default-off generated canvas setup view option.

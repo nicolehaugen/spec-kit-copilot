@@ -107,7 +107,6 @@ unregistered files are not loaded.
 
 - `designer-essentials-description` — `designer.setting-definition`, `replace`
 - `designer-essentials-workflow-heading` — `designer.setting-definition`, `replace`
-- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
 - `designer-essentials-show-setup` — `designer.setting-definition`, `replace`
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`

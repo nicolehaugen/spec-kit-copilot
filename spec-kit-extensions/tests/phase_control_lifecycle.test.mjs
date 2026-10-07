@@ -47,7 +47,8 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt", "viewAt",
             "startManagedRun", "stopManagedRun", "reveal", "error"].map((action) => [action, () => {}]));
         const control = adapter.mount({ root: dom.root, definition,
-            state: { ...state, setupPending: true }, actions });
+            state: { ...state, setupPending: true,
+                ...(name === "stock" ? { blocked: "Available after setup" } : {}) }, actions });
         const selector = name === "stock" ? "#run-phase" : '[data-action="start"]';
         const input = dom.root.querySelector(name === "stock" ? "#phase-args" : "[data-phase-draft]");
         assert.equal(dom.root.querySelector(selector).disabled, true);
@@ -55,7 +56,7 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         if (name === "vertical") assert.equal(dom.root.querySelector('[data-action="autopilot"]').disabled, true);
         assert.match(name === "stock" ? dom.root.querySelector("#phase-message").textContent
             : dom.root.innerHTML, /Available after setup/);
-        control.update({ ...state, setupPending: false, status: { status: "Running" } });
+        control.update({ ...state, setupPending: false, blocked: null, status: { status: "Running" } });
         assert.equal(dom.root.querySelector(selector).disabled, false);
         if (name === "vertical") assert.equal(dom.root.querySelector('[data-action="autopilot"]').disabled, false);
         control.dispose();
@@ -132,14 +133,38 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         assert.deepEqual(calls[0], ["select", 1]);
         assert.deepEqual(calls[2], name === "stock" ? ["run", "run this"] : ["runAt", 0]);
         if (name === "stock") {
+            assert.match(dom.root.innerHTML, />View output<\/button>/);
             control.update({ ...state, outputLinks: [
                 { template: "specs/<slug>/spec.md", label: "specs/demo/spec.md" },
+                { template: "specs/<slug>/research.md", label: "specs/demo/research.md" },
+                { template: "specs/<slug>/data-model.md", label: "specs/demo/data-model.md" },
             ] });
-            const link = dom.root.querySelector("#phase-other-outputs").children
-                .find((node) => node.tag === "button");
-            assert.equal(link.textContent, "specs/demo/spec.md");
+            assert.match(dom.root.innerHTML, /<dt>Output\(s\)<\/dt>.*DEFAULT:/);
+            const toggle = dom.root.querySelector("#phase-output-toggle");
+            const others = dom.root.querySelector("#phase-other-outputs");
+            assert.equal(toggle.textContent, "▸ +2 more");
+            assert.equal(toggle.attributes.get("aria-expanded"), "false");
+            assert.equal(others.hidden, true);
+            dom.root.dispatch("click", toggle);
+            assert.equal(toggle.textContent, "− hide outputs");
+            assert.equal(toggle.attributes.get("aria-expanded"), "true");
+            assert.equal(others.hidden, false);
+            assert.equal(others.children.length, 2);
+            const link = others.children[0].children[0];
+            assert.equal(link.children[0].textContent, "specs/demo/research.md");
             dom.root.dispatch("click", link);
-            assert.deepEqual(calls.at(-1), ["view", "specs/<slug>/spec.md"]);
+            assert.deepEqual(calls.at(-1), ["view", "specs/<slug>/research.md"]);
+            control.update({ ...state, outputLinks: [
+                { template: "specs/<slug>/spec.md", label: "specs/demo/spec.md" },
+                { template: "specs/<slug>/research.md", label: "specs/demo/research.md" },
+            ] });
+            assert.equal(dom.root.querySelector("#phase-other-outputs").hidden, false);
+            control.update({ ...state, workflow: "__new__", output: "specs/<slug>/spec.md",
+                slugEditable: true, blocked: "Enter an artifact folder name (slug)" });
+            assert.equal(dom.root.querySelector("#phase-output-prompt").hidden, false);
+            assert.equal(dom.root.querySelector("#browse-output-folder").hidden, true);
+            assert.equal(dom.root.querySelector("#phase-artifact-status").hidden, true);
+            assert.equal(dom.root.querySelector("#run-phase").disabled, true);
         }
         actions[name === "stock" ? "run" : "runAt"] = () => Promise.reject(new Error("run failed"));
         dom.root.dispatch("click", dom.root.querySelector(name === "stock" ? "#run-phase" : '[data-action="start"]'));
@@ -151,15 +176,21 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         assert.match(dom.root.innerHTML, /<h2>Plan<\/h2>/);
         assert.equal(dom.root.querySelector(name === "stock" ? "#view-artifact"
             : '[data-action="view-row"][data-index="1"]').textContent, "Inspect Plan");
+        if (name === "stock") {
+            assert.equal(dom.root.querySelector("#phase-output-toggle").hidden, true);
+            assert.equal(dom.root.querySelector("#phase-other-outputs").hidden, true);
+        }
         assert.equal(dom.root.querySelectorAll("[data-phase-index]")[1].hasAttribute("aria-current"), true);
         assert.equal(dom.root.querySelector(name === "stock" ? "#phase-args" : "[data-phase-draft]").value,
             "plan details");
         control.update({ ...state, current: 0 });
         assert.equal(dom.root.querySelector(name === "stock" ? "#view-artifact"
-            : '[data-action="view-row"][data-index="0"]').textContent, "View artifact");
+            : '[data-action="view-row"][data-index="0"]').textContent,
+        name === "stock" ? "View output" : "View artifact");
         control.update({ ...state, phases: [{ ...phases[0], id: "constructor" }, phases[1]] });
         assert.equal(dom.root.querySelector(name === "stock" ? "#view-artifact"
-            : '[data-action="view-row"][data-index="0"]').textContent, "View artifact");
+            : '[data-action="view-row"][data-index="0"]').textContent,
+        name === "stock" ? "View output" : "View artifact");
         control.dispose();
         const count = calls.length;
         dom.root.dispatch("input", input);

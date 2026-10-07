@@ -266,6 +266,34 @@ code, pre { font-family: var(--font-mono); }
 }
 .phase-facts dt { color: var(--text-color-muted); font-size: 12px; font-weight: 600; text-transform: uppercase; }
 .phase-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.phase-output-label { color: var(--text-color-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.05em; }
+.phase-output-toggle {
+    margin-left: 0.5rem;
+    padding: 1px 8px;
+    border: 1px solid var(--border-color-default);
+    border-radius: 999px;
+    background: var(--background-color-secondary);
+    color: var(--text-color-muted);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.phase-output-toggle:hover { color: var(--text-color-default); border-color: var(--accent-color); }
+.phase-output-toggle:focus-visible { outline: 2px solid var(--focus-outline-color, var(--accent-color)); outline-offset: 2px; }
+.phase-output-list {
+    display: grid;
+    gap: 0.25rem;
+    margin-left: 0.5rem;
+    padding-left: calc(100px + 1rem);
+    border-left: 1px solid var(--border-color-default);
+}
+.phase-output-list[hidden] { display: none; }
+.phase-output-row { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+    .phase-output-list { padding-left: 0.75rem; }
+}
 .phase-artifact-link {
     display: inline-flex;
     align-items: center;
@@ -322,10 +350,13 @@ code, pre { font-family: var(--font-mono); }
 .generated-image { display: block; max-width: 100%; height: auto; object-fit: contain; }
 .instance-collection-head h2 { margin: 0; font-size: 18px; min-width: 0; overflow-wrap: anywhere; }
 .instance-collection-head .btn { flex-shrink: 0; }
-.workflow-identity-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 1rem; }
+.workflow-identity-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; width: 100%; padding: 0 1rem 1rem; }
 .workflow-identity-fields[hidden] { display: none; }
 .workflow-identity-fields .field { align-content: start; }
 .workflow-identity-fields .field > .muted { font-size: 12px; }
+.workflow-identity-fields .field > .workflow-error { font-size: 12px; }
+.workflow-identity-fields input[aria-invalid="true"] { border-color: var(--danger-color); }
+#workflow-empty { margin: 0; padding: 1rem; color: var(--text-color-muted); }
 .collection-description { margin: 0; overflow-wrap: anywhere; }
 .collection-folder { justify-self: start; max-width: 100%; text-align: left; overflow-wrap: anywhere; }
 .collection-summary { display: flex; flex-wrap: wrap; gap: 0.5rem; }
@@ -350,6 +381,7 @@ code, pre { font-family: var(--font-mono); }
 }
 .instance-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: stretch;
     min-width: 0;
     color: var(--text-color-default);
@@ -358,6 +390,7 @@ code, pre { font-family: var(--font-mono); }
 .instance-row:last-child { border-bottom: 0; }
 .instance-row[hidden] { display: none; }
 .instance-row.active { background: color-mix(in srgb, var(--accent-color) 10%, var(--background-color-elevated)); }
+.instance-row.pending .instance-select { min-height: 64px; }
 .instance-select {
     display: flex;
     align-items: center;
@@ -399,6 +432,7 @@ code, pre { font-family: var(--font-mono); }
 }
 .instance-select .phase-notice { margin-left: auto; flex-shrink: 0; }
 @media (max-width: 640px) {
+    .workflow-identity-fields { grid-template-columns: minmax(0, 1fr); }
     .instance-select { flex-wrap: wrap; gap: 0.25rem 0.75rem; }
     .instance-select-main { flex-basis: 100%; }
     .instance-select .phase-notice { margin-left: 0; max-width: 100%; flex-shrink: 1; }
@@ -512,6 +546,7 @@ code, pre { font-family: var(--font-mono); }
     gap: 1.25rem;
 }
 #workflow-pipeline { display: grid; gap: 1.25rem; min-width: 0; }
+.workflow-pipeline-idle #phase-card { display: none; }
 .workflow-surface .workflow-header {
     display: flex;
     align-items: center;
@@ -582,11 +617,11 @@ code, pre { font-family: var(--font-mono); }
     overflow-wrap: anywhere;
 }
 .constitution-card[hidden] { display: none; }
-.constitution-card summary { display: flex; align-items: center; gap: 0.75rem; cursor: pointer; list-style: none; }
-.constitution-card summary::-webkit-details-marker { display: none; }
-.constitution-card summary::after { content: "▾"; margin-left: auto; color: var(--text-color-muted); }
-.constitution-card:not([open]) summary::after { content: "▸"; }
-.constitution-card summary .muted { font-size: 12px; }
+.constitution-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.constitution-summary .muted { font-size: 12px; }
+.constitution-ready .constitution-details { display: none; }
+.constitution-ready { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+.constitution-ready .constitution-actions { margin-left: auto; }
 .constitution-details { display: grid; gap: 0.5rem; padding-top: 0.75rem; }
 .constitution-details p { margin: 0; }
 .constitution-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -597,9 +632,5 @@ code, pre { font-family: var(--font-mono); }
     .instance-collection-head { align-items: stretch; flex-direction: column; }
     .collection-logo { width: 56px; height: 56px; }
     .instance-collection-head .btn, .instance-select, .phase-actions .btn { min-height: 44px; }
-    .phase-navigation .stepper { display: none; }
-    .phase-mobile-nav { display: grid; gap: 0.25rem; padding: 0.75rem 1rem; border: 1px solid var(--border-color-default); border-radius: var(--radius-md); background: var(--background-color-elevated); }
-    .phase-mobile-nav select { width: 100%; min-height: 44px; padding: 0.5rem; border: 1px solid var(--border-color-default); border-radius: var(--radius-sm); color: var(--text-color-default); background: var(--background-color-elevated); }
-    .phase-mobile-nav .muted { font-size: 12px; }
     .phase-actions-left .btn, .phase-actions-right .btn { max-width: 100%; overflow-wrap: anywhere; }
 }
