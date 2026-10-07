@@ -718,6 +718,7 @@ function renderCollection() {
         }
         if (badge) { badge.textContent = entry.status ?? "Not started"; badge.hidden = !entry.pending; }
         const remove = row.querySelector(".instance-delete");
+        remove.hidden = entry.id === "__new__";
         remove.textContent = entry.pending ? "Remove" : "Delete";
         remove.setAttribute("aria-label", `${remove.textContent} ${entry.label}`);
     }
@@ -1007,6 +1008,7 @@ document.addEventListener("click", (event) => {
             await api("/api/workflow/new", { revision: model.revision });
             workflowQuery = "";
             slugTouched = false;
+            current = 0;
             await refresh();
             $("workflow-name")?.focus();
         }

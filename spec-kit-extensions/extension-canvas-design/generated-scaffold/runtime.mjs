@@ -378,8 +378,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 status: run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
                     ? "Unconfirmed" : run?.status ?? "Not started" };
         });
-        const legacyDraft = item === "__new__" && (view.name || view.slug)
-            ? [{ id: "__new__", slug: view.slug, label: view.name || view.slug, pending: true }] : [];
+        const legacyDraft = item === "__new__" && (view.name || view.slug
+            || Object.keys(view.drafts).some((key) => key.startsWith('["__new__",')))
+            ? [{ id: "__new__", slug: view.slug,
+                label: view.name?.trim() || view.slug || "Unstarted workflow", pending: true }] : [];
         return { ...view, userProvidesSlug: true,
             constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
             autopilot: automation,
@@ -487,6 +489,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("Stop Autopilot before removing this workflow.");
             }
             next.pendingWorkflows.splice(index, 1);
+            next.runs = next.runs.filter((run) => run.item !== input.itemId);
             for (const key of Object.keys(next.drafts)) {
                 if (key.startsWith(`[${JSON.stringify(input.itemId)},`)) delete next.drafts[key];
             }

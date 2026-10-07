@@ -60,7 +60,7 @@ async function setup(t, vertical = true) {
                 { type: "session.task_complete", data: { success, summary: "Finished" } },
             ];
             callbacks.get("session.idle")();
-            for (let count = 0; count < 200; count++) {
+            for (let count = 0; count < 600; count++) {
                 // A snapshot started before reconciliation can project its stale run as Blocked.
                 const saved = JSON.parse(await readFile(stateFile, "utf8"));
                 if (["Completed", "Blocked"].includes(saved.autopilot.status)) {
@@ -73,9 +73,15 @@ async function setup(t, vertical = true) {
         } };
 }
 
+async function startNewAutopilot(runtime) {
+    const { id } = await runtime.createPending({ revision: (await runtime.snapshot()).revision });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, slug: "demo" });
+    return { ...await runtime.startAutopilot({ itemId: id }, "panel"), itemId: id };
+}
+
 test("vertical Autopilot starts first, verifies each artifact and refuses skipped or repeated steps", async (t) => {
     const { runtime, project, sent, session, finish } = await setup(t);
-    const { autopilotId } = await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    const { autopilotId } = await startNewAutopilot(runtime);
     assert.equal(sent[0].agentMode, "autopilot");
     assert.match(sent[0].prompt, /beginning with step 0/);
     await assert.rejects(runtime.reportAutopilotStep(
@@ -221,7 +227,7 @@ test("restart after the last verified step does not replay it", async (t) => {
 
 test("Autopilot can be stopped without an automatic replay and stock adapters cannot opt in", async (t) => {
     const { runtime, sent } = await setup(t);
-    const { autopilotId } = await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    const { autopilotId } = await startNewAutopilot(runtime);
     await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
     assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
     assert.deepEqual(sent.at(-1), { aborted: true });
@@ -235,20 +241,20 @@ test("Autopilot can be stopped without an automatic replay and stock adapters ca
 
 test("an incomplete Copilot response blocks automatic progression and requires an explicit restart", async (t) => {
     const { runtime, sent, finish } = await setup(t);
-    const { autopilotId } = await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    const { autopilotId, itemId } = await startNewAutopilot(runtime);
     await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
     assert.equal(await finish(false), "Blocked");
     await assert.rejects(runtime.reportAutopilotStep(
         { autopilotId, phase: "plan", action: "start" }, "panel"), /inactive/);
     assert.equal(sent.length, 1);
-    await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    await runtime.startAutopilot({ itemId }, "panel");
     assert.equal(sent.length, 2);
     assert.match(sent[1].prompt, /beginning with step 0/);
 });
 
 test("a missing required artifact blocks the step rather than advancing", async (t) => {
     const { runtime, project } = await setup(t);
-    const { autopilotId } = await runtime.startAutopilot({ itemId: "__new__" }, "panel");
+    const { autopilotId } = await startNewAutopilot(runtime);
     const { phaseRunId } = await runtime.reportAutopilotStep(
         { autopilotId, phase: "specify", action: "start" }, "panel");
     await mkdir(join(project, "specs", "demo"), { recursive: true });

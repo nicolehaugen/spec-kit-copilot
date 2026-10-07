@@ -683,6 +683,9 @@ test("a failed pending run cannot discard an unreported directory", async () => 
         await rm(folder, { recursive: true });
         await canvas.runtime.removePending({ itemId: pending.id, revision: failed.revision });
         expect((await canvas.runtime.snapshot()).items).toHaveLength(0);
+        const stateFile = join(canvas.root, "generated-canvases",
+            digest(JSON.stringify([canvas.root, "sample-canvas"])), "state.json");
+        expect(JSON.parse(await readFile(stateFile, "utf8")).runs).toEqual([]);
     } finally {
         await canvas.close();
     }
@@ -800,6 +803,21 @@ test("legacy disabled slug option still generates a required, previewable slug f
     }
 });
 
+test("a blank legacy workflow with a saved draft remains selectable", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await canvas.runtime.save({ revision: 0,
+            draft: { item: "__new__", phase: "specify", value: "Saved guidance" } });
+        await page.goto(canvas.url);
+        await expect(page.locator('[data-workflow-id="__new__"].instance-select'))
+            .toContainText("Unstarted workflow");
+        await expect(page.getByRole("button", { name: "Remove Unstarted workflow" })).toBeHidden();
+        await expect(page.locator("#phase-args")).toHaveValue("Saved guidance");
+    } finally {
+        await canvas.close();
+    }
+});
+
 test("empty bordered list adds and removes numbered pending workflow rows", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
@@ -829,6 +847,23 @@ test("empty bordered list adds and removes numbered pending workflow rows", asyn
         await page.locator("#refresh-state").click();
         await expect(page.locator("#workflow-empty")).toBeHidden();
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("New workflow returns to Specify after selecting a later phase", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
+        await page.goto(canvas.url);
+        await page.getByRole("button", { name: "existing", exact: true }).click();
+        await page.locator('[data-phase-index="1"]').click();
+        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
+        await page.locator("#new-workflow").click();
+        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
+        await expect(page.locator('[data-phase-index="0"]')).toHaveAttribute("aria-current", "step");
+        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
     } finally {
         await canvas.close();
     }
