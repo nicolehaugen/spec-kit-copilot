@@ -417,11 +417,13 @@ function frozenDialogs(request, workflowLayout, phases) {
     }
     const bindings = phaseDialogBindings.map((item) => {
         const doc = frozenNamedAsset(item, ["generated.phase-dialog-binding"], item.id);
+        const dialog = dialogDefinitions.find((entry) => entry.id === doc.dialog);
         if (Object.keys(doc).sort().join() !== "dialog,hash,id,phase"
             || !/^speckit\.[a-z][a-z0-9.-]{0,79}$/.test(doc.phase)
             || doc.phase === "speckit.constitution"
             || !phases.some((phase) => `speckit.${phase.replace(/^speckit\./, "")}` === doc.phase)
-            || !dialogs.some((dialog) => dialog.id === doc.dialog)) {
+            || !dialog || dialog.blocks.some((block) =>
+                block.type === "slot" && block.name !== "phase")) {
             throw new Error(`Invalid phase dialog binding ${doc.id}`);
         }
         return doc;
@@ -431,6 +433,8 @@ function frozenDialogs(request, workflowLayout, phases) {
     }
     const buttons = buttonPlacements.map((item) => {
         const doc = frozenNamedAsset(item, ["generated.button-placement"], item.id);
+        const dialog = dialogDefinitions.find((entry) => entry.id === doc.dialog);
+        const slots = dialog?.blocks.filter((block) => block.type === "slot").map((block) => block.name);
         if (Object.keys(doc).sort().join() !== "action,control,dialog,hash,id,label,order,page,presentation,slot"
             || !identifier.test(doc.id) || !["setup", "workflow"].includes(doc.page)
             || doc.slot !== `${doc.page}.actions`
@@ -441,7 +445,8 @@ function frozenDialogs(request, workflowLayout, phases) {
             || doc.action.type !== (doc.id === "generated-setup-button" ? "project.setup" : "dialog.result")
             || (doc.id === "generated-setup-button") !== (doc.page === "setup")
             || doc.page === "workflow" && !workflowLayout.slots.some((slot) => slot.id === doc.slot)
-            || !dialogs.some((dialog) => dialog.id === doc.dialog)) {
+            || !dialog || doc.page === "setup" && (slots.length !== 1 || slots[0] !== "pending-packages")
+            || doc.page === "workflow" && slots.length !== 0) {
             throw new Error(`Invalid frozen button placement ${doc.id}`);
         }
         return doc;
@@ -478,11 +483,6 @@ function frozenDialogs(request, workflowLayout, phases) {
         || buttons.length && !controls.some((control) => control.id === "project.setup-button")
         || controls.some((control) => !buttons.some((button) => button.control === control.id))) {
         throw new Error("Missing or conflicting button controls");
-    }
-    if (buttons.some((button) => button.page === "setup" && !dialogDefinitions
-        .find((dialog) => dialog.id === button.dialog)?.blocks
-        .some((block) => block.type === "slot" && block.name === "pending-packages"))) {
-        throw new Error("Setup dialog must show the full pending inventory");
     }
     return { dialogs, bindings, buttons, controls };
 }

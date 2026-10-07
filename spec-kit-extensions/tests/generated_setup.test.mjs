@@ -240,7 +240,8 @@ test("nested frozen recipe preserves catalog aliases and rejects changed local m
         { ...nested.presets[0], locator: { ...nested.presets[0].locator, path: "relative" } }] }), false);
     await mkdir(local);
     await writeFile(join(local, "preset.yml"),
-        "schema_version: \"1.0\"\npreset:\n  id: real-preset\n  version: 1.0.0\n");
+        "schema_version: \"1.0\"\npreset: # approved source\n    id: real-preset\n"
+        + "    version: \"1.0.0\" # unchanged\n    requires:\n        id: unrelated\n");
     await mkdir(join(cwd, ".specify"));
     await mkdir(join(cwd, ".github", "skills", phase.skill), { recursive: true });
     await writeFile(join(cwd, ".github", "skills", phase.skill, "SKILL.md"),
@@ -254,7 +255,8 @@ test("nested frozen recipe preserves catalog aliases and rejects changed local m
     assert.equal(review.stage, "awaiting-confirmation");
     assert.equal(review.pending.at(-1).source, "copilot");
     await writeFile(join(local, "preset.yml"),
-        "schema_version: \"1.0\"\npreset:\n  id: other-preset\n  version: 1.0.0\n");
+        "schema_version: \"1.0\"\npreset:\n    id: other-preset\n"
+        + "    version: \"1.0.0\" # unchanged\n");
     await assert.rejects(setup.confirm({ planId: review.planId, confirmed: true }),
         /Frozen local presets real-preset is unavailable or changed/);
     assert.deepEqual(sent, []);
@@ -266,7 +268,8 @@ test("frozen local extension reads its nested manifest identity", async (t) => {
     const local = join(cwd, "approved-extension");
     await mkdir(local);
     await writeFile(join(local, "extension.yml"),
-        "schema_version: \"1.0\"\nextension:\n  id: extension-one\n  version: \"3.0.0\"\nrequires:\n  id: unrelated\n  version: \"9.9.9\"\n");
+        "schema_version: \"1.0\"\nextension:\n    id: extension-one # installed ID\n"
+        + "    version: '3.0.0' # unchanged\nrequires:\n  id: unrelated\n  version: \"9.9.9\"\n");
     await mkdir(join(cwd, ".specify"));
     await mkdir(join(cwd, ".github", "skills", phase.skill), { recursive: true });
     await writeFile(join(cwd, ".github", "skills", phase.skill, "SKILL.md"),
@@ -277,7 +280,13 @@ test("frozen local extension reads its nested manifest identity", async (t) => {
     } }, session: { send: async () => "message" }, command: async (_exe, args) => ({
         stdout: args[0] === "--version" ? "specify 1.0.7" : "[]",
     }) });
-    assert.equal((await setup.start({})).stage, "awaiting-confirmation");
+    const review = await setup.start({});
+    assert.equal(review.stage, "awaiting-confirmation");
+    await writeFile(join(local, "extension.yml"),
+        "schema_version: \"1.0\"\nextension:\n    id: extension-one\n"
+        + "    version: '4.0.0' # changed\nrequires:\n  version: \"3.0.0\"\n");
+    await assert.rejects(setup.confirm({ planId: review.planId, confirmed: true }),
+        /Frozen local extensions extension-one is unavailable or changed/);
 });
 
 test("setup card keeps the workflow visible while gating phase runs until ready", async () => {

@@ -331,15 +331,31 @@ test("Generate freezes winning dialog and button assets with their registrations
             ? "extension:extension-canvas-design" : "preset:copilot-dialog-buttons-test",
         strategy: "replace" });
     }
-    const model = await loadResolvedDesignerPages(handoff, project, entries, templates,
-        (root, name) => {
-            const template = templates.find((item) => item.name === name);
-            return { kind: "template", stack: [{ active: true,
-                sourceId: template.sourceId.startsWith("extension:")
-                    ? template.sourceId.slice("extension:".length) : template.sourceId,
-                layer: template.sourceId.startsWith("extension:") ? "extension" : "preset",
-                strategy: "replace" }] };
-        });
+    const sourceFor = (_root, name) => {
+        const template = templates.find((item) => item.name === name);
+        return { kind: "template", stack: [{ active: true,
+            sourceId: template.sourceId.startsWith("extension:")
+                ? template.sourceId.slice("extension:".length) : template.sourceId,
+            layer: template.sourceId.startsWith("extension:") ? "extension" : "preset",
+            strategy: "replace" }] };
+    };
+    const model = await loadResolvedDesignerPages(handoff, project, entries, templates, sourceFor);
+    for (const [name, change, expected] of [
+        ["canvas-implement-dialog-test", (doc) => ({ ...doc, dialog: "generated-setup-dialog" }),
+            /phase dialog cannot use package slots/],
+        ["canvas-workflow-button-test", (doc) => ({ ...doc, dialog: "canvas-dialog-buttons-test" }),
+            /Workflow dialog cannot use dynamic slots/],
+        ["generated-setup-dialog", (doc) => ({ ...doc, blocks: [
+            ...doc.blocks, { type: "slot", name: "phase" },
+        ] }), /setup dialog requires only the pending packages slot/],
+    ]) {
+        const entry = templates.find((item) => item.name === name);
+        const original = await readFile(entry.path);
+        await writeFile(entry.path, JSON.stringify(change(JSON.parse(original))));
+        await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates,
+            sourceFor), expected);
+        await writeFile(entry.path, original);
+    }
     const values = { ...model.values, "canvas.id": "dialog-canvas",
         "canvas.displayName": "Dialog canvas", "setup.show": true };
     const frozen = await freezeGeneration({ model, values, handoff, project, workspace });
@@ -375,6 +391,34 @@ test("Generate freezes winning dialog and button assets with their registrations
     }
     const { materialize } = await import(new URL(
         "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", frozen.requestId, "request.json");
+    for (const [kind, name, update, expected] of [
+        ["phaseDialogBindings", "canvas-implement-dialog-test",
+            { dialog: "generated-setup-dialog" }, /Invalid phase dialog binding/],
+        ["buttonPlacements", "canvas-workflow-button-test",
+            { dialog: "canvas-dialog-buttons-test" }, /Invalid frozen button placement/],
+        ["dialogDefinitions", "generated-setup-dialog",
+            { blocks: [...request.dialogDefinitions.find((item) =>
+                item.name === "generated-setup-dialog").blocks,
+                { type: "slot", name: "phase" }] }, /Invalid frozen button placement/],
+    ]) {
+        const altered = structuredClone(request);
+        const entry = altered[kind].find((item) => item.name === name);
+        const asset = entry.assets[0];
+        const definition = JSON.parse(Buffer.from(asset.content, "base64").toString("utf8"));
+        Object.assign(definition, update);
+        Object.assign(entry, update);
+        const bytes = Buffer.from(JSON.stringify(definition));
+        asset.content = bytes.toString("base64");
+        asset.hash = createHash("sha256").update(bytes).digest("hex");
+        delete altered.integrity;
+        altered.integrity = createHash("sha256").update(JSON.stringify(altered)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(altered));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, frozen.requestId),
+            expected);
+    }
+    await writeFile(requestPath, JSON.stringify(request));
     await materialize(project, workspace, handoff.handoffId, frozen.requestId);
     const config = JSON.parse(await readFile(join(project, frozen.target, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.runtimeSetup, request.runtimeSetup);

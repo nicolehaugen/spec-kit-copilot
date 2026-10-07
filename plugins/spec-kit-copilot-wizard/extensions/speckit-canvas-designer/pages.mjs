@@ -824,8 +824,13 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${binding.name}: duplicate phase dialog binding ${binding.document.phase}`);
         }
         boundPhases.add(binding.document.phase);
-        if (!dialogs.some((dialog) => dialog.name === binding.document.dialog)) {
+        const dialog = dialogs.find((entry) => entry.name === binding.document.dialog);
+        if (!dialog) {
             throw new Error(`${binding.name}: missing registered dialog ${binding.document.dialog}`);
+        }
+        if (dialog.document.blocks.some((block) =>
+            block.type === "slot" && block.name !== "phase")) {
+            throw new Error(`${binding.name}: phase dialog cannot use package slots`);
         }
     }
     const buttons = loaded.filter((entry) => entry.kind === "generated.button-placement");
@@ -855,9 +860,13 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (!resolvedDialog) {
             throw new Error(`${button.name}: missing registered dialog ${dialog}`);
         }
-        if (page === "setup" && !resolvedDialog.document.blocks.some((entry) =>
-            entry.type === "slot" && entry.name === "pending-packages")) {
-            throw new Error(`${button.name}: setup dialog must show all pending packages`);
+        const slots = resolvedDialog.document.blocks.filter((entry) => entry.type === "slot")
+            .map((entry) => entry.name);
+        if (page === "setup" && (slots.length !== 1 || slots[0] !== "pending-packages")) {
+            throw new Error(`${button.name}: setup dialog requires only the pending packages slot`);
+        }
+        if (page === "workflow" && slots.length) {
+            throw new Error(`${button.name}: Workflow dialog cannot use dynamic slots`);
         }
         const key = `${page}:${slot}:${order}`;
         if (occupiedButtons.has(key)) throw new Error(`${button.name}: conflicting button placement ${key}`);

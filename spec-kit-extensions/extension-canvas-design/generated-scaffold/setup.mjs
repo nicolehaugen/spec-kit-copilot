@@ -80,6 +80,30 @@ function inventoryEntries(value) {
     throw new UserError("Specify returned an unexpected package inventory. Check the CLI and retry.");
 }
 
+function manifestIdentity(manifest, kind) {
+    const lines = manifest.split(/\r?\n/);
+    const heading = lines.findIndex((line) =>
+        new RegExp(`^${kinds[kind]}:[ \t]*(?:#.*)?$`).test(line));
+    if (heading < 0) return null;
+    const identity = {};
+    let depth = null;
+    for (const line of lines.slice(heading + 1)) {
+        if (!line.trim() || /^\s*#/.test(line)) continue;
+        const indent = /^ */.exec(line)[0].length;
+        if (!indent) break;
+        if (line[indent] === "\t") return null;
+        depth ??= indent;
+        if (indent !== depth) continue;
+        const field = /^(id|version):[ \t]*(.*)$/.exec(line.slice(indent));
+        if (!field) continue;
+        const value = /^(?:"([A-Za-z0-9._+-]+)"|'([A-Za-z0-9._+-]+)'|([A-Za-z0-9._+-]+))(?:[ \t]+#.*)?[ \t]*$/
+            .exec(field[2]);
+        if (!value || identity[field[1]] !== undefined) return null;
+        identity[field[1]] = value[1] ?? value[2] ?? value[3];
+    }
+    return identity;
+}
+
 export function createSetup({ config, cwd, session, phases, notify = () => {}, command = exec,
     now = () => Date.now(), approvedSources = () => [], saveApprovedSources = async () => {} }) {
     if (!validateRuntimeSetup(config.runtimeSetup)) throw new UserError("Invalid runtime setup recipe.");
@@ -198,20 +222,10 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
                 if (!info.isDirectory() || info.isSymbolicLink()) throw new Error("Not a regular package directory");
                 const manifest = await readBounded(item.path,
                     item.kind === "presets" ? "preset.yml" : "extension.yml", 64 * 1024);
-                const section = `${kinds[item.kind]}:`;
-                const lines = manifest.split(/\r?\n/);
-                const start = lines.findIndex((line) => line.trimEnd() === section);
-                const fields = [];
-                if (start >= 0) {
-                    for (const line of lines.slice(start + 1)) {
-                        if (/^[^\s#]/.test(line)) break;
-                        fields.push(line);
-                    }
+                const identity = manifestIdentity(manifest, item.kind);
+                if (identity?.id !== item.installedId || identity.version !== item.version) {
+                    throw new Error("Manifest ID or version changed");
                 }
-                const body = fields.join("\n");
-                const id = body.match(/^  id:\s*["']?([a-zA-Z0-9._-]+)["']?\s*$/m)?.[1];
-                const version = body.match(/^  version:\s*["']?([a-zA-Z0-9._+-]+)["']?\s*$/m)?.[1];
-                if (id !== item.installedId || version !== item.version) throw new Error("Manifest ID or version changed");
             } catch (cause) {
                 throw new UserError(`Frozen local ${item.kind} ${item.installedId} is unavailable or changed (${cause.message}). Restore its approved source and retry setup.`);
             }
