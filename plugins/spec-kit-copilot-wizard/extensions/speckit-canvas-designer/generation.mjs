@@ -278,6 +278,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     }
     const workflowPage = { id: "workflow", title: model.workflowPage.title,
         order: model.workflowPage.order, slots: model.workflowPage.slots,
+        managedRun: model.workflowPage.managedRun,
         assets: await Promise.all([workflowDefinition, controlDefinition, adapter].map(asset)) };
     const designerFields = new Map();
     const fieldPlacements = await Promise.all((model.fieldPlacements ?? []).map(async (placement) => {

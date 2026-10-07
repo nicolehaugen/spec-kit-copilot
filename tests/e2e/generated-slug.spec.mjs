@@ -194,9 +194,13 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
     const selectedAdapter = vertical ? await readFile(new URL(
         "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url))
         : phaseAdapter;
+    const selectedControl = vertical ? await readFile(new URL(
+        "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-control.json", import.meta.url))
+        : phaseControlDefinition;
     const config = {
         schemaVersion: 1, userProvidesSlug,
-        workflowPage: { ...workflowPage, hash: digest(selectedAdapter) },
+        workflowPage: { ...workflowPage, controlHash: digest(selectedControl),
+            hash: digest(selectedAdapter), managedRun: vertical },
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
@@ -222,8 +226,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         await mkdir(join(sdk, "pages"), { recursive: true });
         await Promise.all([
             ["workflow.json", workflowSource],
-            ["phase-control.json", phaseControlSource],
         ].map(([file, source]) => copyFile(new URL(file, source), join(sdk, "pages", file))));
+        await writeFile(join(sdk, "pages", "phase-control.json"), selectedControl);
         await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), selectedAdapter);
         const { createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
         const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);

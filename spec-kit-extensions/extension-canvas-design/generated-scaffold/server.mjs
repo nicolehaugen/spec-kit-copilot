@@ -219,7 +219,8 @@ export function readConfig() {
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.hash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.definitionHash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.controlHash)
-        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,order,phaseControl,slots,title"
+        || typeof config.workflowPage.managedRun !== "boolean"
+        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,managedRun,order,phaseControl,slots,title"
         || (config.generatedPages !== undefined
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
@@ -394,7 +395,10 @@ function readWorkflowPage(page) {
     const registration = JSON.parse(control);
     if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
         || registration.adapter !== page.adapter
-        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== "adapter,id,placement,schemaVersion"
+        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== (registration.managedRun === undefined
+            ? "adapter,id,placement,schemaVersion" : "adapter,id,managedRun,placement,schemaVersion")
+        || (registration.managedRun !== undefined && typeof registration.managedRun !== "boolean")
+        || page.managedRun !== (registration.managedRun === true)
         || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
         || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases") {
         throw new Error("Packaged phase control definition differs from its frozen contract");

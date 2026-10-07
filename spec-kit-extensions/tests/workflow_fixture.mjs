@@ -20,7 +20,7 @@ export async function addWorkflowFixture(project, model) {
             strategy: "replace", path: await realpath(path),
             hash: createHash("sha256").update(bytes).digest("hex") });
     }
-    model.workflowPage = { name: "generated-workflow",
+    model.workflowPage = { name: "generated-workflow", managedRun: false,
         ...JSON.parse(await readFile(new URL("../extension-canvas-design/generated-host/workflow-page/workflow.json", import.meta.url))) };
     return model;
 }
