@@ -60,6 +60,7 @@ let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = nu
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const reservedSlug = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const selectedPending = () => model?.items.some((entry) => entry.id === model.selected && entry.pending);
+const hasSelectedWorkflow = () => model?.items.some((entry) => entry.id === model.selected);
 function slugError() {
     const value = model?.slug ?? "";
     if (!value) return "Enter an artifact folder name (slug) before creating a workflow.";
@@ -597,7 +598,7 @@ function renderStatus() {
         }
     }
     phaseControl?.update(phaseState(pendingLabel));
-    const idle = !model.items.length;
+    const idle = !hasSelectedWorkflow();
     $("workflow-pipeline").querySelectorAll("[data-phase-index]").forEach((button) => {
         button.disabled = idle;
     });
@@ -668,7 +669,7 @@ function renderCollection() {
     $("new-workflow").disabled = !workflowPhases().length;
     $("workflow-constitution-note").hidden = model.constitutionReady || !model.items.length;
     $("workflow-pipeline").hidden = !workflowPhases().length;
-    $("workflow-pipeline").classList.toggle("workflow-pipeline-idle", !model.items.length);
+    $("workflow-pipeline").classList.toggle("workflow-pipeline-idle", !hasSelectedWorkflow());
     const list = $("workflow-rows");
     const scroll = $("workflow-list").scrollTop;
     const matches = list.children.length === model.items.length

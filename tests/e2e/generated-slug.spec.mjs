@@ -1271,12 +1271,17 @@ test("workflow list stays bounded and searchable across selection and refresh", 
         await expect(page.locator("#workflow-count")).toHaveText("(11)");
         await expect(page.locator("#workflow-list .instance-row.active")).toHaveCount(0);
         await expect(page.locator("#workflow-identity")).toBeHidden();
+        await expect(page.locator(".stepper")).toBeVisible();
+        await expect(page.locator('[data-phase-index="0"]')).toBeDisabled();
+        await expect(page.locator("#phase-card")).toBeHidden();
         await expect(readFile(artifact, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
         expect(await readFile(neighbor, "utf8")).toBe("# Keep always");
         await page.locator("#workflow-search").fill("missing-workflow");
         await expect(page.locator("#workflow-list-status")).toHaveText("0 of 11 workflows match.");
         await page.locator("#new-workflow").click();
         await expect(page.locator("#workflow-identity")).toBeVisible();
+        await expect(page.locator('[data-phase-index="0"]')).toBeEnabled();
+        await expect(page.locator("#phase-card")).toBeVisible();
         await page.setViewportSize({ width: 1100, height: 800 });
         await expect(page.locator("#workflow-list")).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

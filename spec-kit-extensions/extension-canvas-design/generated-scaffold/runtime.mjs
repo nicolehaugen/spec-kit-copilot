@@ -488,7 +488,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("A workflow directory may have been created by the failed run. Check its artifacts before removing this row.");
             }
             if (next.autopilot?.item === input.itemId
-                && ["Request sent", "Running", "Finishing"].includes(next.autopilot.status)) {
+                && (["Request sent", "Running", "Finishing"].includes(next.autopilot.status)
+                    || (next.autopilot.status === "Blocked" && liveRuns.has(next.autopilot.id)))) {
                 throw new UserError("Stop Autopilot before removing this workflow.");
             }
             next.pendingWorkflows.splice(index, 1);

@@ -412,6 +412,21 @@ test("Stop accepts a concurrent mode change when restoration is unapplied", asyn
     assert.equal(session.mode, "interactive");
 });
 
+test("a dispatched Blocked Autopilot cannot lose its pending row before Stop", async (t) => {
+    const { runtime, session, stateFile } = await setup(t);
+    const itemId = await prepareNewWorkflow(runtime);
+    session.send = async () => "";
+    await assert.rejects(runtime.startAutopilot({ itemId }, "panel"), /No Autopilot message ID/);
+    assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+    assert.deepEqual(JSON.parse(await readFile(stateFile, "utf8")).runs, []);
+    await assert.rejects(runtime.removePending({
+        itemId, revision: (await runtime.snapshot()).revision,
+    }), /Stop Autopilot/);
+    assert.equal((await runtime.stopAutopilot({})).stopped, true);
+    await runtime.removePending({ itemId, revision: (await runtime.snapshot()).revision });
+    assert.equal((await runtime.snapshot()).items.length, 0);
+});
+
 test("failed error persistence cannot skip mode restoration or dispatch cleanup", async (t) => {
     const fixture = await setup(t);
     const { runtime, session, stateFile, diagnostics } = fixture;
