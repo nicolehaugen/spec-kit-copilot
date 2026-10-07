@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "checklist-progress",
+  "label": "Markdown checklist progress",
+  "description": "Count completed and total Markdown checkbox items outside code fences.",
+  "inputs": [
+    {
+      "id": "artifact",
+      "type": "artifact"
+    }
+  ],
+  "textPlaceholders": [
+    "completed",
+    "total",
+    "percent"
+  ],
+  "module": "badge-rule-content"
+}

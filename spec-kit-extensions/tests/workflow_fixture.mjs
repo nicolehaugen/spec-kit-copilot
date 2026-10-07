@@ -7,6 +7,8 @@ export async function addWorkflowFixture(project, model) {
     await mkdir(directory, { recursive: true });
     const assets = [
         ["generated-workflow", "generated.workflow-page-definition", "workflow-page", "workflow.json"],
+        ["generated-workflow-page-adapter", "generated.workflow-page-adapter",
+            "workflow-page", "generated-workflow-page-adapter.mjs"],
         ["generated-phase-control", "generated.phase-control-definition", "phase-control", "phase-control.json"],
         ["generated-phase-adapter", "generated.phase-control-adapter", "phase-control", "generated-phase-adapter.mjs"],
     ];

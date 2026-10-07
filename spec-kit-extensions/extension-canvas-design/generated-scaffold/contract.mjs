@@ -15,6 +15,13 @@ function phaseLabel(id) {
 export function phaseContract(config) {
     const ids = new Set();
     const artifacts = config.phaseArtifacts === undefined ? {} : config.phaseArtifacts;
+    const descriptions = config.phaseDescriptions === undefined ? {} : config.phaseDescriptions;
+    if (!descriptions || typeof descriptions !== "object" || Array.isArray(descriptions)
+        || Object.entries(descriptions).some(([id, description]) =>
+            !config.phases.includes(id) || typeof description !== "string"
+            || !description.trim() || description.length > 240)) {
+        throw new UserError("Invalid phase descriptions.");
+    }
     if (!artifacts || typeof artifacts !== "object" || Array.isArray(artifacts)
         || Object.keys(artifacts).some((id) => !config.phases.includes(id))) throw new UserError("Invalid phase artifact configuration.");
     return config.phases.map((id) => {
@@ -50,7 +57,8 @@ export function phaseContract(config) {
                 throw new UserError("Phase outputs must be workflow Markdown artifacts.");
             }
         }
-        return { id, label: phaseLabel(id), command, skill: command.replaceAll(".", "-"),
+        return { id, label: phaseLabel(id), description: descriptions[id] ?? null,
+            command, skill: command.replaceAll(".", "-"),
             output: output ? safePath(output, true) : null,
             outputs: normalized, configuredArtifacts: !!mapping,
             expectsArtifact: short === "constitution" ? true

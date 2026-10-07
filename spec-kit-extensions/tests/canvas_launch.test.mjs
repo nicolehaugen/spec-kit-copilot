@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -21,6 +21,19 @@ test("template containment rejects outside paths and other Windows drives", () =
 
 test("generated skill declarations include appended pages and templates anywhere", async () => {
     const base = await readFile(join(source, "commands", "load-page.md"), "utf8");
+    const entries = new Map(declarations(base).map((entry) => [entry.name, entry]));
+    const settings = JSON.parse(await readFile(join(source, "designer-host",
+        "badges-settings", "badge-types.json"), "utf8"));
+    const ruleFiles = await readdir(join(source, "generated-host", "badges", "rules"));
+    for (const { rule } of settings.types) {
+        assert.equal(entries.get(`badge-rule-${rule}`)?.kind,
+            "generated.badge-rule-definition", `${rule} must be registered in the composed skill`);
+    }
+    for (const filename of ruleFiles.filter((name) => name.endsWith(".json"))) {
+        const id = filename.slice(0, -".json".length);
+        assert.equal(entries.get(`badge-rule-${id}`)?.kind,
+            "generated.badge-rule-definition", `${id} must be registered in the composed skill`);
+    }
     const appended = `${base}\n## Additional Canvas Design templates\n- \`sample-renderer\` — \`generated.added-page-renderer\`, \`replace\`\n`
         + "## Additional Designer pages\n- `sample-page`\n";
     const names = declarations(appended).map((entry) => entry.name);
@@ -62,6 +75,7 @@ test("composed verification resolves every name, rejects warnings and native scr
         "sample-renderer": join(preset, "pages", "renderer.mjs"),
         "designer-essentials": join(installed, "designer-host", "tabs", "essentials.json"),
         "designer-artifacts": join(installed, "designer-host", "tabs", "outputs.json"),
+        "designer-badges": join(installed, "designer-host", "tabs", "badges.json"),
         "designer-appearance": join(installed, "designer-host", "tabs", "appearance.json"),
         "designer-essentials-description": join(installed, "designer-host", "essentials-settings", "description.json"),
         "designer-essentials-workflow-heading": join(installed, "designer-host", "essentials-settings", "workflow-heading.json"),
@@ -73,6 +87,8 @@ test("composed verification resolves every name, rejects warnings and native scr
                 [`designer-appearance-${mode}-${color}`,
                     join(installed, "designer-host", "appearance-settings", `${mode}-${color}.json`)]))),
         "generated-workflow": join(installed, "generated-host", "workflow-page", "workflow.json"),
+        "generated-workflow-page-adapter": join(installed, "generated-host", "workflow-page",
+            "generated-workflow-page-adapter.mjs"),
         "generated-phase-control": join(installed, "generated-host", "phase-control", "phase-control.json"),
         "generated-phase-adapter": join(installed, "generated-host", "phase-control", "generated-phase-adapter.mjs"),
         "generated-setup-dialog": join(installed, "generated-host", "dialog", "setup.json"),
@@ -80,6 +96,15 @@ test("composed verification resolves every name, rejects warnings and native scr
         "generated-setup-button-control": join(installed, "generated-host", "setup-button-control", "control.json"),
         "generated-setup-button-adapter": join(installed, "generated-host", "setup-button-control", "generated-setup-button-adapter.mjs"),
         "generated-setup-button": join(installed, "generated-host", "setup-button-control", "setup.json"),
+        "badges-settings": join(installed, "designer-host", "badges-settings", "badge-types.json"),
+        ...Object.fromEntries(["value-match", "artifact-current", "markdown-file-count", "checklist-progress",
+            "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
+            "phase-artifact-complete"].map((id) =>
+            [`badge-rule-${id}`, join(installed, "generated-host", "badges", "rules", `${id}.json`)])),
+        ...Object.fromEntries(["content", "artifact-state", "run"].map((id) =>
+            [`badge-rule-${id}`, join(installed, "generated-host", "badges", "handlers", `${id}.mjs`)])),
+        "badge-rule-phase-artifact-complete-handler": join(installed, "generated-host",
+            "badges", "handlers", "phase-artifact-complete.mjs"),
         "shared-controls-image": join(installed, "shared-controls", "stock-image", "control.json"),
         "designer-control-adapter-image": join(installed, "shared-controls", "stock-image", "designer.mjs"),
         "generated-control-adapter-image": join(installed, "shared-controls", "stock-image", "generated.mjs"),
@@ -113,12 +138,12 @@ test("composed verification resolves every name, rejects warnings and native scr
         }) };
     };
     const result = await verifyComposition(project, run);
-    assert.equal(result.pages.length, 4);
+    assert.equal(result.pages.length, 5);
     assert.equal(result.templates.length, stockTemplateCount + 1);
     assert.deepEqual(result.templates.find((entry) => entry.name === "sample-renderer").sourceId, "sample");
     await writeFile(skill, base);
     const baseOnly = await verifyComposition(project, run);
-    assert.equal(baseOnly.pages.length, 3);
+    assert.equal(baseOnly.pages.length, 4);
     assert.equal(baseOnly.templates.length, stockTemplateCount);
     await writeFile(skill, `${base}\n${contribution}`);
     warning = "missing";
@@ -134,6 +159,6 @@ test("composed verification resolves every name, rejects warnings and native scr
     strategy = "replace";
     await writeFile(skill, `${minimalBase}\n${contribution}`);
     const intentionalReplacement = await verifyComposition(project, run);
-    assert.equal(intentionalReplacement.pages.length, 4);
+    assert.equal(intentionalReplacement.pages.length, 5);
     assert.equal(intentionalReplacement.templates.length, 1);
 });

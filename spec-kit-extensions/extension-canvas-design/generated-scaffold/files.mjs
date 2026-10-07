@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, open, realpath, readdir, mkdir, mkdtemp, rename, rm, rmdir, unlink } from "node:fs/promises";
+import { lstat, open, opendir, realpath, readdir, mkdir, mkdtemp, rename, rm, rmdir, unlink } from "node:fs/promises";
 import { resolve, relative, isAbsolute, dirname, join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -66,6 +66,21 @@ export async function readBounded(root, path, cap = 512 * 1024) {
         .decode(await readBoundedBytes(root, path, cap));
 }
 
+export async function readRegularFileMetadata(root, path) {
+    const target = await confined(root, path);
+    const handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+        const before = await handle.stat();
+        if (!before.isFile()) throw new UserError("The selected output is not a regular file.");
+        const after = await lstat(await confined(root, path));
+        if (!after.isFile() || before.dev !== after.dev || before.ino !== after.ino
+            || before.mtimeMs !== after.mtimeMs || before.size !== after.size) {
+            throw new UserError("Artifact changed while reading. Refresh to try again.", 409);
+        }
+        return { mtimeMs: before.mtimeMs };
+    } finally { await handle.close(); }
+}
+
 export async function directories(root, path) {
     try {
         const entries = await readdir(await confined(root, path), { withFileTypes: true });
@@ -82,6 +97,33 @@ export async function directories(root, path) {
         if (error.code === "ENOENT") return [];
         throw error;
     }
+}
+
+export async function countMarkdownDirectory(root, path) {
+    const parent = path === "." ? "." : safePath(path);
+    const checkout = await realpath(root);
+    let folder;
+    try {
+        folder = parent === "." ? checkout : await confined(checkout, parent);
+    } catch (error) {
+        if (error.code === "ENOENT") return 0;
+        throw error;
+    }
+    const before = await lstat(folder);
+    if (!before.isDirectory()) throw new UserError("The selected output folder is not a directory.");
+    let seen = 0;
+    let count = 0;
+    for await (const entry of await opendir(folder)) {
+        if (++seen > 1000) throw new UserError("The selected output folder exceeds the 1000-entry badge limit.");
+        if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) count++;
+    }
+    const current = parent === "." ? await realpath(root) : await confined(root, parent);
+    const after = await lstat(current);
+    if (folder !== current || before.dev !== after.dev || before.ino !== after.ino
+        || before.mtimeMs !== after.mtimeMs) {
+        throw new UserError("The selected output folder changed while counting. Refresh to retry.", 409);
+    }
+    return count;
 }
 
 export async function deleteConfinedDirectory(root, path, move = rename) {

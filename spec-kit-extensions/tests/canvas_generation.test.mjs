@@ -6,9 +6,10 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
-import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
+import { createRuntime, existingOutputFolder } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
 import { phaseContract } from "../extension-canvas-design/generated-scaffold/contract.mjs";
 import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
+import { renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
@@ -37,6 +38,21 @@ const model = {
 const values = { "canvas.id": "my-workflow", "canvas.displayName": "My Workflow",
     "canvas.description": "A workflow", "canvas.workflowListName": "Workflows",
     "workflowSlug.userProvided": false };
+function stockMarkup(config) {
+    const root = { innerHTML: "" };
+    renderStockPage(root, {
+        canvas: config.canvas, mainPageAsset: config.mainPageAsset,
+        readOnlyFields: config.readOnlyFields ?? [], textPlacements: config.textPlacements ?? [],
+        hasValues: Boolean(config.valueSources?.length), generatedControls: config.generatedControls ?? [],
+        badgeDestinations: config.workflowPage.badgeDestinations, hasBadges: Boolean(config.badges?.instances?.length),
+        hasConstitution: config.phases.some((phase) => phase.replace(/^speckit\./, "") === "constitution"),
+        fieldSlots: config.workflowPage.slots.filter(({ id }) => id !== "workflow.phases"
+            && (config.fieldPlacements?.some((item) => item.page === "workflow" && item.slot === id)
+                || config.buttons?.some((item) => item.page === "workflow" && item.slot === id)))
+            .map(({ id }) => id),
+    });
+    return root.innerHTML;
+}
 
 test("confirmed outputs override legacy defaults, including an explicitly empty phase", () => {
     const config = { phases: ["specify", "plan"], phaseOutputs: {
@@ -61,6 +77,18 @@ test("confirmed outputs override legacy defaults, including an explicitly empty 
     ]) {
         assert.throws(() => phaseContract({ ...config, phaseArtifacts:
             { ...config.phaseArtifacts, plan: invalid } }), /Invalid|outside|Duplicate/);
+    }
+});
+
+test("generated phase contract keeps optional Wizard descriptions and rejects invalid metadata", () => {
+    const config = { phases: ["specify"],
+        phaseOutputs: { specify: { outputPath: "specs/<slug>/spec.md" } },
+        phaseDescriptions: { specify: "Describe what to build and why." } };
+    assert.equal(phaseContract(config)[0].description, "Describe what to build and why.");
+    assert.equal(phaseContract({ ...config, phaseDescriptions: undefined })[0].description, null);
+    for (const phaseDescriptions of [{ plan: "Not selected" }, { specify: "" },
+        { specify: "x".repeat(241) }, null]) {
+        assert.throws(() => phaseContract({ ...config, phaseDescriptions }), /Invalid phase descriptions/);
     }
 });
 
@@ -137,6 +165,22 @@ test("viewer-only roots do not create workflows and links resolve within the sel
     assert.deepEqual(state.items.map(({ id }) => id), ["specs/demo"]);
     assert.equal((await runtime.artifact({ phase: "specify", itemId: "specs/demo",
         output: "reports/<slug>/notes.md" })).content, "# Notes");
+    await assert.rejects(runtime.reveal({ phase: "specify", itemId: "specs/demo",
+        output: ".github/private.md" }), /not declared/);
+});
+
+test("missing output links browse the nearest existing confined directory", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "canvas-output-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await mkdir(join(root, "specs", "demo"), { recursive: true });
+    assert.equal(await existingOutputFolder(root, "specs/demo/nested"), join(root, "specs", "demo"));
+    assert.equal(await existingOutputFolder(root, "reports/demo"), root);
+    assert.equal(await existingOutputFolder(root, "."), root);
+    await writeFile(join(root, "specs", "demo", "not-a-folder"), "");
+    await assert.rejects(existingOutputFolder(root, "specs/demo/not-a-folder"), /not a folder/);
+    await assert.rejects(existingOutputFolder(root, "../outside"), /outside/);
+    await symlink(join(root, "specs"), join(root, "linked"), "junction");
+    await assert.rejects(existingOutputFolder(root, "linked/missing"), /link or leaves/);
 });
 const handoff = { handoffId: "handoff-1", sourceFingerprint: "",
     selections: { presets: [], extensions: [], bundles: [] },
@@ -181,6 +225,276 @@ test("generation cannot omit the handoff runtime setup when Show setup is off", 
     await writeFile(requestPath, JSON.stringify(request));
     await assert.rejects(materialize(project, workspace, selectedHandoff.handoffId,
         prepared.requestId), /Runtime setup recipe differs/);
+});
+
+test("selected badge definitions and evaluator are packaged without preset files", async (t) => {
+    const { project, workspace, sdk } = await fixture(t);
+    const selected = structuredClone(model);
+    const root = new URL("../extension-canvas-design/generated-host/badges/", import.meta.url);
+    for (const [name, kind, path] of [
+        ["badge-rule-value-match", "generated.badge-rule-definition", "rules/value-match.json"],
+        ["badge-rule-content", "generated.badge-rule-handler", "handlers/content.mjs"],
+    ]) {
+        const bytes = await readFile(new URL(path, root));
+        const destination = join(project, ".specify", "templates", `${name}.${path.endsWith(".mjs") ? "mjs" : "json"}`);
+        await writeFile(destination, bytes);
+        selected.templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
+            strategy: "replace", path: destination,
+            hash: createHash("sha256").update(bytes).digest("hex") });
+    }
+    const settings = JSON.parse(await readFile(new URL(
+        "../extension-canvas-design/designer-host/badges-settings/badge-types.json", import.meta.url), "utf8"));
+    settings.types[0].id = "preset-value-match";
+    settings.types[0].title = "Customized value match";
+    settings.types[0].description = "A replacement description from badges-settings.";
+    const settingsBytes = Buffer.from(JSON.stringify(settings));
+    const settingsPath = join(project, ".specify", "templates", "badges-settings.json");
+    await writeFile(settingsPath, settingsBytes);
+    selected.templates.push({ name: "badges-settings",
+        kind: "designer.badges-settings-definition", sourceId: "extension:extension-canvas-design",
+        strategy: "replace", path: settingsPath,
+        hash: createHash("sha256").update(settingsBytes).digest("hex") });
+    selected.badgeTypes = [{ name: "badges-settings", sourceId: "extension:extension-canvas-design",
+        schemaVersion: 1, ...settings.types[0] }];
+    selected.badgeRules = [{ name: "badge-rule-value-match",
+        ...JSON.parse(await readFile(new URL("rules/value-match.json", root), "utf8")) }];
+    const outputs = {
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: ["specs/<slug>/plan.md"], view: "specs/<slug>/plan.md" },
+    };
+    const badges = [{ id: "verdict", type: "preset-value-match",
+        inputs: { artifact: { phase: "specify", output: "specs/<slug>/spec.md" },
+            value: "Verdict: needs-clarification" },
+        text: "Review needed", phaseText: "Phase review",
+        summaryText: "Workflows with review ({workflows})", color: "amber",
+        showIn: ["workflow-list", "workflow-summary"], phase: null,
+        targets: [{ phase: "specify", output: "specs/<slug>/spec.md" },
+            { phase: "plan", output: "specs/<slug>/plan.md" },
+            { phase: "plan", output: null }] }];
+    const frozen = await freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges });
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    const overlap = { ...badges[0], id: "overlap",
+        color: "blue", showIn: ["workflow-summary"],
+        targets: [{ phase: "plan", output: null }] };
+    const alternateValues = { ...values, "canvas.id": "badge-duplicate-check" };
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values: alternateValues,
+        handoff, outputs, badges: [...badges, overlap] }), /duplicates phase\/output target/);
+    const alternateText = { ...overlap, text: "Another review needed" };
+    const differentlyLabeled = await freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [...badges, alternateText] });
+    const differentlyLabeledRequest = JSON.parse(await readFile(join(workspace,
+        "speckit-canvas-designer", "handoffs", handoff.handoffId, "generations",
+        differentlyLabeled.requestId, "request.json"), "utf8"));
+    assert.equal(differentlyLabeledRequest.badges.instances[1].text, "Another review needed");
+    const distinctTarget = { ...overlap, targets: [{ phase: "specify", output: null }] };
+    const unique = await freezeGeneration({ project, workspace, model: selected, values: alternateValues,
+        handoff, outputs, badges: [...badges, distinctTarget] });
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", unique.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    request.badges.instances[1].targets = [{ phase: "plan", output: null }];
+    const { integrity: _integrity, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, unique.requestId),
+        /Duplicate frozen badge target/);
+    request.badges.instances[1].targets = distinctTarget.targets;
+    const limitedPage = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
+    limitedPage.badgeDestinations = ["workflow.list"];
+    const limitedBytes = Buffer.from(JSON.stringify(limitedPage));
+    request.workflowPage.assets[0].content = limitedBytes.toString("base64");
+    request.workflowPage.assets[0].hash = createHash("sha256").update(limitedBytes).digest("hex");
+    const { integrity: _oldLimited, ...limitedPayload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(limitedPayload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, unique.requestId),
+        /unsupported by the Workflow page adapter/);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.badges.instances, badges);
+    assert.equal(config.badges.types[0].id, "preset-value-match");
+    assert.equal(config.badges.types[0].title, "Customized value match");
+    assert.equal(config.badges.types[0].description,
+        "A replacement description from badges-settings.");
+    selected.workflowPage.badgeDestinations = ["workflow.list"];
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges }), /unsupported by the Workflow page adapter/);
+    selected.workflowPage.badgeDestinations = ["workflow.list", "workflow.summary",
+        "phase.card", "phase.output"];
+    assert.ok(config.workflowPage.slots.some((slot) => slot.id === "workflow.list"));
+    assert.ok(config.workflowPage.slots.some((slot) => slot.id === "workflow.summary"));
+    assert.deepEqual(config.workflowPage.phaseSlots,
+        [{ id: "phase.card" }, { id: "phase.output" }]);
+    const html = renderHtml(config);
+    assert.match(stockMarkup(config), /data-badge-slot="workflow.list"/);
+    assert.match(stockMarkup(config), /data-badge-slot="workflow.summary"/);
+    assert.match(html, /data-badge-slots="[^"]*phase.card[^"]*phase.output/);
+    assert.equal(config.badges.rules[0].module, "badge-rule-content");
+    assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content.mjs")),
+        await readFile(new URL("handlers/content.mjs", root)));
+    selected.badgeTypes[0].title = "Not in badges settings";
+    const mismatchedValues = { ...values, "canvas.id": "mismatched-badge" };
+    const inconsistent = await freezeGeneration({ project, workspace, model: selected,
+        values: mismatchedValues, handoff, outputs, badges });
+    await assert.rejects(materialize(project, workspace, handoff.handoffId,
+        inconsistent.requestId), /Frozen badge type differs from badges settings/);
+    selected.badgeTypes[0].title = settings.types[0].title;
+    selected.workflowPage.slots = selected.workflowPage.slots
+        .filter((slot) => slot.id !== "workflow.summary");
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges }), /no declared Workflow or phase control slot/);
+    selected.workflowPage.slots.push({ id: "workflow.summary" });
+    const control = selected.templates.find((entry) => entry.name === "generated-phase-control");
+    const originalControl = await readFile(control.path);
+    const incompleteControl = JSON.parse(originalControl.toString("utf8"));
+    incompleteControl.slots = [{ id: "phase.card" }];
+    const bytes = Buffer.from(JSON.stringify(incompleteControl));
+    await writeFile(control.path, bytes);
+    control.hash = createHash("sha256").update(bytes).digest("hex");
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges }), /no declared Workflow or phase control slot/);
+    await writeFile(control.path, originalControl);
+    control.hash = createHash("sha256").update(originalControl).digest("hex");
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs: { ...outputs, specify: { outputs: [], view: null } }, badges }),
+    /invalid or removed output/);
+    const adapter = selected.templates.find((entry) => entry.name === "generated-phase-adapter");
+    const original = await readFile(adapter.path, "utf8");
+    const cardOnly = original.replace(
+        '["workflow.badges.v1", "workflow.badges.targets.v1"]', '["workflow.badges.v1"]');
+    await writeFile(adapter.path, cardOnly);
+    adapter.hash = createHash("sha256").update(cardOnly).digest("hex");
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges }), /does not support phase\/output badge targets/);
+    const incompatible = original
+        .replace('export const capabilities = ["workflow.badges.v1", "workflow.badges.targets.v1"];', "");
+    await writeFile(adapter.path, incompatible);
+    adapter.hash = createHash("sha256").update(incompatible).digest("hex");
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges }), /does not support phase-card badges/);
+});
+
+test("Checklist complete freezes both confirmed outputs and rejects a reordered prerequisite", async (t) => {
+    const { project, workspace, sdk } = await fixture(t);
+    const selected = structuredClone(model);
+    const root = new URL("../extension-canvas-design/", import.meta.url);
+    for (const [name, kind, path] of [
+        ["badges-settings", "designer.badges-settings-definition",
+            "designer-host/badges-settings/badge-types.json"],
+        ["badge-rule-checklist-complete", "generated.badge-rule-definition",
+            "generated-host/badges/rules/checklist-complete.json"],
+        ["badge-rule-content", "generated.badge-rule-handler",
+            "generated-host/badges/handlers/content.mjs"],
+    ]) {
+        const bytes = await readFile(new URL(path, root));
+        const destination = join(project, ".specify", "templates",
+            `${name}.${path.endsWith(".mjs") ? "mjs" : "json"}`);
+        await writeFile(destination, bytes);
+        selected.templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
+            strategy: "replace", path: destination,
+            hash: createHash("sha256").update(bytes).digest("hex") });
+    }
+    const settings = JSON.parse(await readFile(new URL(
+        "designer-host/badges-settings/badge-types.json", root), "utf8"));
+    const definition = JSON.parse(await readFile(new URL(
+        "generated-host/badges/rules/checklist-complete.json", root), "utf8"));
+    selected.badgeTypes = [{ name: "badges-settings", sourceId: "extension:extension-canvas-design",
+        schemaVersion: 1, ...settings.types.find((type) => type.id === "checklist-complete") }];
+    selected.badgeRules = [{ name: "badge-rule-checklist-complete", ...definition }];
+    const outputs = { constitution: { outputs: [".specify/memory/constitution.md"],
+        view: ".specify/memory/constitution.md" },
+    specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+    plan: { outputs: ["specs/<slug>/plan.md"], view: "specs/<slug>/plan.md" } };
+    const instance = { id: "checklist", type: "checklist-complete",
+        inputs: { artifact: { phase: "plan", output: "specs/<slug>/plan.md" },
+            prerequisite: { phase: "specify", output: "specs/<slug>/spec.md" } },
+        text: "Checklist complete", color: "green", showIn: ["workflow-summary"], phase: null };
+    const frozen = await freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges: [instance] });
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.badges.instances[0].inputs, instance.inputs);
+    assert.deepEqual(config.badges.rules[0].inputs, definition.inputs);
+    assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content.mjs")),
+        await readFile(new URL("generated-host/badges/handlers/content.mjs", root)));
+    const invalid = { ...instance, inputs: { artifact: instance.inputs.prerequisite,
+        prerequisite: instance.inputs.artifact } };
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges: [invalid] }), /invalid or removed output/);
+    const next = await freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "checklist-tamper" },
+        handoff, outputs, badges: [instance] });
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", next.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    request.badges.instances[0].inputs = invalid.inputs;
+    const { integrity: _integrity, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, next.requestId),
+        /Invalid configured badge/);
+});
+
+test("directory-scoped rule freezes with its output anchor and evaluator", async (t) => {
+    const { project, workspace, sdk } = await fixture(t);
+    const selected = structuredClone(model);
+    const root = new URL("../extension-canvas-design/", import.meta.url);
+    for (const [name, kind, path] of [
+        ["badges-settings", "designer.badges-settings-definition",
+            "designer-host/badges-settings/badge-types.json"],
+        ["badge-rule-markdown-file-count", "generated.badge-rule-definition",
+            "generated-host/badges/rules/markdown-file-count.json"],
+        ["badge-rule-content", "generated.badge-rule-handler",
+            "generated-host/badges/handlers/content.mjs"],
+    ]) {
+        const bytes = await readFile(new URL(path, root));
+        const destination = join(project, ".specify", "templates",
+            `${name}.${path.endsWith(".mjs") ? "mjs" : "json"}`);
+        await writeFile(destination, bytes);
+        selected.templates ??= [];
+        selected.templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
+            strategy: "replace", path: destination,
+            hash: createHash("sha256").update(bytes).digest("hex") });
+    }
+    const settings = JSON.parse(await readFile(
+        new URL("designer-host/badges-settings/badge-types.json", root), "utf8"));
+    selected.badgeTypes = [{ name: "badges-settings",
+        sourceId: "extension:extension-canvas-design", schemaVersion: 1,
+        ...settings.types.find((entry) => entry.id === "markdown-file-count") }];
+    selected.badgeRules = [{ name: "badge-rule-markdown-file-count",
+        ...JSON.parse(await readFile(new URL(
+            "generated-host/badges/rules/markdown-file-count.json", root), "utf8")) }];
+    const output = "specs/<slug>/review/requirements.md";
+    const outputs = { constitution: { outputs: [".specify/memory/constitution.md"],
+        view: ".specify/memory/constitution.md" },
+    specify: { outputs: [output], view: output },
+    plan: { outputs: ["specs/<slug>/plan.md"], view: "specs/<slug>/plan.md" } };
+    const badges = [{ id: "markdown-files", type: "markdown-file-count",
+        inputs: { artifact: { phase: "specify", output } },
+        text: "Files ({count})", color: "blue",
+        showIn: ["workflow-list", "workflow-summary"], phase: null }];
+    const frozen = await freezeGeneration({ project, workspace, model: selected, values,
+        handoff, outputs, badges });
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.badges.rules[0].inputs,
+        [{ id: "artifact", type: "artifact", scope: "directory" }]);
+    await mkdir(join(project, "specs", "demo", "review"), { recursive: true });
+    const { createRuntime: createGeneratedRuntime } =
+        await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
+    const runtime = await createGeneratedRuntime({ config, cwd: project, workspace,
+        session: { sessionId: "directory-generation", log: async () => {} } });
+    try {
+        const snapshot = await runtime.snapshot();
+        assert.deepEqual(snapshot.badges.summary, [{ id: "markdown-files", color: "blue",
+            count: 0, text: "Markdown files (0)" }]);
+        await writeFile(join(project, "specs", "demo", "review", "security.md"), "# Review");
+        const updated = await runtime.snapshot();
+        assert.equal(updated.badges.items["specs/demo"][0].text, "Files (1)");
+        assert.equal(updated.badges.summary[0].count, 1);
+    } finally { runtime.close(); }
 });
 
 test("Specify inventories supply observed package versions and reject invalid responses", async () => {
@@ -516,7 +830,7 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
     assert.doesNotMatch(renderHtml(defaultConfig), /Configured fields|data-field-id/);
     const config = { ...defaultConfig,
         readOnlyFields: [{ id: "billing.costCode", label: "Cost code", value: '<script>"CC"</script>' }] };
-    const html = renderHtml(config);
+    const html = stockMarkup(config);
     assert.match(html, /data-field-id="billing.costCode">&lt;script&gt;&quot;CC&quot;&lt;\/script&gt;/);
     assert.doesNotMatch(html, /<script>"CC"<\/script>|<input[^>]+billing\.costCode/);
     const pagesHtml = renderHtml({ ...config, generatedPages: [
@@ -531,7 +845,7 @@ test("generated stock scalar is escaped, read-only and absent from unchanged def
     assert.match(pagesHtml, /data-generated-renderer="declared"[\s\S]*?data-values="\{&quot;billing\.costCode&quot;:&quot;&lt;script&gt;\\&quot;CC\\&quot;&lt;\/script&gt;&quot;\}"/);
     assert.match(pagesHtml, /data-generated-renderer="declared"[\s\S]*?data-asset-slots="\[\{&quot;id&quot;:&quot;hero\.logo&quot;,&quot;accepts&quot;:\[&quot;asset&quot;\]\}\]"/);
     assert.match(pagesHtml, /data-generated-renderer="declared"[\s\S]*?data-assets="\[\{&quot;id&quot;:&quot;brand\.gallery&quot;/);
-    const grouped = renderHtml({ ...defaultConfig, readOnlyFields: [
+    const grouped = stockMarkup({ ...defaultConfig, readOnlyFields: [
         { id: "billing.costCode", label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } },
         { id: "billing.other", label: "Other code", value: "CC-482",
@@ -860,7 +1174,8 @@ test("Workflow layout and phase control freeze, validate and package independent
     assert.equal(readConfig().workflowPage.managedRun, true);
     assert.equal(readConfig().workflowPage.phaseControl, "generated-phase-control");
     assert.deepEqual(await readdir(join(sdk, "pages")), [
-        "generated-phase-adapter.mjs", "phase-control.json", "workflow.json",
+        "generated-phase-adapter.mjs", "generated-workflow-page-adapter.mjs",
+        "phase-control.json", "workflow.json",
     ]);
     assert.match(renderPackaged(readConfig()), /data-module="\/pages\/generated-phase-adapter.mjs"/);
     await writeFile(join(sdk, "pages", "phase-control.json"), '{"schemaVersion":1,"id":"workflow-phases","adapter":"wrong"}');
@@ -868,6 +1183,58 @@ test("Workflow layout and phase control freeze, validate and package independent
     await writeFile(join(sdk, "pages", "phase-control.json"), control);
     await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), "export function mount() {}");
     assert.throws(() => readConfig(), /phase control|Invalid generated canvas/);
+});
+
+test("a preset-style Workflow page adapter freezes independently and detects packaged tampering", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    const definition = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
+    definition.badgeDestinations = ["workflow.list"];
+    const bytes = Buffer.from(JSON.stringify(definition));
+    const replacement = Buffer.from(`export const pageId = "workflow";
+export const contractVersion = 1;
+export function mount({ root, actions }) {
+    root.replaceChildren();
+    const button = document.createElement("button");
+    button.textContent = "Choose workflow";
+    button.addEventListener("click", () => actions.selectWorkflow("__new__"));
+    root.append(button);
+    return { update(state) { button.disabled = !state.model; }, dispose() { button.remove(); } };
+}`);
+    request.workflowPage.assets[0].content = bytes.toString("base64");
+    request.workflowPage.assets[0].hash = createHash("sha256").update(bytes).digest("hex");
+    request.workflowPage.assets[3].sourceId = "copilot-workflow-page-test";
+    request.workflowPage.assets[3].content = replacement.toString("base64");
+    request.workflowPage.assets[3].hash = createHash("sha256").update(replacement).digest("hex");
+    const { integrity: _old, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    assert.deepEqual(await readFile(join(sdk, "pages", "generated-workflow-page-adapter.mjs")),
+        replacement);
+    const originalDocument = globalThis.document;
+    globalThis.document = { createElement: () => ({
+        addEventListener(name, listener) { this.listener = listener; },
+        remove() { this.removed = true; },
+    }) };
+    t.after(() => { globalThis.document = originalDocument; });
+    const alternate = await import(pathToFileURL(join(sdk, "pages", "generated-workflow-page-adapter.mjs")).href);
+    let selected;
+    const root = { replaceChildren() {}, append(button) { this.button = button; } };
+    const mounted = alternate.mount({ root, actions: { selectWorkflow: (id) => { selected = id; } } });
+    mounted.update({ model: {} });
+    root.button.listener();
+    assert.equal(selected, "__new__");
+    assert.equal(root.button.disabled, false);
+    mounted.dispose();
+    assert.equal(root.button.removed, true);
+    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    assert.deepEqual(readConfig().workflowPage.badgeDestinations, ["workflow.list"]);
+    await writeFile(join(sdk, "pages", "generated-workflow-page-adapter.mjs"),
+        "export function mount() {}");
+    assert.throws(() => readConfig(), /Workflow page adapter/);
 });
 
 test("phase view label preset and differently named adapter survive generation", async (t) => {
@@ -976,17 +1343,17 @@ test("registered Workflow field placements are packaged and reject unknown slots
     const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
     const bytes = Buffer.from(JSON.stringify({
         schemaVersion: 1, id: "workflow-description-placement", page: "workflow",
-        slot: "workflow.summary", field: "canvas.description", order: 10,
+        slot: "workflow.extra", field: "canvas.description", order: 10,
     }));
     const request = structuredClone(original);
-    request.workflowPage.slots.push({ id: "workflow.summary" });
+    request.workflowPage.slots.push({ id: "workflow.extra" });
     const page = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
     page.slots = request.workflowPage.slots;
     const pageBytes = Buffer.from(JSON.stringify(page));
     request.workflowPage.assets[0].content = pageBytes.toString("base64");
     request.workflowPage.assets[0].hash = digest(pageBytes);
     request.fieldPlacements = [{
-        id: "workflow-description-placement", page: "workflow", slot: "workflow.summary",
+        id: "workflow-description-placement", page: "workflow", slot: "workflow.extra",
         field: "canvas.description", order: 10, label: "Description", control: "stock.text",
         assets: [{ kind: "generated.field-placement", name: "workflow-description-placement",
             sourceId: "test-preset", content: bytes.toString("base64"), hash: digest(bytes) }],
@@ -1001,7 +1368,7 @@ test("registered Workflow field placements are packaged and reject unknown slots
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig, renderHtml: renderPackaged } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
     assert.equal(readConfig().fieldPlacements[0].field, "canvas.description");
-    assert.match(renderPackaged(readConfig()), /data-workflow-slot="workflow.summary"/);
+    assert.match(stockMarkup(readConfig()), /data-workflow-slot="workflow.extra"/);
     assert.deepEqual(await readFile(join(sdk, "pages", "workflow-description-placement.json")), bytes);
     request.fieldPlacements[0].slot = "workflow.unknown";
     await writeRequest();
@@ -1019,18 +1386,18 @@ test("field placement IDs cannot overwrite fixed page assets before target creat
         ["phase-control", /Invalid generated field placement: phase-control/],
     ]) {
         const request = structuredClone(original);
-        request.workflowPage.slots.push({ id: "workflow.summary" });
+        request.workflowPage.slots.push({ id: "workflow.extra" });
         const page = JSON.parse(Buffer.from(request.workflowPage.assets[0].content, "base64"));
         page.slots = request.workflowPage.slots;
         const pageBytes = JSON.stringify(page);
         request.workflowPage.assets[0].content = Buffer.from(pageBytes).toString("base64");
         request.workflowPage.assets[0].hash = digest(pageBytes);
         const placement = JSON.stringify({
-            schemaVersion: 1, id, page: "workflow", slot: "workflow.summary",
+            schemaVersion: 1, id, page: "workflow", slot: "workflow.extra",
             field: "canvas.description", order: 10,
         });
         request.fieldPlacements = [{
-            id, page: "workflow", slot: "workflow.summary", field: "canvas.description",
+            id, page: "workflow", slot: "workflow.extra", field: "canvas.description",
             order: 10, label: "Description", control: "stock.text",
             assets: [{ kind: "generated.field-placement", name: id, sourceId: "test-preset",
                 content: Buffer.from(placement).toString("base64"), hash: digest(placement) }],
@@ -1225,11 +1592,10 @@ test("required artifact folder slug previews the target and binds the actual dir
             "canvas-config.json"), "utf8"));
         const html = renderHtml(config);
         assert.equal(config.userProvidesSlug, true);
-        assert.ok(html.indexOf('id="instance-collection"') < html.indexOf('id="constitution-card"'));
-        const collection = html.slice(html.indexOf('<section id="instance-collection"'),
-            html.indexOf('<p id="canvas-message"'));
-        assert.match(html, /id="constitution-card"/);
-        assert.doesNotMatch(renderHtml({ ...config, phases: ["specify"] }),
+        const collection = stockMarkup(config);
+        assert.ok(collection.indexOf('id="instance-collection"') < collection.indexOf('id="constitution-card"'));
+        assert.match(collection, /id="constitution-card"/);
+        assert.doesNotMatch(stockMarkup({ ...config, phases: ["specify"] }),
             /id="constitution-card"|id="view-constitution"|id="constitution-dialog"/);
         assert.doesNotMatch(collection, /id="feature-select"/);
         assert.match(collection, /id="workflow-list" class="instance-list"/);
@@ -1253,8 +1619,8 @@ test("required artifact folder slug previews the target and binds the actual dir
         const ui = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js", import.meta.url), "utf8");
         assert.match(ui, /function slugError\(\)/);
         assert.match(ui, /\$\("workflow-pipeline"\)\.hidden = !workflowPhases\(\)\.length/);
-        assert.match(html, /<h2 id="workflow-heading">Workflows/);
-        assert.match(renderHtml({ ...config, phases: ["constitution"] }), /id="workflow-name"/);
+        assert.match(collection, /<h2 id="workflow-heading">Workflows/);
+        assert.match(stockMarkup({ ...config, phases: ["constitution"] }), /id="workflow-name"/);
         const skill = join(project, ".github", "skills", "speckit-specify");
         await mkdir(skill, { recursive: true });
         await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
@@ -1271,7 +1637,7 @@ test("required artifact folder slug previews the target and binds the actual dir
         assert.equal((await runtime.snapshot()).userProvidesSlug, true);
         assert.equal((await runtime.snapshot()).constitutionReady, false);
         await assert.rejects(runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
-            slug: requested }, "panel-1"), /Create a project constitution/);
+            slug: requested }, "panel-1"), /Create a constitution/);
         await mkdir(join(project, ".specify", "memory"), { recursive: true });
         await writeFile(join(project, ".specify", "memory", "constitution.md"), "# Existing principles\n");
         assert.equal((await runtime.snapshot()).constitutionReady, true);

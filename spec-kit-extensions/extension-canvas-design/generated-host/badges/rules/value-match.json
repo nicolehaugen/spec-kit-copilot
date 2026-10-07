@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "value-match",
+  "label": "Value match",
+  "description": "Match literal text anywhere in one selected Markdown output, ignoring capitalization.",
+  "inputs": [
+    {
+      "id": "artifact",
+      "type": "artifact",
+      "label": "Output to search"
+    },
+    {
+      "id": "value",
+      "type": "text",
+      "label": "Text to match"
+    }
+  ],
+  "textPlaceholders": [],
+  "module": "badge-rule-content"
+}

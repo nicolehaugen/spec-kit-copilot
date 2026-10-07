@@ -1,14 +1,11 @@
 const token = new URL(location.href).searchParams.get("token");
-const [{ mountIdentity }, { mountOutputs }] = await Promise.all([
-    import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
-    import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
-]);
+let mountIdentity, mountOutputs, mountBadges;
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
-let model, currentPage, draft, draftOutputs, saving = false;
+let model, currentPage, draft, draftOutputs, draftBadges, saving = false;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
@@ -28,12 +25,12 @@ function updateGenerate() {
     const failed = model?.pages.find((page) => page.error);
     const missingIdentity = model && !failed && (!setup || setup.enabled === false
         || !required.every((field) => setup.fields?.some((item) => item.id === field)));
-    generationError.textContent = failed
+    generationError.textContent = model?.preview ? "" : failed
         ? `Cannot generate: ${failed.page} could not load. ${failed.error.reason}`
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
+    generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
         || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity;
@@ -54,7 +51,7 @@ function confirmProviders(providers) {
 }
 
 generate.addEventListener("click", async () => {
-    if (generate.disabled || !checkReady()) return;
+    if (model?.preview || generate.disabled || !checkReady()) return;
     const providers = model.templates.filter((item) => item.kind === "generated.computed-value-provider")
         .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
@@ -67,6 +64,7 @@ generate.addEventListener("click", async () => {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
                 settingsRevision: model.settingsRevision, values, outputs: draftOutputs,
+                badges: draftBadges,
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
@@ -140,8 +138,10 @@ function checkReady() {
 function updateSave() {
     const noChanges = model?.persisted
         && JSON.stringify(draft) === JSON.stringify(model.values)
-        && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs);
-    saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges || !outputPathsReady();
+        && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs)
+        && JSON.stringify(draftBadges) === JSON.stringify(model.badges);
+    saveButton.disabled = model?.preview || saving || activeUploads.size > 0 || !model
+        || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
@@ -153,7 +153,7 @@ function updateSave() {
 }
 
 saveButton.addEventListener("click", async () => {
-    if (saving || !model || !checkReady()) return;
+    if (model?.preview || saving || !model || !checkReady()) return;
     saving = true;
     messageBox.hidden = true;
     showError("");
@@ -163,7 +163,8 @@ saveButton.addEventListener("click", async () => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
-                revision: model.settingsRevision, values: draft, outputs: draftOutputs }),
+                revision: model.settingsRevision, values: draft, outputs: draftOutputs,
+                badges: draftBadges }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Designer save failed (${response.status})`);
@@ -203,6 +204,13 @@ function renderPage(pageId, invalidFieldId) {
     if (page.fixedControl === "designer.outputs") {
         mountOutputs({ root, page, phases: model.phases, draftOutputs,
             pipelineOutputs: model.pipelineOutputs, onChange: updateSave });
+        root.setAttribute("aria-busy", "false");
+        return true;
+    }
+    if (page.fixedControl === "designer.badges") {
+        mountBadges({ root, page, phases: model.phases, outputs: draftOutputs,
+            badgeTypes: model.badgeTypes ?? [], badgeRules: model.badgeRules ?? [],
+            draftBadges, onChange: updateSave });
         root.setAttribute("aria-busy", "false");
         return true;
     }
@@ -324,7 +332,7 @@ function renderPage(pageId, invalidFieldId) {
 
 tabs.addEventListener("click", (event) => {
     const tab = event.target.closest("[data-page]");
-    if (tab && tab.dataset.page !== currentPage && checkReady()) renderPage(tab.dataset.page);
+    if (tab && tab.dataset.page !== currentPage) renderPage(tab.dataset.page);
 });
 tabs.addEventListener("keydown", (event) => {
     const buttons = [...tabs.children];
@@ -337,7 +345,7 @@ tabs.addEventListener("keydown", (event) => {
     else if (event.key === "End") next = buttons.length - 1;
     else return;
     event.preventDefault();
-    if (buttons[next].dataset.page !== currentPage && checkReady()) {
+    if (buttons[next].dataset.page !== currentPage) {
         renderPage(buttons[next].dataset.page);
         buttons[next].focus();
     }
@@ -350,9 +358,13 @@ function applyState(next) {
     const changed = !model || next.revision !== model.revision;
     if (changed) {
         model = next;
+        document.getElementById("preview-banner").hidden = !model.preview;
+        document.getElementById("save-help").hidden = !!model.preview;
+        generate.hidden = !!model.preview;
         draft = structuredClone(model.values);
         draftOutputs = structuredClone(model.outputs ?? Object.fromEntries(
             (model.phases ?? []).map((id) => [id, { outputs: [], view: null }])));
+        draftBadges = structuredClone(model.badges ?? []);
         tabs.replaceChildren();
         for (const page of model.pages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,
@@ -375,6 +387,11 @@ function applyState(next) {
 
 const status = document.getElementById("conn-status");
 try {
+    [{ mountIdentity }, { mountOutputs }, { mountBadges }] = await Promise.all([
+        import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/badges-control.js?token=${encodeURIComponent(token)}`),
+    ]);
     const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);
     const initial = await response.json();
@@ -389,8 +406,9 @@ try {
         }));
     applyState(initial);
     const failures = initial.pages.filter((page) => page.error).length;
-    status.className = failures ? "conn conn-connecting" : "conn conn-live";
-    status.textContent = failures ? `Pages need attention (${failures})` : "Ready";
+    status.className = failures || initial.preview ? "conn conn-connecting" : "conn conn-live";
+    status.textContent = failures ? `Pages need attention (${failures})`
+        : initial.preview ? "Preview only" : "Ready";
 } catch (error) {
     root.setAttribute("aria-busy", "false");
     root.replaceChildren(element("h1", "Settings unavailable"));

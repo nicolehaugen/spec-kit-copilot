@@ -14,6 +14,7 @@ Load these default pages:
 
 - Essentials (`designer-essentials`)
 - `designer-artifacts`
+- `designer-badges`
 - `designer-appearance`
 
 Use **Essentials** in progress messages and other user-facing descriptions of
@@ -27,8 +28,10 @@ set; they do not run a second load operation.
 The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
-Each registration declares its Canvas Design kind (`designer.setting-definition`,
-`generated.workflow-page-definition`, `generated.phase-control-definition`,
+Each registration declares its Canvas Design kind (`designer.badges-settings-definition`,
+`generated.badge-rule-definition`, `generated.badge-rule-handler`, `designer.setting-definition`,
+`generated.workflow-page-definition`, `generated.workflow-page-adapter`,
+`generated.phase-control-definition`,
 `generated.phase-control-adapter`,
 `generated.field-placement`,
 `generated.added-page-definition`, `generated.added-page-renderer`,
@@ -57,7 +60,16 @@ declares a typed constant or a workflow-scoped computed value; a generated page
 declares the value IDs it consumes in its `values` list. A processing-only value
 is not automatically presented and is not secret from its declared consumers.
 Computed-value providers are packaged, never evaluated by Designer.
-The required `generated-workflow` page declares `workflow.phases` first; the
+The required `generated-workflow` page declares `workflow.phases` first, names a
+replaceable `generated.workflow-page-adapter`, and advertises supported badge
+destinations (`workflow.list`, `workflow.summary`, `phase.card`, `phase.output`).
+The page adapter mounts with `{ root, definition, state, actions }` and returns
+`{ update, dispose }`; its state snapshots are read-only, while all actions
+are authorized and validated by the host. Presets replacing the adapter may
+advertise only the badge destinations they actually render. Generation rejects
+badge placements the selected adapter does not support. Legacy generated
+copies keep their original Workflow presentation.
+The
 `generated-phase-control` definition places itself in that slot and references
 its registered adapter by name and may set `viewLabels` for selected
 non-Constitution phase IDs
@@ -121,6 +133,7 @@ unregistered files are not loaded.
 - `designer-appearance-dark-secondary` — `designer.setting-definition`, `replace`
 - `designer-appearance-dark-text` — `designer.setting-definition`, `replace`
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
+- `generated-workflow-page-adapter` — `generated.workflow-page-adapter`, `replace`
 - `generated-phase-control` — `generated.phase-control-definition`, `replace`
 - `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
 - `generated-setup-dialog` — `generated.dialog-definition`, `replace`
@@ -128,6 +141,20 @@ unregistered files are not loaded.
 - `generated-setup-button-control` — `generated.button-control-definition`, `replace`
 - `generated-setup-button-adapter` — `generated.button-adapter`, `replace`
 - `generated-setup-button` — `generated.button-placement`, `replace`
+- `badges-settings` — `designer.badges-settings-definition`, `replace`
+- `badge-rule-value-match` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-artifact-current` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-markdown-file-count` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-checklist-progress` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-checklist-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-work-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-phase-run-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-phase-artifact-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-artifact-stale` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-content` — `generated.badge-rule-handler`, `replace`
+- `badge-rule-artifact-state` — `generated.badge-rule-handler`, `replace`
+- `badge-rule-run` — `generated.badge-rule-handler`, `replace`
+- `badge-rule-phase-artifact-complete-handler` — `generated.badge-rule-handler`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`
 - `designer-control-adapter-image` — `designer.control-adapter`, `replace`
 - `generated-control-adapter-image` — `generated.control-adapter`, `replace`

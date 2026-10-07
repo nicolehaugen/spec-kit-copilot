@@ -4,5 +4,6 @@
   "id": "workflow-phases",
   "adapter": "generated-phase-adapter",
   "managedRun": true,
+  "slots": [{"id": "phase.card"}, {"id": "phase.output"}],
   "placement": {"page": "workflow", "slot": "workflow.phases"}
 }

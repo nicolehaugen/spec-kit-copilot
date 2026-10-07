@@ -7,6 +7,7 @@ import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
 import { validControlValue } from "./control-contract.mjs";
 import { validateRuntimeSetup } from "./setup.mjs";
+import { validateBadges } from "./badge-runtime.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
@@ -16,7 +17,7 @@ const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url),
 const packageRoot = realpathSync(new URL(".", import.meta.url));
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const WORKFLOW_REGIONS = ["collection", "constitution", "details", "values", "controls",
-    "pages", "message", "pipeline"];
+    "pages", "pipeline"];
 const imageValueContract = { type: "image", maxBytes: 32768,
     mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
 
@@ -122,7 +123,8 @@ function validFieldPlacements(config) {
             || !Number.isInteger(item.order) || item.order < -100000 || item.order > 100000
             || !item.schema || !["string", "boolean", "object", "image"].includes(item.schema.type)
             || typeof item.editable !== "boolean" || item.editable && item.value !== undefined
-            || item.slot === "workflow.phases"
+            || item.page === "workflow"
+                && ["workflow.phases", "workflow.list", "workflow.summary"].includes(item.slot)
             || !(item.page === "workflow" ? config.workflowPage.slots
                 : config.generatedPages?.find((page) => page.id === item.page)?.slots)
                 ?.some((slot) => slot.id === item.slot)) return false;
@@ -217,6 +219,11 @@ export function readConfig() {
         || new Set(config.workflowPage.slots.map((slot) => slot?.id)).size !== config.workflowPage.slots.length
         || config.workflowPage.slots.some((slot) => !slot || Object.keys(slot).join() !== "id"
             || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))
+        || !Array.isArray(config.workflowPage.phaseSlots)
+        || ![0, 2].includes(config.workflowPage.phaseSlots.length)
+        || new Set(config.workflowPage.phaseSlots.map((slot) => slot?.id)).size !== config.workflowPage.phaseSlots.length
+        || config.workflowPage.phaseSlots.some((slot) => !slot || Object.keys(slot).join() !== "id"
+            || !["phase.card", "phase.output"].includes(slot.id))
         || config.workflowPage.phaseControl !== "generated-phase-control"
         || !config.workflowPage.placement
         || !isDeepStrictEqual(config.workflowPage.placement, { page: "workflow", slot: "workflow.phases" })
@@ -233,8 +240,20 @@ export function readConfig() {
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.hash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.definitionHash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.controlHash)
+        || (config.workflowPage.pageAdapter !== undefined
+            && (typeof config.workflowPage.pageAdapter !== "string"
+                || !/^[a-z][a-z0-9-]{0,79}$/.test(config.workflowPage.pageAdapter)
+                || isWindowsDeviceName(config.workflowPage.pageAdapter)
+                || !/^[a-f0-9]{64}$/.test(config.workflowPage.pageAdapterHash)
+                || !Array.isArray(config.workflowPage.badgeDestinations)
+                || config.workflowPage.badgeDestinations.length > 4
+                || new Set(config.workflowPage.badgeDestinations).size !== config.workflowPage.badgeDestinations.length
+                || config.workflowPage.badgeDestinations.some((id) =>
+                    !["workflow.list", "workflow.summary", "phase.card", "phase.output"].includes(id))))
         || typeof config.workflowPage.managedRun !== "boolean"
-        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,managedRun,order,phaseControl,placement,slots,title,viewLabels"
+        || !["adapter,controlHash,definitionHash,hash,managedRun,order,phaseControl,phaseSlots,placement,slots,title,viewLabels",
+            "adapter,badgeDestinations,controlHash,definitionHash,hash,managedRun,order,pageAdapter,pageAdapterHash,phaseControl,phaseSlots,placement,slots,title,viewLabels"].includes(
+            Object.keys(config.workflowPage).sort().join())
         || (config.generatedPages !== undefined
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
@@ -245,6 +264,7 @@ export function readConfig() {
                             || page.id === RESERVED_GENERATED_PAGE_ID
                             || typeof page.renderer !== "string" || !/^[a-z][a-z0-9-]{0,79}$/.test(page.renderer)
                             || page.renderer === config.workflowPage.adapter
+                            || page.renderer === config.workflowPage.pageAdapter
                             || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
                             || (page.order !== undefined && (!Number.isInteger(page.order)
                                 || page.order < -100000 || page.order > 100000))
@@ -348,6 +368,7 @@ export function readConfig() {
     if (config.textControl) readTextControl(config.textControl);
     readDialogContracts(config);
     readWorkflowPage(config.workflowPage);
+    readWorkflowPresentation(config.workflowPage);
     for (const item of config.fieldPlacements ?? []) {
         readFieldPlacement(item);
         if (item.adapter) readPlacementControl(item);
@@ -363,6 +384,20 @@ export function readConfig() {
     }
     phaseContract(config);
     valueContract(config);
+    validateBadges(config.badges, phaseContract(config));
+    const destinations = config.workflowPage.badgeDestinations
+        ?? ["workflow.list", "workflow.summary", "phase.card", "phase.output"];
+    const locations = { "workflow-list": "workflow.list", "workflow-summary": "workflow.summary",
+        "phase-card": "phase.card", "phase-output": "phase.output" };
+    if (config.badges?.instances.some((badge) => badge.showIn.some((placement) =>
+        !destinations.includes(locations[placement]))
+        || badge.targets?.length && !destinations.includes("phase.output")
+        || badge.showIn.includes("workflow-list")
+            && !config.workflowPage.slots.some((slot) => slot.id === "workflow.list")
+        || badge.showIn.includes("workflow-summary")
+            && !config.workflowPage.slots.some((slot) => slot.id === "workflow.summary"))) {
+        throw new Error("Configured badge placement is unsupported by the Workflow page adapter");
+    }
     return config;
 }
 
@@ -397,9 +432,13 @@ function readWorkflowPage(page) {
         throw new Error("Packaged Workflow page definition does not match its frozen hash");
     }
     const parsed = JSON.parse(definition);
-    if (parsed.schemaVersion !== 1 || parsed.id !== "workflow"
-        || Object.keys(parsed).filter((key) => key !== "$schema").sort().join() !== "id,order,schemaVersion,slots,title"
+    if (parsed.schemaVersion !== (page.pageAdapter ? 2 : 1) || parsed.id !== "workflow"
+        || !["id,order,schemaVersion,slots,title",
+            "adapter,badgeDestinations,id,order,schemaVersion,slots,title"].includes(
+            Object.keys(parsed).filter((key) => key !== "$schema").sort().join())
         || parsed.title !== page.title || parsed.order !== page.order
+        || (page.pageAdapter && (parsed.adapter !== page.pageAdapter
+            || !isDeepStrictEqual(parsed.badgeDestinations, page.badgeDestinations)))
         || JSON.stringify(parsed.slots) !== JSON.stringify(page.slots)) {
         throw new Error("Packaged Workflow page definition differs from its frozen contract");
     }
@@ -411,19 +450,30 @@ function readWorkflowPage(page) {
     if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
         || registration.adapter !== page.adapter
         || Object.keys(registration).filter((key) => key !== "$schema")
-            .some((key) => !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
+            .some((key) => !["adapter", "id", "managedRun", "placement", "schemaVersion", "slots", "viewLabels"].includes(key))
         || (registration.managedRun !== undefined && typeof registration.managedRun !== "boolean")
         || page.managedRun !== (registration.managedRun === true)
         || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
         || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases"
         || !isDeepStrictEqual(registration.placement, page.placement)
-        || !isDeepStrictEqual(registration.viewLabels ?? {}, page.viewLabels)) {
+        || !isDeepStrictEqual(registration.viewLabels ?? {}, page.viewLabels)
+        || !isDeepStrictEqual(registration.slots ?? [], page.phaseSlots)) {
         throw new Error("Packaged phase control definition differs from its frozen contract");
     }
     const bytes = readPackagedFile(new URL(`./pages/${page.adapter}.mjs`, import.meta.url));
     if (!bytes.length || bytes.length > 32 * 1024
         || createHash("sha256").update(bytes).digest("hex") !== page.hash) {
         throw new Error("Packaged phase control adapter does not match its frozen hash");
+    }
+    return bytes;
+}
+function readWorkflowPresentation(page) {
+    if (!page.pageAdapter) return null;
+    readWorkflowPage(page);
+    const bytes = readPackagedFile(new URL(`./pages/${page.pageAdapter}.mjs`, import.meta.url));
+    if (!bytes.length || bytes.length > 32 * 1024
+        || createHash("sha256").update(bytes).digest("hex") !== page.pageAdapterHash) {
+        throw new Error("Packaged Workflow page adapter does not match its frozen hash");
     }
     return bytes;
 }
@@ -614,6 +664,23 @@ const APPEARANCE_PROPERTIES = {
 
 export function renderHtml(config, token = "") {
     if (!validRuntimeConfig(config)) throw new Error("Invalid generated canvas configuration");
+    const adapted = Boolean(config.workflowPage.pageAdapter);
+    const wrapped = adapted || Boolean(config.generatedPages?.length);
+    const presentation = adapted ? {
+        id: "workflow", title: config.workflowPage.title,
+        slots: config.workflowPage.slots, badgeDestinations: config.workflowPage.badgeDestinations,
+        canvas: { displayName: config.canvas.displayName, workflowListName: config.canvas.workflowListName,
+            description: config.canvas.description },
+        mainPageAsset: config.mainPageAsset, readOnlyFields: config.readOnlyFields ?? [],
+        textPlacements: config.textPlacements ?? [], hasValues: Boolean(config.valueSources?.length),
+        generatedControls: config.generatedControls ?? [],
+        hasBadges: Boolean(config.badges?.instances?.length),
+        hasConstitution: config.phases.some((phase) => phase.replace(/^speckit\./, "") === "constitution"),
+        fieldSlots: config.workflowPage.slots.filter(({ id }) => id !== "workflow.phases"
+            && (config.fieldPlacements?.some((item) => item.page === "workflow" && item.slot === id)
+                || config.buttons?.some((item) => item.page === "workflow" && item.slot === id)))
+            .map(({ id }) => id),
+    } : null;
     const appearanceCss = Object.entries(config.appearance ?? {}).map(([mode, options]) => {
         const colors = typeof options === "string" ? { accent: options } : options;
         const rule = Object.entries(colors).map(([key, value]) =>
@@ -658,13 +725,18 @@ export function renderHtml(config, token = "") {
                 <span id="workflow-slug-error" class="workflow-error" role="alert" hidden></span>
             </label>
         </div>
+        ${config.badges?.instances?.length && config.workflowPage.slots.some((slot) => slot.id === "workflow.summary")
+            ? '<div id="workflow-badge-summary" data-badge-slot="workflow.summary" class="canvas-badges" aria-label="Selected workflow badges" hidden></div>' : ""}
+        ${config.badges?.instances?.length ? '<p id="workflow-badge-diagnostics" class="muted" role="status" hidden></p>' : ""}
         <label id="workflow-search-field" class="workflow-search" for="workflow-search" hidden><span class="visually-hidden">Search workflows</span><input id="workflow-search" type="search" placeholder="Search workflows by name or directory"></label>
         <div id="workflow-list" class="instance-list">
-            <div id="workflow-rows" role="list" aria-labelledby="workflow-heading"></div>
+            <div id="workflow-rows" role="list" aria-labelledby="workflow-heading"${config.workflowPage.slots.some((slot) => slot.id === "workflow.list")
+                ? ' data-badge-slot="workflow.list"' : ""}></div>
             <p id="workflow-empty">No workflows yet.</p>
         </div>
-        <p id="workflow-constitution-note" class="muted" hidden>Create a project constitution to start a workflow.</p>
+        <p id="workflow-constitution-note" class="muted" hidden>Create a constitution to start a workflow.</p>
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
+        <p id="workflow-action-error" class="workflow-error" role="alert" hidden></p>
     </section>`,
         details: readOnlySections(config.readOnlyFields, config.textPlacements),
         values: config.valueSources?.length ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : "",
@@ -682,17 +754,19 @@ export function renderHtml(config, token = "") {
                 `<button class="btn btn-secondary" type="button" data-canvas-page="${escapeHtml(id)}">${escapeHtml(title)}</button>`).join("")}
         </nav>
         <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
-            data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>` : "",
-        constitution: hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Project constitution">
-            <div class="constitution-summary"><strong>Project constitution</strong><span class="muted">Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span></div>
+            data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>
+        <p id="generated-page-error" class="workflow-error" role="alert" hidden></p>` : "",
+        constitution: hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
+            <div class="constitution-summary"><strong>Constitution</strong><span class="muted">Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span></div>
             <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p><p id="constitution-artifact-status" class="muted" role="status"></p></div>
             <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button></div>
         </section>` : "",
-        message: '<p id="canvas-message" role="status"></p>',
         pipeline: `<div id="workflow-pipeline" hidden data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
             data-view-labels="${escapeHtml(JSON.stringify(config.workflowPage.viewLabels))}"
+            data-badge-slots="${escapeHtml(JSON.stringify(config.workflowPage.phaseSlots))}"
             data-phases="${escapeHtml(JSON.stringify(phaseContract(config).filter((step) => !step.project)
-                .map((step) => ({ id: step.id, label: step.label, output: step.output,
+                .map((step) => ({ id: step.id, label: step.label, description: step.description,
+                    output: step.output,
                     outputs: step.outputs }))))}"></div>`,
     };
     const workflowContributions = config.workflowPage.slots.filter(({ id }) => id !== "workflow.phases"
@@ -710,19 +784,22 @@ export function renderHtml(config, token = "") {
         : ' aria-hidden="true"'}>${config.brandAsset ? "" : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
+<p id="canvas-fatal-error" class="workflow-error" role="alert" hidden></p>
 <main id="workflow-surface" class="app-body workflow-surface">
-    <section id="setup-surface" class="phase-card" aria-labelledby="setup-heading" hidden>
+    ${adapted ? "" : `<section id="setup-surface" class="phase-card" aria-labelledby="setup-heading" hidden>
         <div class="setup-copy"><h2 id="setup-heading">Set up this project</h2>
             <p class="muted">Set up Spec Kit and install the selected presets, extensions, and bundles.</p></div>
         <div id="setup-actions"></div>
         <p id="setup-status" role="status" hidden></p>
-    </section>
+    </section>`}
     ${config.generatedPages?.length ? regions.pages : ""}
-    ${config.generatedPages?.length ? '<div id="workflow-content" class="workflow-content">' : ""}
-    ${WORKFLOW_REGIONS.filter((region) => !config.generatedPages?.length
-        || (region !== "pages" && region !== "message")).map((region) =>
+    ${wrapped ? `<div id="workflow-content" class="workflow-content"${adapted
+        ? ` data-page-module="/pages/${escapeHtml(config.workflowPage.pageAdapter)}.mjs"
+        data-page-definition="${escapeHtml(JSON.stringify(presentation))}"` : ""}>` : ""}
+    ${adapted ? regions.pipeline : WORKFLOW_REGIONS.filter((region) => !wrapped
+        || region !== "pages").map((region) =>
         regions[region] + (region === "pipeline" ? workflowContributions : "")).join("")}
-    ${config.generatedPages?.length ? `</div>${regions.message}` : ""}
+    ${wrapped ? "</div>" : ""}
     ${config.generatedPages?.map(({ id, renderer, slots, values }) =>
         `<span hidden data-generated-renderer="${escapeHtml(id)}" data-module="/pages/${escapeHtml(renderer)}.mjs"
             data-values="${escapeHtml(JSON.stringify(Object.fromEntries((config.readOnlyFields ?? [])
@@ -748,8 +825,8 @@ export function renderHtml(config, token = "") {
     data-button-controls="${escapeHtml(JSON.stringify(config.buttonControls ?? []))}"></span>
 <div id="generated-dialog-root"></div>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
-<dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title"><h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2><p>This permanently deletes the selected workflow directory and everything in it:</p><p><code id="delete-workflow-directory"></code></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow" type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow" type="button">Delete workflow</button></footer></dialog>
-${hasConstitution ? `<dialog id="constitution-dialog" aria-labelledby="constitution-dialog-title"><h2 id="constitution-dialog-title">Create project constitution</h2><label class="field" for="constitution-args"><span class="field-label" id="constitution-args-label">Project principles</span><textarea class="phase-input-control" id="constitution-args" required></textarea></label><p id="constitution-message" role="status"></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-constitution" type="button">Cancel</button><button class="btn btn-primary" id="send-constitution" type="button">Create constitution</button></footer></dialog>` : ""}
+${adapted ? "" : '<dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title"><h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2><p>This permanently deletes the selected workflow directory and everything in it:</p><p><code id="delete-workflow-directory"></code></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow" type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow" type="button">Delete workflow</button></footer></dialog>'}
+${!adapted && hasConstitution ? `<dialog id="constitution-dialog" aria-labelledby="constitution-dialog-title"><h2 id="constitution-dialog-title">Create constitution</h2><label class="field" for="constitution-args"><span class="field-label" id="constitution-args-label">Project principles</span><textarea class="phase-input-control" id="constitution-args" required></textarea></label><p id="constitution-message" role="status"></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-constitution" type="button">Cancel</button><button class="btn btn-primary" id="send-constitution" type="button">Create constitution</button></footer></dialog>` : ""}
 <script type="module" src="/ui/app.js?token=${escapeHtml(encodeURIComponent(token))}"></script>
 </body></html>`;
 }
@@ -794,10 +871,13 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             const moduleName = /^\/pages\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname)?.[1];
             if (request.method === "GET" && moduleName
                 && (config.workflowPage.adapter === moduleName
+                    || config.workflowPage.pageAdapter === moduleName
                     || config.generatedPages?.some((page) => page.renderer === moduleName))) {
                 const module = config.workflowPage.adapter === moduleName
                     ? readWorkflowPage(config.workflowPage)
-                    : readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
+                    : config.workflowPage.pageAdapter === moduleName
+                        ? readWorkflowPresentation(config.workflowPage)
+                        : readFileSync(new URL(`./pages/${moduleName}.mjs`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }).end(module);
                 return;
             }

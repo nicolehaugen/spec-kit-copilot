@@ -10,6 +10,22 @@ import { UserError, confined, readBounded, readBoundedBytes, directories, atomic
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 import { createSetup } from "./setup.mjs";
+import { evaluateBadges, verifyBadgeModules } from "./badge-runtime.mjs";
+
+export async function existingOutputFolder(root, path) {
+    let candidate = path === "." ? "." : safePath(path);
+    while (candidate !== ".") {
+        try {
+            const folder = await confined(root, candidate);
+            if (!(await lstat(folder)).isDirectory()) throw new UserError("The output path is not a folder.");
+            return folder;
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            candidate = posix.dirname(candidate);
+        }
+    }
+    return realpath(root);
+}
 
 const PROVIDER_REFRESH_LIMIT_MS = 3000;
 const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
@@ -75,6 +91,7 @@ const newItem = (id) => id === "__new__" || pendingId(id);
 const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null, slug: "",
     name: "", names: {}, drafts: {}, runs: [], values: {}, pendingWorkflows: [], workflowSerial: 0 });
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
+    if (config.badges?.instances?.length) await verifyBadgeModules(config.badges);
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
     const setup = createSetup({ config, cwd, session, phases, notify,
@@ -204,7 +221,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (!output) return false;
         try {
             if (!(await lstat(await confined(cwd, output))).isFile()) {
-                throw new UserError("The project constitution is not a regular file.");
+                throw new UserError("The constitution is not a regular file.");
             }
             return true;
         } catch (error) {
@@ -214,7 +231,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     async function requireConstitution() {
         if (!(await hasConstitution())) {
-            throw new UserError("Create a project constitution before starting a workflow.");
+            throw new UserError("Create a constitution before starting a workflow.");
         }
     }
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
@@ -257,7 +274,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
         }
     }
-    async function outputPath(step, item, view = state, entries) {
+    async function outputPath(step, item, view = state, entries, directory = false) {
         const run = runFor(step, item, view);
         if (!step.configuredArtifacts && run?.artifact) { authorizeReport(step, run.artifact, run.item); return run.artifact; }
         if (!step.output) return null;
@@ -273,6 +290,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("This phase output belongs to a different workflow.");
             }
         }
+        if (directory) return posix.dirname(safePath(path, true));
         if (path.endsWith("<name>.md")) {
             const parent = posix.dirname(path);
             try {
@@ -385,6 +403,18 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             automation.status = "Blocked";
             automation.message = "Autopilot outcome is unconfirmed. Check chat before resuming.";
         }
+        const badges = config.badges?.instances?.length ? await evaluateBadges(config.badges, {
+            cwd, workflows: entries.map(({ id }) => id), phases,
+            outputPath: async ({ phase, output }, workflow, options = {}) => {
+                const step = phaseFor(phase);
+                return outputPath(output === undefined ? step : {
+                    ...step, output, configuredArtifacts: true,
+                }, step.project ? "project" : workflow, view, entries, options.directory === true);
+            },
+            runFor: (step, workflow) => runFor(step, workflow, view),
+            log: (message) => { void diagnostic(message); },
+        }) : undefined;
+        if (badges) badges.selected = badges.items[item] ?? [];
         const project = phases.find((phase) => phase.project);
         const pending = (view.pendingWorkflows ?? []).map(({ id, name, slug }) => {
             const run = view.runs.findLast((entry) => entry.item === id);
@@ -404,6 +434,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             slug: pendingFor(item, view)?.slug ?? view.slug,
             phases, items: [...entries, ...legacyDraft, ...pending],
             statuses, valueFields: visibleValues, pageValues, valueErrors,
+            ...(badges ? { badges } : {}),
             setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
                 : { stage: "legacy", ready: true, pending: [], planId: null, error: null } };
     }
@@ -742,6 +773,7 @@ Steps:\n${instructions}` });
                     slug: null, name: pendingFor(current.item, next)?.name ?? next.name ?? "",
                     before: before.map((entry) => entry.id),
                     sessionId: session.sessionId, messageId: current.messageId,
+                    startedAt: new Date().toISOString(),
                     status: "Running", artifact: null, artifacts: [], error: null });
             });
             liveRuns.add(runId);
@@ -780,6 +812,7 @@ Steps:\n${instructions}` });
             const record = next.runs.find((entry) => entry.runId === run.runId);
             if (record?.status !== "Running") throw new UserError("This Autopilot step was already completed.");
             record.status = "Completed";
+            record.completedAt = new Date().toISOString();
             current.item = record.item;
             current.current++;
             if (current.current === workflowSteps.length) current.status = "Finishing";
@@ -830,6 +863,7 @@ Steps:\n${instructions}` });
             const record = { runId, instanceId, phase: step.id, item, args: input.args,
                 slug: slug || null, name,
                 before: before.map((entry) => entry.id), sessionId: session.sessionId,
+                startedAt: new Date().toISOString(),
                 messageId: null, status: "Request sent", artifact: null, artifacts: [], error: null };
             await update((next) => {
                 next.runs.push(record);
@@ -988,6 +1022,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     continue;
                 }
                 run.status = response.success ? "Completed" : "Failed";
+                if (response.success) run.completedAt ??= new Date().toISOString();
                 run.error = response.error ?? null;
             }
             const automation = next.autopilot;
@@ -1082,14 +1117,15 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         } finally { deleting = false; }
     }
     async function reveal(input) {
-        const path = await outputPath(phaseFor(input.phase), input.itemId);
-        if (!path) throw new UserError("No output folder is available. Select a workflow or run the phase first.");
-        let folder;
-        try { folder = posix.dirname(path) === "." ? await realpath(cwd) : await confined(cwd, posix.dirname(path)); }
-        catch (error) {
-            if (error.code === "ENOENT") throw new UserError("The output folder does not exist yet. Run the phase, then try again.", 404);
-            throw error;
+        const step = phaseFor(input.phase);
+        if (input.output !== undefined && !step.outputs.includes(input.output)) {
+            throw new UserError("This output is not declared for the selected phase.", 403);
         }
+        const selected = input.output === undefined ? step
+            : { ...step, output: input.output, configuredArtifacts: true };
+        const path = await outputPath(selected, input.itemId, state, undefined, true);
+        if (!path) throw new UserError("No output folder is available. Select a workflow or run the phase first.");
+        const folder = await existingOutputFolder(cwd, path);
         const [command, args] = process.platform === "win32" ? ["explorer.exe", [folder]]
             : process.platform === "darwin" ? ["open", [folder]] : ["xdg-open", [folder]];
         await new Promise((resolve, reject) => {
@@ -1099,7 +1135,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         });
         return { message: "Opened the output folder." };
     }
-    return { snapshot, refresh, save, saveValue, createPending, removePending, run,
+
+        return { snapshot, refresh, save, saveValue, createPending, removePending, run,
         startAutopilot, stopAutopilot, reportAutopilotStep,
         report, reportSlug, artifact, reveal, deleteWorkflow,
         setupStart: setup.start, setupConfirm: setup.confirm, setupStatus: setup.status,

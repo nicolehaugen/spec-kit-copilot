@@ -11,10 +11,11 @@ import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invoca
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
 const REQUIRED_PAGES = ["designer-essentials", "designer-artifacts",
-    "designer-appearance"];
+    "designer-badges", "designer-appearance"];
 const FIXED_PAGE_CONTROLS = {
     "designer-essentials": "designer.identity",
     "designer-artifacts": "designer.outputs",
+    "designer-badges": "designer.badges",
 };
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
@@ -379,8 +380,18 @@ function validateGeneratedPage(document, name) {
 function validateWorkflowPage(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "id,order,schemaVersion,slots,title"
-        || document.schemaVersion !== 1 || document.id !== "workflow" || name !== "generated-workflow"
+        || !["id,order,schemaVersion,slots,title",
+            "adapter,badgeDestinations,id,order,schemaVersion,slots,title"].includes(
+            contractKeys(document).sort().join())
+        || document.schemaVersion !== (document.adapter ? 2 : 1)
+        || (document.adapter !== undefined && (typeof document.adapter !== "string"
+            || !PAGE_PATTERN.test(document.adapter) || isWindowsDeviceName(document.adapter)
+            || !Array.isArray(document.badgeDestinations)
+            || document.badgeDestinations.length > 4
+            || new Set(document.badgeDestinations).size !== document.badgeDestinations.length
+            || document.badgeDestinations.some((destination) =>
+                !["workflow.list", "workflow.summary", "phase.card", "phase.output"].includes(destination))))
+        || document.id !== "workflow" || name !== "generated-workflow"
         || typeof document.title !== "string" || !document.title.trim()
         || document.title.length > 120 || document.order !== 0
         || !Array.isArray(document.slots) || document.slots.length < 1 || document.slots.length > 30
@@ -401,7 +412,8 @@ function validateFieldPlacement(document, name) {
         || document.schemaVersion !== 1 || document.id !== name
         || typeof document.page !== "string" || !PAGE_PATTERN.test(document.page)
         || typeof document.slot !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(document.slot)
-        || document.slot === "workflow.phases"
+        || document.page === "workflow"
+            && ["workflow.phases", "workflow.list", "workflow.summary"].includes(document.slot)
         || typeof document.field !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.field)
         || !Number.isInteger(document.order) || document.order < -100000 || document.order > 100000
         || (document.control !== undefined && (typeof document.control !== "string"
@@ -414,7 +426,7 @@ function validatePhaseControl(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).some((key) =>
-            !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
+            !["adapter", "id", "managedRun", "placement", "schemaVersion", "slots", "viewLabels"].includes(key))
         || (document.managedRun !== undefined && typeof document.managedRun !== "boolean")
         || document.schemaVersion !== 1 || document.id !== "workflow-phases"
         || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
@@ -430,7 +442,13 @@ function validatePhaseControl(document, name) {
             || Object.entries(document.viewLabels).some(([id, label]) =>
                 !/^(?:speckit\.)?[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(id)
                 || typeof label !== "string" || !label.trim() || label.length > 80
-                || /[\x00-\x1f\x7f]/.test(label))))) {
+                || /[\x00-\x1f\x7f]/.test(label))))
+        || (document.slots !== undefined
+            && (!Array.isArray(document.slots) || document.slots.length !== 2
+                || new Set(document.slots.map((slot) => slot?.id)).size !== 2
+                || document.slots.some((slot) => !slot || typeof slot !== "object"
+                    || Array.isArray(slot) || Object.keys(slot).join() !== "id"
+                    || !["phase.card", "phase.output"].includes(slot.id))))) {
         throw new Error(`${name}: invalid phase control definition`);
     }
 }
@@ -609,6 +627,84 @@ async function executableRegistration(project, name) {
     }
 }
 
+const BADGE_ID = /^[a-z][a-z0-9-]{0,79}$/;
+const BADGE_COLOR = /^(?:theme|red|green|amber|blue|purple|pink|orange|#[0-9a-fA-F]{6})$/;
+const badgeRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const badgeKeys = (value, keys) => Object.keys(value)
+    .filter((key) => key !== "$schema").sort().join() === [...keys].sort().join();
+function validateBadgeText(text, placeholders, name) {
+    if (typeof text !== "string" || !text.trim() || text.length > 120
+        || /[\x00-\x1f\x7f<>]/.test(text)
+        || [...text.matchAll(/\{([^{}]+)\}/g)].some(([, placeholder]) =>
+            !placeholders.includes(placeholder))
+        || /[{}]/.test(text.replace(/\{[^{}]+\}/g, ""))) {
+        throw new Error(`${name}: invalid badge text or undeclared placeholder`);
+    }
+}
+function validateBadgeType(value, name) {
+    if (!badgeRecord(value) || Object.hasOwn(value, "$schema")
+        || !badgeKeys(value, ["id", "title", "description",
+        "rule", "defaultText", "defaultColor", "enabled"])
+        || typeof value.id !== "string" || !BADGE_ID.test(value.id)
+        || typeof value.rule !== "string" || !BADGE_ID.test(value.rule)
+        || typeof value.title !== "string" || !value.title.trim() || value.title.length > 120
+        || typeof value.description !== "string" || !value.description.trim()
+        || value.description.length > 1000 || typeof value.enabled !== "boolean"
+        || typeof value.defaultColor !== "string" || !BADGE_COLOR.test(value.defaultColor)) {
+        throw new Error(`${name}: invalid badge type definition`);
+    }
+}
+function validateBadgeSettings(value, name) {
+    if (!badgeRecord(value) || !badgeKeys(value, ["schemaVersion", "types"])
+        || value.schemaVersion !== 1 || !Array.isArray(value.types)
+        || !value.types.length || value.types.length > 30) {
+        throw new Error(`${name}: invalid badges settings`);
+    }
+    schemaMetadata(value, name);
+    for (const type of value.types) validateBadgeType(type, name);
+    if (new Set(value.types.map((type) => type.id)).size !== value.types.length) {
+        throw new Error(`${name}: duplicate badge type ID`);
+    }
+}
+export function validateBadgeRule(value, name) {
+    if (!badgeRecord(value) || !badgeKeys(value, ["schemaVersion", "id", "label", "description",
+        "inputs", "textPlaceholders", "module",
+        ...(Object.hasOwn(value, "placementPhaseInput") ? ["placementPhaseInput"] : [])])
+        || value.schemaVersion !== 1 || typeof value.id !== "string" || !BADGE_ID.test(value.id)
+        || typeof value.module !== "string" || !BADGE_ID.test(value.module)
+        || typeof value.label !== "string" || !value.label.trim() || value.label.length > 120
+        || typeof value.description !== "string" || !value.description.trim()
+        || value.description.length > 1000
+        || !Array.isArray(value.inputs) || value.inputs.length > 10
+        || value.inputs.some((input) => !badgeRecord(input) || !badgeKeys(input, ["id", "type",
+            ...(Object.hasOwn(input, "scope") ? ["scope"] : []),
+            ...(Object.hasOwn(input, "before") ? ["before"] : []),
+            ...(Object.hasOwn(input, "label") ? ["label"] : [])])
+            || typeof input.id !== "string" || !BADGE_ID.test(input.id)
+            || !["artifact", "artifact-set", "ordered-artifacts", "phase", "text"].includes(input.type)
+            || (input.label !== undefined
+                && (typeof input.label !== "string" || !input.label.trim() || input.label.length > 80))
+            || (input.scope !== undefined
+                && !(input.type === "artifact" && ["directory", "metadata"].includes(input.scope)
+                    || input.type === "ordered-artifacts" && input.scope === "metadata"))
+            || (input.type === "ordered-artifacts"
+                && (input.scope !== "metadata" || typeof input.before !== "string"))
+            || (input.before !== undefined && (input.type !== "ordered-artifacts"
+                || !value.inputs.some((candidate) => candidate.id === input.before
+                    && candidate.type === "artifact" && candidate.scope === "metadata"))))
+        || new Set(value.inputs.map((input) => input.id)).size !== value.inputs.length
+        || (value.placementPhaseInput !== undefined
+            && !value.inputs.some((input) =>
+                input.id === value.placementPhaseInput && input.type === "artifact"))
+        || !Array.isArray(value.textPlaceholders) || value.textPlaceholders.length > 10
+        || value.textPlaceholders.some((placeholder) => typeof placeholder !== "string"
+            || !/^[a-z][a-z0-9-]{0,39}$/.test(placeholder))
+        || new Set(value.textPlaceholders).size !== value.textPlaceholders.length) {
+        throw new Error(`${name}: invalid badge rule definition`);
+    }
+    schemaMetadata(value, name);
+}
+
 async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes,
     registration) {
     if (!Array.isArray(templates) || templates.length > 100) {
@@ -640,8 +736,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || typeof item.sourceId !== "string"
             || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
             || !["designer.setting-definition", "generated.added-page-definition", "generated.added-page-renderer",
-                "generated.workflow-page-definition", "generated.phase-control-definition",
+                "generated.workflow-page-definition", "generated.workflow-page-adapter",
+                "generated.phase-control-definition",
                 "generated.phase-control-adapter",
+                "designer.badges-settings-definition", "generated.badge-rule-definition",
+                "generated.badge-rule-handler",
                 "generated.field-placement",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                 "generated.value-definition", "generated.computed-value-provider",
@@ -653,9 +752,10 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
         const executable = ["generated.added-page-renderer", "generated.phase-control-adapter",
+            "generated.workflow-page-adapter",
             "designer.control-adapter", "generated.control-adapter",
             "generated.computed-value-provider", "generated.dialog-adapter",
-            "generated.button-adapter"].includes(item.kind);
+            "generated.button-adapter", "generated.badge-rule-handler"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
@@ -713,6 +813,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: control definition exceeds 32 KiB`);
             } else if (item.kind === "generated.value-definition") {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: value definition exceeds 32 KiB`);
+            } else if (item.kind === "designer.badges-settings-definition") {
+                validateBadgeSettings(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: badges settings exceed 32 KiB`);
+            } else if (item.kind === "generated.badge-rule-definition") {
+                validateBadgeRule(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: badge rule exceeds 32 KiB`);
             } else {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: executable module exceeds 32 KiB`);
                 const { init, parse } = await import("es-module-lexer/minimal");
@@ -730,6 +836,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                             ? "computed value provider" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
                 const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
+                    : item.kind === "generated.badge-rule-handler" ? "evaluate"
                     : item.kind === "generated.phase-control-adapter" ? "mount"
                     : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
                 const check = spawnSync("node", ["--check", "--input-type=module"],
@@ -748,6 +855,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                             ? "dialogId" : "controlId")))) {
                     throw new Error(`${item.name}: adapter is missing contractVersion or identity export`);
                 }
+                if (item.kind === "generated.workflow-page-adapter"
+                    && (!exports.some((entry) => entry.n === "pageId")
+                        || !exports.some((entry) => entry.n === "contractVersion"))) {
+                    throw new Error(`${item.name}: Workflow page adapter is missing pageId or contractVersion export`);
+                }
                 if (item.kind === "generated.phase-control-adapter"
                     && (!exports.some((entry) => entry.n === "controlId")
                         || !exports.some((entry) => entry.n === "contractVersion"))) {
@@ -756,6 +868,10 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (item.kind === "designer.control-adapter"
                     && !exports.some((entry) => entry.n === "validate")) {
                     throw new Error(`${item.name}: Designer adapter is missing validate export`);
+                }
+                if (item.kind === "generated.badge-rule-handler"
+                    && !exports.some((entry) => entry.n === "contractVersion")) {
+                    throw new Error(`${item.name}: badge handler is missing contractVersion export`);
                 }
                 if (item.kind === "generated.computed-value-provider") {
                     const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:(?:async\s+)?function|const)\s+provideValue\b/g)];
@@ -795,8 +911,48 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${entry.name}: generated renderer must belong to exactly one page`);
         }
     }
+    const badgeSettings = loaded.filter((item) => item.kind === "designer.badges-settings-definition");
+    if (badgeSettings.length > 1 || badgeSettings.length === 1
+        && badgeSettings[0].name !== "badges-settings") {
+        throw new Error("At most one badges-settings definition is allowed");
+    }
+    const badgeTypes = (badgeSettings[0]?.document.types ?? []).map((document) =>
+        ({ ...badgeSettings[0], document }));
+    const badgeRules = loaded.filter((item) => item.kind === "generated.badge-rule-definition");
+    const badgeHandlers = loaded.filter((item) => item.kind === "generated.badge-rule-handler");
+    if (badgeTypes.length > 30 || badgeRules.length > 30 || badgeHandlers.length > 30) {
+        throw new Error("Designer badge definitions exceed their size limit");
+    }
+    for (const [group, label] of [[badgeTypes, "type"], [badgeRules, "rule"]]) {
+        const ids = new Set();
+        for (const entry of group) {
+            if (ids.has(entry.document.id)) throw new Error(`${entry.name}: duplicate badge ${label} ID`);
+            ids.add(entry.document.id);
+        }
+    }
+    for (const entry of badgeTypes) {
+        const rule = badgeRules.find((item) => item.document.id === entry.document.rule);
+        if (!rule) throw new Error(`${entry.name}: missing badge rule ${entry.document.rule}`);
+        validateBadgeText(entry.document.defaultText, rule.document.textPlaceholders, entry.name);
+    }
+    for (const entry of badgeRules) {
+        if (!badgeHandlers.some((item) => item.name === entry.document.module)) {
+            throw new Error(`${entry.name}: missing registered badge handler ${entry.document.module}`);
+        }
+    }
+    for (const entry of badgeHandlers) {
+        if (!badgeRules.some((item) => item.document.module === entry.name)) {
+            throw new Error(`${entry.name}: unreferenced badge handler`);
+        }
+    }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
     if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
+    const workflowAdapters = loaded.filter((item) => item.kind === "generated.workflow-page-adapter");
+    if (workflowPages[0].document.adapter
+        ? workflowAdapters.length !== 1 || workflowAdapters[0].name !== workflowPages[0].document.adapter
+        : workflowAdapters.length !== 0) {
+        throw new Error("Workflow page requires exactly its registered presentation adapter");
+    }
     const phaseControls = loaded.filter((item) => item.kind === "generated.phase-control-definition");
     if (phaseControls.length !== 1 || phaseControls[0].name !== "generated-phase-control") {
         throw new Error(`${workflowPages[0].name}: missing or unreferenced phase control definition`);
@@ -804,6 +960,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     const phaseAdapters = loaded.filter((item) => item.kind === "generated.phase-control-adapter");
     if (!phaseAdapters.some((entry) => entry.name === phaseControls[0].document.adapter)) {
         throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
+    }
+    if (workflowPages[0].document.adapter === phaseControls[0].document.adapter
+        || loaded.some((entry) => entry.kind === "generated.added-page-definition"
+            && entry.document.renderer === workflowPages[0].document.adapter)) {
+        throw new Error("Workflow page adapter collides with another generated page module");
     }
     const dialogs = loaded.filter((entry) => entry.kind === "generated.dialog-definition");
     const dialogAdapters = loaded.filter((entry) => entry.kind === "generated.dialog-adapter");
@@ -1190,6 +1351,11 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         .sort((a, b) => a.order - b.order || a.sourceId.localeCompare(b.sourceId)
             || a.id.localeCompare(b.id));
     model.valueSources = loaded.filter((entry) => entry.kind === "generated.value-definition")
+        .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
+    model.badgeTypes = loaded.filter((entry) => entry.kind === "designer.badges-settings-definition")
+        .flatMap(({ name, sourceId, document }) =>
+            document.types.map((type) => ({ name, sourceId, schemaVersion: 1, ...type })));
+    model.badgeRules = loaded.filter((entry) => entry.kind === "generated.badge-rule-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.controls = controls.map(({ name, document }) => ({ ...document, template: name }));
     model.adapters = Object.fromEntries(controls.map(({ document }) =>

@@ -33,6 +33,8 @@ Autopilot on another workflow if Copilot is still in Autopilot mode.
 The managed-run capability is declared in the preset's phase-control JSON and
 frozen into generated configuration. The server verifies both packaged hashes
 without executing the browser module.
+The replacement control also declares the phase-card and output badge slots,
+so Designer badge placements remain available with the vertical layout.
 
 This preset depends on the Copilot Canvas Design runtime and its Copilot
 session APIs. Its packaged adapter requires `workflow.rows.v1` and

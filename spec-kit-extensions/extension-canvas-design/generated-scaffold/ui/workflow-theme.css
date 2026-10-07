@@ -285,15 +285,18 @@ code, pre { font-family: var(--font-mono); }
 .phase-output-list {
     display: grid;
     gap: 0.25rem;
-    margin-left: 0.5rem;
-    padding-left: calc(100px + 1rem);
-    border-left: 1px solid var(--border-color-default);
+    margin: 0.5rem 0 0 0.4rem;
+    padding-left: 0.75rem;
+    border-left: 2px solid color-mix(in oklab, var(--accent-color) 30%, transparent);
 }
 .phase-output-list[hidden] { display: none; }
-.phase-output-row { min-width: 0; overflow-wrap: anywhere; }
-@media (max-width: 480px) {
-    .phase-output-list { padding-left: 0.75rem; }
+.phase-output-row {
+    min-width: 0;
+    padding: 0.25rem 0;
+    border-top: 1px dotted color-mix(in oklab, var(--border-color-default) 45%, transparent);
+    overflow-wrap: anywhere;
 }
+.phase-output-row:first-child { border-top: 0; }
 .phase-artifact-link {
     display: inline-flex;
     align-items: center;
@@ -438,6 +441,7 @@ code, pre { font-family: var(--font-mono); }
     .instance-select .phase-notice { margin-left: 0; max-width: 100%; flex-shrink: 1; }
 }
 .instance-delete {
+    flex: 0 0 7rem;
     padding: 0.5rem 1rem;
     color: var(--danger-color);
     background: transparent;

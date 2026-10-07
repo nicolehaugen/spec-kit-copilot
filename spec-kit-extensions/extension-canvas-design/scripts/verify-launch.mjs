@@ -8,7 +8,10 @@ import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
 const exec = promisify(execFile);
 const NAME = /^[a-z][a-z0-9-]{0,79}$/;
 const KINDS = new Set(["designer.setting-definition",
+    "designer.badges-settings-definition", "generated.badge-rule-definition",
+    "generated.badge-rule-handler",
     "generated.workflow-page-definition", "generated.phase-control-definition",
+    "generated.workflow-page-adapter",
     "generated.phase-control-adapter",
     "generated.field-placement",
     "generated.added-page-definition", "generated.added-page-renderer",
@@ -19,7 +22,9 @@ const KINDS = new Set(["designer.setting-definition",
     "generated.value-definition", "generated.computed-value-provider"]);
 const HEADINGS = new Set(["Pages", "Additional Designer pages",
     "Canvas Design templates", "Additional Canvas Design templates"]);
-const EXECUTABLE = new Set(["generated.phase-control-adapter", "generated.added-page-renderer",
+const EXECUTABLE = new Set(["generated.badge-rule-handler",
+    "generated.workflow-page-adapter", "generated.phase-control-adapter",
+    "generated.added-page-renderer",
     "designer.control-adapter", "generated.control-adapter", "generated.computed-value-provider",
     "generated.dialog-adapter", "generated.button-adapter"]);
 

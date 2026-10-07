@@ -36,7 +36,8 @@ test("stock named dialog and button contracts are registered and valid", async (
     assert.equal(option.field.id, "setup.show");
     assert.equal(option.field.default, false);
     const page = await json(base, "generated-host/workflow-page/workflow.json");
-    assert.deepEqual(page.slots.map(({ id }) => id), ["workflow.phases", "workflow.actions"]);
+    assert.deepEqual(page.slots.map(({ id }) => id),
+        ["workflow.phases", "workflow.actions", "workflow.list", "workflow.summary"]);
 });
 
 test("fixture binds exactly one phase and adds a dialog-result button without replacing Workflow", async () => {
