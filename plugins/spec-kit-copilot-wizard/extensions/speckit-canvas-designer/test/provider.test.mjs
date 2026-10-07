@@ -271,6 +271,212 @@ async function stockTemplates(project) {
     return templates;
 }
 
+test("Generate freezes winning dialog and button assets with their registrations", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.selectedPhases.push("implement");
+    handoff.workflow.installed = { presets: [{ id: "runtime-kit", version: "1.0.0",
+        source: "community", enabled: false, priority: 3 }], extensions: [], bundles: [] };
+    const locator = { installedId: "runtime-kit", source: "community",
+        catalogId: "runtime-catalog", downloadUrl: "https://example.org/runtime.zip" };
+    handoff.workflow.installLocators = { presets: [locator], extensions: [], bundles: [] };
+    handoff.workflow.runtimeSetup = { presets: [{ id: "runtime-kit", version: "1.0.0",
+        enabled: false, priority: 3, locator }], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
+        import.meta.url));
+    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-dialog-buttons-test/",
+        import.meta.url));
+    const templates = await stockTemplates(project);
+    for (const [name, kind, directory, filename, root] of [
+        ["designer-essentials-show-setup", "designer.setting-definition",
+            "designer-host/essentials-settings", "show-setup.json", source],
+        ["generated-setup-dialog", "generated.dialog-definition",
+            "generated-host/dialog", "setup.json", source],
+        ["generated-dialog-adapter", "generated.dialog-adapter",
+            "generated-host/dialog", "generated-dialog-adapter.mjs", source],
+        ["generated-setup-button-control", "generated.button-control-definition",
+            "generated-host/setup-button-control", "control.json", source],
+        ["generated-setup-button-adapter", "generated.button-adapter",
+            "generated-host/setup-button-control", "generated-setup-button-adapter.mjs", source],
+        ["generated-setup-button", "generated.button-placement",
+            "generated-host/setup-button-control", "setup.json", source],
+        ["canvas-dialog-buttons-test", "generated.dialog-definition",
+            "generated", "dialog.json", preset],
+        ["canvas-button-dialog-test", "generated.dialog-definition",
+            "generated", "button-dialog.json", preset],
+        ["canvas-dialog-trigger-control", "generated.button-control-definition",
+            "generated", "dialog-trigger-control.json", preset],
+        ["canvas-dialog-trigger-adapter", "generated.button-adapter",
+            "generated", "dialog-trigger-adapter.mjs", preset],
+        ["canvas-implement-dialog-test", "generated.phase-dialog-binding",
+            "generated", "phase-binding.json", preset],
+        ["canvas-workflow-button-test", "generated.button-placement",
+            "generated", "button.json", preset],
+    ]) {
+        const path = join(project, ".specify", root === source ? "extensions" : "presets",
+            root === source ? "extension-canvas-design" : "copilot-dialog-buttons-test",
+            directory, filename);
+        await mkdir(dirname(path), { recursive: true });
+        await copyFile(join(root, directory, filename), path);
+        if (name === "generated-setup-button") {
+            const definition = JSON.parse(await readFile(path, "utf8"));
+            await writeFile(path, JSON.stringify({
+                ...definition, label: "Initialize project", presentation: "secondary",
+            }));
+        }
+        templates.push({ name, path, kind, sourceId: root === source
+            ? "extension:extension-canvas-design" : "preset:copilot-dialog-buttons-test",
+        strategy: "replace" });
+    }
+    const sourceFor = (_root, name) => {
+        const template = templates.find((item) => item.name === name);
+        return { kind: "template", stack: [{ active: true,
+            sourceId: template.sourceId.startsWith("extension:")
+                ? template.sourceId.slice("extension:".length) : template.sourceId,
+            layer: template.sourceId.startsWith("extension:") ? "extension" : "preset",
+            strategy: "replace" }] };
+    };
+    const model = await loadResolvedDesignerPages(handoff, project, entries, templates, sourceFor);
+    for (const [name, change, expected] of [
+        ["canvas-implement-dialog-test", (doc) => ({ ...doc, dialog: "generated-setup-dialog" }),
+            /phase dialog cannot use package slots/],
+        ["canvas-workflow-button-test", (doc) => ({ ...doc, dialog: "canvas-dialog-buttons-test" }),
+            /Workflow dialog cannot use dynamic slots/],
+        ["generated-setup-dialog", (doc) => ({ ...doc, blocks: [
+            ...doc.blocks, { type: "slot", name: "phase" },
+        ] }), /setup dialog requires only the pending packages slot/],
+    ]) {
+        const entry = templates.find((item) => item.name === name);
+        const original = await readFile(entry.path);
+        await writeFile(entry.path, JSON.stringify(change(JSON.parse(original))));
+        await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates,
+            sourceFor), expected);
+        await writeFile(entry.path, original);
+    }
+    const values = { ...model.values, "canvas.id": "dialog-canvas",
+        "canvas.displayName": "Dialog canvas", "setup.show": true };
+    const frozen = await freezeGeneration({ model, values, handoff, project, workspace });
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", frozen.requestId, "request.json"), "utf8"));
+    assert.equal(request.values["setup.show"], true);
+    assert.deepEqual(request.runtimeSetup, handoff.workflow.runtimeSetup);
+    assert.deepEqual(request.dialogDefinitions.map(({ name, assets }) =>
+        [name, assets.map(({ kind }) => kind)]), [
+        ["generated-setup-dialog", ["generated.dialog-definition", "generated.dialog-adapter"]],
+        ["canvas-dialog-buttons-test", ["generated.dialog-definition", "generated.dialog-adapter"]],
+        ["canvas-button-dialog-test", ["generated.dialog-definition", "generated.dialog-adapter"]],
+    ]);
+    assert.deepEqual(request.phaseDialogBindings.map(({ name, assets }) =>
+        [name, assets[0].kind]), [["canvas-implement-dialog-test", "generated.phase-dialog-binding"]]);
+    assert.deepEqual(request.buttonControls.map(({ name, assets }) => [
+        name, assets.map(({ kind }) => kind),
+    ]), [
+        ["generated-setup-button-control", ["generated.button-control-definition", "generated.button-adapter"]],
+        ["canvas-dialog-trigger-control", ["generated.button-control-definition", "generated.button-adapter"]],
+    ]);
+    assert.deepEqual(request.buttonPlacements.map(({ name, assets }) =>
+        [name, assets[0].kind]), [
+        ["generated-setup-button", "generated.button-placement"],
+        ["canvas-workflow-button-test", "generated.button-placement"],
+    ]);
+    for (const entry of [...request.dialogDefinitions, ...request.phaseDialogBindings,
+        ...request.buttonControls, ...request.buttonPlacements]) {
+        for (const item of entry.assets) {
+            assert.equal(createHash("sha256").update(Buffer.from(item.content, "base64"))
+                .digest("hex"), item.hash);
+        }
+    }
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", frozen.requestId, "request.json");
+    for (const [kind, name, update, expected] of [
+        ["phaseDialogBindings", "canvas-implement-dialog-test",
+            { dialog: "generated-setup-dialog" }, /Invalid phase dialog binding/],
+        ["buttonPlacements", "canvas-workflow-button-test",
+            { dialog: "canvas-dialog-buttons-test" }, /Invalid frozen button placement/],
+        ["dialogDefinitions", "generated-setup-dialog",
+            { blocks: [...request.dialogDefinitions.find((item) =>
+                item.name === "generated-setup-dialog").blocks,
+                { type: "slot", name: "phase" }] }, /Invalid frozen button placement/],
+    ]) {
+        const altered = structuredClone(request);
+        const entry = altered[kind].find((item) => item.name === name);
+        const asset = entry.assets[0];
+        const definition = JSON.parse(Buffer.from(asset.content, "base64").toString("utf8"));
+        Object.assign(definition, update);
+        Object.assign(entry, update);
+        const bytes = Buffer.from(JSON.stringify(definition));
+        asset.content = bytes.toString("base64");
+        asset.hash = createHash("sha256").update(bytes).digest("hex");
+        delete altered.integrity;
+        altered.integrity = createHash("sha256").update(JSON.stringify(altered)).digest("hex");
+        await writeFile(requestPath, JSON.stringify(altered));
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, frozen.requestId),
+            expected);
+    }
+    await writeFile(requestPath, JSON.stringify(request));
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    const config = JSON.parse(await readFile(join(project, frozen.target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.runtimeSetup, request.runtimeSetup);
+    assert.equal(config.dialogs.length, 3);
+    assert.equal(config.phaseDialogs.length, 1);
+    assert.equal(config.buttons.length, 2);
+    assert.equal(config.buttons.find((button) => button.id === "generated-setup-button").action.type,
+        "project.setup");
+    assert.equal(config.buttons.find((button) => button.id === "generated-setup-button").control,
+        "project.setup-button");
+    assert.equal(config.buttons.find((button) => button.id === "generated-setup-button").label,
+        "Initialize project");
+    assert.equal(config.buttons.find((button) => button.id === "generated-setup-button").presentation,
+        "secondary");
+    assert.equal(config.buttons.find((button) => button.page === "workflow").dialog,
+        "canvas-button-dialog-test");
+    assert.equal(config.buttons.find((button) => button.page === "workflow").control,
+        "dialog.trigger");
+    assert.equal(config.phaseDialogs[0].phase, "speckit.implement");
+    const generated = join(project, frozen.target);
+    const { readConfig, renderHtml, createWorkflowRoutes } = await import(
+        pathToFileURL(join(generated, "server.mjs")).href);
+    const html = renderHtml(readConfig(), "test-token");
+    assert.match(html, /id="setup-surface"[^>]*\shidden>/);
+    assert.match(html, /id="workflow-surface"/);
+    assert.match(html, /data-workflow-slot="workflow\.actions"/);
+    assert.match(html, /id="generated-dialog-contracts"/);
+    const generatedUi = await readFile(join(generated, "ui", "app.js"), "utf8");
+    assert.match(generatedUi, /async function confirmGeneratedPhase\(/);
+    assert.match(generatedUi, /confirmRun: confirmGeneratedPhase/);
+    assert.match(await readFile(join(generated, "dialogs", "canvas-button-dialog-test.json"), "utf8"),
+        /No workflow phase will run/);
+    assert.match(await readFile(join(generated, "buttons", "generated-setup-button-adapter.mjs"), "utf8"),
+        /controlId = "project.setup-button"/);
+    assert.match(await readFile(join(generated, "buttons", "canvas-dialog-trigger-adapter.mjs"), "utf8"),
+        /controlId = "dialog.trigger"/);
+    const http = createServer();
+    const routes = createWorkflowRoutes(config, { runtime: { snapshot: async () => ({}) },
+        instanceId: "test-instance", token: "test-token", port: () => http.address().port });
+    http.on("request", routes.handle);
+    await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise((resolve) => { routes.close(); http.close(resolve); }));
+    const baseUrl = `http://127.0.0.1:${http.address().port}`;
+    for (const [path, content] of [
+        ["/dialogs/generated-setup-dialog.json", /pending-packages/],
+        ["/dialogs/canvas-button-dialog-test.json", /No workflow phase will run/],
+        ["/dialogs/generated-dialog-adapter.mjs", /dialogId = "stock.dialog"/],
+        ["/buttons/generated-setup-button-adapter.mjs", /controlId = "project.setup-button"/],
+        ["/buttons/canvas-dialog-trigger-adapter.mjs", /controlId = "dialog.trigger"/],
+    ]) {
+        const response = await fetch(`${baseUrl}${path}?token=test-token`);
+        assert.equal(response.status, 200);
+        assert.match(await response.text(), content);
+    }
+    assert.equal((await fetch(`${baseUrl}/dialogs/not-registered.mjs?token=test-token`)).status, 404);
+    assert.equal((await fetch(`${baseUrl}/dialogs/generated-setup-dialog.json`)).status, 401);
+});
+
 async function stockImageTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
@@ -377,8 +583,27 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(controlFile, JSON.stringify(changedControl));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /invalid phase control definition/);
-    await writeFile(controlFile, originalControl);
+    changedControl.placement.slot = "workflow.phases";
+    changedControl.viewLabels = { plan: "View Plan" };
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    assert.deepEqual((await loadResolvedDesignerPages(handoff, project, entries, fields))
+        .templates.find((item) => item.name === "generated-phase-control").name, "generated-phase-control");
+    changedControl.viewLabels = { plan: " " };
+    await writeFile(controlFile, JSON.stringify(changedControl));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid phase control definition/);
+    changedControl.viewLabels = { plan: "View Plan" };
+    changedControl.adapter = "custom-phase-adapter";
+    await writeFile(controlFile, JSON.stringify(changedControl));
     const adapterFile = scalar.find((item) => item.name === "generated-phase-adapter").path;
+    const customAdapterPath = join(dirname(adapterFile), "custom-phase-adapter.mjs");
+    await copyFile(adapterFile, customAdapterPath);
+    scalar.push({ ...scalar.find((item) => item.name === "generated-phase-adapter"),
+        name: "custom-phase-adapter", path: customAdapterPath });
+    assert.ok((await loadResolvedDesignerPages(handoff, project, entries, fields))
+        .templates.some((item) => item.name === "custom-phase-adapter"));
+    scalar.pop();
+    await writeFile(controlFile, originalControl);
     const originalAdapter = await readFile(adapterFile, "utf8");
     await writeFile(adapterFile, "export function other() {}");
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
@@ -458,10 +683,10 @@ test("preset field placements resolve into Workflow and added-page slots", async
     const templates = [...fields,
         await extra("billing-view", "generated.added-page-definition", {
             schemaVersion: 1, id: "billing-view", title: "Billing", order: 20,
-            renderer: "billing-renderer", slots: [{ id: "billing.summary" }],
+            renderer: "billing-renderer", slots: [{ id: "workflow.actions" }],
         }),
         await extra("billing-renderer", "generated.added-page-renderer",
-            'export function renderPage({root}) { root.innerHTML = \'<div data-field-slot="billing.summary"></div>\'; }',
+            'export function renderPage({root}) { root.innerHTML = \'<div data-field-slot="workflow.actions"></div>\'; }',
             "mjs"),
         await extra("workflow-description", "generated.field-placement", {
             schemaVersion: 1, id: "workflow-description", page: "workflow",
@@ -469,7 +694,7 @@ test("preset field placements resolve into Workflow and added-page slots", async
         }),
         await extra("billing-description", "generated.field-placement", {
             schemaVersion: 1, id: "billing-description", page: "billing-view",
-            slot: "billing.summary", field: "canvas.description", order: 10,
+            slot: "workflow.actions", field: "canvas.description", order: 10,
         }),
         await extra("canvas-control-risk-matrix", "shared.control-definition",
             await readFile(new URL("control.json", risk), "utf8")),
@@ -494,6 +719,8 @@ test("preset field placements resolve into Workflow and added-page slots", async
         active: true, sourceId: "placement-fixture", layer: "preset", strategy: "replace",
     }] });
     const model = await loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+    assert.equal(model.fieldPlacements.find((item) => item.page === "billing-view").slot,
+        "workflow.actions");
     assert.deepEqual(model.fieldPlacements.map(({ page: id, field }) => [id, field]),
         [["billing-view", "canvas.description"], ["workflow", "canvas.description"],
             ["workflow", "risk.first"], ["workflow", "risk.second"]]);
@@ -682,6 +909,8 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.workflow.installLocators = { presets: [], extensions: [], bundles: [] };
+    handoff.workflow.runtimeSetup = { presets: [], extensions: [], bundles: [] };
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
@@ -695,12 +924,20 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const values = { ...full.values, "canvas.id": "stock-canvas",
         "canvas.displayName": "Stock Canvas", "canvas.description": "Stock description",
         "canvas.workflowListName": "Stock heading" };
+    await assert.rejects(freezeGeneration({ model: full, values, project, workspace,
+        handoff: { ...handoff, workflow: { ...handoff.workflow, installed: {
+            ...handoff.workflow.installed, presets: [{ id: "local-runtime", source: "local",
+                version: "1.0.0", priority: 1, enabled: true }],
+        } } } }), /local presets local-runtime has no verified path/);
     const saved = await saveDesignerSettings(workspace, handoff, full,
         { revision: 0, modelRevision: full.revision, values });
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, saved)).values, values);
     const prepared = await freezeGeneration({ model: saved, values, handoff, project, workspace });
     const phaseRequest = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(phaseRequest.runtimeSetup, handoff.workflow.runtimeSetup);
+    const { integrity, ...unsignedRequest } = phaseRequest;
+    assert.equal(integrity, createHash("sha256").update(JSON.stringify(unsignedRequest)).digest("hex"));
     assert.deepEqual(Object.keys(phaseRequest.workflowPage).sort(),
         ["assets", "id", "managedRun", "order", "slots", "title"]);
     assert.equal(phaseRequest.workflowPage.managedRun, false);
@@ -3509,7 +3746,10 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",
             "designer.control-adapter", "generated.control-adapter",
-            "generated.value-definition", "generated.computed-value-provider"]);
+            "generated.value-definition", "generated.computed-value-provider",
+            "generated.dialog-definition", "generated.dialog-adapter",
+            "generated.phase-dialog-binding", "generated.button-control-definition",
+            "generated.button-adapter", "generated.button-placement"]);
 
     let releaseShell;
     try {

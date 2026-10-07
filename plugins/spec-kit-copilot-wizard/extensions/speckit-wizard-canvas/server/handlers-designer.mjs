@@ -10,7 +10,7 @@ import { dispatchPromptToSession } from "../canvas-runtime/dispatch.mjs";
 import { buildAugmentedPath } from "../env/resolve-path.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
 import { jsonError, jsonRes } from "./http-utils.mjs";
-import { resolveRuntimeInstallLocators } from "./runtime-provenance.mjs";
+import { buildPortableRuntimeSetup, resolveRuntimeInstallLocators } from "./runtime-provenance.mjs";
 import designerCompatibility from "../../speckit-canvas-designer/designer-contract.json" with { type: "json" };
 
 const KINDS = ["presets", "extensions", "bundles"];
@@ -370,8 +370,10 @@ export function buildDesignerHandoff(snapshot, selections, localSelections, inst
     }
     const canvasDesign = !localBase && hosted ? { version: candidates[0].version,
         downloadUrl: candidates[0].downloadUrl } : undefined;
+    const runtimeSetup = buildPortableRuntimeSetup(installed, installLocators,
+        snapshot.catalog, selections, localSelections);
     const workflow = { selectedPhases: designerPhaseIds(snapshot),
-        outputEvidence: designerPhaseOutputs(snapshot), installed, installLocators };
+        outputEvidence: designerPhaseOutputs(snapshot), installed, installLocators, runtimeSetup };
     const handoff = { schemaVersion: 1, handoffId, workflow, selections,
         ...(canvasDesign ? { canvasDesign } : {}),
         sourceFingerprint: fingerprint({ workflow, selections, localSelections,
@@ -542,6 +544,11 @@ export async function handleDesignerLaunch(res, body, {
                 localSelections, inst.workspacePath, selections.bundles);
             if (JSON.stringify(currentLocators) !== JSON.stringify(handoff.workflow.installLocators)) {
                 return jsonError(res, 409, "Runtime package sources changed; reopen the Designer setup");
+            }
+            const currentSetup = buildPortableRuntimeSetup(readyInstalled, currentLocators,
+                readyState.catalog, selections, localSelections);
+            if (JSON.stringify(currentSetup) !== JSON.stringify(handoff.workflow.runtimeSetup)) {
+                return jsonError(res, 409, "Portable runtime sources changed; reopen the Designer setup");
             }
         } catch (error) { return jsonError(res, 422, error.message); }
         await dispatchPromptToSession({

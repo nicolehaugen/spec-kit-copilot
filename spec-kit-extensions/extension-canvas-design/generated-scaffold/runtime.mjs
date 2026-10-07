@@ -9,6 +9,7 @@ import { UserError, confined, readBounded, readBoundedBytes, directories, atomic
     deleteConfinedDirectory } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
+import { createSetup } from "./setup.mjs";
 
 const PROVIDER_REFRESH_LIMIT_MS = 3000;
 const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
@@ -76,6 +77,12 @@ const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
+    const setup = createSetup({ config, cwd, session, phases, notify,
+        approvedSources: () => state.approvedUrlSources ?? [],
+        saveApprovedSources: (receipts) => update((next) => {
+            next.approvedUrlSources = [...new Set([...(next.approvedUrlSources ?? []), ...receipts])]
+                .slice(-80);
+        }) });
     const key = createHash("sha256").update(JSON.stringify([cwd, config.canvas.id])).digest("hex");
     const statePath = `generated-canvases/${key}/state.json`;
     let state;
@@ -84,6 +91,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (state.version !== 1 || !Number.isSafeInteger(state.revision) || !Array.isArray(state.runs)
             || typeof state.drafts !== "object" || !state.drafts || Array.isArray(state.drafts)
             || typeof state.selected !== "string" || typeof state.slug !== "string"
+            || (state.approvedUrlSources !== undefined
+                && (!Array.isArray(state.approvedUrlSources) || state.approvedUrlSources.length > 80
+                    || state.approvedUrlSources.some((receipt) =>
+                        typeof receipt !== "string" || receipt.length > 8192)))
             || (state.name !== undefined && (typeof state.name !== "string" || state.name.length > 120))
             || (state.names !== undefined && (!state.names || typeof state.names !== "object"
                 || Array.isArray(state.names) || Object.values(state.names).some((name) =>
@@ -387,12 +398,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 label: view.name?.trim() || view.slug || "Unstarted workflow", pending: true }] : [];
         return { ...view, userProvidesSlug: true,
             constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
-            autopilot: automation,
+            autopilot: automation, showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             name: pendingFor(item, view)?.name ?? view.name,
             slug: pendingFor(item, view)?.slug ?? view.slug,
             phases, items: [...entries, ...legacyDraft, ...pending],
-            statuses, valueFields: visibleValues, pageValues, valueErrors };
+            statuses, valueFields: visibleValues, pageValues, valueErrors,
+            setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
+                : { stage: "legacy", ready: true, pending: [], planId: null, error: null } };
     }
     async function saveValue(input) {
         if (!input || Object.keys(input).sort().join() !== "id,revision,value"
@@ -529,6 +542,9 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     async function startAutopilot(input, instanceId) {
         if (!input || Object.keys(input).some((key) => !["itemId"].includes(key))
             || typeof input.itemId !== "string") throw new UserError("Select a workflow for Autopilot.");
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry Autopilot.", 409);
+        }
         if (dispatching || autopilotDispatching || deleting) throw new UserError("A workflow request is being sent. Retry after it finishes.", 409);
         if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
             && liveRuns.has(state.autopilot.id)) throw new UserError("Autopilot is already running. Stop it before retrying.", 409);
@@ -537,6 +553,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         try {
             await enabledAutopilot();
             if (!workflowSteps.length) throw new UserError("No workflow steps are configured.");
+            const boundStep = workflowSteps.find((step) =>
+                config.phaseDialogs?.some((binding) => binding.phase === step.command));
+            if (boundStep) {
+                throw new UserError(`Autopilot cannot run ${boundStep.label} because it requires confirmation. Run the phases manually instead.`, 409);
+            }
             const entries = await items();
             if (!newItem(input.itemId) && !entries.some((entry) => entry.id === input.itemId)
                 || pendingId(input.itemId) && !pendingFor(input.itemId)) {
@@ -767,6 +788,9 @@ Steps:\n${instructions}` });
         return { accepted: true, nextPhase: workflowSteps[state.autopilot.current]?.id ?? null };
     }
     async function run(input, instanceId) {
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry this phase.", 409);
+        }
         if (deleting) throw new UserError("A workflow is being deleted. Refresh and try again.", 409);
         if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
             && liveRuns.has(state.autopilot.id)) throw new UserError("Stop Autopilot before starting a manual step.", 409);
@@ -1078,5 +1102,6 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     return { snapshot, refresh, save, saveValue, createPending, removePending, run,
         startAutopilot, stopAutopilot, reportAutopilotStep,
         report, reportSlug, artifact, reveal, deleteWorkflow,
+        setupStart: setup.start, setupConfirm: setup.confirm, setupStatus: setup.status,
         close() { if (closed) return; closed = true; subscriptions.forEach((unsubscribe) => unsubscribe?.()); } };
 }

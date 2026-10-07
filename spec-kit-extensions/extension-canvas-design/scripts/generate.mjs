@@ -6,12 +6,13 @@ import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promi
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validControlContract, validControlValue } from "../generated-scaffold/control-contract.mjs";
+import { validateRuntimeSetup } from "../generated-scaffold/setup.mjs";
 import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
 import { phaseContract } from "../generated-scaffold/contract.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "generated-scaffold");
-const featureFiles = ["server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
+const featureFiles = ["server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
     "phase-response.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/page-assets.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
@@ -21,7 +22,7 @@ const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
-    "canvas.workflowListName", "workflowSlug.userProvided"]);
+    "canvas.workflowListName", "workflowSlug.userProvided", "setup.show"]);
 
 function withoutSchema(document) {
     if (!document || typeof document !== "object" || Array.isArray(document)) return document;
@@ -237,8 +238,9 @@ const imageFile = (item) => `${item.page
     "image/webp": "webp",
 }[item.mime]}`;
 
-function frozenWorkflowPage(page) {
-    if (!page || Object.keys(page).sort().join() !== "assets,id,managedRun,order,slots,title"
+function frozenWorkflowPage(page, selectedPhases) {
+    if (!Array.isArray(selectedPhases)
+        || !page || Object.keys(page).sort().join() !== "assets,id,managedRun,order,slots,title"
         || page.id !== "workflow" || page.order !== 0
         || typeof page.managedRun !== "boolean"
         || typeof page.title !== "string" || !page.title.trim() || page.title.length > 120
@@ -252,7 +254,9 @@ function frozenWorkflowPage(page) {
         || page.assets[0]?.kind !== "generated.workflow-page-definition"
         || page.assets[1]?.name !== "generated-phase-control"
         || page.assets[1]?.kind !== "generated.phase-control-definition"
-        || page.assets[2]?.name !== "generated-phase-adapter"
+        || typeof page.assets[2]?.name !== "string"
+        || !/^[a-z][a-z0-9-]{0,79}$/.test(page.assets[2].name)
+        || isWindowsDeviceName(page.assets[2].name)
         || page.assets[2]?.kind !== "generated.phase-control-adapter"
         || page.assets.some((asset) => !asset || typeof asset !== "object"
             || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
@@ -275,13 +279,20 @@ function frozenWorkflowPage(page) {
     let control;
     try { control = withoutSchema(JSON.parse(Buffer.from(page.assets[1].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid frozen phase control definition"); }
-    if (!control || Object.keys(control).sort().join() !== (control.managedRun === undefined
-        ? "adapter,id,placement,schemaVersion" : "adapter,id,managedRun,placement,schemaVersion")
+    if (!control || Object.keys(control).some((key) =>
+        !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
         || (control.managedRun !== undefined && typeof control.managedRun !== "boolean")
         || control.schemaVersion !== 1 || control.id !== "workflow-phases"
         || control.adapter !== page.assets[2].name
         || !control.placement || Object.keys(control.placement).sort().join() !== "page,slot"
-        || control.placement.page !== "workflow" || control.placement.slot !== "workflow.phases") {
+        || control.placement.page !== "workflow" || control.placement.slot !== "workflow.phases"
+        || (control.viewLabels !== undefined && (
+            !control.viewLabels || typeof control.viewLabels !== "object" || Array.isArray(control.viewLabels)
+            || Object.keys(control.viewLabels).length > 40
+            || Object.entries(control.viewLabels).some(([id, label]) =>
+                !selectedPhases.includes(id) || id.replace(/^speckit\./, "") === "constitution"
+                || typeof label !== "string" || !label.trim() || label.length > 80
+                || /[\x00-\x1f\x7f]/.test(label))))) {
         throw new Error("Invalid frozen phase control definition");
     }
     const module = Buffer.from(page.assets[2].content, "base64").toString("utf8");
@@ -295,8 +306,10 @@ function frozenWorkflowPage(page) {
     }
     return { title: page.title, order: page.order, slots: page.slots,
         phaseControl: page.assets[1].name,
-        adapter: control.adapter, definitionHash: page.assets[0].hash,
-        controlHash: page.assets[1].hash, hash: page.assets[2].hash, managedRun: page.managedRun };
+        adapter: control.adapter, placement: control.placement,
+        viewLabels: control.viewLabels ?? {}, definitionHash: page.assets[0].hash,
+        controlHash: page.assets[1].hash, hash: page.assets[2].hash,
+        managedRun: page.managedRun };
 }
 
 function frozenPlacement(item, kind) {
@@ -321,6 +334,159 @@ function frozenPlacement(item, kind) {
     return { ...registration, ...(control === undefined ? {} : { control }), hash: assets[0].hash };
 }
 
+function frozenNamedAsset(item, kinds, name, assetName = name) {
+    if (!item || !Array.isArray(item.assets) || item.assets.length !== kinds.length
+        || item.assets.some((asset, index) => !asset
+            || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
+            || asset.kind !== kinds[index]
+            || (index === 0 && asset.name !== assetName)
+            || !/^[a-z][a-z0-9-]{0,79}$/.test(asset.name)
+            || typeof asset.sourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
+            || typeof asset.content !== "string"
+            || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+            || Buffer.from(asset.content, "base64").length > 32 * 1024
+            || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash)) {
+        throw new Error(`Invalid frozen ${name} assets`);
+    }
+    let definition;
+    try { definition = withoutSchema(JSON.parse(Buffer.from(item.assets[0].content, "base64").toString("utf8"))); }
+    catch { throw new Error(`Invalid frozen ${name} definition`); }
+    const { assets, name: registrationName, schemaVersion, ...registration } = item;
+    if (schemaVersion !== 1) throw new Error(`Invalid frozen schema version: ${name}`);
+    if (registrationName !== undefined && registrationName !== assetName) {
+        throw new Error(`Invalid frozen template name: ${registrationName}`);
+    }
+    if (!isDeepStrictEqual(definition, { schemaVersion: 1, ...registration })) {
+        throw new Error(`Frozen ${name} definition differs from registration`);
+    }
+    return { ...registration, hash: assets[0].hash, ...(assets[1]
+        ? { adapterHash: assets[1].hash } : {}) };
+}
+
+function frozenDialogs(request, workflowLayout, phases) {
+    const identifier = /^[a-z][a-z0-9-]{0,79}$/;
+    const labels = (text, limit = 500) => typeof text === "string"
+        && !!text.trim() && text.length <= limit;
+    const { dialogDefinitions = [], phaseDialogBindings = [], buttonPlacements = [],
+        buttonControls = [] } = request;
+    if (![dialogDefinitions, phaseDialogBindings, buttonPlacements, buttonControls].every(Array.isArray)
+        || dialogDefinitions.length > 30 || phaseDialogBindings.length > 30
+        || buttonPlacements.length > 30 || buttonControls.length > 2
+        || (!!buttonControls.length !== !!buttonPlacements.length)) {
+        throw new Error("Invalid frozen dialog and button registrations");
+    }
+    const unique = (items, key) => new Set(items.map(key)).size === items.length;
+    const dialogs = dialogDefinitions.map((item) => {
+        const doc = frozenNamedAsset(item, ["generated.dialog-definition", "generated.dialog-adapter"], item.id);
+        if (!identifier.test(doc.id) || !identifier.test(doc.adapter)
+            || doc.adapter !== item.assets[1].name || !labels(doc.title)
+            || !Array.isArray(doc.blocks) || !doc.blocks.length || doc.blocks.length > 20
+            || !doc.buttons || Object.keys(doc.buttons).sort().join() !== "cancel,confirm"
+            || !labels(doc.buttons.cancel) || !labels(doc.buttons.confirm)
+            || doc.blocks.some((block) => !block || typeof block !== "object"
+                || !(block.type === "slot" && Object.keys(block).sort().join() === "name,type"
+                    && ["pending-packages", "phase"].includes(block.name)
+                    || ["heading", "paragraph", "warning"].includes(block.type)
+                        && Object.keys(block).sort().join() === "text,type" && labels(block.text)
+                    || block.type === "list" && Object.keys(block).sort().join() === "items,type"
+                        && Array.isArray(block.items) && block.items.length > 0 && block.items.length <= 20
+                        && block.items.every((text) => labels(text))
+                    || block.type === "link" && Object.keys(block).sort().join() === "href,text,type"
+                        && labels(block.text) && typeof block.href === "string"
+                        && block.href.length <= 2048 && /^https:\/\/[^\s]+$/.test(block.href)))) {
+            throw new Error(`Invalid frozen dialog ${doc.id}`);
+        }
+        const slots = doc.blocks.filter((block) => block.type === "slot").map((block) => block.name);
+        if (!unique(slots, (slot) => slot) || doc.id === "generated-setup-dialog"
+            && !slots.includes("pending-packages")) throw new Error(`Invalid dialog slots: ${doc.id}`);
+        const code = Buffer.from(item.assets[1].content, "base64").toString("utf8");
+        const syntax = spawnSync("node", ["--check", "--input-type=module"],
+            { input: code, encoding: "utf8", timeout: 5000 });
+        if (syntax.status !== 0 || syntax.error
+            || !/export\s+(?:async\s+)?function\s+mount\s*\(/.test(code)
+            || !/export\s+const\s+dialogId\s*=\s*["']stock\.dialog["']/.test(code)
+            || !/export\s+const\s+contractVersion\s*=\s*1\b/.test(code)) {
+            throw new Error(`Incompatible frozen dialog adapter: ${doc.adapter}`);
+        }
+        return { id: doc.id, adapter: doc.adapter, hash: doc.hash, adapterHash: doc.adapterHash,
+            sourceId: item.assets[0].sourceId };
+    });
+    if (!unique(dialogs, (item) => item.id) || dialogs.some((item) => dialogs.some((other) =>
+        other !== item && other.adapter === item.adapter && other.adapterHash !== item.adapterHash))) {
+        throw new Error("Conflicting frozen dialogs");
+    }
+    const bindings = phaseDialogBindings.map((item) => {
+        const doc = frozenNamedAsset(item, ["generated.phase-dialog-binding"], item.id);
+        const dialog = dialogDefinitions.find((entry) => entry.id === doc.dialog);
+        if (Object.keys(doc).sort().join() !== "dialog,hash,id,phase"
+            || !/^speckit\.[a-z][a-z0-9.-]{0,79}$/.test(doc.phase)
+            || doc.phase === "speckit.constitution"
+            || !phases.some((phase) => `speckit.${phase.replace(/^speckit\./, "")}` === doc.phase)
+            || !dialog || dialog.blocks.some((block) =>
+                block.type === "slot" && block.name !== "phase")) {
+            throw new Error(`Invalid phase dialog binding ${doc.id}`);
+        }
+        return doc;
+    });
+    if (!unique(bindings, (item) => item.id) || !unique(bindings, (item) => item.phase)) {
+        throw new Error("Conflicting phase dialog bindings");
+    }
+    const buttons = buttonPlacements.map((item) => {
+        const doc = frozenNamedAsset(item, ["generated.button-placement"], item.id);
+        const dialog = dialogDefinitions.find((entry) => entry.id === doc.dialog);
+        const slots = dialog?.blocks.filter((block) => block.type === "slot").map((block) => block.name);
+        if (Object.keys(doc).sort().join() !== "action,control,dialog,hash,id,label,order,page,presentation,slot"
+            || !identifier.test(doc.id) || !["setup", "workflow"].includes(doc.page)
+            || doc.slot !== `${doc.page}.actions`
+            || doc.control !== (doc.page === "setup" ? "project.setup-button" : "dialog.trigger")
+            || !Number.isInteger(doc.order) || doc.order < -100000 || doc.order > 100000
+            || !labels(doc.label, 120) || !["primary", "secondary"].includes(doc.presentation)
+            || !doc.action || Object.keys(doc.action).join() !== "type"
+            || doc.action.type !== (doc.id === "generated-setup-button" ? "project.setup" : "dialog.result")
+            || (doc.id === "generated-setup-button") !== (doc.page === "setup")
+            || doc.page === "workflow" && !workflowLayout.slots.some((slot) => slot.id === doc.slot)
+            || !dialog || doc.page === "setup" && (slots.length !== 1 || slots[0] !== "pending-packages")
+            || doc.page === "workflow" && slots.length !== 0) {
+            throw new Error(`Invalid frozen button placement ${doc.id}`);
+        }
+        return doc;
+    });
+    if (!unique(buttons, (item) => item.id)
+        || !unique(buttons, (item) => `${item.page}:${item.slot}:${item.order}`)
+        || buttons.length && !buttons.some((item) => item.id === "generated-setup-button")
+        || request.values?.["setup.show"] && !buttons.some((item) => item.id === "generated-setup-button")) {
+        throw new Error("Missing or conflicting setup button");
+    }
+    const controls = buttonControls.map((item) => {
+        const control = frozenNamedAsset(item, ["generated.button-control-definition",
+            "generated.button-adapter"], item.id, item.name);
+        if (!["project.setup-button", "dialog.trigger"].includes(control.id)
+            || (control.id === "project.setup-button" && item.name !== "generated-setup-button-control")
+            || control.adapter !== item.assets[1].name || !identifier.test(control.adapter)
+            || Object.keys(control).sort().join() !== "adapter,adapterHash,hash,id") {
+            throw new Error("Invalid frozen button control");
+        }
+        const code = Buffer.from(item.assets[1].content, "base64").toString("utf8");
+        const syntax = spawnSync("node", ["--check", "--input-type=module"],
+            { input: code, encoding: "utf8", timeout: 5000 });
+        if (syntax.status !== 0 || syntax.error
+            || !/export\s+(?:async\s+)?function\s+mount\s*\(/.test(code)
+            || !code.includes(`controlId = "${control.id}"`)
+                && !code.includes(`controlId = '${control.id}'`)
+            || !/export\s+const\s+contractVersion\s*=\s*1\b/.test(code)) {
+            throw new Error(`Incompatible frozen button adapter: ${control.id}`);
+        }
+        return { ...control, name: item.name };
+    });
+    if (!unique(controls, (item) => item.id) || !unique(controls, (item) => item.adapter)
+        || buttons.some((button) => !controls.some((control) => control.id === button.control))
+        || buttons.length && !controls.some((control) => control.id === "project.setup-button")
+        || controls.some((control) => !buttons.some((button) => button.control === control.id))) {
+        throw new Error("Missing or conflicting button controls");
+    }
+    return { dialogs, bindings, buttons, controls };
+}
+
 function configuration(request) {
     const { canvas, workflow, values, fieldConstraints, installed, generatedFields,
         generatedPages, generatedControls, generatedAssets, generatedImageControl,
@@ -342,7 +508,9 @@ function configuration(request) {
         }
         if (Object.keys(colors).length) appearance[mode] = colors;
     }
-    const workflowLayout = frozenWorkflowPage(workflowPage);
+    if (!validateRuntimeSetup(request.runtimeSetup)) throw new Error("Invalid frozen runtime setup recipe");
+    const workflowLayout = frozenWorkflowPage(workflowPage, workflow?.selectedPhases ?? []);
+    const dialogContracts = frozenDialogs(request, workflowLayout, workflow?.selectedPhases ?? []);
     if (!canvas || !idPattern.test(canvas.id) || reserved.has(canvas.id)
         || isWindowsDeviceName(canvas.id)
         || !["displayName", "description", "workflowListName"]
@@ -357,10 +525,13 @@ function configuration(request) {
             && fieldConstraints["canvas.workflowListName"]?.type !== "string")
         || (Object.hasOwn(values, "workflowSlug.userProvided")
             && fieldConstraints["workflowSlug.userProvided"]?.type !== "boolean")
+        || (Object.hasOwn(values, "setup.show")
+            && fieldConstraints["setup.show"]?.type !== "boolean")
         || canvas.description !== (values["canvas.description"] || "Spec Kit workflow canvas.")
         || canvas.workflowListName !== (values["canvas.workflowListName"] || "Workflows")
         || (values["workflowSlug.userProvided"] !== undefined
             && typeof values["workflowSlug.userProvided"] !== "boolean")
+        || (values["setup.show"] !== undefined && typeof values["setup.show"] !== "boolean")
         || !workflow || !Array.isArray(workflow.selectedPhases) || !workflow.selectedPhases.length
         || workflow.selectedPhases.length > 30 || new Set(workflow.selectedPhases).size !== workflow.selectedPhases.length
         || workflow.selectedPhases.some((phase) => typeof phase !== "string"
@@ -765,6 +936,12 @@ function configuration(request) {
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
     const config = { schemaVersion: 1, canvas, userProvidesSlug: true,
         ...(Object.keys(appearance).length ? { appearance } : {}),
+        showSetup: values["setup.show"] ?? false,
+        ...(request.runtimeSetup ? { runtimeSetup: request.runtimeSetup } : {}),
+        ...(dialogContracts.dialogs.length ? { dialogs: dialogContracts.dialogs } : {}),
+        ...(dialogContracts.bindings.length ? { phaseDialogs: dialogContracts.bindings } : {}),
+        ...(dialogContracts.buttons.length ? { buttons: dialogContracts.buttons,
+            buttonControls: dialogContracts.controls } : {}),
         workflowPage: workflowLayout,
         ...(placements.length ? { fieldPlacements: placements } : {}),
         ...(headerImage ? { brandAsset: imageConfig(headerImage) } : {}),
@@ -909,6 +1086,12 @@ export async function materialize(project, workspace, handoffId, requestId) {
         }
     }
     const config = configuration({ ...request, installed: request.actualInstalled ?? request.installed });
+    if (!isDeepStrictEqual(request.runtimeSetup, handoff.workflow.runtimeSetup)) {
+        throw new Error("Runtime setup recipe differs from the Wizard handoff");
+    }
+    if (config.showSetup && !request.runtimeSetup) {
+        throw new Error("Show setup requires a verified runtime setup recipe");
+    }
     const pageFiles = (request.generatedPages ?? []).flatMap((page) => [
         { filename: `${page.id}.json`, bytes: Buffer.from(page.assets[0].content, "base64") },
         { filename: `${page.renderer}.mjs`, bytes: Buffer.from(page.assets[1].content, "base64") },
@@ -951,6 +1134,30 @@ export async function materialize(project, workspace, handoffId, requestId) {
     const imageFiles = (request.generatedAssets ?? []).map((item) => ({
         filename: imageFile(item), bytes: frozenImage(item, request.values, request.fieldConstraints),
     }));
+    const dialogFiles = [
+        ...(request.dialogDefinitions ?? []).flatMap(({ assets }) => [
+            { filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") },
+            { filename: `${assets[1].name}.mjs`, bytes: Buffer.from(assets[1].content, "base64") },
+        ]),
+        ...(request.phaseDialogBindings ?? []).map(({ assets }) =>
+            ({ filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") })),
+    ];
+    const buttonFiles = [
+        ...(request.buttonPlacements ?? []).map(({ assets }) =>
+            ({ filename: `${assets[0].name}.json`, bytes: Buffer.from(assets[0].content, "base64") })),
+        ...(request.buttonControls ?? []).flatMap(({ assets }) => assets.map((asset) =>
+            ({ filename: `${asset.name}.${asset.kind === "generated.button-adapter" ? "mjs" : "json"}`,
+                bytes: Buffer.from(asset.content, "base64") }))),
+    ];
+    for (const [kind, entries] of [["dialog", dialogFiles], ["button", buttonFiles]]) {
+        const names = new Map();
+        for (const file of entries) {
+            if (names.has(file.filename) && !names.get(file.filename).equals(file.bytes)) {
+                throw new Error(`Conflicting generated ${kind} asset filenames`);
+            }
+            names.set(file.filename, file.bytes);
+        }
+    }
     const distinctControlFiles = new Map();
     for (const file of controlFiles) {
         if (distinctControlFiles.has(file.filename)
@@ -986,6 +1193,8 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (controlFiles.length) await mkdir(join(target, "controls"));
     if (providerFiles.length) await mkdir(join(target, "providers"));
     if (imageFiles.length) await mkdir(join(target, "assets"));
+    if (dialogFiles.length) await mkdir(join(target, "dialogs"));
+    if (buttonFiles.length) await mkdir(join(target, "buttons"));
     for (const { filename, bytes } of imageFiles) {
         await writeFile(join(target, "assets", filename), bytes, { flag: "wx" });
     }
@@ -1003,6 +1212,13 @@ export async function materialize(project, workspace, handoffId, requestId) {
         const path = join(target, "providers", filename);
         await writeFile(path, bytes, { flag: "wx" });
         checkSyntax(path);
+    }
+    for (const [folder, entries] of [["dialogs", dialogFiles], ["buttons", buttonFiles]]) {
+        for (const { filename, bytes } of new Map(entries.map((file) => [file.filename, file])).values()) {
+            const path = join(target, folder, filename);
+            await writeFile(path, bytes, { flag: "wx" });
+            if (filename.endsWith(".mjs")) checkSyntax(path);
+        }
     }
     for (const [file, content] of files) {
         if (file !== "extension.mjs") {

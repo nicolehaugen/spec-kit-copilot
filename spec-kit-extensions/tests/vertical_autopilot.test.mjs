@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-async function setup(t, vertical = true) {
+async function setup(t, vertical = true, phaseDialogs = []) {
     const root = await mkdtemp(join(tmpdir(), "vertical-autopilot-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const target = join(root, "generated");
@@ -41,6 +41,7 @@ async function setup(t, vertical = true) {
         canvas: { id: "test-autopilot" }, phases: ["specify", "plan"],
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
             plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
+        ...(phaseDialogs.length ? { phaseDialogs } : {}),
         workflowPage: { adapter: "generated-phase-adapter",
             hash: createHash("sha256").update(adapter).digest("hex"), managedRun: vertical },
     }, cwd: project, workspace: root, session };
@@ -72,6 +73,17 @@ async function setup(t, vertical = true) {
             throw new Error("Autopilot completion was not reconciled");
         } };
 }
+
+test("Autopilot refuses dialog-bound phases before dispatch or mode changes", async (t) => {
+    const { runtime, sent, session } = await setup(t, true,
+        [{ phase: "speckit.plan", dialog: "confirm-plan" }]);
+    const itemId = await prepareNewWorkflow(runtime);
+    await assert.rejects(runtime.startAutopilot({ itemId }, "panel"),
+        (error) => error.status === 409 && /Plan.*requires confirmation.*manually/.test(error.message));
+    assert.equal(sent.length, 0);
+    assert.equal(session.mode, undefined);
+    assert.equal((await runtime.snapshot()).autopilot, null);
+});
 
 async function prepareNewWorkflow(runtime) {
     const { id } = await runtime.createPending({ revision: (await runtime.snapshot()).revision });

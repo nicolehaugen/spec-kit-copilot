@@ -158,19 +158,29 @@ The adapter neither chooses a slot nor reads packaged files. Stock text and
 checkbox editors now follow the same definition/Designer-adapter authoring
 pattern. The generated text adapter handles visible Description and Workflow
 header presentation; the generated shell retains identity and requires an
-artifact folder name (slug). Setup confirm is not yet implemented; its future Designer checkbox
-can reuse `stock.checkbox` without a no-op generated presentation adapter.
+artifact folder name (slug). The Show setup checkbox uses `stock.checkbox`
+without a no-op generated presentation adapter.
 
 **Setup confirm** is a stock boolean/control contribution from the **Canvas Design Specify Extension**. The Designer Canvas displays a checkbox. Generate packages its value and the generated setup-control behavior **inside the app**. The checkbox selects when to invoke **one shell-owned project-setup operation**:
 
 | Value | If the active project needs workflow setup |
 | --- | --- |
 | **On** | Show required work and a **Set up project** button; start when clicked. |
-| **Off or absent** | Start during canvas load; show progress, permission requests, and failures. |
+| **Off or absent** | Keep the normal page visible without automatic setup; block phase runs until prerequisites are ready and report what is missing. |
 
-That operation inspects the active project, ensures the **Specify CLI** is available, runs `specify init` in Copilot skills mode if needed, installs or reconciles **Workflow Runtime Packages**, verifies phase skills, and reloads skills when required. It does **not** install the design-time Canvas Design Specify Extension or `canvas-design`-tagged presets merely to render their already-packaged controls.
+That operation inspects the active project, ensures the **Specify CLI** is available, runs `specify init` in Copilot skills mode if needed, then shows one confirmation listing every pending **Workflow Runtime Package** and its source before installing any packages. Closing or cancelling the dialog does not install packages. The generated app verifies the installed packages and phase skills and reloads session skills before revealing the normal page. It does **not** install the design-time Canvas Design Specify Extension or `canvas-design`-tagged presets merely to render their already-packaged controls.
 
-An already-correct project is verified rather than reinstalled. Failed or partial setup stays visible and retryable; dependent phases remain unavailable until their requirements are verified. The current handoff inventory is not necessarily a complete portable installation recipe, so plugin setup also requires frozen, approved source and bundle information—never a guessed source from a package ID.
+An already-correct project is verified rather than reinstalled. Failed or partial setup stays visible and retryable; dependent phases remain unavailable until their requirements are verified. Setup needs a frozen, approved source recipe from the Wizard handoff—never a guessed source from a package ID. Opaque bundles are not replayed: separately verified runtime members are installed from their own sources, so design-time bundle content cannot leak into the generated project. Named, replace-only dialog and setup-button definitions/adapters are resolved by Specify during design, then packaged into the generated app; approved design-time presets need not be installed in the active runtime project. A preset can bind a dialog to one phase or add a dialog-only trigger to the Workflow page's action slot without replacing the phase card.
+
+The generated host owns only project readiness, the setup operation and the
+existing phase dispatch/validation. It does not inspect arbitrary button clicks
+or choose dialog copy. The setup-specific button adapter invokes the host-provided
+setup callback; the host mounts the reusable dialog only when initialization
+produces a pending install plan. The phase adapter invokes an optional
+confirmation callback only for a phase with a declared dialog binding. Absent
+bindings keep the existing phase Run and View behavior unchanged. Setup uses
+a dedicated setup adapter with a replaceable label and presentation, but
+its `project.setup` operation is not replaceable by a dialog definition.
 
 ## 8. Acceptance criteria
 
@@ -190,7 +200,7 @@ An already-correct project is verified rather than reinstalled. Failed or partia
 | **Runtime edit** | Valid edits persist; invalid/conflicting edits fail; frozen initial value does not overwrite later changes. |
 | **Generated page slots and shared editing (milestone 6a)** | A preset page declares a slot and a separately resolved contribution places a field there. One field placed on both the built-in Workflow page and that page shows one synchronized saved value across pages and workflow switches according to its declared scope; a second field using the same risk-matrix control and adapters retains an independent value, including when both appear on one page. Read-only remains the default; only opted-in, non-provider fields accept edits through the shell, with invalid/stale edits rejected and valid edits surviving reopen in a copied app without the design-time preset. Unknown/incompatible slots, duplicate field IDs or placements, and invalid schemas fail before packaging. |
 | **Stock Logo** | Valid image survives Generate and plugin launch without design-time packages; absence uses fallback; invalid input fails. |
-| **Stock Setup confirm** | On waits for click; Off starts needed setup on load. Both verify and report results; setup targets Workflow Runtime Packages, not Canvas Design inputs. |
+| **Stock Show setup** | On waits for a setup click, then initializes before showing a package confirmation dialog; Off leaves the normal page visible but blocks unready phase runs. Setup targets Workflow Runtime Packages, not Canvas Design inputs. |
 | **Pipeline replacement** | Presentation changes while shell-owned phase execution and artifact safeguards remain intact. |
 | **Design-time dependency separation** | The finished app opens and renders its packaged pages, adapters, providers, and assets without `extension-canvas-design` or the originating `canvas-design`-tagged presets installed in the active project. |
 | **Specify CLI dependency** | In a fresh project, setup checks for the Specify CLI, initializes Spec Kit as needed, installs/verifies Workflow Runtime Packages, and reloads skills before dependent phases run. |
@@ -209,7 +219,7 @@ At **each milestone**, preserve the unchanged Wizard code, behavior, and handoff
 6. **Extend values and controls only as scenarios require:** add fixed and workflow-scoped provider values, processing-only presentation, runtime edits, and their validation/persistence tests using the proven registry and packaging path.
 6a. **Compose generated page slots and shared typed edits (separate PR directly above #19):** after milestone 6, let the built-in Workflow page and preset-created generated pages declare named insertion slots and expose their declared mount points to page renderers. Resolve explicit field placements against supported page/slot pairs, using identical declarations for the base extension and presets; Designer only collects/configures values, while those JSON declarations determine generated layout. Bind all placements of one field ID to one scope-aware saved value and allow different field IDs to reuse the same control type/adapters independently, even on one page. Add a control-agnostic generated `onChange` path to shell-owned `/api/values` with typed validation, revision/conflict checks, and canvas-wide persistence; fields remain read-only unless explicitly editable, and provider-backed edits are rejected. Do not add risk-matrix-specific host branches. **Gate:** a preset page declares a slot and a separate contribution targets it; one field appears on Workflow and that page with synchronized edits across navigation and workflow switches, while a second field of the same risk-matrix type retains its own value on the same page. Cover read-only and editable fields, invalid/stale/conflicting edits, save/reopen, and a copied packaged app without design-time presets. Reject unknown/incompatible slots, duplicate field definitions, duplicate page/slot/field placements, invalid schemas, and provider-backed edit attempts before they can corrupt state. Preserve generated read-only behavior, default UX, Wizard handoff, and existing visuals when no new placements are selected.
 7. **Add stock Logo** through the proven reusable asset/control path, not an Essentials-only whitelist branch; verify fallback visuals and packaged image behavior.
-8. **Add standalone-plugin packaging, active-project setup, and stock Setup confirm:** preserve current project-extension output; freeze reproducible Workflow Runtime Package sources; check the Specify CLI and project scaffolding; implement the shell-owned setup operation, then its reusable control/action trigger for automatic or click-to-confirm setup, verification, skill reload, and phase gating.
+8. **Add standalone-plugin packaging, active-project setup, and stock Setup confirm:** preserve current project-extension output; freeze reproducible Workflow Runtime Package sources; check the Specify CLI and project scaffolding; implement the shell-owned setup operation and a default-off, explicit Setup button trigger. Verify inventory and skill reload before revealing the workflow, and gate phase dispatch when prerequisites are absent.
 9. **Add Artifacts, Appearance, and pipeline customization:** after the separate Wizard output-list PR lands and its handoff contract is known, integrate the Artifacts editor and persist corrected phase-output lists; independently add palette choices and pipeline presentation replacement without moving shell-owned phase safeguards into adapters. Neither the separate PR nor live Wizard outputs block the first three preset fixtures.
 10. **Run full end-to-end scenario tests:** open the completed generated app both in its original checkout and as a plugin in another project without design-time packages. Cover Billing, generated-only pages, risk matrix, Artifacts, Appearance, Logo, Setup confirm, and unchanged default appearance.
 
@@ -225,9 +235,12 @@ shell regions from the page JSON. The required `workflow.phases` slot has a
 Additional Workflow slots share an ordered contributions area; added page
 renderers expose declared mount points. Separate field placements target
 those slots without duplicating field values. The control definition identifies
-`workflow-phases` and references the replaceable `generated-phase-adapter`.
+`workflow-phases`, references a replaceable phase adapter by name, and can
+override artifact viewer button labels by selected phase ID. The host verifies
+the frozen definition and adapter hash, then passes the presentation definition
+to the adapter; it retains the artifact view action.
 The generated host validates and packages all three resolved assets. The
-adapter owns its DOM and exposes `mount({ root, state, actions })` with
+adapter owns its DOM and exposes `mount({ root, definition, state, actions })` with
 `update(state)` and `dispose()`; the host retains phase execution,
 persistence, and artifact routes. `copilot-vertical-phase-control` replaces
 the adapter with a vertical step list and the phase-control definition with
@@ -311,7 +324,7 @@ spec-kit-extensions/extension-canvas-design/
   designer-host/essentials-settings/*.json  optional Essentials fields
   designer-host/appearance-settings/*.json  optional per-mode palette fields
   generated-host/workflow-page/workflow.json required Workflow page definition
-  generated-host/phase-control/phase-control.json  phase control identity and placement
+  generated-host/phase-control/phase-control.json  phase identity, placement, adapter and view labels
   generated-host/phase-control/generated-phase-adapter.mjs  phase UI adapter
   shared-controls/stock-{text,checkbox,image}/  cross-host definitions and adapters
   schemas/designer.tab-definition.schema.json  currently string/boolean fields

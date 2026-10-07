@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
 import { validControlValue } from "./control-contract.mjs";
+import { validateRuntimeSetup } from "./setup.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
@@ -172,6 +173,8 @@ function validRuntimeConfig(config) {
                             Object.hasOwn(APPEARANCE_PROPERTIES, key)
                             && typeof config.appearance[mode][key] === "string"
                             && /^#[0-9a-fA-F]{6}$/.test(config.appearance[mode][key]))))))
+        && (config.showSetup === undefined || typeof config.showSetup === "boolean")
+        && validateRuntimeSetup(config.runtimeSetup)
         && config.installed && ["presets", "extensions", "bundles"].every((kind) =>
             Array.isArray(config.installed[kind]) && config.installed[kind].every((item) =>
                 item && typeof item === "object" && !Array.isArray(item)
@@ -215,12 +218,23 @@ export function readConfig() {
         || config.workflowPage.slots.some((slot) => !slot || Object.keys(slot).join() !== "id"
             || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))
         || config.workflowPage.phaseControl !== "generated-phase-control"
-        || config.workflowPage.adapter !== "generated-phase-adapter"
+        || !config.workflowPage.placement
+        || !isDeepStrictEqual(config.workflowPage.placement, { page: "workflow", slot: "workflow.phases" })
+        || typeof config.workflowPage.adapter !== "string"
+        || !/^[a-z][a-z0-9-]{0,79}$/.test(config.workflowPage.adapter)
+        || isWindowsDeviceName(config.workflowPage.adapter)
+        || !config.workflowPage.viewLabels || typeof config.workflowPage.viewLabels !== "object"
+        || Array.isArray(config.workflowPage.viewLabels)
+        || Object.keys(config.workflowPage.viewLabels).length > 40
+        || Object.entries(config.workflowPage.viewLabels).some(([id, label]) =>
+            !config.phases.includes(id) || id.replace(/^speckit\./, "") === "constitution"
+            || typeof label !== "string" || !label.trim()
+            || label.length > 80 || /[\x00-\x1f\x7f]/.test(label))
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.hash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.definitionHash)
         || !/^[a-f0-9]{64}$/.test(config.workflowPage.controlHash)
         || typeof config.workflowPage.managedRun !== "boolean"
-        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,managedRun,order,phaseControl,slots,title"
+        || Object.keys(config.workflowPage).sort().join() !== "adapter,controlHash,definitionHash,hash,managedRun,order,phaseControl,placement,slots,title,viewLabels"
         || (config.generatedPages !== undefined
             && (!Array.isArray(config.generatedPages) || config.generatedPages.length > 30
                 || new Set(config.generatedPages.map((page) => page?.id)).size !== config.generatedPages.length
@@ -332,6 +346,7 @@ export function readConfig() {
     }
     if (config.imageControl) readImageControl(config.imageControl);
     if (config.textControl) readTextControl(config.textControl);
+    readDialogContracts(config);
     readWorkflowPage(config.workflowPage);
     for (const item of config.fieldPlacements ?? []) {
         readFieldPlacement(item);
@@ -395,12 +410,14 @@ function readWorkflowPage(page) {
     const registration = JSON.parse(control);
     if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
         || registration.adapter !== page.adapter
-        || Object.keys(registration).filter((key) => key !== "$schema").sort().join() !== (registration.managedRun === undefined
-            ? "adapter,id,placement,schemaVersion" : "adapter,id,managedRun,placement,schemaVersion")
+        || Object.keys(registration).filter((key) => key !== "$schema")
+            .some((key) => !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
         || (registration.managedRun !== undefined && typeof registration.managedRun !== "boolean")
         || page.managedRun !== (registration.managedRun === true)
         || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
-        || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases") {
+        || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases"
+        || !isDeepStrictEqual(registration.placement, page.placement)
+        || !isDeepStrictEqual(registration.viewLabels ?? {}, page.viewLabels)) {
         throw new Error("Packaged phase control definition differs from its frozen contract");
     }
     const bytes = readPackagedFile(new URL(`./pages/${page.adapter}.mjs`, import.meta.url));
@@ -449,6 +466,102 @@ function readPackagedFile(url) {
         checkParent();
         return buffer.subarray(0, size);
     } finally { closeSync(fd); }
+}
+
+function readRegisteredAsset(folder, name, extension, hash) {
+    if (!/^[a-z][a-z0-9-]{0,79}$/.test(name) || !/^[a-f0-9]{64}$/.test(hash)) {
+        throw new Error("Invalid registered generated asset");
+    }
+    const bytes = readPackagedFile(new URL(`./${folder}/${name}.${extension}`, import.meta.url));
+    if (createHash("sha256").update(bytes).digest("hex") !== hash) {
+        throw new Error(`Packaged ${folder} asset does not match its frozen hash: ${name}`);
+    }
+    return bytes;
+}
+
+function readDialogContracts(config) {
+    const { dialogs = [], phaseDialogs = [], buttons = [], buttonControls = [] } = config;
+    const id = /^[a-z][a-z0-9-]{0,79}$/;
+    if (![dialogs, phaseDialogs, buttons, buttonControls].every(Array.isArray)
+        || [dialogs, phaseDialogs, buttons].some((items) => items.length > 30)
+        || buttonControls.length > 2 || (!!buttonControls.length !== !!buttons.length)
+        || config.showSetup && !buttons.some((button) => button.id === "generated-setup-button")
+        || buttons.length && !buttons.some((button) => button.id === "generated-setup-button")
+        || buttonControls.length && !buttonControls.some((control) => control.id === "project.setup-button")
+        || new Set(dialogs.map((dialog) => dialog?.id)).size !== dialogs.length
+        || new Set(phaseDialogs.map((binding) => binding?.phase)).size !== phaseDialogs.length
+        || new Set(buttons.map((button) => button?.id)).size !== buttons.length
+        || new Set(buttonControls.map((control) => control?.id)).size !== buttonControls.length
+        || new Set(buttonControls.map((control) => control?.adapter)).size !== buttonControls.length
+        || new Set(buttonControls.map((control) => control?.name)).size !== buttonControls.length
+        || new Set(buttons.map((button) => `${button?.page}:${button?.slot}:${button?.order}`)).size
+            !== buttons.length) throw new Error("Invalid generated dialog registrations");
+    for (const control of buttonControls) {
+        if (!control || Object.keys(control).sort().join() !== "adapter,adapterHash,hash,id,name"
+            || !["project.setup-button", "dialog.trigger"].includes(control.id)
+            || !id.test(control.adapter) || !id.test(control.name)
+            || control.id === "project.setup-button" && control.name !== "generated-setup-button-control") {
+            throw new Error("Invalid generated button control registration");
+        }
+        const definition = JSON.parse(readRegisteredAsset("buttons", control.name,
+            "json", control.hash));
+        if (!isDeepStrictEqual(Object.fromEntries(Object.entries(definition)
+            .filter(([key]) => key !== "$schema")), {
+            schemaVersion: 1, id: control.id, adapter: control.adapter,
+        })) throw new Error("Packaged button control differs from its registration");
+        readRegisteredAsset("buttons", control.adapter, "mjs", control.adapterHash);
+    }
+    const definitions = new Map();
+    for (const dialog of dialogs) {
+        if (!dialog || Object.keys(dialog).sort().join() !== "adapter,adapterHash,hash,id,sourceId"
+            || !id.test(dialog.id) || !id.test(dialog.adapter)
+            || typeof dialog.sourceId !== "string") throw new Error("Invalid generated dialog registration");
+        const definition = JSON.parse(readRegisteredAsset("dialogs", dialog.id, "json", dialog.hash));
+        if (definition.id !== dialog.id || definition.adapter !== dialog.adapter
+            || definition.schemaVersion !== 1 || !Array.isArray(definition.blocks)
+            || !definition.buttons || typeof definition.title !== "string") {
+            throw new Error(`Invalid generated dialog definition: ${dialog.id}`);
+        }
+        readRegisteredAsset("dialogs", dialog.adapter, "mjs", dialog.adapterHash);
+        definitions.set(dialog.id, definition);
+    }
+    for (const binding of phaseDialogs) {
+        if (!binding || Object.keys(binding).sort().join() !== "dialog,hash,id,phase"
+            || !id.test(binding.id) || !config.phases.some((phase) =>
+                `speckit.${phase.replace(/^speckit\./, "")}` === binding.phase)
+            || !definitions.has(binding.dialog)) throw new Error("Invalid generated phase dialog binding");
+        const definition = JSON.parse(readRegisteredAsset("dialogs", binding.id, "json", binding.hash));
+        if (definition.id !== binding.id || definition.phase !== binding.phase
+            || definition.dialog !== binding.dialog || definition.schemaVersion !== 1) {
+            throw new Error(`Invalid packaged phase dialog binding: ${binding.id}`);
+        }
+    }
+    for (const button of buttons) {
+        if (!button || Object.keys(button).sort().join()
+            !== "action,control,dialog,hash,id,label,order,page,presentation,slot"
+            || !id.test(button.id) || button.slot !== `${button.page}.actions`
+            || button.control !== (button.page === "setup" ? "project.setup-button" : "dialog.trigger")
+            || !buttonControls.some((control) => control.id === button.control)
+            || !definitions.has(button.dialog)
+            || button.page === "workflow"
+                && !config.workflowPage.slots.some((slot) => slot.id === button.slot)
+            || button.page !== "workflow" && button.page !== "setup"
+            || button.action?.type !== (button.id === "generated-setup-button"
+                ? "project.setup" : "dialog.result")
+            || (button.page === "setup") !== (button.id === "generated-setup-button")) {
+            throw new Error("Invalid generated button registration");
+        }
+        const definition = JSON.parse(readRegisteredAsset("buttons", button.id, "json", button.hash));
+        const { hash, ...expected } = button;
+        if (!isDeepStrictEqual(Object.fromEntries(Object.entries(definition)
+            .filter(([key]) => key !== "$schema" && key !== "schemaVersion")), expected)) {
+            throw new Error(`Packaged button differs from its frozen placement: ${button.id}`);
+        }
+        if (button.page === "setup" && !definitions.get(button.dialog).blocks
+            .some((block) => block.type === "slot" && block.name === "pending-packages")) {
+            throw new Error("Setup dialog must show all pending packages");
+        }
+    }
 }
 
 function readImageAsset(asset) {
@@ -577,12 +690,14 @@ export function renderHtml(config, token = "") {
         </section>` : "",
         message: '<p id="canvas-message" role="status"></p>',
         pipeline: `<div id="workflow-pipeline" hidden data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
+            data-view-labels="${escapeHtml(JSON.stringify(config.workflowPage.viewLabels))}"
             data-phases="${escapeHtml(JSON.stringify(phaseContract(config).filter((step) => !step.project)
                 .map((step) => ({ id: step.id, label: step.label, output: step.output,
                     outputs: step.outputs }))))}"></div>`,
     };
     const workflowContributions = config.workflowPage.slots.filter(({ id }) => id !== "workflow.phases"
-        && config.fieldPlacements?.some((item) => item.page === "workflow" && item.slot === id))
+        && (config.fieldPlacements?.some((item) => item.page === "workflow" && item.slot === id)
+            || config.buttons?.some((item) => item.page === "workflow" && item.slot === id)))
         .map(({ id }) => `<section class="phase-card" data-workflow-slot="${escapeHtml(id)}"></section>`).join("");
     return `<!doctype html>
 <html lang="en"${config.theme ? ` data-theme="${escapeHtml(config.theme)}"` : ""}>
@@ -595,7 +710,13 @@ export function renderHtml(config, token = "") {
         : ' aria-hidden="true"'}>${config.brandAsset ? "" : "&#9671;"}</span><span class="brand-text">${escapeHtml(canvas.displayName)}</span></div>
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
-<main class="app-body workflow-surface">
+<main id="workflow-surface" class="app-body workflow-surface">
+    <section id="setup-surface" class="phase-card" aria-labelledby="setup-heading" hidden>
+        <div class="setup-copy"><h2 id="setup-heading">Set up this project</h2>
+            <p class="muted">Set up Spec Kit and install the selected presets, extensions, and bundles.</p></div>
+        <div id="setup-actions"></div>
+        <p id="setup-status" role="status" hidden></p>
+    </section>
     ${config.generatedPages?.length ? regions.pages : ""}
     ${config.generatedPages?.length ? '<div id="workflow-content" class="workflow-content">' : ""}
     ${WORKFLOW_REGIONS.filter((region) => !config.generatedPages?.length
@@ -621,6 +742,11 @@ export function renderHtml(config, token = "") {
     <span hidden id="generated-field-placements"
         data-placements="${escapeHtml(JSON.stringify(config.fieldPlacements ?? []))}"></span>
 </main>
+<span hidden id="generated-dialog-contracts" data-dialogs="${escapeHtml(JSON.stringify(config.dialogs ?? []))}"
+    data-phase-dialogs="${escapeHtml(JSON.stringify(config.phaseDialogs ?? []))}"
+    data-buttons="${escapeHtml(JSON.stringify(config.buttons ?? []))}"
+    data-button-controls="${escapeHtml(JSON.stringify(config.buttonControls ?? []))}"></span>
+<div id="generated-dialog-root"></div>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
 <dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title"><h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2><p>This permanently deletes the selected workflow directory and everything in it:</p><p><code id="delete-workflow-directory"></code></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow" type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow" type="button">Delete workflow</button></footer></dialog>
 ${hasConstitution ? `<dialog id="constitution-dialog" aria-labelledby="constitution-dialog-title"><h2 id="constitution-dialog-title">Create project constitution</h2><label class="field" for="constitution-args"><span class="field-label" id="constitution-args-label">Project principles</span><textarea class="phase-input-control" id="constitution-args" required></textarea></label><p id="constitution-message" role="status"></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-constitution" type="button">Cancel</button><button class="btn btn-primary" id="send-constitution" type="button">Create constitution</button></footer></dialog>` : ""}
@@ -692,6 +818,27 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                     .end(module);
                 return;
             }
+            const dialogAsset = /^\/dialogs\/([a-z][a-z0-9-]{0,79})\.(json|mjs)$/.exec(url.pathname);
+            if (request.method === "GET" && dialogAsset) {
+                const [, name, extension] = dialogAsset;
+                const entry = extension === "json" ? config.dialogs?.find((item) => item.id === name)
+                    : config.dialogs?.find((item) => item.adapter === name);
+                if (entry) {
+                    const bytes = readRegisteredAsset("dialogs", name, extension,
+                        extension === "json" ? entry.hash : entry.adapterHash);
+                    response.writeHead(200, { "Content-Type": `${extension === "json"
+                        ? "application/json" : "text/javascript"}; charset=utf-8` }).end(bytes);
+                    return;
+                }
+            }
+            const buttonAsset = /^\/buttons\/([a-z][a-z0-9-]{0,79})\.mjs$/.exec(url.pathname);
+            const buttonControl = config.buttonControls?.find((item) => item.adapter === buttonAsset?.[1]);
+            if (request.method === "GET" && buttonAsset && buttonControl) {
+                const bytes = readRegisteredAsset("buttons", buttonAsset[1], "mjs",
+                    buttonControl.adapterHash);
+                response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" }).end(bytes);
+                return;
+            }
             if (!runtime) throw new UserError("The Copilot session runtime is unavailable. Reopen the canvas.", 503);
             if (request.method === "GET" && url.pathname === "/api/events") {
                 response.writeHead(200, { "Content-Type": "text/event-stream", Connection: "keep-alive" });
@@ -705,7 +852,10 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
                 ...(url.searchParams.has("output") ? { output: url.searchParams.get("output") } : {}),
             }));
-            if (request.method !== "POST" || !["/api/run", "/api/autopilot/start", "/api/autopilot/stop", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete", "/api/workflow/new", "/api/workflow/pending/remove"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
+            if (request.method !== "POST" || !["/api/run", "/api/autopilot/start", "/api/autopilot/stop",
+                "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete",
+                "/api/workflow/new", "/api/workflow/pending/remove",
+                "/api/setup/start", "/api/setup/confirm"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;
             if (origin && origin !== `http://127.0.0.1:${port()}`) throw new UserError("Untrusted request origin.", 403);
             if (!request.headers["content-type"]?.startsWith("application/json")) throw new UserError("Expected a JSON request.", 415);
@@ -719,7 +869,9 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             let input;
             try { input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); } catch { throw new UserError("Invalid JSON request."); }
             if (!input || typeof input !== "object" || Array.isArray(input)) throw new UserError("Expected a JSON object.");
-            const result = url.pathname === "/api/run" ? await runtime.run(input, instanceId)
+            const result = url.pathname === "/api/setup/start" ? await runtime.setupStart(input)
+                : url.pathname === "/api/setup/confirm" ? await runtime.setupConfirm(input)
+                : url.pathname === "/api/run" ? await runtime.run(input, instanceId)
                 : url.pathname === "/api/autopilot/start" ? await runtime.startAutopilot(input, instanceId)
                     : url.pathname === "/api/autopilot/stop" ? await runtime.stopAutopilot(input, instanceId)
                 : url.pathname === "/api/workflow/new" ? await runtime.createPending(input)

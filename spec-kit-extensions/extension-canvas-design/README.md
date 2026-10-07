@@ -43,7 +43,7 @@ finished app does not depend on this extension at runtime.
 | `designer-appearance-dark-secondary` | Appearance slot | Optional dark-mode secondary surface |
 | `designer-appearance-dark-text` | Appearance slot | Optional dark-mode main text |
 | `generated-workflow` | Generated Workflow page | Required page metadata and named slots; host shell stays fixed |
-| `generated-phase-control` | Generated Workflow page | Phase control identity, placement, and adapter reference |
+| `generated-phase-control` | Generated Workflow page | Phase identity, placement, adapter reference, and per-phase view labels |
 | `generated-phase-adapter` | Generated Workflow page | Replaceable phase navigation and card presentation |
 | `shared-controls-image` | Shared control | Image value contract and paired adapter names |
 | `designer-control-adapter-image` | Designer | Upload, preview, replace, and remove images |
@@ -71,8 +71,8 @@ in a page or a field contribution to reject empty or whitespace-only values.
 The shared Designer adapter shows the field's syntax guidance; Generate verifies
 the constraint independently. Omitted `required` preserves optional text.
 The artifact folder name (slug) is collected in the generated workflow shell,
-not as a Designer setting. A future Setup confirm checkbox can reuse the stock
-checkbox pattern without moving privileged setup into an adapter.
+not as a Designer setting. The optional Show setup checkbox uses the stock
+checkbox pattern; privileged setup stays in the generated host.
 The composed load-page command explicitly resolves stock contributions into
 `essentials.options` or `appearance.options` in their declared order. Omitting or replacing a stock contribution
 does not remove the required Canvas ID and Title. If absent, generated description
@@ -170,6 +170,58 @@ Specify creates the workflow. Constitution always
 opens `.specify/memory/constitution.md` and cannot
 be changed in the Designer. Existing header Save persists the viewer selections
 and additional links.
+
+## Generated app project setup
+
+Essentials includes **Show setup**, off by default. When enabled, an unready
+project shows a setup card above a read-only preview of its selected workflow.
+Phase Run actions remain unavailable until setup completes. Clicking **Set up
+project** ensures the Specify CLI is available, initializes Spec Kit in Copilot
+skills mode if needed, then asks for confirmation before installing any pending runtime
+packages. The confirmation lists every pending package and source, including
+community packages. Cancelling does not start installation. After installation
+and skill reload are verified, the setup card disappears and the same workflow
+enables in place. Already-ready projects skip setup. With Show setup off, the
+normal page remains visible but phase runs are blocked with a setup-required
+error until the project's
+prerequisites are met; no automatic install runs.
+
+Specify may report an approved direct-URL package as a local source. The
+generated canvas accepts that inventory only after the confirmed URL install
+completes with the frozen identity and settings, and retains an approval receipt
+across restarts. A preexisting unconfirmed local installation remains pending.
+
+Only the frozen **workflow runtime** package inventory is considered for
+installation. The Canvas Design extension, `canvas-design`-tagged presets,
+and local design-time customizations are already represented by their packaged
+generated assets and are not installed into projects using the finished app.
+Opaque bundles are not replayed: their separately verified runtime preset and
+extension members are frozen and installed individually. Bundle-only components
+without a verified standalone source cannot be reproduced by this setup path.
+Dialog and button definitions/adapters use the same named-template resolution
+and packaging as generated pages and controls. The Setup button has a dedicated
+`generated-host/setup-button-control/` with a fixed setup callback; the
+test preset's Workflow-page button uses a separate `dialog.trigger` control.
+A preset can also bind a confirmation dialog to one selected workflow phase without replacing
+the phase card or changing other phases. Project-scoped Constitution does not
+support generated phase confirmations. Autopilot cannot start when any workflow
+phase has a generated confirmation binding; run those phases manually instead.
+
+The named contracts are `schemas/generated.dialog-definition.schema.json`,
+`generated.phase-dialog-binding.schema.json`, `generated.button-control-definition.schema.json`,
+and `generated.button-placement.schema.json`. A dialog adapter exports
+`dialogId = "stock.dialog"`, `contractVersion = 1`, and
+`mount({root, definition, context, onDecision})`, returning an instance (or a
+promise of one) with a decision promise (`confirmed` or `cancelled`) and `dispose()`.
+A button adapter exports
+`controlId = "project.setup-button"`, `contractVersion = 1`, and
+`mount({root, definition, onSetup})`, returning an instance (or a promise of one)
+with `dispose()`. The optional
+`dialog.trigger` adapter instead receives `onTrigger`. Both are executable
+approved template code, not sandboxed JSON. The test-only
+`spec-kit-presets/copilot-dialog-buttons-test` fixture adds one `speckit.implement`
+confirmation and a separate `workflow.actions` button; it is not a runtime
+package or a catalog release.
 
 ## Requirements
 
@@ -385,7 +437,7 @@ not the JSON document. No kind is inferred from a filename.
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
 | `generated.workflow-page-definition` | Required generated Workflow page and slots | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
 | `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/generated.field-placement.schema.json) |
-| `generated.phase-control-definition` | Required phase control identity, placement, and adapter reference | [phase control](schemas/generated.phase-control-definition.schema.json) |
+| `generated.phase-control-definition` | Required phase identity, placement, adapter reference, and optional phase view labels | [phase control](schemas/generated.phase-control-definition.schema.json) |
 | `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
@@ -394,6 +446,12 @@ not the JSON document. No kind is inferred from a filename.
 | `generated.control-adapter` | Generated `.mjs` control adapter | Module contract below |
 | `generated.value-definition` | Generated constant or computed value | [generated value](schemas/generated.value-definition.schema.json) |
 | `generated.computed-value-provider` | Generated `.mjs` provider | Module contract below |
+| `generated.dialog-definition` | Named dialog content and decision labels | [dialog](schemas/generated.dialog-definition.schema.json) |
+| `generated.dialog-adapter` | Generated `.mjs` dialog presentation | Module contract below |
+| `generated.phase-dialog-binding` | Optional per-phase dialog reference | [phase binding](schemas/generated.phase-dialog-binding.schema.json) |
+| `generated.button-control-definition` | Named button identity and adapter reference | [button control](schemas/generated.button-control-definition.schema.json) |
+| `generated.button-adapter` | Generated `.mjs` button presentation | Module contract below |
+| `generated.button-placement` | Setup or workflow button placement and action | [button placement](schemas/generated.button-placement.schema.json) |
 
 Each JSON kind has a matching schema filename. The three required tabs are
 identified by their registered names; added tabs use the same document shape.
@@ -419,11 +477,14 @@ owns its header, collection, details, values, controls, page navigation,
 constitution, messages, and artifact viewer in a fixed shell. Presets may
 replace the Workflow page JSON to add slots; additional slots render together
 in one ordered contributions area. They cannot remove `workflow.phases` or
-reorder the shell. The `generated-phase-control` definition has
-`schemaVersion: 1`, `id: "workflow-phases"`, a placement targeting
-`workflow.phases` on the Workflow page, and
-`adapter: "generated-phase-adapter"`. Designer freezes the page, control
-definition, and adapter as integrity-checked assets.
+reorder the shell. The `generated-phase-control` definition places itself in
+`workflow.phases`, has `schemaVersion: 1`, `id: "workflow-phases"`, an `adapter` name (stock:
+`generated-phase-adapter`), and optional `viewLabels` keyed by selected phase ID,
+for example `{ "plan": "View Plan" }`. Unspecified phases retain "View artifact".
+The label does not change artifact availability or the host-owned view action.
+Both stock and replacement adapters receive `definition` at mount time and must
+apply it when the selected phase changes. Designer freezes those definitions,
+and the adapter as integrity-checked assets.
 
 Like Designer settings, separately registered generated field placements
 target a page and one of its declared slots, identify a field and display
@@ -438,7 +499,7 @@ assets, not runtime uploads. Fixed legacy brand/intro and details bindings
 retain their current behavior.
 
 The phase adapter exports `controlId = "workflow-phases"`,
-`contractVersion = 1`, and `mount({ root, state, actions })`, returning
+`contractVersion = 1`, and `mount({ root, definition, state, actions })`, returning
 `{ update(state), dispose() }`. It owns phase navigation and the selected-phase
 card within `root`. `state` supplies the phase list, current index, workflow
 identity, status, draft, output, other outputs, and sending status. The host
@@ -480,7 +541,7 @@ for local installation; the catalog download requires a published release.
 ```js
 export const controlId = "workflow-phases";
 export const contractVersion = 1;
-export function mount({ root, state, actions }) {
+export function mount({ root, definition, state, actions }) {
   const list = document.createElement("ol");
   root.replaceChildren(list);
   const update = ({ phases, current }) => {

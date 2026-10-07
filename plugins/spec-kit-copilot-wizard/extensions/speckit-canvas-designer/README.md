@@ -42,9 +42,9 @@ while Save can keep an incomplete draft.
 Canvas ID and Title remain unconditionally required, and other text fields
 remain optional unless configured otherwise. The current generated canvas
 requires an artifact folder name (slug) for each new workflow; it is entered
-in the generated app, not configured by a Designer toggle. A future Setup
-confirm checkbox can follow this pattern without delegating project setup to
-adapter code. The Appearance's optional image controls upload, preview, replace,
+in the generated app, not configured by a Designer toggle. The optional Show
+setup checkbox follows the stock control pattern without delegating project
+setup to adapter code. The Appearance's optional image controls upload, preview, replace,
 and remove independent PNG,
 JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
 reason beside their picker, including the actual size when over the limit;

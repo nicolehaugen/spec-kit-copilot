@@ -40,6 +40,9 @@ provides:
     - name: designer-essentials-workflow-heading
       file: designer-host/essentials-settings/workflow-heading.json
       description: Optional Essentials workflow heading.
+    - name: designer-essentials-show-setup
+      file: designer-host/essentials-settings/show-setup.json
+      description: Default-off generated canvas setup view option.
     - name: designer-essentials-header-logo
       file: designer-host/essentials-settings/header-logo.json
       description: Optional image asset for the generated canvas header.
@@ -87,6 +90,21 @@ provides:
     - name: generated-phase-adapter
       file: generated-host/phase-control/generated-phase-adapter.mjs
       description: Workflow phase navigation and card adapter.
+    - name: generated-setup-dialog
+      file: generated-host/dialog/setup.json
+      description: Replaceable setup confirmation dialog and required package inventory slot.
+    - name: generated-dialog-adapter
+      file: generated-host/dialog/generated-dialog-adapter.mjs
+      description: Self-contained safe generated dialog renderer.
+    - name: generated-setup-button-control
+      file: generated-host/setup-button-control/control.json
+      description: Host-owned project setup button control definition.
+    - name: generated-setup-button-adapter
+      file: generated-host/setup-button-control/generated-setup-button-adapter.mjs
+      description: Project setup button mounting adapter.
+    - name: generated-setup-button
+      file: generated-host/setup-button-control/setup.json
+      description: Replaceable setup-only button placement.
 
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image

@@ -32,12 +32,16 @@ FILES = {
     "schemas/generated.added-page-definition.schema.json",
     "schemas/generated.workflow-page-definition.schema.json",
     "schemas/generated.phase-control-definition.schema.json",
+    "schemas/generated.dialog-definition.schema.json",
+    "schemas/generated.phase-dialog-binding.schema.json",
+    "schemas/generated.button-control-definition.schema.json",
+    "schemas/generated.button-placement.schema.json",
     "schemas/generated.field-placement.schema.json",
     "schemas/shared.control-definition.schema.json",
     "schemas/generated.value-definition.schema.json",
     *(f"designer-host/tabs/{name}.json" for name in PAGE_NAMES),
     *(f"designer-host/essentials-settings/{name}.json" for name in (
-        "description", "workflow-heading", "header-logo", "main-page-logo",
+        "description", "workflow-heading", "show-setup", "header-logo", "main-page-logo",
     )),
     *(f"designer-host/appearance-settings/{mode}-{color}.json"
       for mode in ("light", "dark")
@@ -53,8 +57,13 @@ FILES = {
     "generated-host/workflow-page/workflow.json",
     "generated-host/phase-control/phase-control.json",
     "generated-host/phase-control/generated-phase-adapter.mjs",
+    "generated-host/dialog/setup.json",
+    "generated-host/dialog/generated-dialog-adapter.mjs",
+    "generated-host/setup-button-control/control.json",
+    "generated-host/setup-button-control/generated-setup-button-adapter.mjs",
+    "generated-host/setup-button-control/setup.json",
     *(f"generated-scaffold/{name}" for name in (
-        "extension.mjs", "server.mjs", "runtime.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
+        "extension.mjs", "server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
         "ui/page-assets.mjs",
@@ -115,14 +124,19 @@ class CanvasDesignPackageTests(unittest.TestCase):
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
             + [(f"designer-essentials-{filename}", f"designer-host/essentials-settings/{filename}.json")
                for filename in ("description", "workflow-heading",
-                                "header-logo", "main-page-logo")]
+                                "show-setup", "header-logo", "main-page-logo")]
             + [(f"designer-appearance-{mode}-{color}",
                 f"designer-host/appearance-settings/{mode}-{color}.json")
                for mode in ("light", "dark")
                for color in ("accent", "background", "surface", "secondary", "text")]
             + [("generated-workflow", "generated-host/workflow-page/workflow.json"),
                ("generated-phase-control", "generated-host/phase-control/phase-control.json"),
-               ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs")]
+               ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs"),
+               ("generated-setup-dialog", "generated-host/dialog/setup.json"),
+               ("generated-dialog-adapter", "generated-host/dialog/generated-dialog-adapter.mjs"),
+               ("generated-setup-button-control", "generated-host/setup-button-control/control.json"),
+               ("generated-setup-button-adapter", "generated-host/setup-button-control/generated-setup-button-adapter.mjs"),
+               ("generated-setup-button", "generated-host/setup-button-control/setup.json")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [

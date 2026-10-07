@@ -28,8 +28,10 @@ function card(phase) {
     </footer>`;
 }
 
-export function mount({ root, state, actions }) {
+export function mount({ root, definition, state, actions }) {
     if (!root || typeof root.replaceChildren !== "function" || !actions
+        || definition?.id !== controlId || !definition.viewLabels
+        || typeof definition.viewLabels !== "object" || Array.isArray(definition.viewLabels)
         || ["select", "draft", "run", "view", "reveal", "error"].some((key) =>
             typeof actions[key] !== "function")) throw new Error("Invalid phase control context");
     const listeners = new AbortController();
@@ -86,6 +88,7 @@ export function mount({ root, state, actions }) {
             ? `Next: ${next.phases[next.current + 1].label} ▶` : "Complete";
         const input = $("#phase-args");
         if (changed || document.activeElement !== input) input.value = next.draft;
+        input.readOnly = Boolean(next.setupPending);
         $(".phase-notice").textContent = status?.status ?? "Not run";
         const output = next.output ?? "No file output";
         const browse = $("#browse-output-folder");
@@ -104,6 +107,8 @@ export function mount({ root, state, actions }) {
         const artifact = $("#phase-artifact-status");
         const available = next.output === status?.output && status?.artifactAvailability === "available";
         $("#view-artifact").hidden = !available;
+        $("#view-artifact").textContent = Object.hasOwn(definition.viewLabels, phase.id)
+            ? definition.viewLabels[phase.id] : "View output";
         artifact.textContent = next.workflow === "__new__" || available ? "" : (status?.artifactError
             ?? (next.output ? `${next.output} is not available yet. Run the phase, then refresh to check again.`
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."));
@@ -138,7 +143,8 @@ export function mount({ root, state, actions }) {
         $("#run-phase").disabled = Boolean(next.blocked);
         $("#run-phase").title = next.blocked ?? "";
         const notice = $("#phase-message");
-        notice.textContent = status?.error ?? "";
+        notice.textContent = [status?.error, next.setupPending ? "Available after setup" : ""]
+            .filter(Boolean).join(" — ");
         notice.classList.toggle("workflow-error", Boolean(status?.error));
     }
     root.addEventListener("click", (event) => {
@@ -156,7 +162,22 @@ export function mount({ root, state, actions }) {
                         root.querySelector(`#${button.id}`)?.focus({ preventScroll: true });
                     }
                 });
-            } else if (button.id === "run-phase") action = actions.run($("#phase-args").value);
+            } else if (button.id === "run-phase") {
+                const input = $("#phase-args").value;
+                const phase = currentState.phases[currentState.current];
+                const workflow = currentState.workflow;
+                const index = currentState.current;
+                action = typeof actions.confirmRun === "function"
+                    ? Promise.resolve(actions.confirmRun(phase)).then((confirmed) => {
+                        if (confirmed !== true) return;
+                        if (currentState.workflow !== workflow || currentState.current !== index
+                            || currentState.phases[index]?.id !== phase.id) {
+                            throw new Error("Selected workflow or phase changed. Select the phase and retry.");
+                        }
+                        return actions.run(input);
+                    })
+                    : actions.run(input);
+            }
             else if (button.id === "view-artifact") action = actions.view();
             else if (button.id === "phase-output-toggle") {
                 outputsExpanded = !outputsExpanded;

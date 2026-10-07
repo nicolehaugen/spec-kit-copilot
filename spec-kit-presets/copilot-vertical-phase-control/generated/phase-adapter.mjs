@@ -38,7 +38,7 @@ function validState(state) {
         && (state.runLabel == null || typeof state.runLabel === "string");
 }
 
-function render(state) {
+function render(state, definition) {
     const { phases, current } = state;
     const phase = phases[current];
     const status = state.status?.status ?? "Not run";
@@ -54,7 +54,8 @@ function render(state) {
             Autopilot starts at the first step and stops at a blocker.</p>
         <div class="vertical-phase-toolbar">
             <button class="btn btn-primary" type="button" data-action="autopilot"
-                ${!phases.length || ["Request sent", "Running", "Finishing"].includes(autopilot?.status) ? "disabled" : ""}>Autopilot</button>
+                ${state.setupPending || !phases.length || ["Request sent", "Running", "Finishing"].includes(autopilot?.status) ? "disabled" : ""}
+                ${state.setupPending ? 'title="Available after setup"' : ""}>Autopilot</button>
             ${["Request sent", "Running", "Finishing", "Blocked"].includes(autopilot?.status)
                 ? '<button class="btn btn-secondary" type="button" data-action="stop">Stop</button>' : ""}
             <span class="muted" role="status" aria-live="polite">${escapeHtml(target + (autopilot?.message ?? ""))}</span>
@@ -64,7 +65,8 @@ function render(state) {
             const itemStatus = sameWorkflow && autopilot?.current === index && autopilot.status === "Running"
                 ? "Running" : result?.status ?? "Not run";
             const ready = result?.artifactAvailability === "available";
-            const label = item.id.replace(/^speckit\./, "").endsWith("plan") ? "View Plan" : "View artifact";
+            const label = Object.hasOwn(definition.viewLabels, item.id) ? definition.viewLabels[item.id]
+                : item.id.replace(/^speckit\./, "").endsWith("plan") ? "View Plan" : "View artifact";
             return `<li class="vertical-phase-row">
                 <div class="vertical-phase-summary">
                     <button class="vertical-phase-select" type="button" data-phase-index="${index}"
@@ -77,7 +79,8 @@ function render(state) {
                 <div class="vertical-phase-actions">
                     <button class="btn btn-secondary" type="button" data-action="view-row" data-index="${index}"
                         ${ready ? "" : `disabled title="No verified artifact is available yet"`}>${label}</button>
-                    <button class="btn btn-primary" type="button" data-action="start" data-index="${index}">Start Step ${index}</button>
+                    <button class="btn btn-primary" type="button" data-action="start" data-index="${index}"
+                        ${state.setupPending ? 'disabled title="Available after setup"' : ""}>Start Step ${index}</button>
                 </div>
             </li>`;
         }).join("")}</ol>
@@ -100,9 +103,11 @@ function render(state) {
         </div>` : ""}
         <label class="field"><span class="field-label">Phase input</span>
             <textarea class="phase-input-control" data-phase-draft placeholder="Add details or direction for this phase."
+                ${state.setupPending ? "readonly" : ""}
                 aria-label="Phase input">${escapeHtml(state.draft)}</textarea>
         </label>
-        <div class="muted${state.status?.error ? " workflow-error" : ""}" role="status">${escapeHtml(state.status?.error)}</div>
+        <div class="muted${state.status?.error ? " workflow-error" : ""}" role="status">${escapeHtml(
+            [state.status?.error, state.setupPending ? "Available after setup" : ""].filter(Boolean).join(" — "))}</div>
         <footer class="phase-actions phase-actions-nav">
             <div class="phase-actions-left"><button class="btn btn-secondary" data-action="previous" type="button"
                 ${current === 0 ? "disabled" : ""}>&#9664; Back</button></div>
@@ -111,8 +116,10 @@ function render(state) {
         </footer>` : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>`;
 }
 
-export function mount({ root, state, actions }) {
+export function mount({ root, definition, state, actions }) {
     if (!root || typeof root.replaceChildren !== "function" || !validState(state)
+        || definition?.id !== controlId || !definition.viewLabels
+        || typeof definition.viewLabels !== "object" || Array.isArray(definition.viewLabels)
         || !actions || ["select", "draft", "runAt", "viewAt", "reveal", "startManagedRun", "stopManagedRun", "error"]
             .some((key) => typeof actions[key] !== "function")) throw new Error("Invalid vertical phase control context");
     let disposed = false;
@@ -133,7 +140,15 @@ export function mount({ root, state, actions }) {
                     "Autopilot is running. Stop it before starting this step manually?")) return;
                 await actions.stopManagedRun();
             }
-            await actions.runAt(Number(button.dataset.index));
+            const index = Number(button.dataset.index);
+            const workflow = state.workflow;
+            const phase = state.phases[index];
+            if (typeof actions.confirmRun === "function"
+                && await actions.confirmRun(phase) !== true) return;
+            if (state.workflow !== workflow || state.phases[index]?.id !== phase?.id) {
+                throw new Error("Selected workflow or phase changed. Select the phase and retry.");
+            }
+            await actions.runAt(index);
         });
         else if (action === "view-row") invoke(() => actions.viewAt(Number(button.dataset.index)));
         else if (action === "output") invoke(() => actions.viewAt(state.current, button.dataset.output));
@@ -164,7 +179,7 @@ export function mount({ root, state, actions }) {
                     ? "" : `[data-index="${focused.dataset.index}"]`}` : null;
         const cursor = focused?.hasAttribute("data-phase-draft")
             ? [focused.selectionStart, focused.selectionEnd] : null;
-        root.innerHTML = render(state);
+        root.innerHTML = render(state, definition);
         if (selector) {
             const replacement = root.querySelector(selector);
             replacement?.focus({ preventScroll: true });

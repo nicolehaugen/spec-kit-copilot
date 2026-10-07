@@ -27,6 +27,7 @@ test("closing the last started panel while another opens retains the shared runt
             managedRun: false,
             slots: JSON.parse(definition).slots,
             phaseControl: "generated-phase-control", adapter: "generated-phase-adapter",
+            placement: JSON.parse(control).placement, viewLabels: {},
             definitionHash: createHash("sha256").update(definition).digest("hex"),
             controlHash: createHash("sha256").update(control).digest("hex"),
             hash: createHash("sha256").update(adapter).digest("hex") },
