@@ -477,6 +477,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             if (next.runs.some((run) => run.item === input.itemId && run.status !== "Failed")) {
                 throw new UserError("This workflow has a run in progress or unconfirmed. Check chat before removing it.");
             }
+            if (next.runs.some((run) => run.item === input.itemId && run.status === "Failed"
+                && existing.some((entry) => !run.before.includes(entry.id)
+                    && (entry.slug === run.slug || new RegExp(`^\\d+-${run.slug}$`).test(entry.slug))))) {
+                throw new UserError("A workflow directory may have been created by the failed run. Check its artifacts before removing this row.");
+            }
             if (next.autopilot?.item === input.itemId
                 && ["Request sent", "Running", "Finishing"].includes(next.autopilot.status)) {
                 throw new UserError("Stop Autopilot before removing this workflow.");
@@ -986,7 +991,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 throw new UserError("Stop Autopilot before deleting this workflow.", 409);
             }
             if (state.runs.some((run) => (run.item === item.id
-                || (run.item === "__new__" && !run.before.includes(item.id)))
+                || (newItem(run.item) && !run.before.includes(item.id)))
                 && !["Completed", "Failed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
