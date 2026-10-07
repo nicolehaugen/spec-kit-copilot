@@ -14,8 +14,8 @@ const pageAssets = readFileSync(new URL("./ui/page-assets.mjs", import.meta.url)
 const runtimeStyles = readFileSync(new URL("./ui/runtime.css", import.meta.url), "utf8");
 const packageRoot = realpathSync(new URL(".", import.meta.url));
 const RESERVED_GENERATED_PAGE_ID = "workflow";
-const WORKFLOW_REGIONS = ["collection", "details", "values", "controls",
-    "pages", "constitution", "message", "pipeline"];
+const WORKFLOW_REGIONS = ["collection", "constitution", "details", "values", "controls",
+    "pages", "message", "pipeline"];
 const imageValueContract = { type: "image", maxBytes: 32768,
     mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
 
@@ -529,21 +529,28 @@ export function renderHtml(config, token = "") {
             ${config.mainPageAsset
                 ? `<div class="collection-intro"><span data-stock-image="workflow.intro" data-image-file="${escapeHtml(config.mainPageAsset.file)}" data-image-alt="${escapeHtml(canvas.displayName)} logo" data-image-class="collection-logo generated-image"></span>${intro}</div>`
                 : intro}
-            <button class="btn btn-secondary" id="new-workflow" type="button">+ New</button>
+            <button class="btn btn-secondary" id="new-workflow" type="button">New workflow</button>
         </div>
-        <div id="workflow-identity" class="workflow-identity-fields"${phases.length ? "" : " hidden"}>
+        <div id="workflow-identity" class="workflow-identity-fields" hidden>
             <label class="field" for="workflow-name">
-                <span class="field-label" id="workflow-name-label">Workflow name <span class="muted">(optional)</span></span>
-                <input class="phase-input-control" id="workflow-name" type="text" maxlength="120" placeholder="My workflow">
+                <span class="field-label" id="workflow-name-label">Workflow name</span>
+                <input class="phase-input-control" id="workflow-name" type="text" maxlength="120" placeholder="Workflow 1" aria-describedby="workflow-name-help">
+                <span class="muted" id="workflow-name-help">Shown in the workflow list.</span>
             </label>
-            ${config.userProvidesSlug ? `<label class="field" for="workflow-slug">
-                <span class="field-label" id="workflow-slug-label">Artifact directory slug <span class="muted">(optional)</span></span>
-                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100" placeholder="your-slug">
-            </label>` : ""}
+            <label class="field" for="workflow-slug">
+                <span class="field-label" id="workflow-slug-label">Artifact folder name (slug) <span class="muted">Required</span></span>
+                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100" required
+                    pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="workflow-1" aria-describedby="workflow-slug-help workflow-slug-error">
+                <span class="muted" id="workflow-slug-help">Folder for workflow artifacts. Created when Specify runs; use lowercase, numbers, or hyphens.</span>
+                <span id="workflow-slug-error" class="workflow-error" role="alert" hidden></span>
+            </label>
         </div>
         <label id="workflow-search-field" class="workflow-search" for="workflow-search" hidden><span class="visually-hidden">Search workflows</span><input id="workflow-search" type="search" placeholder="Search workflows by name or directory"></label>
-        <div id="workflow-list" class="instance-list" role="list" aria-label="Existing workflows" hidden></div>
-        <div id="workflow-empty" class="instance-list" hidden><button id="create-first-workflow" class="instance-select empty-workflow" type="button"><span class="empty-workflow-mark" aria-hidden="true">+</span><span class="instance-select-main"><strong>No workflows yet</strong><span class="muted">Create a workflow to see it here.</span></span><span class="empty-workflow-action" aria-hidden="true">Create workflow &#8594;</span></button></div>
+        <div id="workflow-list" class="instance-list">
+            <div id="workflow-rows" role="list" aria-labelledby="workflow-heading"></div>
+            <p id="workflow-empty">No workflows yet.</p>
+        </div>
+        <p id="workflow-constitution-note" class="muted" hidden>Create a project constitution to start a workflow.</p>
         <p id="workflow-list-status" class="muted" role="status" hidden></p>
     </section>`,
         details: readOnlySections(config.readOnlyFields, config.textPlacements),
@@ -563,13 +570,13 @@ export function renderHtml(config, token = "") {
         </nav>
         <section id="generated-page" class="phase-card" data-canvas-id="${escapeHtml(canvas.id)}"
             data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>` : "",
-        constitution: hasConstitution ? `<details id="constitution-card" class="constitution-card" aria-label="Project constitution" open>
-            <summary><strong>Constitution</strong><span class="muted" id="constitution-status">Not run</span></summary>
-            <div class="constitution-details"><p id="constitution-prerequisite">Project principles apply to every workflow.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
-            <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create / update</button></div></div>
-        </details>` : "",
+        constitution: hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Project constitution">
+            <div class="constitution-summary"><strong>Project constitution</strong><span class="muted">Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span></div>
+            <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p><p id="constitution-artifact-status" class="muted" role="status"></p></div>
+            <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button></div>
+        </section>` : "",
         message: '<p id="canvas-message" role="status"></p>',
-        pipeline: `<div id="workflow-pipeline" data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
+        pipeline: `<div id="workflow-pipeline" hidden data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
             data-phases="${escapeHtml(JSON.stringify(phaseContract(config).filter((step) => !step.project)
                 .map((step) => ({ id: step.id, label: step.label, output: step.output,
                     outputs: step.outputs }))))}"></div>`,
@@ -616,7 +623,7 @@ export function renderHtml(config, token = "") {
 </main>
 <dialog id="artifact-viewer" class="artifact-viewer" aria-labelledby="artifact-title"><header class="artifact-viewer-header"><button class="btn btn-secondary artifact-viewer-back" id="close-artifact" type="button">&#8592; Canvas</button><div class="artifact-viewer-title"><h2 id="artifact-title">Artifact</h2><code id="artifact-path" class="muted"></code></div></header><div class="artifact-viewer-body"><p id="artifact-message" role="status"></p><article id="artifact-content" class="artifact-viewer-md"></article></div></dialog>
 <dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title"><h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2><p>This permanently deletes the selected workflow directory and everything in it:</p><p><code id="delete-workflow-directory"></code></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow" type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow" type="button">Delete workflow</button></footer></dialog>
-${hasConstitution ? `<dialog id="constitution-dialog" aria-labelledby="constitution-dialog-title"><h2 id="constitution-dialog-title">Create / update Constitution</h2><label class="field" for="constitution-args"><span class="field-label">Guidance (optional)</span><textarea class="phase-input-control" id="constitution-args"></textarea></label><p id="constitution-message" role="status"></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-constitution" type="button">Cancel</button><button class="btn btn-primary" id="send-constitution" type="button">Run phase</button></footer></dialog>` : ""}
+${hasConstitution ? `<dialog id="constitution-dialog" aria-labelledby="constitution-dialog-title"><h2 id="constitution-dialog-title">Create project constitution</h2><label class="field" for="constitution-args"><span class="field-label" id="constitution-args-label">Project principles</span><textarea class="phase-input-control" id="constitution-args" required></textarea></label><p id="constitution-message" role="status"></p><footer class="viewer-head"><button class="btn btn-secondary" id="cancel-constitution" type="button">Cancel</button><button class="btn btn-primary" id="send-constitution" type="button">Create constitution</button></footer></dialog>` : ""}
 <script type="module" src="/ui/app.js?token=${escapeHtml(encodeURIComponent(token))}"></script>
 </body></html>`;
 }
@@ -698,7 +705,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 phase: url.searchParams.get("phase"), itemId: url.searchParams.get("itemId"),
                 ...(url.searchParams.has("output") ? { output: url.searchParams.get("output") } : {}),
             }));
-            if (request.method !== "POST" || !["/api/run", "/api/autopilot/start", "/api/autopilot/stop", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
+            if (request.method !== "POST" || !["/api/run", "/api/autopilot/start", "/api/autopilot/stop", "/api/state", "/api/values", "/api/refresh", "/api/reveal", "/api/workflow/delete", "/api/workflow/new", "/api/workflow/pending/remove"].includes(url.pathname)) return json(response, 404, { error: "Not found" });
             const origin = request.headers.origin;
             if (origin && origin !== `http://127.0.0.1:${port()}`) throw new UserError("Untrusted request origin.", 403);
             if (!request.headers["content-type"]?.startsWith("application/json")) throw new UserError("Expected a JSON request.", 415);
@@ -715,6 +722,8 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             const result = url.pathname === "/api/run" ? await runtime.run(input, instanceId)
                 : url.pathname === "/api/autopilot/start" ? await runtime.startAutopilot(input, instanceId)
                     : url.pathname === "/api/autopilot/stop" ? await runtime.stopAutopilot(input, instanceId)
+                : url.pathname === "/api/workflow/new" ? await runtime.createPending(input)
+                    : url.pathname === "/api/workflow/pending/remove" ? await runtime.removePending(input)
                 : url.pathname === "/api/state" ? await runtime.save(input)
                     : url.pathname === "/api/values" ? await runtime.saveValue(input)
                     : url.pathname === "/api/reveal" ? await runtime.reveal(input)

@@ -26,8 +26,8 @@ If the installed Canvas Design page schema itself is missing or unusable,
 Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
-Essentials requires Canvas ID and Title from the resolved core page. Description,
-Workflow header, and Allow custom slug are ordered Essentials contributions.
+Essentials requires Canvas ID and Title from the resolved core page. Description
+and Workflow header are ordered Essentials contributions.
 Header logo, Main page logo, and light/dark accent, page background, surface,
 secondary surface, and text colors are ordered Appearance contributions
 registered by the composed load-page command. The two required identity fields
@@ -40,11 +40,12 @@ fields on a page or in a contribution can opt into `"required": true`; the
 shared text validator rejects blank or whitespace-only values at Generate,
 while Save can keep an incomplete draft.
 Canvas ID and Title remain unconditionally required, and other text fields
-remain optional unless configured otherwise. The custom-slug boolean is
-consumed by the generated shell, so it needs no
-generated visual adapter or display toggle. A future Setup confirm checkbox
-can follow this pattern without delegating project setup to adapter code. The
-Appearance's optional image controls upload, preview, replace, and remove independent PNG,
+remain optional unless configured otherwise. The current generated canvas
+requires an artifact folder name (slug) for each new workflow; it is entered
+in the generated app, not configured by a Designer toggle. A future Setup
+confirm checkbox can follow this pattern without delegating project setup to
+adapter code. The Appearance's optional image controls upload, preview, replace,
+and remove independent PNG,
 JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
 reason beside their picker, including the actual size when over the limit;
 successful replacement or removal clears the message. A failed upload blocks
@@ -57,9 +58,8 @@ presentation `context` for packaged alt text and styling. The smaller Header
 logo replaces the generated header's brand mark; the larger Main page logo appears beside the
 workflow heading. Either can be set alone. Both use the shared field/slot
 validation path and freeze the selected bytes and hashes at Generate. With no
-Header logo, the existing brand mark remains unchanged. Without optional text
-fields, generated description, heading and custom slug default to
-`Spec Kit workflow canvas.`, `Workflows` and off.
+Header logo, the existing brand mark remains unchanged. Without optional text fields, generated description and heading default to
+`Spec Kit workflow canvas.` and `Workflows`.
 
 Preset-generated pages can publish ID-only slots and receive any registered
 `stock.image` field by `generatedBinding.page` and `.slot`, independent of the
@@ -83,9 +83,9 @@ packaged images are display-only.
 
 Workflow name appears in the generated canvas's workflow collection, before
 phase navigation, while creating a workflow. It labels the workflow there.
-Essentials' default-off Allow custom slug setting controls whether an optional
-Workflow slug field appears below it. The slug previews the View target directory; the created
-directory remains authoritative.
+The generated workflow also collects a required Artifact folder name (slug)
+for the artifact directory. The slug previews the View target; the created
+directory, which may include a numeric prefix, remains authoritative.
 The **Outputs** tab (resolved template ID `designer-artifacts`) lets users select
 one phase at a time, except Constitution. Wizard-inferred pipeline artifacts are
 read-only; users may add or remove separate project-relative Markdown artifact

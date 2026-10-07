@@ -15,10 +15,11 @@ that child project). Reload the generated skills and follow the composed
 `speckit-extension-canvas-design-load-page` skill. The Wizard's handoff and its
 runtime package selection are unchanged.
 
-Generate with a valid, non-reserved Canvas ID and Title. The generated canvas
-uses description `Spec Kit workflow canvas.`, workflow heading `Workflows`, and
-custom-slug availability `false`. Removing either required identity field or
-entering an invalid ID blocks Generate.
+Generate with a valid, non-reserved Canvas ID and Title. With the current
+worktree's Canvas Design source, the generated canvas uses description
+`Spec Kit workflow canvas.` and workflow heading `Workflows`; each new
+workflow requires an artifact folder name (slug). Removing either required
+identity field or entering an invalid ID blocks Generate.
 
 Because this preset **replaces** the load-page command, it captures the
 Canvas Design v0.1.18 resolution instructions. Keep the replacement command

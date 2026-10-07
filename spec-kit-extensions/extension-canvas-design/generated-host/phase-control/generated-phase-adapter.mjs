@@ -9,9 +9,9 @@ function card(phase) {
         <div class="workflow-header-main"><div class="phase-heading"><h2>${escapeHtml(phase.label)}</h2><span class="phase-notice">Not run</span></div>
         <p class="tagline">${escapeHtml(phase.id.startsWith("speckit.") ? phase.id : `speckit.${phase.id}`)}</p></div>
     </header>
-    <dl class="phase-facts"><dt>View target</dt><dd><button class="phase-artifact-link" id="browse-output-folder" type="button" title="Open the viewer target's folder"><code></code></button></dd></dl>
+    <dl class="phase-facts"><dt>Output(s)</dt><dd><span id="phase-output-default" class="phase-output-label">DEFAULT:</span> <button class="phase-artifact-link" id="browse-output-folder" type="button" title="Open the viewer target's folder"><code></code></button><span id="phase-output-prompt" class="muted" hidden>Choose an artifact folder name to preview the output path.</span><button id="phase-output-toggle" class="phase-output-toggle" type="button" aria-controls="phase-other-outputs" aria-expanded="false" hidden></button></dd></dl>
     <p id="phase-artifact-status" class="muted" role="status"></p>
-    <div id="phase-other-outputs" class="phase-output-list" aria-label="Phase outputs" hidden></div>
+    <div id="phase-other-outputs" class="phase-output-list" aria-label="Additional phase outputs" hidden></div>
     <label class="field" for="phase-args">
         <span class="field-label" id="phase-input-label">Phase input</span>
         <span class="visually-hidden" id="phase-input-help">Add details or direction for this phase.</span>
@@ -22,7 +22,7 @@ function card(phase) {
         <div class="phase-actions-left"><button class="btn btn-secondary" id="previous-phase" type="button">&#9664; Back</button></div>
         <div class="phase-actions-center">
             <button class="btn btn-primary" id="run-phase" type="button" aria-describedby="phase-message">Run phase</button>
-            <button class="btn btn-secondary" id="view-artifact" type="button" aria-describedby="phase-artifact-status" hidden>View artifact</button>
+            <button class="btn btn-secondary" id="view-artifact" type="button" aria-describedby="phase-artifact-status" hidden>View output</button>
         </div>
         <div class="phase-actions-right"><button class="btn btn-secondary" id="next-phase" type="button">Continue &#9654;</button></div>
     </footer>`;
@@ -35,6 +35,8 @@ export function mount({ root, state, actions }) {
     const listeners = new AbortController();
     let currentState;
     let previousKey;
+    let outputsExpanded = false;
+    let additionalCount = 0;
     const $ = (selector) => root.querySelector(selector);
     function update(next) {
         if (!next || !Array.isArray(next.phases) || !Number.isInteger(next.current)
@@ -45,6 +47,7 @@ export function mount({ root, state, actions }) {
         const key = `${next.workflow}:${next.current}`;
         const changed = !currentState || previousKey !== key
             || currentState.phases.length !== next.phases.length;
+        if (changed) outputsExpanded = false;
         currentState = next;
         previousKey = key;
         if (changed) {
@@ -84,40 +87,56 @@ export function mount({ root, state, actions }) {
         const input = $("#phase-args");
         if (changed || document.activeElement !== input) input.value = next.draft;
         $(".phase-notice").textContent = status?.status ?? "Not run";
-        const output = next.output ?? "No declared output";
+        const output = next.output ?? "No file output";
         const browse = $("#browse-output-folder");
         browse.querySelector("code").textContent = output;
+        const needsSlug = next.workflow === "__new__" && next.slugEditable
+            && next.output?.includes("<slug>");
+        $("#phase-output-default").hidden = !next.output || needsSlug;
+        $("#phase-output-prompt").hidden = !needsSlug;
+        browse.hidden = needsSlug;
         const unresolved = !next.output || next.output.includes("<slug>");
         browse.disabled = unresolved;
         browse.title = unresolved
-            ? (next.slugEditable ? "Enter a workflow slug to resolve this path"
+            ? (next.slugEditable ? "Enter an artifact folder name (slug) to resolve this path"
                 : "Run the phase to resolve this path")
             : `Open ${output.slice(0, output.lastIndexOf("/")) || "."} in file explorer`;
         const artifact = $("#phase-artifact-status");
         const available = next.output === status?.output && status?.artifactAvailability === "available";
         $("#view-artifact").hidden = !available;
-        artifact.textContent = available ? "" : (status?.artifactError
+        artifact.textContent = next.workflow === "__new__" || available ? "" : (status?.artifactError
             ?? (next.output ? `${next.output} is not available yet. Run the phase, then refresh to check again.`
                 : "No artifact is available for this phase yet. Run the phase, then refresh to check again."));
         artifact.hidden = !artifact.textContent;
         const others = $("#phase-other-outputs");
         others.replaceChildren();
-        if (next.outputLinks.length) {
-            const heading = document.createElement("strong");
-            heading.textContent = "Outputs";
-            others.append(heading);
-            for (const output of next.outputLinks) {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.className = "phase-artifact-link";
-                button.dataset.output = output.template;
-                button.textContent = output.label;
-                others.append(button);
-            }
+        const additional = needsSlug ? [] : next.outputLinks.filter(({ template, label }) =>
+            template !== phase.output && label !== next.output);
+        additionalCount = additional.length;
+        for (const output of additional) {
+            const row = document.createElement("div");
+            row.className = "phase-output-row";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "phase-artifact-link";
+            button.dataset.output = output.template;
+            const path = document.createElement("code");
+            path.textContent = output.label;
+            button.append(path);
+            row.append(button);
+            others.append(row);
         }
-        others.hidden = !next.outputLinks.length;
+        const toggle = $("#phase-output-toggle");
+        toggle.hidden = !additional.length;
+        toggle.textContent = outputsExpanded ? "− hide outputs" : `▸ +${additional.length} more`;
+        toggle.setAttribute("aria-expanded", String(outputsExpanded));
+        others.hidden = !additional.length || !outputsExpanded;
         $("#run-phase").textContent = next.runLabel
-            ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
+            ?? (next.workflow === "__new__" && next.current === 0
+                ? `Create workflow and run ${phase.label}`
+                : status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
+        $("#run-phase").disabled = Boolean(next.blocked);
+        $("#run-phase").title = next.blocked ?? "";
         const notice = $("#phase-message");
         notice.textContent = status?.error ?? "";
         notice.classList.toggle("workflow-error", Boolean(status?.error));
@@ -139,6 +158,12 @@ export function mount({ root, state, actions }) {
                 });
             } else if (button.id === "run-phase") action = actions.run($("#phase-args").value);
             else if (button.id === "view-artifact") action = actions.view();
+            else if (button.id === "phase-output-toggle") {
+                outputsExpanded = !outputsExpanded;
+                button.textContent = outputsExpanded ? "− hide outputs" : `▸ +${additionalCount} more`;
+                button.setAttribute("aria-expanded", String(outputsExpanded));
+                $("#phase-other-outputs").hidden = !outputsExpanded;
+            }
             else if (button.hasAttribute("data-output")) action = actions.view(button.dataset.output);
             else if (button.id === "browse-output-folder") action = actions.reveal();
             if (action) Promise.resolve(action).catch(actions.error);

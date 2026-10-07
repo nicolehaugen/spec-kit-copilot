@@ -37,7 +37,7 @@ FILES = {
     "schemas/generated.value-definition.schema.json",
     *(f"designer-host/tabs/{name}.json" for name in PAGE_NAMES),
     *(f"designer-host/essentials-settings/{name}.json" for name in (
-        "description", "workflow-heading", "custom-slug", "header-logo", "main-page-logo",
+        "description", "workflow-heading", "header-logo", "main-page-logo",
     )),
     *(f"designer-host/appearance-settings/{mode}-{color}.json"
       for mode in ("light", "dark")
@@ -114,7 +114,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [(f"designer-{page}", f"designer-host/tabs/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
             + [(f"designer-essentials-{filename}", f"designer-host/essentials-settings/{filename}.json")
-               for filename in ("description", "workflow-heading", "custom-slug",
+               for filename in ("description", "workflow-heading",
                                 "header-logo", "main-page-logo")]
             + [(f"designer-appearance-{mode}-{color}",
                 f"designer-host/appearance-settings/{mode}-{color}.json")
@@ -208,14 +208,12 @@ class CanvasDesignPackageTests(unittest.TestCase):
             ],
         )
         stock = [json.loads((PACKAGE / f"designer-host/essentials-settings/{name}.json").read_text("utf-8"))
-                 for name in ("description", "workflow-heading", "custom-slug")]
-        self.assertEqual([item["order"] for item in stock], [10, 20, 30])
-        self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 3)
+                 for name in ("description", "workflow-heading")]
+        self.assertEqual([item["order"] for item in stock], [10, 20])
+        self.assertEqual([item["slot"] for item in stock], ["essentials.options"] * 2)
         self.assertEqual([item["field"]["id"] for item in stock],
-                         ["canvas.description", "canvas.workflowListName",
-                          "workflowSlug.userProvided"])
-        self.assertEqual(stock[-1]["field"]["default"], False)
-        for name in ("description", "workflow-heading", "custom-slug"):
+                         ["canvas.description", "canvas.workflowListName"])
+        for name in ("description", "workflow-heading"):
             self.assertIn(f"`designer-essentials-{name}` — `designer.setting-definition`, `replace`",
                           self.command)
         self.assertTrue(all(page["fields"] == [] for page in self.pages[1:]))

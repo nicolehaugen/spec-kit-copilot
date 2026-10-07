@@ -628,7 +628,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
         .includes(".app-header"), true);
     const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.phases, handoff.workflow.selectedPhases);
-    assert.equal(config.userProvidesSlug, false);
+    assert.equal(config.userProvidesSlug, true);
     assert.deepEqual(config.installed, { presets: [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }],
         extensions: [], bundles: [] });
     assert.equal(Object.hasOwn(config, "resultTags"), false);
@@ -661,6 +661,18 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     const state = await (await fetch(new URL(`/api/state?token=${new URL(opened.url).searchParams.get("token")}`,
         opened.url))).json();
     assert.deepEqual(state.phases.map((phase) => phase.id), handoff.workflow.selectedPhases);
+    const token = new URL(opened.url).searchParams.get("token");
+    const request = (route, body) => fetch(new URL(route, opened.url), { method: "POST",
+        headers: { "x-canvas-token": token, "Content-Type": "application/json" },
+        body: JSON.stringify(body) });
+    const added = await request("/api/workflow/new", { revision: state.revision });
+    assert.equal(added.status, 200);
+    const created = await added.json();
+    const pending = await (await fetch(new URL(`/api/state?token=${token}`, opened.url))).json();
+    assert.equal(pending.items.find((item) => item.id === created.id).slug, "workflow-1");
+    const removed = await request("/api/workflow/pending/remove",
+        { itemId: created.id, revision: pending.revision });
+    assert.equal(removed.status, 200);
     await canvas.onClose({ instanceId: "generated-test" });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId));
 });
@@ -1077,15 +1089,12 @@ test("frozen named values reject tampered modules and package independently of t
     assert.deepEqual(readPortableConfig().valueSources, config.valueSources);
 });
 
-test("Essentials keeps Workflow header separate from the default-off custom slug toggle", async () => {
+test("Essentials keeps Workflow header without a redundant slug toggle", async () => {
     const page = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/tabs/essentials.json", import.meta.url)));
     assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
     const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/essentials-settings/workflow-heading.json", import.meta.url)));
-    const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/essentials-settings/custom-slug.json", import.meta.url)));
-    assert.deepEqual(slug.field, {
-        id: "workflowSlug.userProvided", type: "boolean", control: "stock.checkbox", default: false, label: "Allow custom slug",
-        description: "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.",
-    });
+    assert.ok(!(await readdir(new URL("../extension-canvas-design/designer-host/essentials-settings/", import.meta.url)))
+        .includes("custom-slug.json"));
     assert.equal(heading.field.label, "Workflow header");
 });
 
@@ -1120,8 +1129,11 @@ test("legacy result state stays on disk but is not evaluated or shown", async (t
     assert.equal(Object.hasOwn(snapshot.items[0] ?? {}, "tags"), false);
     const html = renderHtml(config);
     assert.doesNotMatch(html, /result-tags|tag-diagnostic|checklist-progress/);
+    await mkdir(join(project, ".specify", "memory"), { recursive: true });
+    await writeFile(join(project, ".specify", "memory", "constitution.md"), "# Existing principles\n");
     await runtime.save({ revision: 0, selected: "__new__" });
-    const run = await runtime.run({ phase: "specify", itemId: "__new__", args: "Feature" }, "panel-legacy");
+    const run = await runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
+        slug: "legacy-feature" }, "panel-legacy");
     events = [
         { type: "user.message", data: { messageId: "message-legacy", interactionId: "interaction-legacy" } },
         { type: "assistant.turn_start", data: { interactionId: "interaction-legacy", turnId: "turn-legacy" } },
@@ -1138,20 +1150,18 @@ test("legacy result state stays on disk but is not evaluated or shown", async (t
         old.tagMatches);
 });
 
-test("custom slug toggle controls the field and View target preview; actual directory binds artifacts", async (t) => {
-    for (const [mode, requested] of [
-        ["supplied", "sample-feature"],
-        ["blank", ""],
-        ["off", ""],
-    ]) await t.test(mode, async (child) => {
-        const enabled = mode !== "off";
+test("required artifact folder slug previews the target and binds the actual directory", async (t) => {
+    for (const [mode, requested] of [["legacy-on", "sample-feature"], ["legacy-off", "sample-feature"]]) {
+        await t.test(mode, async (child) => {
+        const enabled = mode === "legacy-on";
         const { project, workspace, prepared } = await fixture(child, handoff,
             { ...values, "workflowSlug.userProvided": enabled });
         await materialize(project, workspace, handoff.handoffId, prepared.requestId);
         const config = JSON.parse(await readFile(join(project, ".github", "extensions", "my-workflow",
             "canvas-config.json"), "utf8"));
         const html = renderHtml(config);
-        assert.equal(config.userProvidesSlug, enabled);
+        assert.equal(config.userProvidesSlug, true);
+        assert.ok(html.indexOf('id="instance-collection"') < html.indexOf('id="constitution-card"'));
         const collection = html.slice(html.indexOf('<section id="instance-collection"'),
             html.indexOf('<p id="canvas-message"'));
         assert.match(html, /id="constitution-card"/);
@@ -1162,17 +1172,23 @@ test("custom slug toggle controls the field and View target preview; actual dire
         assert.match(collection, /id="workflow-search"/);
         assert.doesNotMatch(html, /id="current-workflow-title"/);
         assert.ok(collection.indexOf('id="workflow-name"') > collection.indexOf('id="new-workflow"'));
-        assert.match(html, /id="workflow-pipeline" data-module="\/pages\/generated-phase-adapter.mjs"/);
+        assert.doesNotMatch(collection, /id="workflow-draft-head"|id="cancel-new-workflow"/);
+        assert.match(html, /id="workflow-pipeline" hidden data-module="\/pages\/generated-phase-adapter.mjs"/);
         assert.doesNotMatch(html, /id="phase-card"|id="phase-args"|phase-template-/);
-        assert.match(collection, /id="workflow-name-label">Workflow name <span class="muted">\(optional\)<\/span>/);
-        assert.doesNotMatch(collection, /workflow-name-help|workflow-slug-help/);
-        if (enabled) {
-            assert.ok(collection.indexOf('id="workflow-slug"') > collection.indexOf('id="workflow-name"'));
-            assert.match(collection, /id="workflow-slug-label">Artifact directory slug <span class="muted">\(optional\)<\/span>/);
-            assert.match(collection, /id="workflow-slug"[^>]+placeholder="your-slug"/);
-        } else assert.doesNotMatch(html, /id="workflow-slug"/);
+        assert.match(collection, /id="workflow-name-label">Workflow name<\/span>/);
+        assert.ok(collection.indexOf('id="workflow-name"') < collection.indexOf('id="workflow-slug"'));
+        assert.match(collection, /id="workflow-slug-label">Artifact folder name \(slug\) <span class="muted">Required<\/span>/);
+        assert.match(collection, /id="workflow-slug"[^>]+required/);
+        assert.match(collection, /id="workflow-slug-help">Folder for workflow artifacts/);
+        assert.match(collection, /id="workflow-name-help">Shown in the workflow list\./);
+        assert.doesNotMatch(collection, /id="create-first-workflow"/);
+        assert.match(collection, /id="new-workflow"[^>]*>New workflow<\/button>/);
+        assert.match(collection, /id="workflow-rows" role="list" aria-labelledby="workflow-heading"/);
+        assert.match(collection, /id="workflow-empty">No workflows yet\.<\/p>/);
+        assert.doesNotMatch(collection, /Nothing has been created yet|id="workflow-draft-note"/);
         const ui = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js", import.meta.url), "utf8");
-        assert.match(ui, /input\.placeholder = input\.readOnly \? "Automatically assigned" : "your-slug"/);
+        assert.match(ui, /function slugError\(\)/);
+        assert.match(ui, /\$\("workflow-pipeline"\)\.hidden = !workflowPhases\(\)\.length/);
         assert.match(html, /<h2 id="workflow-heading">Workflows/);
         assert.match(renderHtml({ ...config, phases: ["constitution"] }), /id="workflow-name"/);
         const skill = join(project, ".github", "skills", "speckit-specify");
@@ -1180,31 +1196,35 @@ test("custom slug toggle controls the field and View target preview; actual dire
         await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
         const prompts = [];
         const runtime = await createRuntime({
-            config, cwd: project, workspace, session: {
+            config: enabled ? config : { ...config, userProvidesSlug: false },
+            cwd: project, workspace, session: {
                 sessionId: "workflow-test", rpc: { skills: { reload: async () => ({ errors: [] }) } },
                 send: async ({ prompt }) => { prompts.push(prompt); return "message-1"; },
                 on: () => () => {}, getEvents: async () => [], log: async () => {},
             },
         });
         child.after(() => runtime.close());
+        assert.equal((await runtime.snapshot()).userProvidesSlug, true);
+        assert.equal((await runtime.snapshot()).constitutionReady, false);
         await assert.rejects(runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
-            slug: enabled ? "Invalid Name" : "sample-feature" }, "panel-1"),
-        enabled ? /lowercase letters/ : /disabled/);
+            slug: requested }, "panel-1"), /Create a project constitution/);
+        await mkdir(join(project, ".specify", "memory"), { recursive: true });
+        await writeFile(join(project, ".specify", "memory", "constitution.md"), "# Existing principles\n");
+        assert.equal((await runtime.snapshot()).constitutionReady, true);
+        assert.equal((await runtime.snapshot()).statuses.constitution.artifactAvailability, "available");
+        await assert.rejects(runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
+            slug: "Invalid Name" }, "panel-1"), /lowercase letters/);
         await assert.rejects(runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
             name: "\n" }, "panel-1"), /Workflow name/);
-        if (mode === "supplied") {
-            await runtime.save({ revision: 0, slug: requested, name: "Customer dashboard" });
-            assert.equal((await runtime.snapshot()).statuses.specify.output,
-                "specs/sample-feature/spec.md");
-        } else if (enabled) await runtime.save({ revision: 0, slug: "stale-name" });
-        else await assert.rejects(runtime.save({ revision: 0, slug: "sample-feature" }), /disabled/);
+        await assert.rejects(runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
+            slug: "" }, "panel-1"), /Enter an artifact folder name/);
+        await runtime.save({ revision: 0, slug: requested, name: "Customer dashboard" });
+        assert.equal((await runtime.snapshot()).statuses.specify.output,
+            "specs/sample-feature/spec.md");
         const result = await runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
-            ...(mode === "supplied" ? { name: "Customer dashboard" } : {}),
-            ...(mode === "blank" ? { slug: "" } : mode === "supplied" ? { slug: requested } : {}) }, "panel-1");
+            name: "Customer dashboard", slug: requested }, "panel-1");
         assert.equal(prompts.length, 1);
-        assert.equal(prompts[0].includes("Requested short name:"), !!requested);
-        if (requested) assert.match(prompts[0], /Requested short name: "sample-feature"/);
-        else assert.doesNotMatch(prompts[0], /Requested short name:|ask_user|Do not invent a name/);
+        assert.match(prompts[0], /Requested short name: "sample-feature"/);
         assert.doesNotMatch(prompts[0], /Customer dashboard/);
         assert.match(prompts[0], /Before writing workflow artifacts, invoke report_workflow_slug/);
         assert.doesNotMatch(prompts[0], /report_phase_result/);
@@ -1220,25 +1240,98 @@ test("custom slug toggle controls the field and View target preview; actual dire
             "specs/001-sample-feature/spec.md");
         assert.equal((await runtime.snapshot()).selected, "specs/001-sample-feature");
         assert.equal((await runtime.snapshot()).items.find((item) => item.id === "specs/001-sample-feature").label,
-            mode === "supplied" ? "Customer dashboard" : "001-sample-feature");
+            "Customer dashboard");
         await writeFile(join(directory, "spec.md"), "# Feature\n");
         await runtime.report({ phaseRunId: result.runId,
             path: "specs/001-sample-feature/spec.md" }, "panel-1");
         const snapshot = await runtime.snapshot();
         assert.equal(snapshot.selected, "specs/001-sample-feature");
         assert.equal(snapshot.statuses.specify.output, "specs/001-sample-feature/spec.md");
-        if (mode === "supplied") {
-            const reopened = await createRuntime({
-                config, cwd: project, workspace, session: {
-                    sessionId: "reopened-test", on: () => () => {},
-                    getEvents: async () => [], log: async () => {},
-                },
-            });
-            child.after(() => reopened.close());
-            assert.equal((await reopened.snapshot()).items.find((item) => item.id === snapshot.selected).label,
-                "Customer dashboard");
-        }
-    });
+        const reopened = await createRuntime({
+            config, cwd: project, workspace, session: {
+                sessionId: "reopened-test", on: () => () => {},
+                getEvents: async () => [], log: async () => {},
+            },
+        });
+        child.after(() => reopened.close());
+        assert.equal((await reopened.snapshot()).items.find((item) => item.id === snapshot.selected).label,
+            "Customer dashboard");
+        });
+    }
+});
+
+test("unstarted workflow rows persist, retain drafts and only create a folder on Specify", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions", "my-workflow",
+        "canvas-config.json"), "utf8"));
+    const skill = join(project, ".github", "skills", "speckit-specify");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+    await mkdir(join(project, ".specify", "memory"), { recursive: true });
+    await writeFile(join(project, ".specify", "memory", "constitution.md"), "# Principles\n");
+    const session = { sessionId: "pending-test", on: () => () => {},
+        rpc: { skills: { reload: async () => ({ errors: [] }) } },
+        send: async () => "pending-message", getEvents: async () => [], log: async () => {} };
+    const runtime = await createRuntime({ config, cwd: project, workspace, session });
+    t.after(() => runtime.close());
+    assert.deepEqual((await runtime.snapshot()).items, []);
+    const first = await runtime.createPending({ revision: 0 });
+    assert.equal(first.id, "__new__:1");
+    let snapshot = await runtime.snapshot();
+    assert.deepEqual(snapshot.items.map(({ label, slug, pending }) => ({ label, slug, pending })),
+        [{ label: "Workflow 1", slug: "workflow-1", pending: true }]);
+    assert.equal(snapshot.statuses.specify.output, "specs/workflow-1/spec.md");
+    await assert.rejects(readdir(join(project, "specs")), { code: "ENOENT" });
+    await runtime.save({ revision: snapshot.revision, name: "Customer dashboard", slug: "customer-dashboard",
+        draft: { item: first.id, phase: "specify", value: "Dashboard scope" } });
+    snapshot = await runtime.snapshot();
+    const second = await runtime.createPending({ revision: snapshot.revision });
+    assert.equal(second.id, "__new__:2");
+    const reopened = await createRuntime({ config, cwd: project, workspace, session });
+    t.after(() => reopened.close());
+    snapshot = await reopened.snapshot();
+    assert.deepEqual(snapshot.items.map((item) => item.label), ["Customer dashboard", "Workflow 2"]);
+    assert.equal(snapshot.selected, second.id);
+    await reopened.removePending({ itemId: second.id, revision: snapshot.revision });
+    snapshot = await reopened.snapshot();
+    assert.equal(snapshot.selected, first.id);
+    assert.equal(snapshot.drafts[JSON.stringify([first.id, "specify"])], "Dashboard scope");
+    const result = await reopened.run({ phase: "specify", itemId: first.id, args: "Dashboard scope" }, "pending-panel");
+    await assert.rejects(reopened.removePending({ itemId: first.id, revision: (await reopened.snapshot()).revision }),
+        /may have created a workflow directory/);
+    const directory = join(project, "specs", "001-customer-dashboard");
+    await mkdir(directory, { recursive: true });
+    await reopened.reportSlug({ phaseRunId: result.runId, slug: "001-customer-dashboard" }, "pending-panel");
+    snapshot = await reopened.snapshot();
+    assert.equal(snapshot.selected, "specs/001-customer-dashboard");
+    assert.deepEqual(snapshot.items.map((item) => item.label), ["Customer dashboard"]);
+    assert.equal(snapshot.drafts[JSON.stringify([snapshot.selected, "specify"])], "Dashboard scope");
+});
+
+test("a missing project constitution can be created before workflow runs", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        "my-workflow", "canvas-config.json"), "utf8"));
+    const skill = join(project, ".github", "skills", "speckit-constitution");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-constitution\n---\n");
+    const prompts = [];
+    const runtime = await createRuntime({ config, cwd: project, workspace,
+        session: { sessionId: "constitution-test", on: () => () => {},
+            rpc: { skills: { reload: async () => ({ errors: [] }) } },
+            send: async ({ prompt }) => { prompts.push(prompt); return "message-constitution"; },
+            getEvents: async () => [], log: async () => {} } });
+    t.after(() => runtime.close());
+    assert.equal((await runtime.snapshot()).constitutionReady, false);
+    await assert.rejects(runtime.run({ phase: "constitution", args: "" }, "panel-project"),
+        /Enter project principles/);
+    assert.equal(prompts.length, 0);
+    await runtime.run({ phase: "constitution", args: "Use concise project principles" }, "panel-project");
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0], /Project-scoped Constitution/);
+    assert.equal((await runtime.snapshot()).constitutionReady, false);
 });
 
 test("local development selections remain bound to the frozen handoff at publication", async (t) => {
