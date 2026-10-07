@@ -82,7 +82,7 @@ test("generated host mounts synchronous and asynchronous dialog and button adapt
             dispose: () => { dialogDisposals++; } });
         const buttonInstance = () => ({ dispose: () => { buttonDisposals++; } });
         const context = {
-            dialogs: [dialog], dialogCache: new Map(), dialogRoot, token: "test",
+            dialogs: [dialog], dialogCache: new Map(), dialogPending: false, dialogRoot, token: "test",
             buttons: [{ control: "dialog.trigger", page: "workflow", slot: "workflow.actions",
                 order: 0, label: "Review", dialog: dialog.id }],
             buttonControls: [{ id: "dialog.trigger", adapter: "button-adapter" }],
@@ -108,4 +108,47 @@ test("generated host mounts synchronous and asynchronous dialog and button adapt
         context.buttonMounts[0].dispose();
         assert.equal(buttonDisposals, 1);
     }
+});
+
+test("generated host rejects overlapping dialog mounts and releases its reservation", async () => {
+    const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
+        import.meta.url), "utf8");
+    const start = source.indexOf("async function showGeneratedDialog(");
+    const end = source.indexOf("async function mountGeneratedButtons()", start);
+    assert.ok(start >= 0 && end > start);
+    const host = source.slice(start, end)
+        .replace("await import(`/dialogs/${registration.adapter}.mjs?token=${encodeURIComponent(token)}`)",
+            "await loadDialog(registration.adapter)");
+    assert.doesNotMatch(host, /await import\(/);
+
+    const dialog = { id: "review-dialog", adapter: "review-adapter" };
+    let entered, release, mounts = 0, disposals = 0;
+    const started = new Promise((resolve) => { entered = resolve; });
+    const gate = new Promise((resolve) => { release = resolve; });
+    const context = {
+        dialogs: [dialog], dialogCache: new Map(), dialogPending: false, token: "test",
+        $: () => ({ childElementCount: 0 }),
+        fetch: async () => ({ ok: true, json: async () => dialog }),
+        loadDialog: async () => ({ dialogId: "stock.dialog", contractVersion: 1,
+            mount: async () => {
+                mounts++;
+                if (mounts === 1) { entered(); await gate; }
+                if (mounts === 3) throw new Error("mount failed");
+                return { result: Promise.resolve("cancelled"),
+                    dispose: () => { disposals++; } };
+            } }),
+    };
+    runInNewContext(`${host}\nthis.showGeneratedDialog = showGeneratedDialog;`, context);
+    const first = context.showGeneratedDialog(dialog.id);
+    await assert.rejects(context.showGeneratedDialog(dialog.id), /already open/);
+    await started;
+    await assert.rejects(context.showGeneratedDialog(dialog.id), /already open/);
+    assert.equal(mounts, 1);
+    release();
+    assert.equal(await first, false);
+    assert.equal(await context.showGeneratedDialog(dialog.id), false);
+    await assert.rejects(context.showGeneratedDialog(dialog.id), /mount failed/);
+    assert.equal(await context.showGeneratedDialog(dialog.id), false);
+    assert.equal(mounts, 4);
+    assert.equal(disposals, 3);
 });

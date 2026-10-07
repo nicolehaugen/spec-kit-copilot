@@ -55,35 +55,41 @@ const phaseDialogs = JSON.parse(dialogContracts?.dataset.phaseDialogs ?? "[]");
 const buttons = JSON.parse(dialogContracts?.dataset.buttons ?? "[]");
 const buttonControls = JSON.parse(dialogContracts?.dataset.buttonControls ?? "[]");
 const dialogCache = new Map();
-let buttonMounts = [], setupBusy = false, activeSetupPlan = null;
+let buttonMounts = [], setupBusy = false, activeSetupPlan = null, dialogPending = false;
 
 async function showGeneratedDialog(name, context = {}) {
-    const registration = dialogs.find((item) => item.id === name);
-    if (!registration) throw new Error(`Unregistered generated dialog: ${name}`);
-    let entry = dialogCache.get(name);
-    if (!entry) {
-        const response = await fetch(`/dialogs/${name}.json?token=${encodeURIComponent(token)}`);
-        if (!response.ok) throw new Error(`Could not load generated dialog ${name} (${response.status})`);
-        const definition = await response.json();
-        const module = await import(`/dialogs/${registration.adapter}.mjs?token=${encodeURIComponent(token)}`);
-        if (definition.id !== name || definition.adapter !== registration.adapter
-            || module.dialogId !== "stock.dialog" || module.contractVersion !== 1
-            || typeof module.mount !== "function") throw new Error(`Incompatible generated dialog: ${name}`);
-        entry = { definition, mount: module.mount };
-        dialogCache.set(name, entry);
-    }
-    if ($("generated-dialog-root").childElementCount) throw new Error("A generated dialog is already open");
-    const instance = await entry.mount({ root: $("generated-dialog-root"), definition: entry.definition,
-        context, onDecision: () => {} });
-    if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
-        throw new Error(`Invalid dialog adapter result: ${name}`);
-    }
+    if (dialogPending) throw new Error("A generated dialog is already open");
+    dialogPending = true;
     try {
-        const result = await instance.result;
-        if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
-        return result === "confirmed";
+        const registration = dialogs.find((item) => item.id === name);
+        if (!registration) throw new Error(`Unregistered generated dialog: ${name}`);
+        let entry = dialogCache.get(name);
+        if (!entry) {
+            const response = await fetch(`/dialogs/${name}.json?token=${encodeURIComponent(token)}`);
+            if (!response.ok) throw new Error(`Could not load generated dialog ${name} (${response.status})`);
+            const definition = await response.json();
+            const module = await import(`/dialogs/${registration.adapter}.mjs?token=${encodeURIComponent(token)}`);
+            if (definition.id !== name || definition.adapter !== registration.adapter
+                || module.dialogId !== "stock.dialog" || module.contractVersion !== 1
+                || typeof module.mount !== "function") throw new Error(`Incompatible generated dialog: ${name}`);
+            entry = { definition, mount: module.mount };
+            dialogCache.set(name, entry);
+        }
+        if ($("generated-dialog-root").childElementCount) throw new Error("A generated dialog is already open");
+        const instance = await entry.mount({ root: $("generated-dialog-root"), definition: entry.definition,
+            context, onDecision: () => {} });
+        if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
+            throw new Error(`Invalid dialog adapter result: ${name}`);
+        }
+        try {
+            const result = await instance.result;
+            if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
+            return result === "confirmed";
+        } finally {
+            instance.dispose();
+        }
     } finally {
-        instance.dispose();
+        dialogPending = false;
     }
 }
 
