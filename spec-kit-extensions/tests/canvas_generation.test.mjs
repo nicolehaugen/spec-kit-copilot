@@ -1183,7 +1183,7 @@ test("required artifact folder slug previews the target and binds the actual dir
         assert.match(collection, /id="workflow-name-help">Shown in the workflow list\./);
         assert.doesNotMatch(collection, /id="create-first-workflow"/);
         assert.match(collection, /id="new-workflow"[^>]*>New workflow<\/button>/);
-        assert.match(collection, /id="workflow-rows" role="list"/);
+        assert.match(collection, /id="workflow-rows" role="list" aria-labelledby="workflow-heading"/);
         assert.match(collection, /id="workflow-empty">No workflows yet\.<\/p>/);
         assert.doesNotMatch(collection, /Nothing has been created yet|id="workflow-draft-note"/);
         const ui = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js", import.meta.url), "utf8");
@@ -1299,7 +1299,7 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     assert.equal(snapshot.drafts[JSON.stringify([first.id, "specify"])], "Dashboard scope");
     const result = await reopened.run({ phase: "specify", itemId: first.id, args: "Dashboard scope" }, "pending-panel");
     await assert.rejects(reopened.removePending({ itemId: first.id, revision: (await reopened.snapshot()).revision }),
-        /run in progress or unconfirmed/);
+        /may have created a workflow directory/);
     const directory = join(project, "specs", "001-customer-dashboard");
     await mkdir(directory, { recursive: true });
     await reopened.reportSlug({ phaseRunId: result.runId, slug: "001-customer-dashboard" }, "pending-panel");

@@ -761,7 +761,7 @@ async function refresh(reconcile = false) {
             model.slug = previous.slug;
             model.name = previous.name;
             const entry = model.items.find((item) => item.id === model.selected && item.pending);
-            if (entry) { entry.slug = model.slug; entry.label = model.name.trim() || model.slug; }
+            if (entry) { entry.slug = model.slug; entry.label = model.name?.trim() || model.slug || "Unstarted workflow"; }
         }
     }
     const project = constitution();
@@ -919,7 +919,7 @@ document.addEventListener("input", (event) => {
         model.name = event.target.value;
         const entry = model.items.find((item) => item.id === model.selected && item.pending);
         if (entry) {
-            entry.label = model.name.trim() || entry.slug;
+            entry.label = model.name?.trim() || entry.slug || "Unstarted workflow";
             const row = [...$("workflow-rows").children].find((item) => item.dataset.workflowId === entry.id);
             row.querySelector("strong").textContent = entry.label;
             row.querySelector("strong").title = entry.label;
@@ -934,7 +934,7 @@ document.addEventListener("input", (event) => {
         const entry = model.items.find((item) => item.id === model.selected && item.pending);
         if (entry) {
             entry.slug = model.slug;
-            entry.label = model.name.trim() || entry.slug;
+            entry.label = model.name?.trim() || entry.slug || "Unstarted workflow";
             const row = [...$("workflow-rows").children].find((item) => item.dataset.workflowId === entry.id);
             row.querySelector("strong").textContent = entry.label;
             row.querySelector("strong").title = entry.label;

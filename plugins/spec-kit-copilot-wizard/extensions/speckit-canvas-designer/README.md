@@ -40,11 +40,12 @@ fields on a page or in a contribution can opt into `"required": true`; the
 shared text validator rejects blank or whitespace-only values at Generate,
 while Save can keep an incomplete draft.
 Canvas ID and Title remain unconditionally required, and other text fields
-remain optional unless configured otherwise. The custom-slug boolean is
-consumed by the generated shell, so it needs no
-generated visual adapter or display toggle. A future Setup confirm checkbox
-can follow this pattern without delegating project setup to adapter code. The
-Appearance's optional image controls upload, preview, replace, and remove independent PNG,
+remain optional unless configured otherwise. The current generated canvas
+requires an artifact folder name (slug) for each new workflow; it is entered
+in the generated app, not configured by a Designer toggle. A future Setup
+confirm checkbox can follow this pattern without delegating project setup to
+adapter code. The Appearance's optional image controls upload, preview, replace,
+and remove independent PNG,
 JPEG, GIF, or WebP images up to 32 KiB each. Rejected files show an accessible
 reason beside their picker, including the actual size when over the limit;
 successful replacement or removal clears the message. A failed upload blocks
@@ -57,9 +58,8 @@ presentation `context` for packaged alt text and styling. The smaller Header
 logo replaces the generated header's brand mark; the larger Main page logo appears beside the
 workflow heading. Either can be set alone. Both use the shared field/slot
 validation path and freeze the selected bytes and hashes at Generate. With no
-Header logo, the existing brand mark remains unchanged. Without optional text
-fields, generated description, heading and custom slug default to
-`Spec Kit workflow canvas.`, `Workflows` and off.
+Header logo, the existing brand mark remains unchanged. Without optional text fields, generated description and heading default to
+`Spec Kit workflow canvas.` and `Workflows`.
 
 Preset-generated pages can publish ID-only slots and receive any registered
 `stock.image` field by `generatedBinding.page` and `.slot`, independent of the

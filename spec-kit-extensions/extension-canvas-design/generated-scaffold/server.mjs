@@ -546,8 +546,8 @@ export function renderHtml(config, token = "") {
             </label>
         </div>
         <label id="workflow-search-field" class="workflow-search" for="workflow-search" hidden><span class="visually-hidden">Search workflows</span><input id="workflow-search" type="search" placeholder="Search workflows by name or directory"></label>
-        <div id="workflow-list" class="instance-list" aria-label="Workflows">
-            <div id="workflow-rows" role="list"></div>
+        <div id="workflow-list" class="instance-list">
+            <div id="workflow-rows" role="list" aria-labelledby="workflow-heading"></div>
             <p id="workflow-empty">No workflows yet.</p>
         </div>
         <p id="workflow-constitution-note" class="muted" hidden>Create a project constitution to start a workflow.</p>

@@ -647,7 +647,7 @@ test("new workflow run follows its confirmed slug and blocks deletion while acti
         const before = await canvas.runtime.snapshot();
         expect(before.items.find((item) => item.id === pending.id)?.status).toBe("Request sent");
         await expect(canvas.runtime.removePending({ itemId: pending.id,
-            revision: before.revision })).rejects.toThrow(/run in progress/);
+            revision: before.revision })).rejects.toThrow(/may have created a workflow directory/);
         await expect(canvas.runtime.deleteWorkflow({
             itemId: "specs/new-feature", confirmation: "new-feature", revision: before.revision,
         })).rejects.toThrow(/unfinished phase/);
@@ -655,6 +655,7 @@ test("new workflow run follows its confirmed slug and blocks deletion while acti
         await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
         const after = await canvas.runtime.snapshot();
         expect(after.selected).toBe("specs/new-feature");
+        expect(after.items.some((item) => item.id === "__new__")).toBe(false);
         expect(after.statuses.specify.status).toBe("Request sent");
         await expect(canvas.runtime.deleteWorkflow({
             itemId: "specs/new-feature", confirmation: "new-feature", revision: after.revision,
@@ -812,11 +813,90 @@ test("a blank legacy workflow with a saved draft remains selectable", async ({ p
     try {
         await canvas.runtime.save({ revision: 0,
             draft: { item: "__new__", phase: "specify", value: "Saved guidance" } });
+        await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
         await page.goto(canvas.url);
+        await expect(page.getByRole("list", { name: "Workflows" })).toBeVisible();
         await expect(page.locator('[data-workflow-id="__new__"].instance-select'))
             .toContainText("Unstarted workflow");
         await expect(page.getByRole("button", { name: "Remove Unstarted workflow" })).toBeHidden();
         await expect(page.locator("#phase-args")).toHaveValue("Saved guidance");
+        await page.getByRole("button", { name: "existing", exact: true }).click();
+        await expect(page.locator('[data-workflow-id="__new__"].instance-select')).toBeVisible();
+        await page.locator("#new-workflow").click();
+        await expect(page.locator('[data-workflow-id="__new__"].instance-select')).toBeVisible();
+        await page.locator('[data-workflow-id="__new__"].instance-select').click();
+        await expect(page.locator("#phase-args")).toHaveValue("Saved guidance");
+        await page.reload();
+        await expect(page.locator('[data-workflow-id="__new__"].instance-select')).toBeVisible();
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("an empty pending identity retains its accessible fallback during edits and refresh", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await page.goto(canvas.url);
+        await page.locator("#new-workflow").click();
+        await page.locator("#workflow-name").fill("");
+        await page.locator("#workflow-slug").fill("");
+        await expect(page.locator("#workflow-rows .instance-select strong")).toHaveText("Unstarted workflow");
+        await expect(page.getByRole("button", { name: "Remove Unstarted workflow" })).toBeVisible();
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#workflow-rows .instance-select strong")).toHaveText("Unstarted workflow");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("creating a numbered workflow preserves a separate legacy draft until it is used", async () => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        await canvas.runtime.save({ revision: 0, name: "Legacy", slug: "legacy",
+            draft: { item: "__new__", phase: "specify", value: "Legacy scope" } });
+        const pending = await canvas.runtime.createPending({ revision: 1 });
+        const first = await canvas.runtime.run({ phase: "specify", itemId: pending.id,
+            args: "New scope" }, "slug-test");
+        await mkdir(join(canvas.root, "specs", "workflow-1"), { recursive: true });
+        await canvas.runtime.reportSlug({ phaseRunId: first.runId, slug: "workflow-1" }, "slug-test");
+        const afterPending = await canvas.runtime.snapshot();
+        expect(afterPending.items.find((item) => item.id === "__new__")?.label).toBe("Legacy");
+        expect(afterPending.drafts[JSON.stringify(["__new__", "specify"])]).toBe("Legacy scope");
+        await canvas.runtime.save({ revision: afterPending.revision, selected: "__new__" });
+        const second = await canvas.runtime.run({ phase: "specify", itemId: "__new__",
+            args: "Legacy scope", slug: "legacy" }, "slug-test");
+        await mkdir(join(canvas.root, "specs", "legacy"), { recursive: true });
+        await canvas.runtime.reportSlug({ phaseRunId: second.runId, slug: "legacy" }, "slug-test");
+        const afterLegacy = await canvas.runtime.snapshot();
+        expect(afterLegacy.items.some((item) => item.id === "__new__")).toBe(false);
+        expect(afterLegacy.items.find((item) => item.id === "specs/legacy")?.label).toBe("Legacy");
+        expect(afterLegacy.drafts[JSON.stringify(["specs/legacy", "specify"])]).toBe("Legacy scope");
+    } finally {
+        await canvas.close();
+    }
+});
+
+test("reporting a legacy artifact without a slug report consumes its draft", async () => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        await canvas.runtime.save({ revision: 0, name: "Legacy", slug: "legacy",
+            draft: { item: "__new__", phase: "specify", value: "Legacy scope" } });
+        const run = await canvas.runtime.run({ phase: "specify", itemId: "__new__",
+            args: "Legacy scope" }, "slug-test");
+        await mkdir(join(canvas.root, "specs", "legacy"), { recursive: true });
+        await writeFile(join(canvas.root, "specs", "legacy", "spec.md"), "# Legacy");
+        await canvas.runtime.report({ phaseRunId: run.runId,
+            path: "specs/legacy/spec.md" }, "slug-test");
+        const snapshot = await canvas.runtime.snapshot();
+        expect(snapshot.items.some((item) => item.id === "__new__")).toBe(false);
+        expect(snapshot.items.find((item) => item.id === "specs/legacy")?.label).toBe("Legacy");
+        expect(snapshot.drafts[JSON.stringify(["specs/legacy", "specify"])]).toBe("Legacy scope");
     } finally {
         await canvas.close();
     }

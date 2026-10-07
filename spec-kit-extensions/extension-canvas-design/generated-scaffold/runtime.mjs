@@ -377,11 +377,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const project = phases.find((phase) => phase.project);
         const pending = (view.pendingWorkflows ?? []).map(({ id, name, slug }) => {
             const run = view.runs.findLast((entry) => entry.item === id);
-            return { id, slug, label: name.trim() || slug, pending: true,
+            return { id, slug, label: name.trim() || slug || "Unstarted workflow", pending: true,
                 status: run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
                     ? "Unconfirmed" : run?.status ?? "Not started" };
         });
-        const legacyDraft = item === "__new__" && (view.name || view.slug
+        const legacyDraft = (view.name || view.slug
             || Object.keys(view.drafts).some((key) => key.startsWith('["__new__",')))
             ? [{ id: "__new__", slug: view.slug,
                 label: view.name?.trim() || view.slug || "Unstarted workflow", pending: true }] : [];
@@ -480,7 +480,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             const index = (next.pendingWorkflows ?? []).findIndex((entry) => entry.id === input.itemId);
             if (index < 0) throw new UserError("This unstarted workflow no longer exists.");
             if (next.runs.some((run) => run.item === input.itemId && run.status !== "Failed")) {
-                throw new UserError("This workflow has a run in progress or unconfirmed. Check chat before removing it.");
+                throw new UserError("This row cannot be removed: a run may have created a workflow directory without reporting it, even if completed. Check chat and artifacts.");
             }
             if (next.runs.some((run) => run.item === input.itemId && run.status === "Failed"
                 && existing.some((entry) => !run.before.includes(entry.id)
@@ -888,9 +888,9 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             if (run.name) (next.names ??= {})[created.id] = run.name;
             if (newItem(run.item)) next.pendingWorkflows = (next.pendingWorkflows ?? [])
                 .filter((entry) => entry.id !== run.item);
+            if (run.item === "__new__") { next.name = ""; next.slug = ""; }
             if (next.selected === run.item) {
                 next.selected = created.id;
-                next.slug = input.slug;
                 next.revision++;
             }
         });
@@ -938,8 +938,9 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 next.drafts[JSON.stringify([item, target.phase])] = target.args;
                 next.pendingWorkflows = (next.pendingWorkflows ?? [])
                     .filter((entry) => entry.id !== run.item);
+                if (run.item === "__new__") { next.name = ""; next.slug = ""; }
                 if (next.selected === run.item) {
-                    next.selected = item; next.slug = item.split("/").at(-1); next.revision++;
+                    next.selected = item; next.revision++;
                 }
             }
         });
