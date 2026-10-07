@@ -52,12 +52,6 @@ export function buildPortableRuntimeSetup(installed, installLocators, catalog, s
     const designIds = { presets: new Set(), extensions: new Set() };
     designIds.extensions.add("extension-canvas-design");
     for (const kind of ["presets", "extensions"]) {
-        for (const entry of catalog?.[kind] ?? []) {
-            if (entry.tags?.includes("canvas-design")) {
-                designIds[kind].add(entry.id);
-                if (entry.installedId) designIds[kind].add(entry.installedId);
-            }
-        }
         for (const entry of [...(selections?.[kind] ?? []), ...(localSelections?.[kind] ?? [])]) {
             designIds[kind].add(entry.id);
         }
@@ -67,7 +61,12 @@ export function buildPortableRuntimeSetup(installed, installLocators, catalog, s
         for (const item of installed[kind]) {
             const locator = installLocators[kind].find((entry) => entry.installedId === item.id);
             if (!locator) throw new Error(`Missing verified runtime source for ${kind} ${item.id}`);
-            if (designIds[kind].has(item.id) || designIds[kind].has(locator.catalogId)) continue;
+            const catalogDesign = (catalog?.[kind] ?? []).some((entry) =>
+                entry.tags?.includes("canvas-design")
+                && entry.id === locator.catalogId && (entry.installedId ?? entry.id) === item.id
+                && entry.source === locator.source && entry.version === item.version);
+            if (designIds[kind].has(item.id) || designIds[kind].has(locator.catalogId)
+                || catalogDesign) continue;
             if (locator.source === "local" && item.source === "local"
                 && (!item.path || item.path !== locator.path)) {
                 throw new Error(`Cannot reproduce local runtime ${kind} ${item.id}: verified installed path is unavailable`);

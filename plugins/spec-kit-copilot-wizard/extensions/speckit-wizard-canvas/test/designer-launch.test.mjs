@@ -1086,6 +1086,29 @@ test("runtime package locators are carried into the child installation instructi
     assert.match(prompt, /runtime presets or extensions.*installLocator.*source "local"/);
 });
 
+test("catalog design tags exclude only the installed source and version", () => {
+    const installed = { presets: [{ id: "shared", version: "1.0.0", source: "default",
+        enabled: true, priority: 10 }], extensions: [], bundles: [] };
+    const matching = { id: "shared", installedId: "shared", version: "1.0.0",
+        source: "default", downloadUrl: null };
+    const catalog = { presets: [
+        matching,
+        { ...matching, source: "community", tags: ["canvas-design"] },
+        { ...matching, version: "2.0.0", tags: ["canvas-design"] },
+    ], extensions: [], bundles: [] };
+    const locators = resolveRuntimeInstallLocators(installed, catalog);
+    assert.deepEqual(buildPortableRuntimeSetup(installed, locators, catalog, empty).presets, [{
+        id: "shared", version: "1.0.0", enabled: true, priority: 10,
+        locator: locators.presets[0],
+    }]);
+    assert.deepEqual(buildPortableRuntimeSetup(installed, locators, {
+        ...catalog, presets: [{ ...matching, tags: ["canvas-design"] }],
+    }, empty).presets, []);
+    assert.deepEqual(buildPortableRuntimeSetup(installed, locators, catalog, {
+        ...empty, presets: [{ id: "shared" }],
+    }).presets, []);
+});
+
 test("portable runtime setup excludes tagged packages, local design choices, and opaque mixed bundles", () => {
     const installed = {
         presets: [
