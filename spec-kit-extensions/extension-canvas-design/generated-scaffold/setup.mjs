@@ -10,6 +10,7 @@ const exec = promisify(execFile);
 const kinds = { bundles: "bundle", extensions: "extension", presets: "preset" };
 const idPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/;
 const TIMEOUT_MS = 10 * 60 * 1000;
+const STATUS_PROBE_TTL_MS = 3000;
 
 export function validateRuntimeSetup(recipe) {
     if (recipe === undefined) return true;
@@ -111,6 +112,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
     let stage = "needs-setup", error = null, plan = null, turn = null, sending = false;
     let advancing = null;
     let lastProbe = null;
+    let cachedProbe = null, probeInFlight = null;
     const cli = process.platform === "win32" ? "specify.exe" : "specify";
     const urlReceipt = (kind, item, found) => JSON.stringify([kind, item.installedId,
         item.source, item.catalogId, item.downloadUrl, item.version, item.enabled, item.priority,
@@ -193,6 +195,24 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
         return { cliReady, cliInstalled, initialized, coreSkillReady, pending, skillsReady,
             ready: !pending.length && skillsReady };
     }
+    async function checkProject(fresh = false) {
+        if (fresh) cachedProbe = null;
+        if (!fresh && probeInFlight) return probeInFlight;
+        if (!fresh && cachedProbe) {
+            const age = now() - cachedProbe.at;
+            if (age >= 0 && age < STATUS_PROBE_TTL_MS) return cachedProbe.result;
+        }
+        const previous = probeInFlight;
+        const current = (async () => {
+            if (previous) await Promise.allSettled([previous]);
+            const result = await probe();
+            cachedProbe = { result, at: now() };
+            return result;
+        })();
+        probeInFlight = current;
+        try { return await current; }
+        finally { if (probeInFlight === current) probeInFlight = null; }
+    }
     async function recordApprovedUrls(pending) {
         const receipts = [];
         for (const kind of ["extensions", "presets"]) {
@@ -256,7 +276,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
         }
         try {
             if (current.kind === "install") await recordApprovedUrls(current.pending);
-            const checked = await probe();
+            const checked = await checkProject(true);
             if (!checked.cliReady || !checked.initialized || !checked.coreSkillReady) {
                 throw new UserError("Setup did not create a usable Specify CLI, .specify directory and Copilot skills-mode scaffolding. Check chat and retry.");
             }
@@ -280,11 +300,11 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
         }
         return advancing;
     }
-    async function status() {
+    async function status({ fresh = false } = {}) {
         await advance();
         if (!turn && !sending && stage !== "awaiting-confirmation" && stage !== "cancelled") {
             try {
-                const checked = await probe();
+                const checked = await checkProject(fresh);
                 if (checked.ready) {
                     if (stage !== "ready") await reload();
                     stage = "ready"; error = null; plan = null;
@@ -319,7 +339,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
     async function start(input) {
         if (!input || Object.keys(input).length) throw new UserError("Invalid setup request.");
         if (turn || sending) return status();
-        const checked = await probe();
+        const checked = await checkProject(true);
         if (checked.ready) { await reload(); stage = "ready"; plan = null; error = null; return status(); }
         plan = null;
         if (!checked.cliReady || !checked.initialized || !checked.coreSkillReady) {
@@ -354,7 +374,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             plan = null; stage = "cancelled"; error = null; notify();
             return status();
         }
-        const checked = await probe();
+        const checked = await checkProject(true);
         activePlan();
         if (!checked.cliReady || !checked.initialized || !checked.coreSkillReady) {
             plan = null; stage = "failed";
@@ -379,5 +399,5 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
             + "Verify actual IDs, versions, settings and source with each specify <kind> list --json; do not claim completion on warnings. "
             + `Confirmed batch: ${JSON.stringify(packages)}`, "install", packages);
     }
-    return { status, start, confirm, probe };
+    return { status, start, confirm, probe: () => checkProject(true) };
 }

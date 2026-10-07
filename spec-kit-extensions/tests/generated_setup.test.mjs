@@ -18,7 +18,7 @@ const extension = { id: "extension-one", version: "3.0.0", enabled: true, priori
 const recipe = { presets: [preset], bundles: [], extensions: [extension] };
 
 function harness(t, { init = false, installed = false, skill = false, configured = true,
-    empty = false, urlLocal = false } = {}) {
+    empty = false, urlLocal = false, clock = () => Date.now() } = {}) {
     const root = mkdtemp(join(process.cwd(), ".generated-setup-test-"));
     t.after(async () => rm(await root, { recursive: true, force: true }));
     const calls = [], sent = [], events = [], approved = [];
@@ -64,7 +64,7 @@ function harness(t, { init = false, installed = false, skill = false, configured
         return createSetup({ config: { runtimeSetup: configured
             ? empty ? { bundles: [], extensions: [], presets: [] } : recipe
             : undefined }, cwd,
-            session, phases: [phase], command, approvedSources: () => approved,
+            session, phases: [phase], command, now: clock, approvedSources: () => approved,
             saveApprovedSources: async (receipts) => { approved.push(...receipts); } });
     };
     return { setup, ready, complete, calls, sent, events, session, approved,
@@ -137,6 +137,56 @@ test("concurrent completion checks share one stable confirmation plan", async (t
     assert.equal(reads, 1);
     assert.equal(a.stage, "awaiting-confirmation");
     assert.equal(a.planId, b.planId);
+});
+
+test("background status probes coalesce and expire while explicit readiness checks stay fresh", async (t) => {
+    let time = 1000;
+    const h = harness(t, { init: true, installed: true, clock: () => time });
+    const setup = await h.setup();
+    let entered, release;
+    const started = new Promise((resolve) => { entered = resolve; });
+    const gate = new Promise((resolve) => { release = resolve; });
+    h.beforeCommand(async (args) => {
+        if (args[0] === "--version") { entered(); await gate; }
+    });
+    const first = setup.status(), second = setup.status();
+    await started;
+    assert.equal(h.calls.filter(({ args }) => args[0] === "--version").length, 1);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(a.ready, true);
+    assert.equal(b.ready, true);
+    assert.equal(h.calls.length, 3);
+    await setup.status();
+    assert.equal(h.calls.length, 3);
+
+    h.setInstalled(false);
+    assert.equal((await setup.status()).ready, true);
+    assert.equal((await setup.status({ fresh: true })).ready, false);
+    assert.equal(h.calls.length, 6);
+    h.setInstalled(true);
+    assert.equal((await setup.start({})).ready, true);
+    assert.equal(h.calls.length, 9);
+    time += 3001;
+    assert.equal((await setup.status()).ready, true);
+    assert.equal(h.calls.length, 12);
+});
+
+test("a failed background probe is visible and retried", async (t) => {
+    const h = harness(t, { init: true, installed: true });
+    const setup = await h.setup();
+    let fail = true;
+    h.beforeCommand(async (args) => {
+        if (args[0] === "--version" && fail) {
+            fail = false;
+            throw new Error("temporary probe failure");
+        }
+    });
+    const first = await setup.status();
+    assert.equal(first.stage, "failed");
+    assert.match(first.error, /temporary probe failure/);
+    assert.equal((await setup.status()).ready, true);
+    assert.equal(h.calls.filter(({ args }) => args[0] === "--version").length, 2);
 });
 
 test("cancelling during the confirmation probe prevents installation", async (t) => {

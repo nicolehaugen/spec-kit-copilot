@@ -423,7 +423,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     async function startAutopilot(input, instanceId) {
         if (!input || Object.keys(input).some((key) => !["itemId"].includes(key))
             || typeof input.itemId !== "string") throw new UserError("Select a workflow for Autopilot.");
-        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status()).ready) {
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
             throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry Autopilot.", 409);
         }
         if (dispatching || autopilotDispatching || deleting) throw new UserError("A workflow request is being sent. Retry after it finishes.", 409);
@@ -657,7 +657,7 @@ Steps:\n${instructions}` });
         return { accepted: true, nextPhase: workflowSteps[state.autopilot.current]?.id ?? null };
     }
     async function run(input, instanceId) {
-        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status()).ready) {
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
             throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry this phase.", 409);
         }
         if (deleting) throw new UserError("A workflow is being deleted. Refresh and try again.", 409);
