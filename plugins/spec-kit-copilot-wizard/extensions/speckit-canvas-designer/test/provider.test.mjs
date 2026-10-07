@@ -681,10 +681,10 @@ test("preset field placements resolve into Workflow and added-page slots", async
     const templates = [...fields,
         await extra("billing-view", "generated.added-page-definition", {
             schemaVersion: 1, id: "billing-view", title: "Billing", order: 20,
-            renderer: "billing-renderer", slots: [{ id: "billing.summary" }],
+            renderer: "billing-renderer", slots: [{ id: "workflow.actions" }],
         }),
         await extra("billing-renderer", "generated.added-page-renderer",
-            'export function renderPage({root}) { root.innerHTML = \'<div data-field-slot="billing.summary"></div>\'; }',
+            'export function renderPage({root}) { root.innerHTML = \'<div data-field-slot="workflow.actions"></div>\'; }',
             "mjs"),
         await extra("workflow-description", "generated.field-placement", {
             schemaVersion: 1, id: "workflow-description", page: "workflow",
@@ -692,7 +692,7 @@ test("preset field placements resolve into Workflow and added-page slots", async
         }),
         await extra("billing-description", "generated.field-placement", {
             schemaVersion: 1, id: "billing-description", page: "billing-view",
-            slot: "billing.summary", field: "canvas.description", order: 10,
+            slot: "workflow.actions", field: "canvas.description", order: 10,
         }),
         await extra("canvas-control-risk-matrix", "shared.control-definition",
             await readFile(new URL("control.json", risk), "utf8")),
@@ -717,6 +717,8 @@ test("preset field placements resolve into Workflow and added-page slots", async
         active: true, sourceId: "placement-fixture", layer: "preset", strategy: "replace",
     }] });
     const model = await loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+    assert.equal(model.fieldPlacements.find((item) => item.page === "billing-view").slot,
+        "workflow.actions");
     assert.deepEqual(model.fieldPlacements.map(({ page: id, field }) => [id, field]),
         [["billing-view", "canvas.description"], ["workflow", "canvas.description"],
             ["workflow", "risk.first"], ["workflow", "risk.second"]]);

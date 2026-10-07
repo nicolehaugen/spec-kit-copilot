@@ -76,7 +76,7 @@ test("generated host mounts synchronous and asynchronous dialog and button adapt
         let dialogDisposals = 0, buttonDisposals = 0, trigger;
         const messages = [];
         const dialog = { id: "review-dialog", adapter: "review-adapter" };
-        const dialogRoot = { childElementCount: 0 };
+        const dialogRoot = { childElementCount: 0, replaceChildren() {} };
         const buttonsRoot = { append() {} };
         const dialogInstance = () => ({ result: Promise.resolve("confirmed"),
             dispose: () => { dialogDisposals++; } });
@@ -125,15 +125,20 @@ test("generated host rejects overlapping dialog mounts and releases its reservat
     let entered, release, mounts = 0, disposals = 0;
     const started = new Promise((resolve) => { entered = resolve; });
     const gate = new Promise((resolve) => { release = resolve; });
+    const root = { children: [], get childElementCount() { return this.children.length; },
+        replaceChildren() { this.children = []; } };
     const context = {
         dialogs: [dialog], dialogCache: new Map(), dialogPending: false, token: "test",
-        $: () => ({ childElementCount: 0 }),
+        $: () => root,
         fetch: async () => ({ ok: true, json: async () => dialog }),
         loadDialog: async () => ({ dialogId: "stock.dialog", contractVersion: 1,
             mount: async () => {
                 mounts++;
                 if (mounts === 1) { entered(); await gate; }
-                if (mounts === 3) throw new Error("mount failed");
+                if (mounts === 3) {
+                    root.children.push({});
+                    throw new Error("mount failed");
+                }
                 return { result: Promise.resolve("cancelled"),
                     dispose: () => { disposals++; } };
             } }),
@@ -148,7 +153,32 @@ test("generated host rejects overlapping dialog mounts and releases its reservat
     assert.equal(await first, false);
     assert.equal(await context.showGeneratedDialog(dialog.id), false);
     await assert.rejects(context.showGeneratedDialog(dialog.id), /mount failed/);
+    assert.equal(root.childElementCount, 0);
     assert.equal(await context.showGeneratedDialog(dialog.id), false);
     assert.equal(mounts, 4);
     assert.equal(disposals, 3);
+});
+
+test("generated phase confirmation rejects a switch between pending workflow IDs", async () => {
+    const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
+        import.meta.url), "utf8");
+    const start = source.indexOf("async function confirmGeneratedPhase(");
+    const end = source.indexOf("async function mountGeneratedButtons()", start);
+    assert.ok(start >= 0 && end > start);
+    const model = { selected: "__new__:1" };
+    let approve, dialogContext;
+    const decision = new Promise((resolve) => { approve = resolve; });
+    const context = { model, phaseDialogs: [{ phase: "speckit.plan", dialog: "confirm-plan" }],
+        requireModel() {}, showGeneratedDialog: (_id, details) => {
+            dialogContext = details; return decision;
+        } };
+    runInNewContext(`${source.slice(start, end)}\nthis.confirmGeneratedPhase = confirmGeneratedPhase;`, context);
+    const selected = { id: "plan", label: "Plan" };
+    const confirmation = context.confirmGeneratedPhase(selected);
+    model.selected = "__new__:2";
+    approve(true);
+    await assert.rejects(confirmation, /Selected workflow or phase changed/);
+    assert.deepEqual(JSON.parse(JSON.stringify(dialogContext)), { phase: selected });
+    context.showGeneratedDialog = async () => true;
+    assert.equal(await context.confirmGeneratedPhase(selected), true);
 });

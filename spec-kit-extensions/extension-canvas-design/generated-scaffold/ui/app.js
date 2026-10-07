@@ -75,22 +75,42 @@ async function showGeneratedDialog(name, context = {}) {
             entry = { definition, mount: module.mount };
             dialogCache.set(name, entry);
         }
-        if ($("generated-dialog-root").childElementCount) throw new Error("A generated dialog is already open");
-        const instance = await entry.mount({ root: $("generated-dialog-root"), definition: entry.definition,
-            context, onDecision: () => {} });
-        if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
-            throw new Error(`Invalid dialog adapter result: ${name}`);
-        }
+        const root = $("generated-dialog-root");
+        if (root.childElementCount) throw new Error("A generated dialog is already open");
         try {
-            const result = await instance.result;
-            if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
-            return result === "confirmed";
+            const instance = await entry.mount({ root, definition: entry.definition,
+                context, onDecision: () => {} });
+            if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
+                throw new Error(`Invalid dialog adapter result: ${name}`);
+            }
+            try {
+                const result = await instance.result;
+                if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
+                return result === "confirmed";
+            } finally {
+                instance.dispose();
+            }
         } finally {
-            instance.dispose();
+            root.replaceChildren();
         }
     } finally {
         dialogPending = false;
     }
+}
+
+async function confirmGeneratedPhase(selected) {
+    requireModel();
+    const selectedWorkflow = model.selected;
+    const binding = phaseDialogs.find((item) =>
+        item.phase === `speckit.${selected?.id?.replace(/^speckit\./, "")}`);
+    if (!binding) return true;
+    const confirmed = await showGeneratedDialog(binding.dialog, {
+        phase: { id: selected.id, label: selected.label },
+    });
+    if (confirmed && model.selected !== selectedWorkflow) {
+        throw new Error("Selected workflow or phase changed. Select the phase and retry.");
+    }
+    return confirmed;
 }
 
 async function mountGeneratedButtons() {
@@ -1205,14 +1225,7 @@ try {
                 await api("/api/autopilot/stop", {});
                 await refresh();
             },
-            confirmRun: async (selected) => {
-                requireModel();
-                const binding = phaseDialogs.find((item) =>
-                    item.phase === `speckit.${selected?.id?.replace(/^speckit\./, "")}`);
-                return !binding || showGeneratedDialog(binding.dialog, {
-                    phase: { id: selected.id, label: selected.label },
-                });
-            },
+            confirmRun: confirmGeneratedPhase,
             reveal: async () => {
                 requireModel();
                 await flush();

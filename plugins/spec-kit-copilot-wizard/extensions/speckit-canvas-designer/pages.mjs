@@ -886,7 +886,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         placementIds.add(entry.document.id);
         const page = pageId === "workflow" ? workflowPages[0]
             : addedPages.find((candidate) => candidate.document.id === pageId);
-        if (slot === "workflow.actions" || !page?.document.slots?.some((candidate) => candidate.id === slot)) {
+        if ((pageId === "workflow" && slot === "workflow.actions")
+            || !page?.document.slots?.some((candidate) => candidate.id === slot)) {
             throw new Error(`${entry.name}: unknown generated page slot ${pageId}.${slot}`);
         }
         const key = `${pageId}:${slot}:${fieldId}`;
