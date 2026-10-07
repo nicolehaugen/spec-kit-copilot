@@ -28,6 +28,7 @@ export async function existingOutputFolder(root, path) {
 }
 
 const PROVIDER_REFRESH_LIMIT_MS = 3000;
+const PROVIDER_EVALUATION_LIMIT_MS = 300;
 const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
 
 if (!isMainThread && workerData?.canvasValueProvider) {
@@ -44,7 +45,7 @@ if (!isMainThread && workerData?.canvasValueProvider) {
             + "const result = provide({ workflow });\n"
             + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
             + "JSON.stringify(result);",
-            context, { timeout: 300 });
+            context, { timeout: PROVIDER_EVALUATION_LIMIT_MS });
         if (typeof serialized !== "string" || serialized.length > 8192) throw new Error("Invalid provider result");
         parentPort.postMessage({ value: JSON.parse(serialized) });
     } catch (error) {
@@ -61,7 +62,7 @@ async function evaluateProvider(module, hash, workflow, deadline) {
     }
     const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const remaining = Math.ceil(deadline - performance.now());
-    if (remaining <= 0) throw new UserError(PROVIDER_REFRESH_ERROR);
+    if (remaining < PROVIDER_EVALUATION_LIMIT_MS) throw new UserError(PROVIDER_REFRESH_ERROR);
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL(import.meta.url), {
             workerData: { canvasValueProvider: { source, workflow } },
@@ -69,20 +70,29 @@ async function evaluateProvider(module, hash, workflow, deadline) {
             resourceLimits: { maxOldGenerationSizeMb: 48, maxYoungGenerationSizeMb: 16 },
         });
         let finished = false;
-        const timer = setTimeout(() => finish(remaining < 2000
-            ? new UserError(PROVIDER_REFRESH_ERROR) : new Error("Provider exceeded its execution limit")),
-        Math.min(2000, remaining));
-        function finish(error, value) {
+        // The VM bounds execution; do not terminate it at the shared refresh deadline.
+        const timer = setTimeout(() => finish(performance.now() >= deadline
+            ? new UserError(PROVIDER_REFRESH_ERROR) : new Error("Provider exceeded its execution limit")), 2000);
+        async function finish(error, value, stopWorker = true) {
             if (finished) return;
             finished = true;
             clearTimeout(timer);
-            void worker.terminate();
+            if (stopWorker) {
+                try { await worker.terminate(); }
+                catch (cause) {
+                    reject(new Error("Value provider worker could not stop.", { cause }));
+                    return;
+                }
+            }
             if (error) reject(error);
+            else if (performance.now() >= deadline) reject(new UserError(PROVIDER_REFRESH_ERROR));
             else resolve(value);
         }
-        worker.once("message", (result) => finish(result.error ? new Error(result.error) : null, result.value));
+        worker.once("message", (result) => finish(result.error ? new Error(result.error) : null,
+            result.value, false));
         worker.once("error", (error) => finish(error));
-        worker.once("exit", (code) => finish(new Error(`Provider exited before returning a value (${code}).`)));
+        worker.once("exit", (code) => finish(new Error(`Provider exited before returning a value (${code}).`),
+            undefined, false));
     });
 }
 
