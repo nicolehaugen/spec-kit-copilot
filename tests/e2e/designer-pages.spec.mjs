@@ -63,7 +63,7 @@ async function model(revision = "first") {
         const document = JSON.parse(await readFile(new URL(`${name}.json`, templateRoot), "utf8"));
         pages.push({ ...document, page: document.id });
     }
-    for (const name of ["description", "workflow-heading", "custom-slug"]) {
+    for (const name of ["description", "workflow-heading"]) {
         const { field } = JSON.parse(await readFile(new URL(`${name}.json`, settingsRoot), "utf8"));
         pages[0].fields.push(field);
     }
@@ -76,10 +76,9 @@ async function model(revision = "first") {
                 required: true },
             "canvas.description": { type: "string", maxLength: 240 },
             "canvas.workflowListName": { type: "string", maxLength: 80 },
-            "workflowSlug.userProvided": { type: "boolean" },
         },
         values: { "canvas.id": "", "canvas.displayName": "", "canvas.description": "",
-            "canvas.workflowListName": "", "workflowSlug.userProvided": false },
+            "canvas.workflowListName": "" },
     };
 }
 
@@ -813,7 +812,7 @@ async function openWithError(page, name) {
             reason: "Invalid JSON: <b>unexpected</b>" } };
     if (index === 0) {
         for (const field of ["canvas.id", "canvas.displayName", "canvas.description",
-            "canvas.workflowListName", "workflowSlug.userProvided"]) {
+            "canvas.workflowListName"]) {
             delete state.constraints[field];
             delete state.values[field];
         }
@@ -823,18 +822,14 @@ async function openWithError(page, name) {
     return shell;
 }
 
-test("Essentials offers a default-off custom slug toggle independently of Workflow header", async ({ page }) => {
+test("Essentials keeps the Workflow header without a slug toggle", async ({ page }) => {
     const shell = await openDesigner(page);
     try {
         await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         const title = page.getByRole("textbox", { name: "Title (required)" });
         await expect(page.getByRole("textbox")).toHaveCount(4);
-        const customSlug = page.getByRole("checkbox", { name: "Allow custom slug" });
-        await expect(customSlug).toHaveCount(1);
-        await expect(customSlug).not.toBeChecked();
-        await expect(customSlug).toHaveAttribute("aria-description",
-            "Lets users specify the slug used as the directory name for generated artifacts. Otherwise, Spec Kit chooses a default.");
+        await expect(page.getByRole("checkbox")).toHaveCount(0);
         await expect(id).toHaveAttribute("pattern",
             "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$");
         const hint = page.locator(`[id="${await id.getAttribute("id")}-hint"]`);
@@ -844,7 +839,6 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
         await expect(title).toHaveAttribute("maxlength", "120");
         await expect(page.getByRole("textbox", { name: "Description" })).toHaveAttribute("maxlength", "240");
         await expect(page.getByRole("textbox", { name: "Workflow header" })).toHaveAttribute("maxlength", "80");
-        await customSlug.check();
         await id.fill("example-canvas");
         for (const name of ["Outputs", "Appearance"]) {
             await page.getByRole("tab", { name }).click();
@@ -853,7 +847,6 @@ test("Essentials offers a default-off custom slug toggle independently of Workfl
         }
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(id).toHaveValue("example-canvas");
-        await expect(customSlug).toBeChecked();
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.getByRole("status")).toHaveText("Ready");

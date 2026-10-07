@@ -26,8 +26,8 @@ If the installed Canvas Design page schema itself is missing or unusable,
 Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
-Essentials requires Canvas ID and Title from the resolved core page. Description,
-Workflow header, and Allow custom slug are ordered Essentials contributions.
+Essentials requires Canvas ID and Title from the resolved core page. Description
+and Workflow header are ordered Essentials contributions.
 Header logo, Main page logo, and light/dark accent, page background, surface,
 secondary surface, and text colors are ordered Appearance contributions
 registered by the composed load-page command. The two required identity fields
@@ -83,9 +83,9 @@ packaged images are display-only.
 
 Workflow name appears in the generated canvas's workflow collection, before
 phase navigation, while creating a workflow. It labels the workflow there.
-Essentials' default-off Allow custom slug setting controls whether an optional
-Workflow slug field appears below it. The slug previews the View target directory; the created
-directory remains authoritative.
+The generated workflow also collects a required Artifact folder name (slug)
+for the artifact directory. The slug previews the View target; the created
+directory, which may include a numeric prefix, remains authoritative.
 The **Outputs** tab (resolved template ID `designer-artifacts`) lets users select
 one phase at a time, except Constitution. Wizard-inferred pipeline artifacts are
 read-only; users may add or remove separate project-relative Markdown artifact

@@ -62,7 +62,7 @@ Each contribution has a stable ID, contract version, target host (`designer`, `g
 
 A tagged preset can register a **control type previously unknown to either canvas**. To render in both, it supplies a Designer adapter, a generated adapter, and a compatible typed value or action contract. A Designer adapter does not automatically render in the generated host. Missing adapters, incompatible schemas, or unavailable host capabilities produce clear errors—not an unrelated fallback widget.
 
-The **Canvas Design Specify Extension is the base contributor to declarative fields, slots, and values**. Its stock text, checkbox, and image types each have a replace-only definition and Designer adapter. A generated adapter is registered for a visual placement, not for a behavior-only setting such as custom-slug availability. Canvas ID and Title use a fixed Designer identity control rather than a replaceable stock text adapter; Outputs uses a fixed phase-artifacts control. The shell enforces their presence and validity. Presets can reuse stock contracts and supply their own types, such as the risk matrix, through the same resolution path.
+The **Canvas Design Specify Extension is the base contributor to declarative fields, slots, and values**. Its stock text, checkbox, and image types each have a replace-only definition and Designer adapter. A generated adapter is registered for a visual placement, not for a behavior-only setting. Canvas ID and Title use a fixed Designer identity control rather than a replaceable stock text adapter; Outputs uses a fixed phase-artifacts control. The shell enforces their presence and validity. Presets can reuse stock contracts and supply their own types, such as the risk matrix, through the same resolution path.
 
 **Specify’s role:** Specify already supports overriding and composing **commands, scripts, and templates**, but `specify preset resolve <name>` resolves named **templates**, not native script artifacts. First-version executable Canvas Design adapters and generated page/presentation modules are `.mjs` files declared as named `provides.templates` entries (`type: template`), not `type: script` entries. Extension-provided templates have implicit replace semantics; preset-provided executable templates explicitly set `strategy: replace`. Specify applies named-file precedence and whole-file replacement; a winning `replace` replaces the lower-layer file in full. Registering a **new logical name** adds to the resolved inventory regardless of replace semantics, which affect only layers sharing that name. The **Canvas Design integration** interprets only final resolved files as slots, fields, controls, and adapter registrations; it does not replay preset stacks or arbitrate preset precedence. Specify does not need a native “slot” or “control” feature.
 
@@ -85,7 +85,7 @@ The **Canvas Design Specify Extension** places its other stock options into an o
 | --- | --- | --- | --- |
 | `canvas.description` | Text | Collection description | Existing default description. |
 | `canvas.workflowListName` | Text | Collection heading | “Workflows.” |
-| `workflowSlug.userProvided` | Checkbox | Custom-slug availability | `false`. |
+| `workflowSlug.userProvided` | Legacy frozen value | Accepted from older Designer handoffs; generated workflows now always require an artifact folder name (slug) | Ignored. |
 | **Upcoming:** `canvas.logo` | Image upload/preview | Header image | Existing brand mark. |
 | **Upcoming:** `setup.confirm` | Checkbox | Project-setup trigger | Automatic mode when portable setup exists. |
 
@@ -157,8 +157,8 @@ upload state, accessible text, and styling live in `context`, not in `value`.
 The adapter neither chooses a slot nor reads packaged files. Stock text and
 checkbox editors now follow the same definition/Designer-adapter authoring
 pattern. The generated text adapter handles visible Description and Workflow
-header presentation; the generated shell retains identity and custom-slug
-policy. Setup confirm is not yet implemented; its future Designer checkbox
+header presentation; the generated shell retains identity and requires an
+artifact folder name (slug). Setup confirm is not yet implemented; its future Designer checkbox
 can reuse `stock.checkbox` without a no-op generated presentation adapter.
 
 **Setup confirm** is a stock boolean/control contribution from the **Canvas Design Specify Extension**. The Designer Canvas displays a checkbox. Generate packages its value and the generated setup-control behavior **inside the app**. The checkbox selects when to invoke **one shell-owned project-setup operation**:
@@ -177,7 +177,7 @@ An already-correct project is verified rather than reinstalled. Failed or partia
 | Scenario | Required result |
 | --- | --- |
 | **Minimal Essentials** | Generate succeeds with valid Canvas ID and name alone; invalid/missing core identity blocks it clearly. |
-| **Optional stock controls** | Description, Workflow header, and Allow custom slug are supplied by base contributions and preserve current default UX; removing one applies its declared fallback. |
+| **Optional stock controls** | Description and Workflow header are supplied by base contributions; removing one applies its declared fallback. |
 | **Cost code on Essentials** | A `canvas-design`-tagged preset adds it to an Essentials slot without replacing the entire page; its value reaches a generated read-only control. |
 | **Cost code on Billing tab** | The preset explicitly registers a Designer Billing page. Its saved value produces the same generated result as on Essentials; an unregistered file adds no tab. |
 | **Designer-only/generated-only pages** | Either can be declared independently. A Designer Billing tab does not implicitly create a Generated Workflow Canvas app Billing page. |
@@ -272,7 +272,7 @@ Designer Canvas → Essentials page
   Canvas name                   required core field
   [essentials.options]          declared slot
     Description                 base-extension contribution
-    Allow custom slug           base-extension contribution
+    Workflow header             base-extension contribution
     Cost code                   preset contribution
 ```
 
@@ -438,29 +438,8 @@ Core Essentials defines the required fields and a documented slot:
 
 The host sorts contributed settings by their `order`, then source ID and contribution ID for ties. A slot ID identifies the destination tab; it is not a control type.
 
-An optional stock field targets that slot:
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "stock.workflow-slug-option",
-  "host": "designer",
-  "slot": "essentials.options",
-  "order": 30,
-  "field": {
-    "id": "workflowSlug.userProvided",
-    "type": "boolean",
-    "label": "Allow custom slug",
-    "control": "stock.checkbox",
-    "source": "designer",
-    "default": false
-  },
-  "generatedBinding": {
-    "feature": "stock.workflow-slug",
-    "presentation": "configured"
-  }
-}
-```
+The generated workflow shell collects the required artifact folder name
+(slug). It is not a Designer field or a slot contribution.
 
 Billing declares `billing.costCode` as a bounded string field with `control: "stock.text"` and a stock read-only generated binding. The base extension resolves `stock.text` and its Designer/generated adapters; Billing reuses those registrations without per-field adapter files. Each field's control ID selects exactly one resolved definition, with no separate contribution-level template dependency declaration; missing or duplicate definitions fail. Generate packages the winning generated adapter once. A **new** control such as the risk matrix in section 14 instead registers its own definition and paired adapters.
 
@@ -707,7 +686,7 @@ The Outputs control shows **expected files**, not files that necessarily exist a
 - Select **one default reader target** from the listed artifacts.
 
 Removing a selected addition returns to the phase's original default. An empty
-phase shows a warning that the generated phase will have no View artifact button.
+phase shows a warning that the generated phase will have no View output button.
 The existing header Save persists edits and Generate writes the confirmed
 `phaseArtifacts` (`outputs` plus `view`), including explicit empty lists that
 must not fall back to canonical defaults. Each output appears as a viewer link
@@ -729,7 +708,7 @@ The Appearance editor lets the canvas creator enter optional six-digit accent, p
 
 These details extend the implementation sequence in section 9; they do not replace its goals:
 
-1. Resolve stock scalar definitions and Designer adapters in the baseline fixtures. Require a generated visual adapter for stock text presentations, but keep shell behavior driven by booleans (such as custom-slug availability) outside the adapter. Preserve the distinct risk-matrix control fixture and its paired adapters.
+1. Resolve stock scalar definitions and Designer adapters in the baseline fixtures. Require a generated visual adapter for stock text presentations, but keep shell behavior outside the adapter. Preserve the distinct risk-matrix control fixture and its paired adapters.
 2. Publish slot contracts so contributors know which IDs exist, what they accept, and how items are ordered. Reject unknown or incompatible targets.
 3. Use Specify’s command composition and replace-only named-template resolution for executable adapters, including its native project overrides; do not recheck each winner's package or layer against handoff approvals. Reject native script-kind adapters and non-replace executable contributions; defer `wrap` until Specify provides a CLI resolve/materialize interface. Have Canvas Design validate normal content/path safety, semantic conflicts, and effective JSON and module contracts among surviving files; do not assume Specify structurally merges JSON fields or repeat its precedence logic. For generated pages, the resolved artifact's declared kind, replace-only strategy, and winning template registration are acceptance gates: they establish which definition and renderer can be frozen and packaged. Other artifact metadata remains diagnostic, not a general import or packaging gate.
 4. Freeze **resolved module bytes and declared transitive assets**, not only paths or preset IDs. Validate hashes when generating.

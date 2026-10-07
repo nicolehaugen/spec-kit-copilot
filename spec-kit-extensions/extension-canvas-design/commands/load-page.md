@@ -71,7 +71,6 @@ bindings retain their separate slots; a field placement cannot occupy one.
 
 - `designer-essentials-description` — `designer.setting-definition`, `replace`
 - `designer-essentials-workflow-heading` — `designer.setting-definition`, `replace`
-- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
 - `designer-appearance-light-accent` — `designer.setting-definition`, `replace`

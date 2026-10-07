@@ -49,13 +49,25 @@ async function mountGeneratedControl(root) {
     }
 }
 const $ = (id) => document.getElementById(id);
+const workflowIdentity = $("workflow-identity");
 let phaseControl;
 const drafts = new Map();
 const failedValueDrafts = new Map();
 const failedPatches = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
 let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null,
-    pendingValueSaves = 0, workflowQuery = "";
+    pendingValueSaves = 0, workflowQuery = "", slugTouched = false;
+const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const reservedSlug = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+const selectedPending = () => model?.items.some((entry) => entry.id === model.selected && entry.pending);
+function slugError() {
+    const value = model?.slug ?? "";
+    if (!value) return "Enter an artifact folder name (slug) before creating a workflow.";
+    if (value.length > 100 || !slugPattern.test(value) || reservedSlug.test(value)) {
+        return "Use lowercase letters, numbers, and single hyphens; avoid reserved folder names.";
+    }
+    return "";
+}
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 const placements = JSON.parse($("generated-field-placements")?.dataset.placements ?? "[]");
 const mountedFields = new Map();
@@ -510,7 +522,7 @@ function queueInput() {
 function saveInputs() {
     if (!model) return;
     const selected = phase();
-    const patch = model.selected === "__new__"
+    const patch = selectedPending()
         ? { name: model.name ?? "", ...(model.userProvidesSlug ? { slug: model.slug } : {}) } : {};
     if (selected) patch.draft = { item: model.selected, phase: selected.id, value: drafts.get(draftKey(selected)) ?? model.drafts[draftKey(selected)] ?? "" };
     return persist(patch);
@@ -541,15 +553,17 @@ function phaseState(pendingLabel = () => null) {
     const selected = phase();
     const status = selected ? model?.statuses[selected.id] : null;
     const item = model?.items.find((entry) => entry.id === model.selected);
-    const slug = item?.slug ?? (model?.selected === "__new__" ? model.slug : "");
+    const pending = Boolean(item?.pending || model?.selected === "__new__");
+    const slug = item?.slug ?? (pending ? model.slug : "");
     const resolveOutput = (output) => slug && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
+        && (!pending || !slugError())
         ? output?.replace("<slug>", slug) : output;
     const output = selected
-        ? (model.selected === "__new__" && selected.output
+        ? (pending && selected.output
             ? resolveOutput(selected.output) : status?.output ?? resolveOutput(selected.output)) : null;
     return { phases: phases.map(({ id, label, output, outputs }) => ({ id, label, output, outputs })),
         statuses: model?.statuses ?? {}, autopilot: model?.autopilot ?? null,
-        current: selected ? current : -1, workflow: model?.selected ?? "__new__",
+        current: selected ? current : -1, workflow: pending ? "__new__" : model?.selected ?? "__new__",
         status: status && output !== status.output
             ? { ...status, artifactAvailability: "unknown", artifactError: null } : status,
         draft: selected ? drafts.get(draftKey(selected)) ?? model.drafts[draftKey(selected)] ?? "" : "",
@@ -558,6 +572,9 @@ function phaseState(pendingLabel = () => null) {
                 template, label: resolveOutput(template),
             })) : [],
         slugEditable: Boolean(model?.userProvidesSlug),
+        blocked: !model?.items.length ? "Choose New workflow to start."
+            : !model?.constitutionReady ? "Create a project constitution before running a workflow."
+                : pending && model?.userProvidesSlug ? slugError() : null,
         sending: Boolean(selected && sending && sending.phase === selected.id
             && sending.item === model.selected),
         runLabel: selected ? pendingLabel(selected) : null };
@@ -580,19 +597,34 @@ function renderStatus() {
         }
     }
     phaseControl?.update(phaseState(pendingLabel));
+    const idle = !model.items.length;
+    $("workflow-pipeline").querySelectorAll("[data-phase-index]").forEach((button) => {
+        button.disabled = idle;
+    });
+    const mobilePhaseSelect = $("mobile-phase-select");
+    if (mobilePhaseSelect) mobilePhaseSelect.disabled = idle;
     if (constitution()) {
         const status = model.statuses[constitution().id];
         artifactAction("view-constitution", "constitution-artifact-status", status);
-        const statusText = status?.status ?? "Not run";
+        const available = status?.artifactAvailability === "available";
+        const statusText = available ? "Available" : status?.artifactAvailability === "error"
+            ? "Unavailable" : status?.status === "Not run" ? "Needed before starting a workflow"
+                : status?.status ?? "Checking...";
         const card = $("constitution-card");
-        if (card.dataset.status !== statusText) {
-            card.open = statusText === "Not run" || statusText === "Failed"
-                || statusText === "Needs clarification" || Boolean(status?.error);
-            card.dataset.status = statusText;
-        }
+        card.classList.toggle("constitution-ready", available);
         $("constitution-status").textContent = statusText;
-        $("run-constitution").textContent = pendingLabel(constitution()) ?? "Create / update";
-        $("send-constitution").textContent = pendingLabel(constitution()) ?? "Run phase";
+        $("run-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update" : "Create constitution");
+        $("send-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update constitution" : "Create constitution");
+        $("constitution-dialog-title").textContent = available ? "Update project constitution" : "Create project constitution";
+        $("constitution-args-label").textContent = available ? "Guidance (optional)" : "Project principles";
+        $("constitution-args").required = !available;
+    }
+    const input = $("workflow-slug");
+    if (input && selectedPending()) {
+        const error = slugTouched && input.value.trim() ? slugError() : "";
+        $("workflow-slug-error").textContent = error;
+        $("workflow-slug-error").hidden = !error;
+        input.setAttribute("aria-invalid", String(Boolean(error)));
     }
     renderName();
     renderSlug();
@@ -604,13 +636,15 @@ function renderSlug() {
     const input = $("workflow-slug");
     if (!input) return;
     const first = creationPhase();
-    input.readOnly = model.selected !== "__new__"
+    const status = model.items.find((entry) => entry.id === model.selected)?.status;
+    input.readOnly = !selectedPending()
+        || Boolean(status && !["Not started", "Failed"].includes(status))
         || Boolean(sending && sending.phase === first?.id)
         || ["Request sent", "Running"].includes(model.statuses[first?.id]?.status);
-    input.placeholder = input.readOnly ? "Automatically assigned" : "your-slug";
+    input.placeholder = input.readOnly ? "Automatically assigned" : "workflow-1";
     $("workflow-slug-label").querySelector(".muted").hidden = input.readOnly;
     if (document.activeElement !== input && !timer) {
-        input.value = model.selected === "__new__" ? model.slug
+        input.value = selectedPending() ? model.slug
             : model.items.find((entry) => entry.id === model.selected)?.slug ?? "";
     }
 }
@@ -618,62 +652,90 @@ function renderName() {
     const input = $("workflow-name");
     if (!input) return;
     const first = creationPhase();
-    input.readOnly = model.selected !== "__new__"
+    const status = model.items.find((entry) => entry.id === model.selected)?.status;
+    input.readOnly = !selectedPending()
+        || Boolean(status && !["Not started", "Failed"].includes(status))
         || Boolean(sending && sending.phase === first?.id)
         || ["Request sent", "Running"].includes(model.statuses[first?.id]?.status);
-    $("workflow-name-label").querySelector(".muted").hidden = input.readOnly;
     if (document.activeElement !== input && !timer) {
-        input.value = model.selected === "__new__" ? model.name ?? ""
+        input.value = selectedPending() ? model.name ?? ""
             : model.items.find((entry) => entry.id === model.selected)?.label ?? "";
     }
 }
 function renderCollection() {
     if (model.items.length <= 8) workflowQuery = "";
     $("workflow-count").textContent = `(${model.items.length})`;
-    $("workflow-identity").hidden = model.selected !== "__new__" || !workflowPhases().length;
-    const list = $("workflow-list");
-    const scroll = list.scrollTop;
-    list.replaceChildren(...model.items.map((entry) => {
+    $("new-workflow").disabled = !workflowPhases().length;
+    $("workflow-constitution-note").hidden = model.constitutionReady || !model.items.length;
+    $("workflow-pipeline").hidden = !workflowPhases().length;
+    $("workflow-pipeline").classList.toggle("workflow-pipeline-idle", !model.items.length);
+    const list = $("workflow-rows");
+    const scroll = $("workflow-list").scrollTop;
+    const matches = list.children.length === model.items.length
+        && model.items.every((entry, index) => list.children[index].dataset.workflowId === entry.id);
+    if (!matches) list.replaceChildren(...model.items.map((entry) => {
         const item = document.createElement("div");
-        item.className = `instance-row${entry.id === model.selected ? " active" : ""}`;
+        item.className = "instance-row";
         item.setAttribute("role", "listitem");
-        item.dataset.search = `${entry.label} ${entry.slug}`.toLowerCase();
+        item.dataset.workflowId = entry.id;
         const button = document.createElement("button");
         button.type = "button";
         button.className = "instance-select";
         button.dataset.workflowId = entry.id;
-        if (entry.id === model.selected) button.setAttribute("aria-current", "true");
         const identity = document.createElement("span");
         identity.className = "instance-select-main";
         const name = document.createElement("strong");
-        name.textContent = entry.label;
-        name.title = entry.label;
         identity.append(name);
-        if (entry.slug !== entry.label) {
-            const slug = document.createElement("code");
-            slug.textContent = entry.slug;
-            identity.append(slug);
-        }
+        identity.append(document.createElement("code"));
         button.append(identity);
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "instance-delete";
         remove.dataset.deleteWorkflowId = entry.id;
-        remove.textContent = "Delete";
-        remove.setAttribute("aria-label", `Delete ${entry.label}`);
         item.append(button, remove);
         return item;
     }));
-    list.hidden = !model.items.length;
+    for (const [index, entry] of model.items.entries()) {
+        const row = list.children[index];
+        const active = entry.id === model.selected;
+        row.classList.toggle("active", active);
+        row.classList.toggle("pending", Boolean(entry.pending));
+        row.dataset.search = `${entry.label} ${entry.slug}`.toLowerCase();
+        const select = row.querySelector(".instance-select");
+        if (active) select.setAttribute("aria-current", "true");
+        else select.removeAttribute("aria-current");
+        const name = select.querySelector("strong");
+        name.textContent = entry.label;
+        name.title = entry.label;
+        const slug = select.querySelector("code");
+        slug.textContent = entry.slug;
+        slug.hidden = entry.slug === entry.label;
+        let badge = select.querySelector(".phase-notice");
+        if (entry.pending && !badge) {
+            badge = document.createElement("span");
+            badge.className = "phase-notice";
+            select.append(badge);
+        }
+        if (badge) { badge.textContent = entry.status ?? "Not started"; badge.hidden = !entry.pending; }
+        const remove = row.querySelector(".instance-delete");
+        remove.textContent = entry.pending ? "Remove" : "Delete";
+        remove.setAttribute("aria-label", `${remove.textContent} ${entry.label}`);
+    }
+    const editor = workflowIdentity;
+    const selectedRow = [...list.children].find((row) => row.dataset.workflowId === model.selected);
+    editor.hidden = !selectedPending();
+    if (selectedPending() && editor.parentElement !== selectedRow) selectedRow.append(editor);
     $("workflow-empty").hidden = Boolean(model.items.length);
-    list.scrollTop = scroll;
+    $("workflow-empty").textContent = workflowPhases().length
+        ? "No workflows yet." : "No workflow phases are configured.";
+    $("workflow-list").scrollTop = scroll;
     $("workflow-search-field").hidden = model.items.length <= 8;
     $("workflow-search").value = workflowQuery;
     filterWorkflowList();
 }
 function filterWorkflowList() {
     const query = workflowQuery.trim().toLowerCase();
-    const rows = [...$("workflow-list").children];
+    const rows = [...$("workflow-rows").children];
     let shown = 0;
     for (const row of rows) {
         row.hidden = !row.dataset.search.includes(query);
@@ -694,8 +756,12 @@ async function refresh(reconcile = false) {
     if (!previous) current = Math.max(0, workflowPhases().findIndex((step) => step.id === model.phase));
     // Do not replace live input text during events or background refresh.
     if (previous && (timer || saveFailure)) {
-        model.slug = previous.slug;
-        model.name = previous.name;
+        if (model.selected === previous.selected) {
+            model.slug = previous.slug;
+            model.name = previous.name;
+            const entry = model.items.find((item) => item.id === model.selected && item.pending);
+            if (entry) { entry.slug = model.slug; entry.label = model.name.trim() || model.slug; }
+        }
     }
     const project = constitution();
     if (project && !model.statuses[project.id]?.error
@@ -739,13 +805,19 @@ async function selectPhase(index) {
 }
 async function selectFeature(value) {
     await flush();
-    await persist({ selected: value, ...(value === "__new__"
-        ? { name: "", ...(model.userProvidesSlug ? { slug: "" } : {}) } : {}) });
+    await persist({ selected: value });
     await refresh();
 }
 async function deleteFeature(itemId) {
     const item = model.items.find((entry) => entry.id === itemId);
     if (!item) throw new Error("This workflow is no longer available. Refresh and try again.");
+    if (item.pending) {
+        await flush();
+        await api("/api/workflow/pending/remove", { itemId, revision: model.revision });
+        await refresh();
+        message(`Removed ${item.label}. No directory was created.`);
+        return;
+    }
     const dialog = $("delete-workflow-dialog");
     $("delete-workflow-name").textContent = item.label;
     $("delete-workflow-directory").textContent = item.id;
@@ -768,6 +840,20 @@ async function deleteFeature(itemId) {
     message(`Deleted ${item.label} and its directory.`);
 }
 async function send(step, value, target = "canvas-message") {
+    if (step.project && !model.constitutionReady && !value.trim()) {
+        message("Enter project principles before creating the constitution.", target, true);
+        $("constitution-args").focus();
+        return;
+    }
+    if (!step.project && !model.constitutionReady) {
+        message("Create a project constitution before starting a workflow.", target, true);
+        return;
+    }
+    if (!step.project && selectedPending() && model.userProvidesSlug && slugError()) {
+        message(slugError(), target, true);
+        $("workflow-slug")?.focus();
+        return;
+    }
     if (sending) { message("This request is being sent. Check chat before trying again.", target); return; }
     sending = { phase: step.id, item: step.project ? "project" : model.selected };
     renderStatus();
@@ -776,8 +862,8 @@ async function send(step, value, target = "canvas-message") {
         await flush();
         await api("/api/run", { phase: step.id, args: value,
             ...(!step.project ? { itemId: model.selected,
-                ...(model.selected === "__new__" && model.name?.trim() ? { name: model.name.trim() } : {}),
-                ...(model.selected === "__new__" && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) });
+                ...(selectedPending() && model.name?.trim() ? { name: model.name.trim() } : {}),
+                ...(selectedPending() && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) });
         accepted = true;
         if (step.project) {
             $("constitution-dialog").close();
@@ -830,13 +916,45 @@ document.addEventListener("input", (event) => {
     if (!model) return;
     if (event.target.id === "workflow-name") {
         model.name = event.target.value;
+        const entry = model.items.find((item) => item.id === model.selected && item.pending);
+        if (entry) {
+            entry.label = model.name.trim() || entry.slug;
+            const row = [...$("workflow-rows").children].find((item) => item.dataset.workflowId === entry.id);
+            row.querySelector("strong").textContent = entry.label;
+            row.querySelector("strong").title = entry.label;
+            row.querySelector("code").hidden = entry.slug === entry.label;
+            row.querySelector(".instance-delete").setAttribute("aria-label", `Remove ${entry.label}`);
+            row.dataset.search = `${entry.label} ${entry.slug}`.toLowerCase();
+        }
         queueInput();
     }
-    if (event.target.id === "workflow-slug") { model.slug = event.target.value; queueInput(); renderStatus(); }
+    if (event.target.id === "workflow-slug") {
+        model.slug = event.target.value;
+        const entry = model.items.find((item) => item.id === model.selected && item.pending);
+        if (entry) {
+            entry.slug = model.slug;
+            entry.label = model.name.trim() || entry.slug;
+            const row = [...$("workflow-rows").children].find((item) => item.dataset.workflowId === entry.id);
+            row.querySelector("strong").textContent = entry.label;
+            row.querySelector("strong").title = entry.label;
+            row.querySelector("code").textContent = entry.slug;
+            row.querySelector("code").hidden = entry.slug === entry.label;
+            row.querySelector(".instance-delete").setAttribute("aria-label", `Remove ${entry.label}`);
+            row.dataset.search = `${entry.label} ${entry.slug}`.toLowerCase();
+        }
+        queueInput(); renderStatus();
+    }
     if (event.target.id === "constitution-args") {
         constitutionDraft = remember(constitution(), event.target.value);
         clearTimeout(constitutionTimer);
         constitutionTimer = setTimeout(() => { constitutionTimer = null; saveConstitutionDraft(); }, 400);
+    }
+});
+document.addEventListener("focusout", (event) => {
+    if (event.target.id === "workflow-slug" && selectedPending()
+        && event.target.value.trim()) {
+        slugTouched = true;
+        renderStatus();
     }
 });
 document.addEventListener("change", (event) => {
@@ -884,8 +1002,12 @@ document.addEventListener("click", (event) => {
         requireModel();
         if (button.dataset.deleteWorkflowId) { await deleteFeature(button.dataset.deleteWorkflowId); return; }
         if (button.dataset.workflowId) { await selectFeature(button.dataset.workflowId); return; }
-        if (button.id === "new-workflow" || button.id === "create-first-workflow") {
-            await selectFeature("__new__");
+        if (button.id === "new-workflow") {
+            await flush();
+            await api("/api/workflow/new", { revision: model.revision });
+            workflowQuery = "";
+            slugTouched = false;
+            await refresh();
             $("workflow-name")?.focus();
         }
         else if (button.id === "view-constitution") await openArtifact(constitution());

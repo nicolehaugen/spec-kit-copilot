@@ -757,7 +757,7 @@ function configuration(request) {
     const mainImage = generatedAssets?.find((item) => !item.page && item.slot === "workflow.intro");
     const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
-    const config = { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
+    const config = { schemaVersion: 1, canvas, userProvidesSlug: true,
         ...(Object.keys(appearance).length ? { appearance } : {}),
         workflowPage: workflowLayout,
         ...(placements.length ? { fieldPlacements: placements } : {}),
