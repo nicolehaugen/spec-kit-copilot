@@ -1105,8 +1105,38 @@ test("catalog design tags exclude only the installed source and version", () => 
         ...catalog, presets: [{ ...matching, tags: ["canvas-design"] }],
     }, empty).presets, []);
     assert.deepEqual(buildPortableRuntimeSetup(installed, locators, catalog, {
-        ...empty, presets: [{ id: "shared" }],
+        ...empty, presets: [{ id: "shared", source: "community" }],
     }).presets, []);
+});
+
+test("hosted design aliases do not exclude runtime packages from another catalog", () => {
+    const runtime = { id: "runtime-preset", version: "1.0.0", source: "default",
+        enabled: true, priority: 10 };
+    const design = { id: "design-preset", version: "1.0.0", source: "community",
+        enabled: true, priority: 5 };
+    const catalog = { presets: [
+        { id: "shared-alias", installedId: runtime.id, version: runtime.version,
+            source: "default", downloadUrl: null },
+        { id: "shared-alias", installedId: design.id, version: design.version,
+            source: "community", tags: ["canvas-design"],
+            downloadUrl: "https://example.org/design.zip" },
+    ], extensions: [], bundles: [] };
+    const selected = { ...empty, presets: [{ id: "shared-alias", source: "community" }] };
+    const installed = { ...empty, presets: [runtime, design] };
+    const locators = resolveRuntimeInstallLocators(installed, catalog);
+    assert.deepEqual(buildPortableRuntimeSetup(installed, locators, catalog, selected).presets, [{
+        id: runtime.id, version: runtime.version, enabled: runtime.enabled,
+        priority: runtime.priority, locator: locators.presets[0],
+    }]);
+
+    const overridden = { ...runtime, id: design.id };
+    const withOverride = { ...empty, presets: [overridden] };
+    const overrideCatalog = { ...catalog, presets: [
+        { ...catalog.presets[0], id: "runtime-alias", installedId: design.id },
+        catalog.presets[1],
+    ] };
+    assert.deepEqual(buildPortableRuntimeSetup(withOverride,
+        resolveRuntimeInstallLocators(withOverride, overrideCatalog), overrideCatalog, selected).presets, []);
 });
 
 test("portable runtime setup excludes tagged packages, local design choices, and opaque mixed bundles", () => {

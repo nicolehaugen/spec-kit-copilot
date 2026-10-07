@@ -52,8 +52,14 @@ export function buildPortableRuntimeSetup(installed, installLocators, catalog, s
     const designIds = { presets: new Set(), extensions: new Set() };
     designIds.extensions.add("extension-canvas-design");
     for (const kind of ["presets", "extensions"]) {
-        for (const entry of [...(selections?.[kind] ?? []), ...(localSelections?.[kind] ?? [])]) {
+        for (const entry of localSelections?.[kind] ?? []) {
             designIds[kind].add(entry.id);
+        }
+        for (const selected of selections?.[kind] ?? []) {
+            const entry = (catalog?.[kind] ?? []).find((candidate) =>
+                candidate.id === selected.id && candidate.source === selected.source
+                && candidate.tags?.includes("canvas-design"));
+            if (entry) designIds[kind].add(entry.installedId ?? entry.id);
         }
     }
     const setup = { presets: [], extensions: [], bundles: [] };
@@ -65,8 +71,7 @@ export function buildPortableRuntimeSetup(installed, installLocators, catalog, s
                 entry.tags?.includes("canvas-design")
                 && entry.id === locator.catalogId && (entry.installedId ?? entry.id) === item.id
                 && entry.source === locator.source && entry.version === item.version);
-            if (designIds[kind].has(item.id) || designIds[kind].has(locator.catalogId)
-                || catalogDesign) continue;
+            if (designIds[kind].has(item.id) || catalogDesign) continue;
             if (locator.source === "local" && item.source === "local"
                 && (!item.path || item.path !== locator.path)) {
                 throw new Error(`Cannot reproduce local runtime ${kind} ${item.id}: verified installed path is unavailable`);
