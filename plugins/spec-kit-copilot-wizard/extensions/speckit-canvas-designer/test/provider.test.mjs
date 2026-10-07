@@ -446,7 +446,9 @@ test("Generate freezes winning dialog and button assets with their registrations
     assert.match(html, /id="workflow-surface"/);
     assert.match(html, /data-workflow-slot="workflow\.actions"/);
     assert.match(html, /id="generated-dialog-contracts"/);
-    assert.match(await readFile(join(generated, "ui", "app.js"), "utf8"), /confirmRun: async/);
+    const generatedUi = await readFile(join(generated, "ui", "app.js"), "utf8");
+    assert.match(generatedUi, /async function confirmGeneratedPhase\(/);
+    assert.match(generatedUi, /confirmRun: confirmGeneratedPhase/);
     assert.match(await readFile(join(generated, "dialogs", "canvas-button-dialog-test.json"), "utf8"),
         /No workflow phase will run/);
     assert.match(await readFile(join(generated, "buttons", "generated-setup-button-adapter.mjs"), "utf8"),
