@@ -73,7 +73,7 @@ async function showGeneratedDialog(name, context = {}) {
         dialogCache.set(name, entry);
     }
     if ($("generated-dialog-root").childElementCount) throw new Error("A generated dialog is already open");
-    const instance = entry.mount({ root: $("generated-dialog-root"), definition: entry.definition,
+    const instance = await entry.mount({ root: $("generated-dialog-root"), definition: entry.definition,
         context, onDecision: () => {} });
     if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
         throw new Error(`Invalid dialog adapter result: ${name}`);
@@ -121,7 +121,7 @@ async function mountGeneratedButtons() {
                 message(error.message, definition.page === "setup" ? "setup-status" : "canvas-message", true);
             }
         };
-        const instance = module.mount({ root: mountRoot, definition,
+        const instance = await module.mount({ root: mountRoot, definition,
             ...(definition.control === "project.setup-button" ? { onSetup: activate } : { onTrigger: activate }) });
         if (typeof instance?.dispose !== "function") throw new Error("Invalid button instance");
         buttonMounts.push(instance);

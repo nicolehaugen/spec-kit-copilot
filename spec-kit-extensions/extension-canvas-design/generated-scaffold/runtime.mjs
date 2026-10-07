@@ -434,6 +434,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         try {
             await enabledAutopilot();
             if (!workflowSteps.length) throw new UserError("No workflow steps are configured.");
+            const boundStep = workflowSteps.find((step) =>
+                config.phaseDialogs?.some((binding) => binding.phase === step.command));
+            if (boundStep) {
+                throw new UserError(`Autopilot cannot run ${boundStep.label} because it requires confirmation. Run the phases manually instead.`, 409);
+            }
             const entries = await items();
             if (input.itemId !== "__new__" && !entries.some((entry) => entry.id === input.itemId)) {
                 throw new UserError("The selected workflow no longer exists. Refresh before starting.");

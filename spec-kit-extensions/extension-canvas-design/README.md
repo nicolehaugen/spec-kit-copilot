@@ -206,16 +206,19 @@ and packaging as generated pages and controls. The Setup button has a dedicated
 test preset's Workflow-page button uses a separate `dialog.trigger` control.
 A preset can also bind a confirmation dialog to one selected workflow phase without replacing
 the phase card or changing other phases. Project-scoped Constitution does not
-support generated phase confirmations.
+support generated phase confirmations. Autopilot cannot start when any workflow
+phase has a generated confirmation binding; run those phases manually instead.
 
 The named contracts are `schemas/generated.dialog-definition.schema.json`,
 `generated.phase-dialog-binding.schema.json`, `generated.button-control-definition.schema.json`,
 and `generated.button-placement.schema.json`. A dialog adapter exports
 `dialogId = "stock.dialog"`, `contractVersion = 1`, and
-`mount({root, definition, context, onDecision})`, returning a decision promise
-(`confirmed` or `cancelled`) and `dispose()`. A button adapter exports
+`mount({root, definition, context, onDecision})`, returning an instance (or a
+promise of one) with a decision promise (`confirmed` or `cancelled`) and `dispose()`.
+A button adapter exports
 `controlId = "project.setup-button"`, `contractVersion = 1`, and
-`mount({root, definition, onSetup})`, returning `dispose()`. The optional
+`mount({root, definition, onSetup})`, returning an instance (or a promise of one)
+with `dispose()`. The optional
 `dialog.trigger` adapter instead receives `onTrigger`. Both are executable
 approved template code, not sandboxed JSON. The test-only
 `spec-kit-presets/copilot-dialog-buttons-test` fixture adds one `speckit.implement`

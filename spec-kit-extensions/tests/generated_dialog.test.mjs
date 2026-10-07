@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 import { mount } from "../extension-canvas-design/generated-host/dialog/generated-dialog-adapter.mjs";
 
 function dialogRoot() {
@@ -55,4 +57,55 @@ test("dialog keyboard trap includes links before buttons and cleanup is idempote
     assert.deepEqual(decisions, ["cancelled"]);
     assert.equal(root.children.length, 0);
     assert.equal(root.ownerDocument.activeElement, original);
+});
+
+test("generated host mounts synchronous and asynchronous dialog and button adapters", async () => {
+    const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
+        import.meta.url), "utf8");
+    const start = source.indexOf("async function showGeneratedDialog(");
+    const end = source.indexOf("function renderSetup()", start);
+    assert.ok(start >= 0 && end > start);
+    const host = source.slice(start, end)
+        .replace("await import(`/dialogs/${registration.adapter}.mjs?token=${encodeURIComponent(token)}`)",
+            "await loadDialog(registration.adapter)")
+        .replace("await import(`/buttons/${control.adapter}.mjs?token=${encodeURIComponent(token)}`)",
+            "await loadButton(control.adapter)");
+    assert.doesNotMatch(host, /await import\(/);
+
+    for (const asynchronous of [false, true]) {
+        let dialogDisposals = 0, buttonDisposals = 0, trigger;
+        const messages = [];
+        const dialog = { id: "review-dialog", adapter: "review-adapter" };
+        const dialogRoot = { childElementCount: 0 };
+        const buttonsRoot = { append() {} };
+        const dialogInstance = () => ({ result: Promise.resolve("confirmed"),
+            dispose: () => { dialogDisposals++; } });
+        const buttonInstance = () => ({ dispose: () => { buttonDisposals++; } });
+        const context = {
+            dialogs: [dialog], dialogCache: new Map(), dialogRoot, token: "test",
+            buttons: [{ control: "dialog.trigger", page: "workflow", slot: "workflow.actions",
+                order: 0, label: "Review", dialog: dialog.id }],
+            buttonControls: [{ id: "dialog.trigger", adapter: "button-adapter" }],
+            buttonMounts: [], setupBusy: false,
+            $: (id) => id === "generated-dialog-root" ? dialogRoot : null,
+            fetch: async () => ({ ok: true, json: async () => dialog }),
+            loadDialog: async () => ({ dialogId: "stock.dialog", contractVersion: 1,
+                mount: asynchronous ? async () => dialogInstance() : () => dialogInstance() }),
+            loadButton: async () => ({ controlId: "dialog.trigger", contractVersion: 1,
+                mount: asynchronous ? async ({ onTrigger }) => {
+                    trigger = onTrigger; return buttonInstance();
+                } : ({ onTrigger }) => { trigger = onTrigger; return buttonInstance(); } }),
+            document: { createElement: () => ({}), querySelector: () => buttonsRoot },
+            message: (text) => messages.push(text),
+        };
+        runInNewContext(`${host}\nthis.operations = { showGeneratedDialog, mountGeneratedButtons };`, context);
+        await context.operations.mountGeneratedButtons();
+        assert.equal(context.buttonMounts.length, 1);
+        assert.equal(await context.operations.showGeneratedDialog(dialog.id), true);
+        await trigger();
+        assert.equal(dialogDisposals, 2);
+        assert.deepEqual(messages, ["Review confirmed."]);
+        context.buttonMounts[0].dispose();
+        assert.equal(buttonDisposals, 1);
+    }
 });
