@@ -8,6 +8,7 @@ plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/test-results/
 .specify/
 .github/skills/*
 !.github/skills/refresh-generated-canvas/
+!.github/skills/speckit-designer-preview/
 specs/
 css-baseline-*.png
 css-c*.png

@@ -10,11 +10,12 @@ import { validControlContract } from "./control-contract.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
-const REQUIRED_PAGES = ["designer-essentials", "designer-artifacts",
-    "designer-appearance"];
+const DEFAULT_PAGES = ["designer-essentials", "designer-artifacts",
+    "designer-badges", "designer-appearance"];
 const FIXED_PAGE_CONTROLS = {
     "designer-essentials": "designer.identity",
     "designer-artifacts": "designer.outputs",
+    "designer-badges": "designer.badges",
 };
 const FILE_LIMIT = 256 * 1024;
 const MODEL_LIMIT = 2 * 1024 * 1024;
@@ -162,8 +163,8 @@ function buildModel(entries, schema) {
     const fieldOrigins = new Map();
     for (const [index, entry] of entries.entries()) {
         const { name, path, document, hash, error } = entry;
-        const fallbackOrder = REQUIRED_PAGES.includes(name)
-            ? (REQUIRED_PAGES.indexOf(name) + 1) * 10 : 100001 + index;
+        const fallbackOrder = DEFAULT_PAGES.includes(name)
+            ? (DEFAULT_PAGES.indexOf(name) + 1) * 10 : 100001 + index;
         const fail = (reason) => {
             pages.push({ page: name, title: name, order: fallbackOrder,
                 error: { name, path, reason: reason.slice(0, ERROR_LIMIT) } });
@@ -244,10 +245,6 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || typeof document.slot !== "string") {
         throw new Error(`${name}: invalid Canvas Design contribution`);
     }
-    const slot = slots.get(document.slot)?.slot;
-    if (!slot) {
-        throw new Error(`${name}: unknown Designer slot ${document.slot}`);
-    }
     const field = document.field;
     if (!field || typeof field !== "object" || Array.isArray(field)
         || Object.keys(field).some((key) =>
@@ -312,6 +309,9 @@ function validateContribution(document, name, slots, fieldOrigins) {
                     || typeof binding.section.title !== "string"
                     || !binding.section.title.trim() || binding.section.title.length > 120)))) {
         throw new Error(`${name}: incompatible generated binding`);
+    }
+    if (!slots.get(document.slot)?.slot) {
+        throw new Error(`${name}: unknown Designer slot ${document.slot}`);
     }
     if (fieldOrigins.has(field.id)) {
         throw new Error(`${name}: duplicate field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
@@ -379,8 +379,18 @@ function validateGeneratedPage(document, name) {
 function validateWorkflowPage(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "id,order,schemaVersion,slots,title"
-        || document.schemaVersion !== 1 || document.id !== "workflow" || name !== "generated-workflow"
+        || !["id,order,schemaVersion,slots,title",
+            "adapter,badgeDestinations,id,order,schemaVersion,slots,title"].includes(
+            contractKeys(document).sort().join())
+        || document.schemaVersion !== (document.adapter ? 2 : 1)
+        || (document.adapter !== undefined && (typeof document.adapter !== "string"
+            || !PAGE_PATTERN.test(document.adapter) || isWindowsDeviceName(document.adapter)
+            || !Array.isArray(document.badgeDestinations)
+            || document.badgeDestinations.length > 4
+            || new Set(document.badgeDestinations).size !== document.badgeDestinations.length
+            || document.badgeDestinations.some((destination) =>
+                !["workflow.list", "workflow.summary", "phase.card", "phase.output"].includes(destination))))
+        || document.id !== "workflow" || name !== "generated-workflow"
         || typeof document.title !== "string" || !document.title.trim()
         || document.title.length > 120 || document.order !== 0
         || !Array.isArray(document.slots) || document.slots.length < 1 || document.slots.length > 30
@@ -401,7 +411,8 @@ function validateFieldPlacement(document, name) {
         || document.schemaVersion !== 1 || document.id !== name
         || typeof document.page !== "string" || !PAGE_PATTERN.test(document.page)
         || typeof document.slot !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(document.slot)
-        || document.slot === "workflow.phases"
+        || document.page === "workflow"
+            && ["workflow.phases", "workflow.list", "workflow.summary"].includes(document.slot)
         || typeof document.field !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.field)
         || !Number.isInteger(document.order) || document.order < -100000 || document.order > 100000
         || (document.control !== undefined && (typeof document.control !== "string"
@@ -414,7 +425,7 @@ function validatePhaseControl(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
         || contractKeys(document).some((key) =>
-            !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
+            !["adapter", "id", "managedRun", "placement", "schemaVersion", "slots", "viewLabels"].includes(key))
         || (document.managedRun !== undefined && typeof document.managedRun !== "boolean")
         || document.schemaVersion !== 1 || document.id !== "workflow-phases"
         || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
@@ -430,7 +441,13 @@ function validatePhaseControl(document, name) {
             || Object.entries(document.viewLabels).some(([id, label]) =>
                 !/^(?:speckit\.)?[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(id)
                 || typeof label !== "string" || !label.trim() || label.length > 80
-                || /[\x00-\x1f\x7f]/.test(label))))) {
+                || /[\x00-\x1f\x7f]/.test(label))))
+        || (document.slots !== undefined
+            && (!Array.isArray(document.slots) || document.slots.length !== 2
+                || new Set(document.slots.map((slot) => slot?.id)).size !== 2
+                || document.slots.some((slot) => !slot || typeof slot !== "object"
+                    || Array.isArray(slot) || Object.keys(slot).join() !== "id"
+                    || !["phase.card", "phase.output"].includes(slot.id))))) {
         throw new Error(`${name}: invalid phase control definition`);
     }
 }
@@ -609,6 +626,84 @@ async function executableRegistration(project, name) {
     }
 }
 
+const BADGE_ID = /^[a-z][a-z0-9-]{0,79}$/;
+const BADGE_COLOR = /^(?:theme|red|green|amber|blue|purple|pink|orange|#[0-9a-fA-F]{6})$/;
+const badgeRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const badgeKeys = (value, keys) => Object.keys(value)
+    .filter((key) => key !== "$schema").sort().join() === [...keys].sort().join();
+function validateBadgeText(text, placeholders, name) {
+    if (typeof text !== "string" || !text.trim() || text.length > 120
+        || /[\x00-\x1f\x7f<>]/.test(text)
+        || [...text.matchAll(/\{([^{}]+)\}/g)].some(([, placeholder]) =>
+            !placeholders.includes(placeholder))
+        || /[{}]/.test(text.replace(/\{[^{}]+\}/g, ""))) {
+        throw new Error(`${name}: invalid badge text or undeclared placeholder`);
+    }
+}
+function validateBadgeType(value, name) {
+    if (!badgeRecord(value) || Object.hasOwn(value, "$schema")
+        || !badgeKeys(value, ["id", "title", "description",
+        "rule", "defaultText", "defaultColor", "enabled"])
+        || typeof value.id !== "string" || !BADGE_ID.test(value.id)
+        || typeof value.rule !== "string" || !BADGE_ID.test(value.rule)
+        || typeof value.title !== "string" || !value.title.trim() || value.title.length > 120
+        || typeof value.description !== "string" || !value.description.trim()
+        || value.description.length > 1000 || typeof value.enabled !== "boolean"
+        || typeof value.defaultColor !== "string" || !BADGE_COLOR.test(value.defaultColor)) {
+        throw new Error(`${name}: invalid badge type definition`);
+    }
+}
+function validateBadgeSettings(value, name) {
+    if (!badgeRecord(value) || !badgeKeys(value, ["schemaVersion", "types"])
+        || value.schemaVersion !== 1 || !Array.isArray(value.types)
+        || !value.types.length || value.types.length > 30) {
+        throw new Error(`${name}: invalid badges settings`);
+    }
+    schemaMetadata(value, name);
+    for (const type of value.types) validateBadgeType(type, name);
+    if (new Set(value.types.map((type) => type.id)).size !== value.types.length) {
+        throw new Error(`${name}: duplicate badge type ID`);
+    }
+}
+export function validateBadgeRule(value, name) {
+    if (!badgeRecord(value) || !badgeKeys(value, ["schemaVersion", "id", "label", "description",
+        "inputs", "textPlaceholders", "module",
+        ...(Object.hasOwn(value, "placementPhaseInput") ? ["placementPhaseInput"] : [])])
+        || value.schemaVersion !== 1 || typeof value.id !== "string" || !BADGE_ID.test(value.id)
+        || typeof value.module !== "string" || !BADGE_ID.test(value.module)
+        || typeof value.label !== "string" || !value.label.trim() || value.label.length > 120
+        || typeof value.description !== "string" || !value.description.trim()
+        || value.description.length > 1000
+        || !Array.isArray(value.inputs) || value.inputs.length > 10
+        || value.inputs.some((input) => !badgeRecord(input) || !badgeKeys(input, ["id", "type",
+            ...(Object.hasOwn(input, "scope") ? ["scope"] : []),
+            ...(Object.hasOwn(input, "before") ? ["before"] : []),
+            ...(Object.hasOwn(input, "label") ? ["label"] : [])])
+            || typeof input.id !== "string" || !BADGE_ID.test(input.id)
+            || !["artifact", "artifact-set", "ordered-artifacts", "phase", "text"].includes(input.type)
+            || (input.label !== undefined
+                && (typeof input.label !== "string" || !input.label.trim() || input.label.length > 80))
+            || (input.scope !== undefined
+                && !(input.type === "artifact" && ["directory", "metadata"].includes(input.scope)
+                    || input.type === "ordered-artifacts" && input.scope === "metadata"))
+            || (input.type === "ordered-artifacts"
+                && (input.scope !== "metadata" || typeof input.before !== "string"))
+            || (input.before !== undefined && (input.type !== "ordered-artifacts"
+                || !value.inputs.some((candidate) => candidate.id === input.before
+                    && candidate.type === "artifact" && candidate.scope === "metadata"))))
+        || new Set(value.inputs.map((input) => input.id)).size !== value.inputs.length
+        || (value.placementPhaseInput !== undefined
+            && !value.inputs.some((input) =>
+                input.id === value.placementPhaseInput && input.type === "artifact"))
+        || !Array.isArray(value.textPlaceholders) || value.textPlaceholders.length > 10
+        || value.textPlaceholders.some((placeholder) => typeof placeholder !== "string"
+            || !/^[a-z][a-z0-9-]{0,39}$/.test(placeholder))
+        || new Set(value.textPlaceholders).size !== value.textPlaceholders.length) {
+        throw new Error(`${name}: invalid badge rule definition`);
+    }
+    schemaMetadata(value, name);
+}
+
 async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes,
     registration) {
     if (!Array.isArray(templates) || templates.length > 100) {
@@ -619,7 +714,22 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     const names = new Set(pageNames);
     const loaded = [];
+    const compositionErrors = [];
     const slots = new Map();
+    const verifyRegistration = async (item) => {
+        const info = await registration(dirname(specify), item.name);
+        const layers = info?.stack;
+        const winner = layers?.find((layer) => layer.active);
+        const sourceLayer = item.sourceId === "project" ? "project"
+            : item.sourceId.startsWith("extension:") ? "extension" : "preset";
+        const sourceId = sourceLayer === "project" ? "_"
+            : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
+        if (info?.kind !== "template" || !Array.isArray(layers) || !layers.length
+            || layers.some((layer) => layer.strategy !== "replace")
+            || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
+            throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
+        }
+    };
     for (const page of pageEntries.filter((entry) => !entry.error)) {
         for (const slot of page.slots ?? []) {
             if (slots.has(slot.id)) {
@@ -640,8 +750,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || typeof item.sourceId !== "string"
             || !/^[A-Za-z0-9_.:-]{1,160}$/.test(item.sourceId)
             || !["designer.setting-definition", "generated.added-page-definition", "generated.added-page-renderer",
-                "generated.workflow-page-definition", "generated.phase-control-definition",
+                "generated.workflow-page-definition", "generated.workflow-page-adapter",
+                "generated.phase-control-definition",
                 "generated.phase-control-adapter",
+                "designer.badges-settings-definition", "generated.badge-rule-definition",
+                "generated.badge-rule-adapter",
                 "generated.field-placement",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                 "generated.value-definition", "generated.computed-value-provider",
@@ -653,37 +766,42 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         const path = resolve(dirname(specify), item.path);
         const extension = extname(path).toLowerCase();
         const executable = ["generated.added-page-renderer", "generated.phase-control-adapter",
+            "generated.workflow-page-adapter",
             "designer.control-adapter", "generated.control-adapter",
             "generated.computed-value-provider", "generated.dialog-adapter",
-            "generated.button-adapter"].includes(item.kind);
+            "generated.button-adapter", "generated.badge-rule-adapter"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
         }
-        const { document, hash, size: bytes } = await boundedJson(
-            path, specify, FILE_LIMIT, open, !executable);
+        let content;
+        try {
+            content = await boundedJson(path, specify, FILE_LIMIT, open, !executable);
+        } catch (error) {
+            if (!(error instanceof PageContentError)) throw error;
+            if (item.kind !== "designer.setting-definition") await verifyRegistration(item);
+            compositionErrors.push(`${item.name} (from ${item.sourceId}): ${error.message.slice(0, ERROR_LIMIT)}`);
+            continue;
+        }
+        const { document, hash, size: bytes } = content;
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
         if (item.kind === "designer.setting-definition") {
-            validateContribution(document, item.name, slots, fieldOrigins);
+            try {
+                validateContribution(document, item.name, slots, fieldOrigins);
+            } catch (error) {
+                if (error?.constructor !== Error
+                    || !error.message.startsWith(`${item.name}: unknown Designer slot `)) throw error;
+                compositionErrors.push(`${item.name} (from ${item.sourceId}): ${error.message}`);
+                continue;
+            }
             if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
             ids.add(document.id);
         } else if (item.kind === "generated.value-definition") {
             validateValueSource(document, item.name, fieldOrigins);
         }
         if (item.kind !== "designer.setting-definition") {
-            const info = await registration(dirname(specify), item.name);
-            const layers = info?.stack;
-            const winner = layers?.find((layer) => layer.active);
-            const sourceLayer = item.sourceId === "project" ? "project"
-                : item.sourceId.startsWith("extension:") ? "extension" : "preset";
-            const sourceId = sourceLayer === "project" ? "_"
-                : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
-            if (info.kind !== "template" || !Array.isArray(layers) || !layers.length
-                || layers.some((layer) => layer.strategy !== "replace")
-                || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
-                throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
-            }
+            await verifyRegistration(item);
             if (item.kind === "generated.added-page-definition") {
                 validateGeneratedPage(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
@@ -713,6 +831,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: control definition exceeds 32 KiB`);
             } else if (item.kind === "generated.value-definition") {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: value definition exceeds 32 KiB`);
+            } else if (item.kind === "designer.badges-settings-definition") {
+                validateBadgeSettings(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: badges settings exceed 32 KiB`);
+            } else if (item.kind === "generated.badge-rule-definition") {
+                validateBadgeRule(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: badge rule exceeds 32 KiB`);
             } else {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: executable module exceeds 32 KiB`);
                 const { init, parse } = await import("es-module-lexer/minimal");
@@ -730,6 +854,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                             ? "computed value provider" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
                 const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
+                    : item.kind === "generated.badge-rule-adapter" ? "evaluate"
                     : item.kind === "generated.phase-control-adapter" ? "mount"
                     : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
                 const check = spawnSync("node", ["--check", "--input-type=module"],
@@ -748,6 +873,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                             ? "dialogId" : "controlId")))) {
                     throw new Error(`${item.name}: adapter is missing contractVersion or identity export`);
                 }
+                if (item.kind === "generated.workflow-page-adapter"
+                    && (!exports.some((entry) => entry.n === "pageId")
+                        || !exports.some((entry) => entry.n === "contractVersion"))) {
+                    throw new Error(`${item.name}: Workflow page adapter is missing pageId or contractVersion export`);
+                }
                 if (item.kind === "generated.phase-control-adapter"
                     && (!exports.some((entry) => entry.n === "controlId")
                         || !exports.some((entry) => entry.n === "contractVersion"))) {
@@ -756,6 +886,10 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (item.kind === "designer.control-adapter"
                     && !exports.some((entry) => entry.n === "validate")) {
                     throw new Error(`${item.name}: Designer adapter is missing validate export`);
+                }
+                if (item.kind === "generated.badge-rule-adapter"
+                    && !exports.some((entry) => entry.n === "contractVersion")) {
+                    throw new Error(`${item.name}: badge adapter is missing contractVersion export`);
                 }
                 if (item.kind === "generated.computed-value-provider") {
                     const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:(?:async\s+)?function|const)\s+provideValue\b/g)];
@@ -785,7 +919,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     for (const entry of loaded.filter((item) => item.kind === "generated.added-page-definition")) {
         const renderer = loaded.find((item) => item.name === entry.document.renderer);
         if (!renderer || renderer.kind !== "generated.added-page-renderer") {
-            throw new Error(`${entry.name}: missing generated renderer ${entry.document.renderer}`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` missing generated renderer ${entry.document.renderer}`);
         }
     }
     for (const entry of loaded.filter((item) => item.kind === "generated.added-page-renderer")) {
@@ -795,15 +930,67 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${entry.name}: generated renderer must belong to exactly one page`);
         }
     }
+    const badgeSettings = loaded.filter((item) => item.kind === "designer.badges-settings-definition");
+    if (badgeSettings.length > 1 || badgeSettings.length === 1
+        && badgeSettings[0].name !== "badges-settings") {
+        throw new Error("At most one badges-settings definition is allowed");
+    }
+    const badgeTypes = (badgeSettings[0]?.document.types ?? []).map((document) =>
+        ({ ...badgeSettings[0], document }));
+    const badgeRules = loaded.filter((item) => item.kind === "generated.badge-rule-definition");
+    const badgeAdapters = loaded.filter((item) => item.kind === "generated.badge-rule-adapter");
+    if (badgeTypes.length > 30 || badgeRules.length > 30 || badgeAdapters.length > 30) {
+        throw new Error("Designer badge definitions exceed their size limit");
+    }
+    for (const [group, label] of [[badgeTypes, "type"], [badgeRules, "rule"]]) {
+        const ids = new Set();
+        for (const entry of group) {
+            if (ids.has(entry.document.id)) throw new Error(`${entry.name}: duplicate badge ${label} ID`);
+            ids.add(entry.document.id);
+        }
+    }
+    for (const entry of badgeTypes) {
+        const rule = badgeRules.find((item) => item.document.id === entry.document.rule);
+        if (!rule) throw new Error(`${entry.name}: missing badge rule ${entry.document.rule}`);
+        validateBadgeText(entry.document.defaultText, rule.document.textPlaceholders, entry.name);
+    }
+    for (const entry of badgeRules) {
+        if (!badgeAdapters.some((item) => item.name === entry.document.module)) {
+            throw new Error(`${entry.name}: missing registered badge adapter ${entry.document.module}`);
+        }
+    }
+    for (const entry of badgeAdapters) {
+        if (!badgeRules.some((item) => item.document.module === entry.name)) {
+            throw new Error(`${entry.name}: unreferenced badge adapter`);
+        }
+    }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
-    if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
+    if (!workflowPages.length) compositionErrors.push("Generated Workflow page is not registered");
+    else if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
+    const workflowAdapters = loaded.filter((item) => item.kind === "generated.workflow-page-adapter");
+    if (workflowPages[0]?.document.adapter
+        ? workflowAdapters.length !== 1 || workflowAdapters[0].name !== workflowPages[0].document.adapter
+        : workflowAdapters.length !== 0) {
+        compositionErrors.push(`${workflowPages[0]?.name ?? "Workflow page"}`
+            + `${workflowPages[0] ? ` (from ${workflowPages[0].sourceId})` : ""}:`
+            + " missing or unreferenced presentation adapter"
+            + `${workflowPages[0]?.document.adapter ? ` ${workflowPages[0].document.adapter}` : ""}`);
+    }
     const phaseControls = loaded.filter((item) => item.kind === "generated.phase-control-definition");
-    if (phaseControls.length !== 1 || phaseControls[0].name !== "generated-phase-control") {
-        throw new Error(`${workflowPages[0].name}: missing or unreferenced phase control definition`);
+    if (!phaseControls.length) compositionErrors.push("Generated phase control is not registered");
+    else if (phaseControls.length !== 1 || phaseControls[0].name !== "generated-phase-control") {
+        throw new Error("Missing or unreferenced phase control definition");
     }
     const phaseAdapters = loaded.filter((item) => item.kind === "generated.phase-control-adapter");
-    if (!phaseAdapters.some((entry) => entry.name === phaseControls[0].document.adapter)) {
-        throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
+    if (phaseControls[0] && !phaseAdapters.some((entry) => entry.name === phaseControls[0].document.adapter)) {
+        compositionErrors.push(`${phaseControls[0].name} (from ${phaseControls[0].sourceId}):`
+            + ` missing or unreferenced phase control adapter ${phaseControls[0].document.adapter}`);
+    }
+    if (workflowPages[0]?.document.adapter && phaseControls[0]
+        && workflowPages[0].document.adapter === phaseControls[0].document.adapter
+        || loaded.some((entry) => entry.kind === "generated.added-page-definition"
+            && entry.document.renderer === workflowPages[0]?.document.adapter)) {
+        throw new Error("Workflow page adapter collides with another generated page module");
     }
     const dialogs = loaded.filter((entry) => entry.kind === "generated.dialog-definition");
     const dialogAdapters = loaded.filter((entry) => entry.kind === "generated.dialog-adapter");
@@ -853,7 +1040,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     const occupiedButtons = new Set();
     for (const button of buttons) {
         const { page, slot, order, dialog } = button.document;
-        if (page === "workflow" && !workflowPages[0].document.slots.some((entry) => entry.id === slot)) {
+        if (page === "workflow" && !workflowPages[0]?.document.slots.some((entry) => entry.id === slot)) {
             throw new Error(`${button.name}: missing Workflow action slot ${slot}`);
         }
         const resolvedDialog = dialogs.find((entry) => entry.name === dialog);
@@ -878,6 +1065,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     const placed = new Set();
     const placementIds = new Set();
     const placementControls = new Map();
+    const invalidPlacements = new Set();
     for (const entry of fieldPlacements) {
         const { page: pageId, slot, field: fieldId, control: controlId } = entry.document;
         if (placementIds.has(entry.document.id)) {
@@ -886,20 +1074,27 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         placementIds.add(entry.document.id);
         const page = pageId === "workflow" ? workflowPages[0]
             : addedPages.find((candidate) => candidate.document.id === pageId);
-        if ((pageId === "workflow" && slot === "workflow.actions")
-            || !page?.document.slots?.some((candidate) => candidate.id === slot)) {
-            throw new Error(`${entry.name}: unknown generated page slot ${pageId}.${slot}`);
+        if (pageId === "workflow" && slot === "workflow.actions") {
+            throw new Error(`${entry.name}: generated field slot is reserved for actions`);
         }
         const key = `${pageId}:${slot}:${fieldId}`;
         if (placed.has(key)) throw new Error(`${entry.name}: duplicate generated field placement ${key}`);
         placed.add(key);
+        if (!page?.document.slots?.some((candidate) => candidate.id === slot)) {
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` unknown generated page slot ${pageId}.${slot}`);
+            invalidPlacements.add(entry.name);
+            continue;
+        }
         const setting = loaded.find((candidate) =>
             candidate.kind === "designer.setting-definition" && candidate.document.field.id === fieldId);
         const baseField = pageEntries.filter((candidate) => !candidate.error)
             .flatMap((candidate) => candidate.fields ?? []).find((candidate) => candidate.id === fieldId);
         const value = sources.find((candidate) => candidate.document.id === fieldId);
         if (!setting && !baseField && !value) {
-            throw new Error(`${entry.name}: missing generated field ${fieldId}`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}): missing generated field ${fieldId}`);
+            invalidPlacements.add(entry.name);
+            continue;
         }
         if (value?.document.presentation === "processing-only") {
             throw new Error(`${entry.name}: processing-only value cannot be placed`);
@@ -919,7 +1114,10 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || type === "object" && !field
                 && !isDeepStrictEqual(shared.document.value.properties, value.document.schema.properties)
             || requiredControl !== "stock.checkbox" && !shared.document.adapters.generated) {
-            throw new Error(`${entry.name}: missing or incompatible shared generated control`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` missing or incompatible shared generated control ${requiredControl}`);
+            invalidPlacements.add(entry.name);
+            continue;
         }
         placementControls.set(entry.name, requiredControl);
     }
@@ -998,7 +1196,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 : "generated.control-adapter";
             const adapter = loaded.find((item) => item.name === name);
             if (!adapter || adapter.kind !== kind) {
-                throw new Error(`${control.name}: missing ${host} adapter ${name}`);
+                compositionErrors.push(`${control.name} (from ${control.sourceId}):`
+                    + ` missing ${host} adapter ${name}`);
+                continue;
             }
             const owner = adapterOwners.get(adapter.name);
             if (owner) {
@@ -1021,24 +1221,28 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${entry.name}: unreferenced control adapter`);
         }
     }
+    const invalidContributions = new Set();
     for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition")) {
         const { field, requires } = entry.document;
         const control = controls.find((item) => item.document.id === field.control);
         if (!control || control.document.id !== field.control
             || control.document.value.type !== field.type
             || (requires && control.name !== requires[0])) {
-            throw new Error(`${entry.name}: missing or incompatible shared control definition`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` missing or incompatible shared control definition ${field.control}`);
+            invalidContributions.add(entry.name);
         }
     }
     for (const page of pageEntries.filter((entry) => !entry.error)) {
         for (const field of page.fields ?? []) {
             if (!controls.some((control) => control.document.id === field.control
                 && control.document.value.type === (field.type ?? "string"))) {
-                throw new Error(`${page.page}: missing shared control definition for ${field.id}`);
+                compositionErrors.push(`${page.page}: missing shared control definition for ${field.id}`);
             }
         }
     }
-    const ordered = loaded.filter((entry) => entry.kind === "designer.setting-definition");
+    const ordered = loaded.filter((entry) => entry.kind === "designer.setting-definition"
+        && !invalidContributions.has(entry.name));
     const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     ordered.sort((a, b) => a.document.order - b.document.order
         || compare(a.sourceId.split(":").at(-1), b.sourceId.split(":").at(-1))
@@ -1053,7 +1257,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         sections.set(section.id, section.title);
     }
-    return { loaded, ordered, controls, placementControls };
+    return { loaded, ordered, controls, placementControls, invalidPlacements, compositionErrors };
 }
 
 async function context(project) {
@@ -1100,8 +1304,8 @@ export async function assertPageCommand(project) {
 export async function loadResolvedDesignerPages(handoff, project, input, templates = [],
     registration = executableRegistration) {
     const { checkout, schema } = await context(project);
-    if (!Array.isArray(input) || !input.length || input.length > 100) {
-        throw new Error("Designer requires between 1 and 100 resolved page paths");
+    if (!Array.isArray(input) || input.length > 100) {
+        throw new Error("Designer requires at most 100 resolved page paths");
     }
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
@@ -1122,9 +1326,6 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         }
         return { name: item.name, path };
     });
-    if (REQUIRED_PAGES.some((name) => !names.has(name))) {
-        throw new Error("Designer load must include all three Canvas Design pages");
-    }
     const entries = [];
     let size = 0;
     for (const { name, path } of paths) {
@@ -1157,15 +1358,17 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
-    const { loaded, ordered, controls, placementControls } = await loadTemplates(
+    const { loaded, ordered, controls, placementControls, invalidPlacements, compositionErrors } = await loadTemplates(
         templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
-    model.workflowPage = { name: workflowPage.name, ...workflowPage.document,
-        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-definition").document.managedRun === true };
+    model.workflowPage = workflowPage ? { name: workflowPage.name, ...workflowPage.document,
+        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-definition")?.document.managedRun === true }
+        : null;
+    model.compositionErrors = compositionErrors;
     model.dialogDefinitions = loaded.filter((entry) => entry.kind === "generated.dialog-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.phaseDialogBindings = loaded.filter((entry) => entry.kind === "generated.phase-dialog-binding")
@@ -1184,12 +1387,18 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     model.buttonPlacements = loaded.filter((entry) => entry.kind === "generated.button-placement")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }))
         .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
+    model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement"
+        && !invalidPlacements.has(entry.name))
         .map(({ name, sourceId, document }) =>
             ({ name, sourceId, ...document, control: placementControls.get(name) }))
         .sort((a, b) => a.order - b.order || a.sourceId.localeCompare(b.sourceId)
             || a.id.localeCompare(b.id));
     model.valueSources = loaded.filter((entry) => entry.kind === "generated.value-definition")
+        .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
+    model.badgeTypes = loaded.filter((entry) => entry.kind === "designer.badges-settings-definition")
+        .flatMap(({ name, sourceId, document }) =>
+            document.types.map((type) => ({ name, sourceId, schemaVersion: 1, ...type })));
+    model.badgeRules = loaded.filter((entry) => entry.kind === "generated.badge-rule-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.controls = controls.map(({ name, document }) => ({ ...document, template: name }));
     model.adapters = Object.fromEntries(controls.map(({ document }) =>

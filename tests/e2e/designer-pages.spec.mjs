@@ -11,7 +11,7 @@ import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wi
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
-import { renderHtml } from "../../spec-kit-extensions/extension-canvas-design/generated-scaffold/server.mjs";
+import { verifyComposition } from "../../spec-kit-extensions/extension-canvas-design/scripts/verify-launch.mjs";
 
 const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/tabs/", import.meta.url);
 const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/", import.meta.url);
@@ -19,6 +19,7 @@ const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design
 const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
 const riskRoot = new URL("../../spec-kit-presets/copilot-risk-matrix-test/", import.meta.url);
+const minimalRoot = new URL("../../spec-kit-presets/copilot-minimal-essentials-test/", import.meta.url);
 
 function supportsSpecifyVersion(output) {
     const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
@@ -42,6 +43,7 @@ function scalarRegistrations(resolve) {
 function workflowRegistrations(resolve) {
     return [
         ["generated-workflow", "generated.workflow-page-definition"],
+        ["generated-workflow-page-adapter", "generated.workflow-page-adapter"],
         ["generated-phase-control", "generated.phase-control-definition"],
         ["generated-phase-adapter", "generated.phase-control-adapter"],
     ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
@@ -59,7 +61,7 @@ test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
 
 async function model(revision = "first") {
     const pages = [];
-    for (const name of ["essentials", "outputs", "appearance"]) {
+    for (const name of ["essentials", "outputs", "badges", "appearance"]) {
         const document = JSON.parse(await readFile(new URL(`${name}.json`, templateRoot), "utf8"));
         pages.push({ ...document, page: document.id });
     }
@@ -69,6 +71,12 @@ async function model(revision = "first") {
     }
     return {
         pages, revision,
+        workflowPage: { name: "generated-workflow", adapter: "generated-workflow-page-adapter" },
+        templates: [
+            { name: "generated-workflow", kind: "generated.workflow-page-definition" },
+            { name: "generated-phase-control", kind: "generated.phase-control-definition" },
+            { name: "generated-phase-adapter", kind: "generated.phase-control-adapter" },
+        ],
         constraints: {
             "canvas.id": { type: "string", minLength: 1, maxLength: 100,
                 pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$", required: true },
@@ -155,6 +163,105 @@ async function openDesigner(page) {
     await page.goto(shell.url);
     return shell;
 }
+
+test("empty and partial preset inventories keep Designer open with inline generation errors", async ({ page }) => {
+    const empty = await model();
+    empty.pages = [];
+    empty.compositionErrors = ["Generated Workflow page is not registered"];
+    const emptyShell = await startPreparedShell(empty);
+    let partialShell;
+    try {
+        await page.goto(emptyShell.url);
+        await expect(page.getByRole("heading", { name: "No Designer pages registered" })).toBeVisible();
+        await expect(page.getByRole("tab")).toHaveCount(0);
+        await expect(page.locator("#composition-error")).toContainText("Generated Workflow page is not registered");
+        await expect(page.locator("#save-settings")).toBeDisabled();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        const saveUrl = new URL(`/api/save?token=${new URL(emptyShell.url).searchParams.get("token")}`,
+            emptyShell.url);
+        const refusedSave = await fetch(saveUrl, { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: "{}" });
+        expect(refusedSave.status).toBe(422);
+        expect((await refusedSave.json()).error).toContain("no pages are registered");
+
+        const partial = await model();
+        partial.pages = partial.pages.filter((entry) => entry.page !== "designer-badges");
+        partial.compositionErrors = ["generated-workflow (from extension:extension-canvas-design):"
+            + " missing or unreferenced presentation adapter generated-workflow-page-adapter"];
+        partialShell = await startPreparedShell(partial);
+        await page.goto(partialShell.url);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.locator("#composition-error")).toContainText("generated-workflow-page-adapter");
+        await expect(page.locator("#generation-error")).toContainText("generated-workflow-page-adapter");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Partial designer");
+        await expect(page.locator("#save-settings")).toBeEnabled();
+        await page.locator("#save-settings").click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+    } finally {
+        await partialShell?.close();
+        await emptyShell.close();
+    }
+});
+
+test("unchanged minimal Essentials preset composes and opens a savable partial Designer", async ({ page }) => {
+    test.setTimeout(150_000);
+    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
+    if (available.error?.code === "ENOENT") {
+        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
+        return;
+    }
+    expect(available.status, available.stderr).toBe(0);
+    expect(supportsSpecifyVersion(available.stdout), available.stdout).toBe(true);
+    const workspace = await mkdtemp(join(tmpdir(), "minimal-designer-e2e-"));
+    const project = join(workspace, "project");
+    const workflow = { selectedPhases: [] };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "minimal-test", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    let shell;
+    try {
+        await mkdir(project);
+        const run = (...args) => {
+            const result = spawnSync("specify", args, { cwd: project, encoding: "utf8",
+                timeout: 120000, env: { ...process.env, COLUMNS: "500" } });
+            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
+            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
+        };
+        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
+            "--integration", "copilot", "--integration-options=--skills",
+            "--script", process.platform === "win32" ? "ps" : "sh");
+        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        run("preset", "add", "--dev", fileURLToPath(minimalRoot));
+        const inventory = await verifyComposition(project);
+        expect(inventory.pages.map((entry) => entry.name)).toEqual(
+            ["designer-essentials", "designer-artifacts", "designer-appearance"]);
+        expect(inventory.templates.map((entry) => entry.name)).not.toContain("generated-workflow-page-adapter");
+        const folder = handoffDirectory(workspace, handoff.handoffId);
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        const resolved = await loadResolvedDesignerPages(handoff, project, inventory.pages, inventory.templates);
+        expect(resolved.compositionErrors.join(" ")).toContain("generated-workflow-page-adapter");
+        shell = await startShell(handoff, await loadDesignerSettings(workspace, handoff, resolved),
+            { project, workspace, session: { send: async () => { throw new Error("Generation was dispatched"); } } });
+        await page.goto(shell.url);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.locator("#composition-error")).toContainText("generated-workflow-page-adapter");
+        await expect(page.locator("#composition-error")).toContainText("extension:extension-canvas-design");
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("minimal-canvas");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Minimal Canvas");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+        const endpoint = new URL(`/api/generate?token=${new URL(shell.url).searchParams.get("token")}`, shell.url);
+        const response = await fetch(endpoint, { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: "{}" });
+        expect(response.status).toBe(422);
+        expect((await response.json()).error).toContain("generated-workflow-page-adapter");
+    } finally {
+        await shell?.close();
+        await rm(workspace, { recursive: true, force: true });
+    }
+});
 
 test("Outputs page keeps pipeline artifacts fixed and restores the viewer default after removing an addition", async ({ page }) => {
     const state = await model();
@@ -341,8 +448,13 @@ test("pending or failed image selection blocks actions until completion or cance
         await page.evaluate(() => window.releaseUpload());
         await expect(page.locator('[id="setting-field-canvas.logo-error"]'))
             .toContainText("Image bytes do not match");
+        await page.getByRole("tab", { name: "Outputs" }).click();
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#page-error")).toContainText("Header logo (canvas.logo) is still processing or needs attention");
+        await expect(page.getByRole("tab", { name: "Essentials" }))
+            .toHaveAttribute("aria-selected", "true");
+        await expect(page.locator('[id="setting-field-canvas.logo-error"]'))
+            .toContainText("Image bytes do not match");
         await page.getByRole("button", { name: "Cancel upload" }).click();
         await page.getByRole("tab", { name: "Outputs" }).click();
         await expect(page.getByRole("tab", { name: "Outputs" })).toHaveAttribute("aria-selected", "true");
@@ -457,7 +569,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
         const pages = ["designer-essentials", "designer-artifacts",
-            "designer-appearance", "canvas-settings-pr1-test"]
+            "designer-badges", "designer-appearance", "canvas-settings-pr1-test"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = ["canvas-contribution-pr1-test", "canvas-contribution-pr1-toggle"]
@@ -469,8 +581,8 @@ test("isolated test preset resolves through Specify and renders its contributed 
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Outputs", "Appearance", "Test settings"]);
-        expect(resolved.pages[3].fields.map((item) => item.id)).toEqual(
+            ["Essentials", "Outputs", "Badges", "Appearance", "Test settings"]);
+        expect(resolved.pages[4].fields.map((item) => item.id)).toEqual(
             ["pr1Test.label", "pr1Test.enabled"]);
         expect(resolved.values["pr1Test.label"]).toBe("");
         expect(resolved.values["pr1Test.enabled"]).toBe(true);
@@ -520,7 +632,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
     const selections = { presets: [], extensions: [], bundles: [] };
     const handoff = { schemaVersion: 1, handoffId: "billing-test", workflow, selections,
         sourceFingerprint: fingerprint({ workflow, selections }) };
-    let shell, reopened;
+    let shell, reopened, generatedRoutes, generatedServer;
     try {
         await mkdir(project);
         const run = (...args) => {
@@ -550,7 +662,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
         const pages = ["designer-essentials", "designer-artifacts",
-            "designer-appearance", "canvas-settings-billing"]
+            "designer-badges", "designer-appearance", "canvas-settings-billing"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contributions-billing"),
@@ -562,7 +674,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Outputs", "Appearance", "Billing"]);
+            ["Essentials", "Outputs", "Badges", "Appearance", "Billing"]);
         const costPage = resolved.pages.find((entry) =>
             entry.fields.some((field) => field.id === "billing.costCode"));
         shell = await startShell(handoff,
@@ -595,12 +707,28 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
             label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } }]);
-        await page.setContent(renderHtml(config));
+        const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
+            "extensions", "billing-canvas", "server.mjs")).href);
+        generatedRoutes = createWorkflowRoutes(config, {
+            runtime: null, instanceId: "billing-browser", token: "billing-token",
+            port: () => generatedServer.address().port,
+        });
+        generatedServer = createServer(generatedRoutes.handle);
+        await new Promise((resolve) => generatedServer.listen(0, "127.0.0.1", resolve));
+        await page.goto(`http://127.0.0.1:${generatedServer.address().port}/?token=billing-token`,
+            { waitUntil: "commit" });
         await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
         await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveCount(0);
     } finally {
+        generatedRoutes?.close();
+        if (generatedServer) {
+            await new Promise((resolve) => {
+                generatedServer.close(resolve);
+                generatedServer.closeAllConnections();
+            });
+        }
         await reopened?.close();
         await shell?.close();
         await rm(workspace, { recursive: true, force: true });
@@ -608,7 +736,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
 });
 
 test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
-    test.setTimeout(360_000);
+    test.setTimeout(480_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -661,7 +789,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             expect(source, output).not.toBeNull();
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
-        const pages = ["designer-essentials", "designer-artifacts", "designer-appearance"]
+        const pages = ["designer-essentials", "designer-artifacts", "designer-badges", "designer-appearance"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [
@@ -783,8 +911,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         expect(await servedAdapter.text()).toContain("export const mount = null;");
         brokenContext = await page.context().browser().newContext();
         const brokenPage = await brokenContext.newPage();
-        await brokenPage.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
-        await expect(brokenPage.getByRole("alert")).toContainText(
+        await brokenPage.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`,
+            { waitUntil: "commit" });
+        await expect(brokenPage.locator('[data-control-id="risk.rating"][role="alert"]')).toContainText(
             "Generated control could not render: Missing mount export");
     } finally {
         await brokenContext?.close();
@@ -825,7 +954,7 @@ async function openWithError(page, name) {
 test("Essentials keeps the Workflow header without a slug toggle", async ({ page }) => {
     const shell = await openDesigner(page);
     try {
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Badges", "Appearance"]);
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         const title = page.getByRole("textbox", { name: "Title (required)" });
         await expect(page.getByRole("textbox")).toHaveCount(4);

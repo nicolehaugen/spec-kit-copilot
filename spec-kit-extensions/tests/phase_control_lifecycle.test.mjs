@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import * as stock from "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs";
 import * as vertical from "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs";
@@ -11,10 +12,165 @@ const phases = [
 const state = {
     phases, current: 0, workflow: "demo", status: null, draft: "initial",
     output: phases[0].output, outputLinks: [], sending: false, runLabel: null,
+    badgeSlots: [{ id: "phase.card" }, { id: "phase.output" }],
 };
 const definition = { id: "workflow-phases", viewLabels: { plan: "Inspect Plan" } };
 
 for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
+    if (name === "stock") {
+        test("stock shows a supplied phase description instead of its command ID", (t) => {
+            const dom = phaseControlDom();
+            const previousDocument = globalThis.document;
+            globalThis.document = dom.document;
+            t.after(() => { globalThis.document = previousDocument; });
+            const actions = Object.fromEntries(["select", "draft", "run", "view",
+                "reveal", "error"].map((action) => [action, () => {}]));
+            const control = adapter.mount({ root: dom.root, definition, actions,
+                state: { ...state, phases: [{ ...phases[0],
+                    description: "Describe what to build & why." }] } });
+            assert.match(dom.root.innerHTML, /<p class="tagline">Describe what to build &amp; why\.<\/p>/);
+            assert.doesNotMatch(dom.root.innerHTML, /speckit\.specify/);
+            control.dispose();
+            const legacy = adapter.mount({ root: dom.root, definition, actions,
+                state: { ...state, phases: [phases[0]] } });
+            assert.match(dom.root.innerHTML, /Describe what to build and why\./);
+            legacy.dispose();
+        });
+        test("stock nests expanded outputs inside the shaded Output(s) section", async (t) => {
+            const dom = phaseControlDom();
+            const previousDocument = globalThis.document;
+            globalThis.document = dom.document;
+            t.after(() => { globalThis.document = previousDocument; });
+            const actions = Object.fromEntries(["select", "draft", "run", "view",
+                "reveal", "error"].map((action) => [action, () => {}]));
+            const control = adapter.mount({ root: dom.root, definition, actions,
+                state: { ...state, outputLinks: [{
+                    template: "specs/<slug>/checklists/requirements.md",
+                    label: "specs/demo/checklists/requirements.md",
+                }] } });
+            assert.match(dom.root.innerHTML,
+                /<dl class="phase-facts">[\s\S]*?<dd>[\s\S]*?id="phase-output-toggle"[\s\S]*?id="phase-other-outputs"[\s\S]*?<\/dd><\/dl>/);
+            const toggle = dom.root.querySelector("#phase-output-toggle");
+            assert.equal(toggle.hidden, false);
+            dom.root.dispatch("click", toggle);
+            assert.equal(dom.root.querySelector("#phase-other-outputs").hidden, false);
+            const css = await readFile(new URL(
+                "../extension-canvas-design/generated-scaffold/ui/workflow-theme.css", import.meta.url), "utf8");
+            assert.match(css, /\.phase-output-list\s*\{[^}]*margin:\s*0\.5rem 0 0 0\.4rem/s);
+            control.dispose();
+        });
+        test("stock labels the first pending phase Run phase", (t) => {
+            const dom = phaseControlDom();
+            const previousDocument = globalThis.document;
+            globalThis.document = dom.document;
+            t.after(() => { globalThis.document = previousDocument; });
+            const actions = Object.fromEntries(["select", "draft", "run", "view",
+                "reveal", "error"].map((action) => [action, () => {}]));
+            const control = adapter.mount({ root: dom.root, definition, actions,
+                state: { ...state, workflow: "__new__" } });
+            assert.equal(dom.root.querySelector("#run-phase").textContent,
+                "Run phase");
+            control.dispose();
+        });
+        test("stock rebuilds its phase card when badge slots change after mount", (t) => {
+            const dom = phaseControlDom();
+            const previousDocument = globalThis.document;
+            globalThis.document = dom.document;
+            t.after(() => { globalThis.document = previousDocument; });
+            const actions = Object.fromEntries(["select", "draft", "run", "view",
+                "reveal", "error"].map((action) => [action, () => {}]));
+            const control = adapter.mount({ root: dom.root, definition, actions,
+                state: { ...state, badgeSlots: undefined } });
+            assert.equal(dom.root.querySelector("#phase-badges"), null);
+            control.update({ ...state, badgeModels: [
+                { text: "Ready", color: "green", phase: "specify" },
+            ] });
+            assert.match(dom.root.querySelector("#phase-badges").innerHTML, /Ready/);
+            assert.ok(dom.root.querySelector("#phase-view-badges"));
+            control.dispose();
+        });
+    }
+    test(`${name} renders a targeted output badge in the phase control's output slot`, (t) => {
+        const dom = phaseControlDom();
+        const previousDocument = globalThis.document;
+        globalThis.document = dom.document;
+        t.after(() => { globalThis.document = previousDocument; });
+        const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt",
+            "viewAt", "startManagedRun", "stopManagedRun", "reveal", "error"]
+            .map((action) => [action, () => {}]));
+        const control = adapter.mount({ root: dom.root, definition, actions, state: {
+            ...state, outputLinks: [{
+                template: "specs/<slug>/extra.md", label: "specs/demo/extra.md",
+            }], badgeModels: [{
+                text: "Extra output", color: "blue", targets: [{
+                    phase: "specify", output: "specs/<slug>/extra.md",
+                }],
+            }],
+        } });
+        if (name === "stock") {
+            const rows = dom.root.querySelector("#phase-other-outputs").children;
+            const marks = rows.flatMap((row) => row.children ?? [])
+                .find((node) => node.dataset.phaseBadgeSlot === "phase.output");
+            assert.match(marks.innerHTML, /Extra output/);
+        } else {
+            assert.match(dom.root.innerHTML,
+                /data-phase-badge-slot="phase.output">[^<]*<span[^>]*>Extra output/);
+        }
+        control.dispose();
+    });
+    test(`${name} renders readable text over custom hex badge backgrounds`, (t) => {
+        const dom = phaseControlDom();
+        const previousDocument = globalThis.document;
+        globalThis.document = dom.document;
+        t.after(() => { globalThis.document = previousDocument; });
+        const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt",
+            "viewAt", "startManagedRun", "stopManagedRun", "reveal", "error"]
+            .map((action) => [action, () => {}]));
+        const control = adapter.mount({ root: dom.root, definition, actions, state: {
+            ...state, badgeModels: [
+                { text: "Light", color: "#ffffff", phase: "specify" },
+                { text: "Dark", color: "#000000", phase: "specify" },
+            ],
+        } });
+        const markup = name === "stock"
+            ? dom.root.querySelector("#phase-badges").innerHTML : dom.root.innerHTML;
+        if (name === "stock") assert.match(dom.root.innerHTML,
+            /id="phase-badges" data-phase-badge-slot="phase.card"/);
+        assert.match(markup, /style="background-color:#ffffff;color:#111"/);
+        assert.match(markup, /style="background-color:#000000;color:#fff"/);
+        control.dispose();
+    });
+    test(`${name} owns phase badge markup without disabling pending retries`, (t) => {
+        const dom = phaseControlDom();
+        const previousDocument = globalThis.document;
+        globalThis.document = dom.document;
+        t.after(() => { globalThis.document = previousDocument; });
+        assert.ok(adapter.capabilities.includes("workflow.badges.v1"));
+        const actions = Object.fromEntries(["select", "draft", "run", "view", "runAt",
+            "viewAt", "startManagedRun", "stopManagedRun", "reveal", "error"]
+            .map((action) => [action, () => {}]));
+        const control = adapter.mount({ root: dom.root, definition, actions, state: {
+            ...state, statuses: { specify: { status: "Running" } }, status: { status: "Running" },
+            badgeModels: [
+                { text: "Workflow review", phaseText: "Phase <review>",
+                    color: "amber", phase: "specify" },
+                { text: "Other phase", color: "blue", phase: "plan" },
+            ],
+        } });
+        const rendered = name === "stock"
+            ? dom.root.querySelector("#phase-badges").innerHTML : dom.root.innerHTML;
+        assert.match(rendered, /Phase &lt;review&gt;/);
+        assert.doesNotMatch(rendered, /Workflow review/);
+        assert.doesNotMatch(rendered, /<review>/);
+        if (name === "stock") {
+            assert.doesNotMatch(dom.root.querySelector("#phase-badges").innerHTML, /Other phase/);
+            assert.equal(dom.root.querySelector("#run-phase").disabled, false);
+        } else {
+            assert.match(dom.root.innerHTML, /Other phase/);
+            assert.match(dom.root.innerHTML, /data-action="start" data-index="0"[^>]*>/);
+        }
+        control.dispose();
+    });
     test(`${name} does not dispatch a confirmed selection after navigation`, async (t) => {
         const dom = phaseControlDom();
         const previousDocument = globalThis.document;
@@ -61,7 +217,6 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         if (name === "vertical") assert.equal(dom.root.querySelector('[data-action="autopilot"]').disabled, false);
         control.dispose();
     });
-
     test(`${name} phase control mounts, updates a focused draft, dispatches actions and disposes`, async (t) => {
         const dom = phaseControlDom();
         const previousDocument = globalThis.document;

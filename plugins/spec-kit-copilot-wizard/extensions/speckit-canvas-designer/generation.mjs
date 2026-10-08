@@ -8,12 +8,35 @@ import { initialOutputs, validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
 import { validateConfirmedOutputs } from "./handoff.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
+import { findDuplicateBadge } from "./ui/badge-duplicates.js";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
+
+export function generationBlockers(model) {
+    const pages = model.pages ?? [];
+    const essentials = pages.find((page) => page.page === "designer-essentials");
+    const blockers = [...(model.compositionErrors ?? [])];
+    if (!essentials || essentials.error || essentials.enabled === false
+        || !required.every((id) => essentials.fields?.some((field) => field.id === id))) {
+        blockers.unshift("Essentials must contain Canvas ID and Title");
+    }
+    if (!model.workflowPage || !model.templates?.some((entry) =>
+        entry.kind === "generated.workflow-page-definition")) {
+        blockers.push("Generated Workflow page definition is required");
+    }
+    if (!model.templates?.some((entry) => entry.name === "generated-phase-control"
+        && entry.kind === "generated.phase-control-definition")
+        || !model.templates?.some((entry) => entry.kind === "generated.phase-control-adapter")) {
+        blockers.push("Generated phase control and adapter are required");
+    }
+    const invalid = pages.find((page) => page.error);
+    if (invalid) blockers.push(`${invalid.page}: ${invalid.error.reason}`);
+    return blockers;
+}
 
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "designer-essentials");
@@ -143,8 +166,45 @@ export function reconcileInstalledVersions(frozen, inventory) {
     return { installed, warnings };
 }
 
-export async function freezeGeneration({ model, values, outputs = model.outputs, handoff, project, workspace,
+export function validBadgeEvidence(instance, rule, phaseIds, declared) {
+    if (!Array.isArray(rule?.inputs) || !instance?.inputs
+        || typeof instance.inputs !== "object" || Array.isArray(instance.inputs)) return false;
+    if (rule.placementPhaseInput !== undefined
+        && !rule.inputs.some((input) => input.id === rule.placementPhaseInput
+            && input.type === "artifact")) return false;
+    if (rule.placementPhaseInput
+        && (instance.targets?.length
+            ? instance.targets.length !== 1 || instance.targets[0].output !== null
+                || instance.targets[0].phase !== instance.inputs[rule.placementPhaseInput]?.phase
+            : instance.showIn?.includes("phase-card")
+                && instance.phase !== instance.inputs[rule.placementPhaseInput]?.phase)) return false;
+    for (const input of rule.inputs) {
+        if (input.type !== "ordered-artifacts") {
+            if (input.before !== undefined || input.scope !== undefined
+                && !(input.type === "artifact" && ["directory", "metadata"].includes(input.scope))) return false;
+            continue;
+        }
+        if (input.scope !== "metadata"
+            || !rule.inputs.some((entry) => entry.id === input.before
+                && entry.type === "artifact" && entry.scope === "metadata")) return false;
+        const prior = instance.inputs[input.id];
+        const target = instance.inputs[input.before];
+        if (!Array.isArray(prior) || prior.length > 100 || !declared(target)
+            || prior.some((entry) => !entry || typeof entry !== "object"
+                || Object.keys(entry).sort().join() !== "output,phase" || !declared(entry))) return false;
+        const chain = [...prior, target];
+        if (chain.some((entry, index) => index
+                && phaseIds.indexOf(chain[index - 1].phase) >= phaseIds.indexOf(entry.phase))
+            || new Set(chain.map((entry) => entry.output.toLowerCase())).size !== chain.length) return false;
+    }
+    return true;
+}
+
+export async function freezeGeneration({ model, values, outputs = model.outputs, badges = model.badges,
+    handoff, project, workspace,
     runtimeInventory, inventoryWarning }) {
+    const blockers = generationBlockers(model);
+    if (blockers.length) throw new Error(`Cannot generate: ${blockers.join("; ")}`);
     const essentials = validateEssentials(model, values);
     if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases,
         initialOutputs(handoff));
@@ -271,6 +331,8 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         - (b.order ?? defaultPageOrder.get(b.id)) || a.id.localeCompare(b.id));
     const workflowDefinition = model.templates?.find((item) =>
         item.name === model.workflowPage?.name && item.kind === "generated.workflow-page-definition");
+    const workflowAdapter = model.workflowPage?.adapter && model.templates?.find((item) =>
+        item.name === model.workflowPage.adapter && item.kind === "generated.workflow-page-adapter");
     const controlDefinition = model.templates?.find((item) =>
         item.name === "generated-phase-control" && item.kind === "generated.phase-control-definition");
     const controlBytes = controlDefinition && await readFrozenAsset(controlDefinition, specify);
@@ -279,7 +341,8 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     catch { throw new Error("Invalid frozen phase control definition"); }
     const adapter = model.templates?.find((item) =>
         item.name === phaseControl?.adapter && item.kind === "generated.phase-control-adapter");
-    if (!workflowDefinition || !controlDefinition || !adapter
+    if (!workflowDefinition || (model.workflowPage?.adapter && !workflowAdapter)
+        || !controlDefinition || !adapter
         || phaseControl?.id !== "workflow-phases"
         || phaseControl?.placement?.page !== "workflow"
         || phaseControl?.placement?.slot !== "workflow.phases"
@@ -291,7 +354,8 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     const workflowPage = { id: "workflow", title: model.workflowPage.title,
         order: model.workflowPage.order, slots: model.workflowPage.slots,
         managedRun: model.workflowPage.managedRun,
-        assets: await Promise.all([workflowDefinition, controlDefinition, adapter].map(asset)) };
+        assets: await Promise.all([workflowDefinition, controlDefinition, adapter,
+            ...(workflowAdapter ? [workflowAdapter] : [])].map(asset)) };
     const namedTemplate = (name, kind) => {
         const match = model.templates?.find((item) => item.name === name && item.kind === kind);
         if (!match) throw new Error(`${name}: missing validated ${kind} asset`);
@@ -317,6 +381,163 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         namedTemplate(definition.name, "generated.button-control-definition"),
         namedTemplate(definition.adapter, "generated.button-adapter"),
     ].map(asset)) })));
+    const instances = badges === undefined ? [] : Array.isArray(badges)
+        ? badges : badges?.instances;
+    if (!Array.isArray(instances) || instances.length > 100) {
+        throw new Error("Badges must be a list of at most 100 configured instances");
+    }
+    let frozenBadges;
+    if (instances.length) {
+        const workflowSlots = new Set(model.workflowPage.slots.map((slot) => slot.id));
+        const destinations = new Set(model.workflowPage.badgeDestinations
+            ?? ["workflow.list", "workflow.summary", "phase.card", "phase.output"]);
+        const locations = { "workflow-list": "workflow.list",
+            "workflow-summary": "workflow.summary", "phase-card": "phase.card",
+            "phase-output": "phase.output" };
+        if (instances.some((badge) => badge.showIn?.some((placement) =>
+            !destinations.has(locations[placement]))
+            || badge.targets?.some((target) => !destinations.has(
+                target.output === null ? "phase.card" : "phase.output")))) {
+            throw new Error("Selected badge placement is unsupported by the Workflow page adapter");
+        }
+        if (instances.some((badge) => badge.showIn?.includes("workflow-list"))
+            && !workflowSlots.has("workflow.list")
+            || instances.some((badge) => badge.showIn?.includes("workflow-summary"))
+                && !workflowSlots.has("workflow.summary")
+            || instances.some((badge) => badge.showIn?.includes("phase-card")
+                || badge.targets?.some((target) => target.output === null))
+                && !phaseControl.slots?.some((slot) => slot.id === "phase.card")
+            || instances.some((badge) => badge.showIn?.includes("phase-output")
+                || badge.targets?.some((target) => target.output !== null))
+                && !phaseControl.slots?.some((slot) => slot.id === "phase.output")) {
+            throw new Error("Selected badge placement has no declared Workflow or phase control slot");
+        }
+        const types = [...new Set(instances.map((instance) => instance.type))].map((id) => {
+            const type = model.badgeTypes?.find((item) => item.id === id && item.enabled);
+            if (!type) throw new Error(`Badge type ${id} is unavailable or disabled`);
+            return type;
+        });
+        const rules = [...new Set(types.map((type) => type.rule))].map((id) => {
+            const rule = model.badgeRules?.find((item) => item.id === id);
+            if (!rule) throw new Error(`Badge rule ${id} is unavailable`);
+            return rule;
+        });
+        const phaseIds = handoff.workflow.selectedPhases;
+        const source = (artifact) => artifact && phaseIds.includes(artifact.phase)
+            && typeof artifact.output === "string"
+            && outputs?.[artifact.phase]?.outputs?.includes(artifact.output);
+        const textValid = (text, placeholders) => typeof text === "string"
+            && text.trim() && text.length <= 120
+            && !/[{}]/.test(text.replace(/\{[a-z][a-z0-9-]{0,39}\}/g, ""))
+            && [...text.matchAll(/\{([a-z][a-z0-9-]{0,39})\}/g)]
+                .every((match) => placeholders.includes(match[1]));
+        const ids = new Set();
+        const checked = [];
+        for (const instance of instances) {
+            const type = types.find((item) => item.id === instance.type);
+            const rule = rules.find((item) => item.id === type.rule);
+            if (typeof instance.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(instance.id)
+                || ids.has(instance.id) || !validBadgeEvidence(instance, rule, phaseIds, source)
+                || !instance.inputs || typeof instance.inputs !== "object"
+                || Object.keys(instance.inputs).length !== rule.inputs.length
+                || rule.inputs.some(({ id, type: inputType }) => {
+                    const value = instance.inputs[id];
+                    if (inputType === "artifact") return !source(value);
+                    if (inputType === "phase") return !phaseIds.includes(value);
+                    if (inputType === "text") return typeof value !== "string" || !value.trim()
+                        || value.length > 256 || /[\x00-\x1f\x7f]/.test(value);
+                    if (inputType === "ordered-artifacts") return !Array.isArray(value)
+                        || value.length > 100 || value.some((entry) => !source(entry));
+                    return inputType !== "artifact-set" || !Array.isArray(value)
+                        || !value.length || value.length > 100
+                        || value.some((item) => !phaseIds.includes(item?.phase)
+                            || !Array.isArray(item.outputs) || !item.outputs.length
+                            || item.outputs.length > 100
+                            || item.outputs.some((output) =>
+                                !source({ phase: item.phase, output })));
+                })
+                || (rule.id === "checklist-complete"
+                    && rule.inputs.some((input) => input.id === "prerequisite")
+                    && (phaseIds.indexOf(instance.inputs.prerequisite?.phase) < 0
+                        || phaseIds.indexOf(instance.inputs.prerequisite.phase)
+                            >= phaseIds.indexOf(instance.inputs.artifact?.phase)
+                        || instance.inputs.prerequisite.output.toLowerCase()
+                            === instance.inputs.artifact.output.toLowerCase()))
+                || !textValid(instance.text, rule.textPlaceholders)
+                || (instance.phaseText !== undefined
+                    && (!(instance.targets?.length || instance.showIn?.includes("phase-card"))
+                        || !textValid(instance.phaseText, rule.textPlaceholders)))
+                || (instance.summaryText !== undefined
+                    && (!instance.showIn?.includes("workflow-summary")
+                        || !textValid(instance.summaryText, ["workflows"])))
+                || typeof instance.color !== "string"
+                || !/^(?:theme|red|green|amber|blue|purple|pink|orange|#[0-9a-fA-F]{6})$/.test(instance.color)
+                || !Array.isArray(instance.showIn)
+                || new Set(instance.showIn).size !== instance.showIn.length
+                || instance.showIn.some((place) =>
+                    !["workflow-list", "workflow-summary", "phase-card"].includes(place))
+                || (instance.targets === undefined
+                    ? (instance.showIn.includes("phase-card")
+                        && (!phaseIds.includes(instance.phase)
+                            || instance.phase.replace(/^speckit\./, "") === "constitution"))
+                        || (!instance.showIn.includes("phase-card") && instance.phase != null)
+                    : instance.phase != null || instance.showIn.includes("phase-card")
+                        || !Array.isArray(instance.targets) || instance.targets.length > 100
+                        || new Set(instance.targets.map((target) =>
+                            JSON.stringify([target?.phase, target?.output]))).size !== instance.targets.length
+                        || instance.targets.some((target) => !target
+                            || !phaseIds.includes(target.phase)
+                            || target.phase.replace(/^speckit\./, "") === "constitution"
+                            || (target.output !== null
+                                && (!rule.inputs.some((input) =>
+                                    ["artifact", "artifact-set"].includes(input.type))
+                                    || !source(target)))))) {
+                throw new Error(`Badge ${instance?.id ?? "unknown"} has an invalid or removed output, phase, text, or placement; edit it on the Badges page before Generate`);
+            }
+            ids.add(instance.id);
+            const duplicate = findDuplicateBadge(instance, checked);
+            if (duplicate) {
+                throw new Error(`Badge ${instance.id} duplicates phase/output target of ${duplicate.id}; edit the existing badge before Generate`);
+            }
+            checked.push(instance);
+        }
+        const adapters = [...new Set(rules.map((rule) => rule.module))];
+        const adapterAssets = await Promise.all(adapters.map(async (name) => {
+            const entry = model.templates?.find((item) =>
+                item.kind === "generated.badge-rule-adapter" && item.name === name);
+            if (!entry) throw new Error(`Missing badge evaluator ${name}`);
+            return asset(entry);
+        }));
+        if (instances.some((instance) => instance.showIn?.includes("phase-card")
+            || instance.targets?.length)) {
+            const module = await import(`data:text/javascript;base64,${workflowPage.assets[2].content}`);
+            if (!Array.isArray(module.capabilities)
+                || !module.capabilities.includes("workflow.badges.v1")) {
+                throw new Error(`${adapter.name} does not support phase-card badges; use a badge-capable phase adapter or deselect Phase card`);
+            }
+            if (instances.some((instance) => instance.targets?.length)
+                && !module.capabilities.includes("workflow.badges.targets.v1")) {
+                throw new Error(`${adapter.name} does not support phase/output badge targets; use a target-capable phase adapter or deselect phase/output placements`);
+            }
+        }
+        frozenBadges = {
+            instances,
+            settings: await (async () => {
+                const entry = model.templates?.find((item) =>
+                    item.kind === "designer.badges-settings-definition" && item.name === "badges-settings");
+                if (!entry) throw new Error("Missing badges-settings definition");
+                return asset(entry);
+            })(),
+            types,
+            rules: await Promise.all(rules.map(async (rule) => {
+                const entry = model.templates?.find((item) =>
+                    item.kind === "generated.badge-rule-definition" && item.name === rule.name);
+                if (!entry) throw new Error(`Missing badge rule definition ${rule.id}`);
+                return { ...rule, assets: [await asset(entry)] };
+            })),
+            adapters: adapterAssets,
+        };
+    }
     const designerFields = new Map();
     const fieldPlacements = await Promise.all((model.fieldPlacements ?? []).map(async (placement) => {
         const definition = model.templates.find((item) => item.name === placement.name
@@ -421,6 +642,8 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             description: essentials["canvas.description"] || "Spec Kit workflow canvas.",
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
         workflow: { selectedPhases: handoff.workflow.selectedPhases,
+            ...(handoff.workflow.phaseDescriptions !== undefined
+                ? { phaseDescriptions: handoff.workflow.phaseDescriptions } : {}),
             ...(outputs !== undefined ? { phaseArtifacts: outputs } : {}) },
         installed: handoff.workflow.installed,
         ...(handoff.workflow.runtimeSetup ? { runtimeSetup: handoff.workflow.runtimeSetup } : {}),
@@ -442,6 +665,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         ...(generatedTextControl ? { generatedTextControl, generatedTextPlacements } : {}),
         ...(valueSources.length ? { valueSources } : {}),
         ...(controlAssets.size ? { controlAssets: [...controlAssets.values()] } : {}),
+        ...(frozenBadges ? { badges: frozenBadges } : {}),
     };
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");

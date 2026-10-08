@@ -182,6 +182,19 @@ bindings keep the existing phase Run and View behavior unchanged. Setup uses
 a dedicated setup adapter with a replaceable label and presentation, but
 its `project.setup` operation is not replaceable by a dialog definition.
 
+The generated Workflow page is a replaceable, frozen presentation adapter. It
+owns setup and constitution panels, workflow rows and summary, phase-control
+composition, dialogs, and contributed slots; the host retains privileged
+operations, persistence, validation, and safe project access. A replacement
+declares which badge destinations it supports, and unsupported configured
+placements fail validation before generation. The separate badge capability
+evaluates frozen adapters against declared evidence, computes per-workflow
+matches and matching-workflow summary counts, and passes presentation-ready
+results to the page. The page does not read files or decide badge outcomes.
+The opt-in Phase artifact complete rule reads metadata for one target output
+and zero or more selected earlier outputs, comparing adjacent modification
+times in workflow order; it does not depend on phase-run status.
+
 ## 8. Acceptance criteria
 
 | Scenario | Required result |

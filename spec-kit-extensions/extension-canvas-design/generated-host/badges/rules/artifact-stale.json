@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "artifact-stale",
+  "label": "Stale artifact",
+  "description": "The selected declared artifact may be stale by best-effort freshness.",
+  "inputs": [
+    {
+      "id": "artifact",
+      "type": "artifact"
+    }
+  ],
+  "textPlaceholders": [],
+  "module": "badge-rule-artifact-state-adapter"
+}

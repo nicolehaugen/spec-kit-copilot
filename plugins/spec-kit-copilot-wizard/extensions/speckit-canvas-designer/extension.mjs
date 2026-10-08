@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
+import { previewModel } from "./preview.mjs";
 import { assertPageCommand, loadResolvedDesignerPages, PAGE_NAME } from "./pages.mjs";
 import { loadDesignerSettings } from "./settings.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
@@ -59,12 +60,13 @@ const session = await joinSession({
     canvases: [createCanvas({
         id: "speckit-canvas-designer",
         displayName: "Spec Kit Canvas Designer",
-        description: "Open Designer with the complete preset-resolved page set.",
+        description: "Open Designer with the complete preset-resolved page set or a nonpersistent UX preview.",
         inputSchema: {
             type: "object", additionalProperties: false,
             properties: {
+                preview: { type: "boolean" },
                 handoffId: handoffIdSchema,
-                pages: { type: "array", minItems: 3, maxItems: 100, items: {
+                pages: { type: "array", maxItems: 100, items: {
                     type: "object", additionalProperties: false, required: ["name", "path", "kind", "strategy"],
                     properties: { name: { type: "string", pattern: PAGE_NAME },
                         path: { type: "string", minLength: 1, maxLength: 4096 },
@@ -77,8 +79,11 @@ const session = await joinSession({
                         path: { type: "string", minLength: 1, maxLength: 4096 },
                         sourceId: { type: "string", minLength: 1, maxLength: 160 },
                         kind: { type: "string", enum: ["designer.setting-definition",
-                            "generated.workflow-page-definition", "generated.phase-control-definition",
+                            "generated.workflow-page-definition", "generated.workflow-page-adapter",
+                            "generated.phase-control-definition",
                             "generated.phase-control-adapter",
+                            "designer.badges-settings-definition", "generated.badge-rule-definition",
+                            "generated.badge-rule-adapter",
                             "generated.field-placement",
                             "generated.added-page-definition", "generated.added-page-renderer",
                             "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
@@ -102,14 +107,18 @@ const session = await joinSession({
                     servers.delete(ctx.instanceId);
                     await previous.close();
                 }
-                await ensureDependencies();
-                const { handoffId, pages, templates } = ctx.input ?? {};
+                const { preview, handoffId, pages, templates } = ctx.input ?? {};
+                if (preview && (handoffId !== undefined || pages !== undefined
+                    || templates !== undefined)) {
+                    throw new Error("Designer preview cannot include a Wizard handoff, pages, or templates");
+                }
                 if ((handoffId === undefined) !== (pages === undefined)
                     || (handoffId === undefined) !== (templates === undefined)) {
                     throw new Error("Designer handoff and complete resolved inventory are required together");
                 }
+                if (!preview) await ensureDependencies();
                 let handoff = null;
-                let model = null;
+                let model = preview ? previewModel() : null;
                 if (handoffId !== undefined) {
                     try {
                         handoff = await readHandoff(session.workspacePath, handoffId);
@@ -123,7 +132,7 @@ const session = await joinSession({
                 }
                 const next = await startShell(handoff, model, handoff
                     ? { project: await getCheckout(), workspace: session.workspacePath, session }
-                    : {});
+                    : { preview: preview === true });
                 if (opening.get(ctx.instanceId) !== token) {
                     await next.close();
                     throw new CanvasError("designer_open_failed", "Designer panel closed while opening");

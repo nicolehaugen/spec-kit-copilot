@@ -8,20 +8,37 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 import {
     fingerprint, handoffDirectory, HANDOFF_LIMIT, readHandoff, validateHandoff,
     validateHandoffId,
 } from "../handoff.mjs";
 import { shellHtml, startShell } from "../server.mjs";
+import { previewModel } from "../preview.mjs";
 import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAsset } from "../pages.mjs";
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
-import { freezeGeneration, validateEssentials } from "../generation.mjs";
+import { freezeGeneration, generationBlockers, validateEssentials } from "../generation.mjs";
 import { decodeImage } from "../image.mjs";
+import { renderStockPage } from "../../../../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 
 const ID = "designer_1";
 const scalarFixtures = new Map();
+function stockMarkup(config) {
+    const root = { innerHTML: "" };
+    renderStockPage(root, { canvas: config.canvas, mainPageAsset: config.mainPageAsset,
+        readOnlyFields: config.readOnlyFields ?? [], textPlacements: config.textPlacements ?? [],
+        hasValues: Boolean(config.valueSources?.length), generatedControls: config.generatedControls ?? [],
+        hasConstitution: config.phases.some((phase) => phase.replace(/^speckit\./, "") === "constitution"),
+        hasBadges: Boolean(config.badges?.instances?.length),
+        badgeDestinations: config.workflowPage.badgeDestinations,
+        fieldSlots: config.workflowPage.slots.filter(({ id }) => id !== "workflow.phases"
+            && (config.fieldPlacements?.some((item) => item.page === "workflow" && item.slot === id)
+                || config.buttons?.some((item) => item.page === "workflow" && item.slot === id)))
+            .map(({ id }) => id) });
+    return root.innerHTML;
+}
 
 async function loadResolvedDesignerPages(handoff, project, entries, templates = [], registration) {
     const scalar = scalarFixtures.get(project) ?? [];
@@ -50,22 +67,37 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
         specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
         plan: { outputs: [], view: null },
     };
+    handoff.workflow.phaseDescriptions = { specify: "Describe what to build and why." };
     handoff.sourceFingerprint = fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
     });
     await saveHandoff(workspace, handoff);
-    const model = { revision: "outputs-test", constraints: {}, values: {} };
+    const model = { revision: "outputs-test", constraints: {}, values: {},
+        badgeTypes: [{ id: "artifact", rule: "artifact", enabled: true }],
+        badgeRules: [{ id: "artifact", inputs: [{ id: "artifact", type: "artifact" }],
+            textPlaceholders: [] }] };
     const initial = await loadDesignerSettings(workspace, handoff, model);
+    assert.deepEqual(initial.badges, []);
     const constitution = { outputs: [".specify/memory/constitution.md"],
         view: ".specify/memory/constitution.md" };
     assert.deepEqual(initial.outputs, { ...handoff.workflow.outputEvidence, constitution });
     const outputs = { constitution, specify: { outputs: [
         "specs/<slug>/spec.md", "specs/<slug>/research.md"],
         view: "specs/<slug>/research.md" }, plan: { outputs: [], view: null } };
+    const badges = [{ id: "research", type: "artifact",
+        inputs: { artifact: { phase: "specify", output: "specs/<slug>/research.md" } },
+        text: "Research ready", color: "green", showIn: ["workflow-list"], phase: null }];
     const saved = await saveDesignerSettings(workspace, handoff, initial,
-        { modelRevision: model.revision, revision: 0, values: {}, outputs });
+        { modelRevision: model.revision, revision: 0, values: {}, outputs, badges });
     assert.deepEqual(saved.outputs, outputs);
+    assert.deepEqual(saved.badges, badges);
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, outputs);
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).badges, badges);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {},
+        outputs: { ...outputs, specify: { outputs: ["specs/<slug>/spec.md"],
+            view: "specs/<slug>/spec.md" } }, badges,
+    }), /invalid artifact input/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
         modelRevision: model.revision, revision: 1, values: {},
         outputs: { ...outputs, specify: { outputs: ["specs/<slug>/research.md"],
@@ -80,7 +112,7 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
     const removed = { ...outputs, specify: { outputs: ["specs/<slug>/spec.md"],
         view: "specs/<slug>/spec.md" } };
     const restored = await saveDesignerSettings(workspace, handoff, saved,
-        { modelRevision: model.revision, revision: 1, values: {}, outputs: removed });
+        { modelRevision: model.revision, revision: 1, values: {}, outputs: removed, badges: [] });
     assert.deepEqual(restored.outputs, removed);
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, removed);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
@@ -165,11 +197,13 @@ test("Generation freezes the pipeline links and chosen additional viewer target"
     const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
     assert.deepEqual(request.workflow.phaseArtifacts, outputs);
+    assert.deepEqual(request.workflow.phaseDescriptions, handoff.workflow.phaseDescriptions);
     const { materialize } = await import(new URL(
         "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const config = JSON.parse(await readFile(join(project, prepared.target, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.phaseArtifacts.specify, outputs.specify);
+    assert.deepEqual(config.phaseDescriptions, handoff.workflow.phaseDescriptions);
 });
 
 function validHandoff(id = ID) {
@@ -213,7 +247,7 @@ async function projectFixture(t, workspace) {
     await copyFile(join(source, "schemas", "designer.tab-definition.schema.json"),
         join(installed, "schemas", "designer.tab-definition.schema.json"));
     await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
-    const pages = ["essentials", "outputs", "appearance"];
+    const pages = ["essentials", "outputs", "badges", "appearance"];
     const entries = [];
     for (const filename of pages) {
         const path = join(installed, "designer-host", "tabs", `${filename}.json`);
@@ -224,6 +258,8 @@ async function projectFixture(t, workspace) {
     const scalar = [];
     for (const [name, directory, filename, kind] of [
         ["generated-workflow", "workflow-page", "workflow.json", "generated.workflow-page-definition"],
+        ["generated-workflow-page-adapter", "workflow-page",
+            "generated-workflow-page-adapter.mjs", "generated.workflow-page-adapter"],
         ["generated-phase-control", "phase-control", "phase-control.json", "generated.phase-control-definition"],
         ["generated-phase-adapter", "phase-control", "generated-phase-adapter.mjs", "generated.phase-control-adapter"],
     ]) {
@@ -253,6 +289,258 @@ async function projectFixture(t, workspace) {
     t.after(() => rm(project, { recursive: true, force: true }));
     return { project, entries };
 }
+
+async function badgeTemplates(project) {
+    const source = fileURLToPath(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url));
+    const templates = [];
+    const settingsPath = join(project, ".specify", "extensions", "extension-canvas-design",
+        "designer-host", "badges-settings", "badge-types.json");
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await copyFile(join(source, "designer-host", "badges-settings", "badge-types.json"), settingsPath);
+    templates.push({ name: "badges-settings", path: settingsPath,
+        sourceId: "extension:extension-canvas-design",
+        kind: "designer.badges-settings-definition", strategy: "replace" });
+    for (const [folder, prefix, kind] of [
+        ["rules", "badge-rule", "generated.badge-rule-definition"],
+        ["adapters", "badge-rule", "generated.badge-rule-adapter"],
+    ]) {
+        const directory = join(source, "generated-host", "badges", folder);
+        for (const filename of await readdir(directory)) {
+            const stem = filename.replace(/\.(?:json|mjs)$/, "");
+            const name = `${prefix}-${stem}${folder === "adapters" ? "-adapter" : ""}`;
+            const path = join(project, ".specify", "extensions", "extension-canvas-design",
+                "generated-host", "badges", folder, filename);
+            await mkdir(dirname(path), { recursive: true });
+            await copyFile(join(directory, filename), path);
+            templates.push({ name, path, sourceId: "extension:extension-canvas-design",
+                kind, strategy: "replace" });
+        }
+    }
+    return templates;
+}
+
+const badgeRegistration = () => ({ kind: "template", stack: [
+    { active: true, sourceId: "extension-canvas-design", layer: "extension",
+        strategy: "replace" },
+] });
+
+test("registered badge definitions resolve types, rules, adapters, and declared placeholders", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const templates = await badgeTemplates(project);
+    const load = (inventory = templates) => loadResolvedDesignerPages(validHandoff(),
+        project, entries, inventory, badgeRegistration);
+    const model = await load();
+    assert.equal(model.badgeTypes.length, 9);
+    assert.equal(model.badgeRules.length, 9);
+    assert.ok(model.badgeRules.some((rule) => rule.id === "value-match"
+        && rule.inputs[0].type === "artifact" && rule.inputs[1].type === "text"));
+    assert.ok(model.badgeRules.some((rule) => rule.id === "markdown-file-count"
+        && rule.inputs[0].scope === "directory"));
+    assert.equal(model.badgeTypes.find((item) => item.id === "value-match").title,
+        "Value match");
+    const rule = templates.find((item) => item.name === "badge-rule-value-match");
+    const original = await readFile(rule.path, "utf8");
+    await writeFile(rule.path, JSON.stringify({ ...JSON.parse(original), module: "not-registered" }));
+    await assert.rejects(load(), /missing registered badge adapter/);
+    await writeFile(rule.path, original);
+    const type = templates.find((item) => item.name === "badges-settings");
+    const typeOriginal = await readFile(type.path, "utf8");
+    const settings = JSON.parse(typeOriginal);
+    settings.types.find((item) => item.id === "value-match").defaultText =
+        "Unknown {not-declared}";
+    await writeFile(type.path, JSON.stringify(settings));
+    await assert.rejects(load(), /undeclared placeholder/);
+    await writeFile(type.path, typeOriginal);
+    const handler = templates.find((item) => item.name === "badge-rule-run-adapter");
+    await writeFile(handler.path, `import "node:fs";\nexport const contractVersion = 1;\nexport function evaluate() {}`);
+    await assert.rejects(load(), /must be self-contained/);
+});
+
+test("preset badge definitions add, replace, and disable registered catalog entries", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const inventory = await badgeTemplates(project);
+    const folder = join(project, ".specify", "presets", "badge-catalog-test");
+    await mkdir(folder, { recursive: true });
+    const add = async (name, kind, document, extension = ".json") => {
+        const path = join(folder, `${name}${extension}`);
+        await writeFile(path, extension === ".json" ? JSON.stringify(document) : document);
+        const entry = { name, path, sourceId: "badge-catalog-test", kind, strategy: "replace" };
+        inventory.push(entry);
+        return entry;
+    };
+    await add("badge-rule-preset-extra", "generated.badge-rule-adapter",
+        "export const contractVersion = 1;\nexport async function evaluate() { return { match: true }; }\n",
+        ".mjs");
+    const addedRule = await add("badge-rule-preset-extra-definition",
+        "generated.badge-rule-definition", {
+            schemaVersion: 1, id: "preset-extra", label: "Preset rule",
+            description: "Added by a preset.", inputs: [{ id: "phase", type: "phase" }],
+            textPlaceholders: ["count"], module: "badge-rule-preset-extra",
+        });
+    const settingsEntry = inventory.find((item) => item.name === "badges-settings");
+    const settings = JSON.parse(await readFile(settingsEntry.path, "utf8"));
+    settings.types.push({ id: "preset-extra", title: "Preset badge",
+        description: "Added by a preset.", rule: "preset-extra",
+        defaultText: "Preset {count}", defaultColor: "purple", enabled: true });
+    const artifact = settings.types.find((item) => item.id === "artifact-current");
+    artifact.enabled = false;
+    artifact.title = "Replaced by preset";
+    artifact.description = "Customized in the single badges settings file.";
+    artifact.id = "artifact-renamed";
+    const settingsOverride = join(folder, "badges-settings-override.json");
+    await writeFile(settingsOverride, JSON.stringify(settings));
+    inventory.splice(inventory.indexOf(settingsEntry), 1, {
+        ...settingsEntry, path: settingsOverride, sourceId: "badge-catalog-test",
+    });
+    const source = fileURLToPath(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url));
+    const replace = async (name, folderName, filename, patch) => {
+        const original = inventory.find((item) => item.name === name);
+        const document = JSON.parse(await readFile(join(source, "generated-host", "badges",
+            folderName, filename), "utf8"));
+        const path = join(folder, `${name}-override.json`);
+        await writeFile(path, JSON.stringify({ ...document, ...patch }));
+        inventory.splice(inventory.indexOf(original), 1, { ...original, path,
+            sourceId: "badge-catalog-test" });
+        return path;
+    };
+    const replacedRule = await replace("badge-rule-checklist-progress", "rules",
+        "checklist-progress.json", { module: "badge-rule-preset-extra" });
+    const load = () => loadResolvedDesignerPages(validHandoff(), project, entries, inventory,
+        (_root, name) => {
+            const entry = inventory.find((item) => item.name === name);
+            const preset = entry?.sourceId === "badge-catalog-test";
+            return { kind: "template", stack: [{ active: true,
+                sourceId: preset ? "badge-catalog-test" : "extension-canvas-design",
+                layer: preset ? "preset" : "extension", strategy: "replace" }] };
+        });
+    const model = await load();
+    assert.equal(model.badgeTypes.length, 10);
+    assert.equal(model.badgeRules.length, 10);
+    assert.equal(model.badgeTypes.find((item) => item.id === "preset-extra").name, "badges-settings");
+    assert.equal(model.badgeRules.find((item) => item.id === "preset-extra").name, addedRule.name);
+    assert.equal(model.badgeTypes.find((item) => item.id === "checklist-progress").rule,
+        "checklist-progress");
+    assert.equal(model.badgeRules.find((item) => item.id === "checklist-progress").module,
+        "badge-rule-preset-extra");
+    assert.equal(model.badgeTypes.find((item) => item.id === "artifact-renamed").enabled, false);
+    assert.equal(model.badgeTypes.find((item) => item.id === "artifact-renamed").title,
+        "Replaced by preset");
+    assert.equal(model.badgeTypes.find((item) => item.id === "artifact-renamed").description,
+        "Customized in the single badges settings file.");
+    settings.types.find((item) => item.id === "preset-extra").defaultText = "Unknown {undeclared}";
+    await writeFile(settingsOverride, JSON.stringify(settings));
+    await assert.rejects(load(), /undeclared placeholder/);
+    settings.types.find((item) => item.id === "preset-extra").defaultText = "Preset {count}";
+    await writeFile(settingsOverride, JSON.stringify(settings));
+    await writeFile(replacedRule, JSON.stringify({
+        ...JSON.parse(await readFile(replacedRule, "utf8")), module: "not-registered",
+    }));
+    await assert.rejects(load(), /missing registered badge adapter/);
+    await writeFile(replacedRule, JSON.stringify({
+        ...JSON.parse(await readFile(replacedRule, "utf8")),
+        module: "badge-rule-preset-extra",
+    }));
+    settings.types.push({ ...settings.types[0] });
+    await writeFile(settingsOverride, JSON.stringify(settings));
+    await assert.rejects(load(), /duplicate badge type ID/);
+});
+
+test("Designer badge save and reopen freezes registered assets into generated config", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.workflow.outputEvidence = {
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const templates = [...await stockTemplates(project), ...await badgeTemplates(project)];
+    const pages = await loadResolvedDesignerPages(handoff, project, entries,
+        templates, badgeRegistration);
+    assert.equal(pages.badgeTypes.find((type) => type.id === "checklist-progress")
+        .name, "badges-settings");
+    assert.equal(pages.badgeRules.find((rule) => rule.id === "checklist-progress")
+        .name, "badge-rule-checklist-progress");
+    const model = await loadDesignerSettings(workspace, handoff, pages);
+    assert.deepEqual(model.badges, []);
+    const values = { ...model.values, "canvas.id": "badge-canvas",
+        "canvas.displayName": "Badge canvas" };
+    const badges = [{ id: "checklist-progress-1", type: "checklist-progress",
+        inputs: { artifact: { phase: "specify", output: "specs/<slug>/spec.md" } },
+        text: "{completed}/{total} complete", color: "blue",
+        showIn: ["workflow-list"], phase: null,
+        targets: [{ phase: "specify", output: "specs/<slug>/spec.md" },
+            { phase: "plan", output: null }] }];
+    const saved = await saveDesignerSettings(workspace, handoff, model, {
+        modelRevision: model.revision, revision: 0, values, outputs: model.outputs, badges,
+    });
+    assert.equal(saved.settingsRevision, 1);
+    const reopened = await loadDesignerSettings(workspace, handoff, pages);
+    assert.deepEqual(reopened.badges, badges);
+    const prepared = await freezeGeneration({ model: reopened, values: reopened.values,
+        badges: reopened.badges, outputs: reopened.outputs, handoff, project, workspace });
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.badges.adapters.map(({ name, kind }) => [name, kind]),
+        [["badge-rule-content-adapter", "generated.badge-rule-adapter"]]);
+    assert.equal(Object.hasOwn(request.badges, "handlers"), false);
+    const { materialize } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(project, prepared.target, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.badges.instances, badges);
+    assert.equal(config.badges.types[0].id, "checklist-progress");
+    assert.equal(config.badges.rules[0].id, "checklist-progress");
+    assert.equal(config.badges.rules[0].module, "badge-rule-content-adapter");
+    assert.deepEqual(Object.keys(config.badges).sort(), ["instances", "rules", "types"]);
+    assert.deepEqual(await readFile(join(project, prepared.target, "badges",
+        "badge-rule-content-adapter.mjs")), Buffer.from(request.badges.adapters[0].content, "base64"));
+});
+
+test("Generate refuses saved Constitution badge destinations while permitting its evidence", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.workflow.selectedPhases.unshift("constitution");
+    handoff.workflow.outputEvidence = {
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const pages = await loadResolvedDesignerPages(handoff, project, entries,
+        [...await stockTemplates(project), ...await badgeTemplates(project)], badgeRegistration);
+    const model = await loadDesignerSettings(workspace, handoff, pages);
+    const values = { ...model.values, "canvas.id": "constitution-badge",
+        "canvas.displayName": "Constitution badge" };
+    const global = { id: "constitution-evidence", type: "checklist-progress",
+        inputs: { artifact: { phase: "constitution", output: ".specify/memory/constitution.md" } },
+        text: "{completed}/{total} complete", color: "blue",
+        showIn: ["workflow-list"], phase: null };
+    const options = { model, values, outputs: model.outputs, handoff, project, workspace };
+    await assert.doesNotReject(freezeGeneration({ ...options, badges: [global] }));
+    for (const badge of [
+        { ...global, showIn: ["phase-card"], phase: "constitution" },
+        { ...global, targets: [{ phase: "constitution", output: null }] },
+        { ...global, targets: [{ phase: "constitution", output: ".specify/memory/constitution.md" }] },
+    ]) {
+        await assert.rejects(freezeGeneration({ ...options, badges: [badge] }),
+            /invalid or removed output, phase, text, or placement/);
+    }
+});
 
 async function stockTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
@@ -442,9 +730,9 @@ test("Generate freezes winning dialog and button assets with their registrations
     const { readConfig, renderHtml, createWorkflowRoutes } = await import(
         pathToFileURL(join(generated, "server.mjs")).href);
     const html = renderHtml(readConfig(), "test-token");
-    assert.match(html, /id="setup-surface"[^>]*\shidden>/);
+    assert.match(stockMarkup(config), /id="setup-surface"[^>]*\shidden>/);
     assert.match(html, /id="workflow-surface"/);
-    assert.match(html, /data-workflow-slot="workflow\.actions"/);
+    assert.match(stockMarkup(config), /data-workflow-slot="workflow\.actions"/);
     assert.match(html, /id="generated-dialog-contracts"/);
     const generatedUi = await readFile(join(generated, "ui", "app.js"), "utf8");
     assert.match(generatedUi, /async function confirmGeneratedPhase\(/);
@@ -524,6 +812,100 @@ test("stock image picker announces its format hint and upload error", async (t) 
     assert.equal(input.getAttribute("aria-describedby"), `${hint.id} ${error.id}`);
 });
 
+test("Designer tabs remain navigable when a field adapter is not ready", async () => {
+    const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
+    const start = source.indexOf('tabs.addEventListener("click"');
+    const end = source.indexOf("function applyState(", start);
+    assert.ok(start >= 0 && end > start);
+    const handlers = new Map();
+    const buttons = ["designer-appearance", "designer-essentials"].map((page) => ({
+        dataset: { page }, focus() {},
+    }));
+    let selected = buttons[0].dataset.page;
+    runInNewContext(source.slice(start, end), {
+        tabs: { children: buttons, addEventListener: (type, handler) => handlers.set(type, handler) },
+        document: { activeElement: buttons[0] },
+        currentPage: selected,
+        checkReady: () => { throw new Error("Broken adapter must not block navigation"); },
+        renderPage: (page) => { selected = page; },
+    });
+    handlers.get("click")({ target: { closest: () => buttons[1] } });
+    assert.equal(selected, "designer-essentials");
+    selected = buttons[0].dataset.page;
+    handlers.get("keydown")({ key: "ArrowRight", preventDefault() {} });
+    assert.equal(selected, "designer-essentials");
+});
+
+test("switching tabs preserves an unsubmitted badge editor", async () => {
+    const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
+    const start = source.indexOf("function renderPage(");
+    const end = source.indexOf('tabs.addEventListener("click"', start);
+    assert.ok(start >= 0 && end > start);
+    const root = {
+        childNodes: [],
+        replaceChildren(...children) { this.childNodes = children; },
+        setAttribute() {},
+    };
+    const pageViews = new Map();
+    let badgeMounts = 0;
+    let badgeUpdates = 0;
+    const draftOutputs = { specify: { outputs: ["spec.md"] } };
+    const renderPage = runInNewContext(`${source.slice(start, end)}\nrenderPage`, {
+        model: { revision: "same", phases: [], outputs: {}, pages: [
+            { page: "designer-badges", fields: [], fixedControl: "designer.badges" },
+            { page: "designer-outputs", fields: [], fixedControl: "designer.outputs" },
+        ] },
+        root, pageViews, currentPage: null,
+        tabs: { children: [{ dataset: { page: "designer-badges" }, setAttribute() {} },
+            { dataset: { page: "designer-outputs" }, setAttribute() {} }] },
+        mountBadges: () => {
+            badgeMounts++;
+            root.replaceChildren({ draft: "", choices: ["spec.md"] });
+            return { updateOutputs(outputs) {
+                badgeUpdates++;
+                root.childNodes[0].choices = [...outputs.specify.outputs];
+            } };
+        },
+        mountOutputs: () => root.replaceChildren({ output: true }),
+        draftBadges: [], draftOutputs, updateSave() {},
+    });
+    renderPage("designer-badges");
+    const editor = root.childNodes[0];
+    editor.draft = "still editing";
+    renderPage("designer-outputs");
+    draftOutputs.specify.outputs.push("new.md");
+    renderPage("designer-badges");
+    assert.equal(root.childNodes[0], editor);
+    assert.equal(root.childNodes[0].draft, "still editing");
+    assert.deepEqual(root.childNodes[0].choices, ["spec.md", "new.md"]);
+    assert.equal(badgeMounts, 1);
+    assert.equal(badgeUpdates, 1);
+    assert.ok(pageViews.has("designer-outputs"));
+});
+
+test("Designer readiness checks controls on previously visited tabs", async () => {
+    const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
+    const start = source.indexOf("function checkReady()");
+    const end = source.indexOf("function updateSave()", start);
+    assert.ok(start >= 0 && end > start);
+    const failures = [];
+    const handle = { isReady: () => false };
+    const model = { pages: [
+        { page: "designer-essentials", fields: [{ id: "canvas.logo", label: "Logo" }] },
+        { page: "designer-appearance", fields: [] },
+    ] };
+    const ready = runInNewContext(`${source.slice(start, end)}\ncheckReady`, {
+        model, currentPage: "designer-appearance",
+        pageViews: new Map([["designer-essentials", []]]),
+        mounted: new Map([["canvas.logo", handle]]),
+        showFieldError: (message) => failures.push(message),
+    });
+    assert.equal(ready(), false);
+    assert.match(failures[0], /Logo \(canvas.logo\) is still processing/);
+    handle.isReady = () => true;
+    assert.equal(ready(), true);
+});
+
 function stockImageRegistration(_root, name) {
     const stock = name.startsWith("shared-controls-image")
         || ["designer-control-adapter-image", "generated-control-adapter-image"].includes(name);
@@ -557,7 +939,7 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     const workflowFile = scalar.find((item) => item.name === "generated-workflow").path;
     const originalWorkflow = await readFile(workflowFile, "utf8");
     const reordered = JSON.parse(originalWorkflow);
-    reordered.slots.push({ id: "workflow.summary" });
+    reordered.slots.push({ id: "workflow.extra" });
     await writeFile(workflowFile, JSON.stringify(reordered));
     const changedLayout = await loadResolvedDesignerPages(handoff, project, entries, fields);
     assert.deepEqual(changedLayout.workflowPage.slots, reordered.slots);
@@ -571,8 +953,8 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     const changedControl = JSON.parse(originalControl);
     changedControl.adapter = "missing-adapter";
     await writeFile(controlFile, JSON.stringify(changedControl));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
-        /missing or unreferenced phase control adapter/);
+    const incompatible = await loadResolvedDesignerPages(handoff, project, entries, fields);
+    assert.match(incompatible.compositionErrors.join(" "), /missing or unreferenced phase control adapter missing-adapter/);
     changedControl.adapter = "generated-phase-adapter";
     changedControl.id = "wrong-id";
     await writeFile(controlFile, JSON.stringify(changedControl));
@@ -625,14 +1007,18 @@ export function mount() {}`);
         /invalid phase control definition/);
     await writeFile(controlFile, originalControl);
     await writeFile(adapterFile, originalAdapter);
-    await assert.rejects(loadPages(handoff, project, entries,
+    const missingControls = await loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
+            || item.kind === "generated.workflow-page-adapter"
             || item.kind === "generated.phase-control-definition"
-            || item.kind === "generated.phase-control-adapter"), verify),
-        /missing shared control definition for canvas.id/);
-    await assert.rejects(loadPages(handoff, project, entries,
+            || item.kind === "generated.phase-control-adapter"), verify);
+    assert.match(missingControls.compositionErrors.join(" "), /missing shared control definition for canvas.id/);
+    assert.deepEqual(missingControls.pages.map((page) => page.page), entries.map((entry) => entry.name));
+    const missingGeneratedAdapter = await loadPages(handoff, project, entries,
         [...fields, ...scalar.filter((item) => item.name !== "generated-control-adapter-text")],
-        verify), /missing generated adapter generated-control-adapter-text/);
+        verify);
+    assert.match(missingGeneratedAdapter.compositionErrors.join(" "),
+        /missing generated adapter generated-control-adapter-text/);
     const original = await readFile(fields[0].path, "utf8");
     const changed = JSON.parse(original);
     changed.requires = ["shared-controls-text"];
@@ -641,8 +1027,10 @@ export function mount() {}`);
         .contributions[0].requires[0], "shared-controls-text");
     changed.requires = ["shared-controls-checkbox"];
     await writeFile(fields[0].path, JSON.stringify(changed));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
-        /missing or incompatible shared control definition/);
+    const incompatibleControl = await loadResolvedDesignerPages(handoff, project, entries, fields);
+    assert.match(incompatibleControl.compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.text/);
+    assert.ok(!incompatibleControl.contributions.some((item) => item.name === fields[0].name));
     await writeFile(fields[0].path, original);
     await writeFile(fields[0].path, JSON.stringify({ ...JSON.parse(original),
         generatedBinding: { presentation: "text", slot: "workflow.heading" } }));
@@ -666,7 +1054,7 @@ test("preset field placements resolve into Workflow and added-page slots", async
     const fields = await stockTemplates(project);
     const workflow = scalarFixtures.get(project).find((item) => item.name === "generated-workflow").path;
     const page = JSON.parse(await readFile(workflow, "utf8"));
-    page.slots.push({ id: "workflow.summary" });
+    page.slots.push({ id: "workflow.extra" });
     await writeFile(workflow, JSON.stringify(page));
     const folder = join(project, ".specify", "presets", "placement-fixture");
     await mkdir(folder, { recursive: true });
@@ -690,7 +1078,7 @@ test("preset field placements resolve into Workflow and added-page slots", async
             "mjs"),
         await extra("workflow-description", "generated.field-placement", {
             schemaVersion: 1, id: "workflow-description", page: "workflow",
-            slot: "workflow.summary", field: "canvas.description", order: 10,
+            slot: "workflow.extra", field: "canvas.description", order: 10,
         }),
         await extra("billing-description", "generated.field-placement", {
             schemaVersion: 1, id: "billing-description", page: "billing-view",
@@ -711,7 +1099,7 @@ test("preset field placements resolve into Workflow and added-page slots", async
         ...await Promise.all(["risk.first", "risk.second"].map((id, order) => extra(
             `placement-${id.replace(".", "-")}`, "generated.field-placement", {
                 schemaVersion: 1, id: `placement-${id.replace(".", "-")}`,
-                page: "workflow", slot: "workflow.summary", field: id,
+                page: "workflow", slot: "workflow.extra", field: id,
                 order: order + 20, control: "risk-matrix",
             }))),
     ];
@@ -724,6 +1112,29 @@ test("preset field placements resolve into Workflow and added-page slots", async
     assert.deepEqual(model.fieldPlacements.map(({ page: id, field }) => [id, field]),
         [["billing-view", "canvas.description"], ["workflow", "canvas.description"],
             ["workflow", "risk.first"], ["workflow", "risk.second"]]);
+    const billingPlacement = templates.find((item) => item.name === "billing-description");
+    const billingDocument = JSON.parse(await readFile(billingPlacement.path, "utf8"));
+    for (const [change, expected] of [
+        [{ page: "missing-page" }, /unknown generated page slot missing-page.workflow.actions/],
+        [{ slot: "missing.slot" }, /unknown generated page slot billing-view.missing.slot/],
+        [{ field: "missing.field" }, /missing generated field missing.field/],
+    ]) {
+        await writeFile(billingPlacement.path, JSON.stringify({ ...billingDocument, ...change }));
+        const partial = await loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+        assert.match(partial.compositionErrors.join(" "), expected);
+        assert.equal(partial.fieldPlacements.length, 3);
+        assert.ok(generationBlockers(partial).length);
+        await assert.rejects(freezeGeneration({ model: partial, values: partial.values,
+            handoff, project, workspace }), /Cannot generate|incomplete|missing|blocked/i);
+    }
+    await writeFile(billingPlacement.path, JSON.stringify(billingDocument));
+    const withoutControl = await loadResolvedDesignerPages(handoff, project, entries,
+        templates.filter((item) => !item.name.startsWith("canvas-control-risk-matrix")), registration);
+    assert.match(withoutControl.compositionErrors.join(" "),
+        /missing or incompatible shared generated control risk-matrix/);
+    assert.deepEqual(withoutControl.fieldPlacements.map(({ field }) => field),
+        ["canvas.description", "canvas.description"]);
+    assert.ok(generationBlockers(withoutControl).length);
     const values = { ...model.values, "canvas.id": "placed-canvas",
         "canvas.displayName": "Placed Canvas", "canvas.description": "One shared value" };
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
@@ -868,21 +1279,27 @@ test("stock image requires one compatible control definition and paired self-con
         .fields.find((field) => field.id === "canvas.logo").control, "stock.image");
     assert.deepEqual(model.constraints["canvas.logo"].mimeTypes,
         ["image/png", "image/jpeg", "image/gif", "image/webp"]);
-    await assert.rejects(load(fields), /missing or incompatible shared control definition/);
+    const missingImageControl = await load(fields);
+    assert.match(missingImageControl.compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.image/);
+    assert.ok(!missingImageControl.values["canvas.logo"]);
     for (const kind of ["designer.control-adapter", "generated.control-adapter"]) {
-        await assert.rejects(load(templates.filter((item) => item.kind !== kind)),
+        const missingAdapter = await load(templates.filter((item) => item.kind !== kind));
+        assert.match(missingAdapter.compositionErrors.join(" "),
             new RegExp(`missing ${kind.split(".")[0]} adapter`));
     }
     const originalField = await readFile(fieldPath, "utf8");
     await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
         requires: ["canvas-stock-image"] }));
-    await assert.rejects(load(), /invalid Canvas Design contribution|missing or incompatible shared control definition/);
+    assert.match((await load()).compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.image/);
     await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
         requires: ["shared-controls-image"] }));
     assert.equal((await load()).contributions[0].requires[0], "shared-controls-image");
     await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
         requires: ["shared-controls-text"] }));
-    await assert.rejects(load(), /missing or incompatible shared control definition/);
+    assert.match((await load()).compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.image/);
     await writeFile(fieldPath, originalField);
     const control = adapters[0];
     const originalControl = await readFile(control.path, "utf8");
@@ -949,6 +1366,7 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
         ["generated-workflow", "generated.workflow-page-definition"],
         ["generated-phase-control", "generated.phase-control-definition"],
         ["generated-phase-adapter", "generated.phase-control-adapter"],
+        ["generated-workflow-page-adapter", "generated.workflow-page-adapter"],
     ]);
     for (const asset of phaseRequest.workflowPage.assets) {
         assert.deepEqual(Object.keys(asset).sort(), ["content", "hash", "kind", "name", "sourceId"]);
@@ -1000,7 +1418,7 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const defaultHtml = renderHtml(defaults);
     assert.match(defaultHtml, /Workflows/);
     assert.match(defaultHtml, /Spec Kit workflow canvas\./);
-    assert.match(defaultHtml, /id="workflow-slug"[^>]+required/);
+    assert.match(stockMarkup(defaults), /id="workflow-slug"[^>]+required/);
     assert.equal(await readFile(join(project, next.target, "ui", "runtime.css"), "utf8"),
         await readFile(join(project, prepared.target, "ui", "runtime.css"), "utf8"));
     const originalPages = await Promise.all(entries.slice(0, 2)
@@ -1013,6 +1431,8 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const legacyPages = await loadResolvedDesignerPages(handoff, project, entries);
     assert.equal(legacyPages.pages[0].fixedControl, "designer.identity");
     assert.equal(legacyPages.pages[1].fixedControl, "designer.outputs");
+    assert.equal(legacyPages.pages.find((page) => page.page === "designer-badges")
+        .fixedControl, "designer.badges");
     for (const [index, contents] of originalPages.entries()) {
         await writeFile(entries[index].path, contents);
     }
@@ -1040,19 +1460,19 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     await assert.rejects(freezeGeneration({ model: incomplete,
         values: { ...incomplete.values, ...minimum },
         handoff, project, workspace }),
-    /Cannot generate while designer-artifacts is invalid/);
+    /Cannot generate: designer-artifacts:/);
     await writeFile(entries[1].path, "{invalid");
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
     assert.ok(invalid.pages[1].error);
     await assert.rejects(freezeGeneration({ model: invalid, values: minimum,
-        handoff, project, workspace }), /Cannot generate while designer-artifacts is invalid/);
+        handoff, project, workspace }), /Cannot generate: designer-artifacts:/);
     const replaced = JSON.parse(await readFile(entries[0].path, "utf8"));
     replaced.fields = [{ id: "canvas.id", label: "ID" }];
     await writeFile(entries[0].path, JSON.stringify(replaced));
     const missingIdentity = await loadResolvedDesignerPages(handoff, project, entries);
     await assert.rejects(freezeGeneration({ model: missingIdentity,
         values: { ...missingIdentity.values, "canvas.id": "other" },
-        handoff, project, workspace }), /Essentials must load with Canvas ID and Title/);
+        handoff, project, workspace }), /Essentials must contain Canvas ID and Title/);
 });
 
 test("Appearance palette colors persist and style both runtime themes without replacing defaults", async (t) => {
@@ -1094,10 +1514,11 @@ test("Appearance palette colors persist and style both runtime themes without re
             sourceId: "extension-canvas-design", layer: "extension", strategy: "replace" }] }));
     assert.deepEqual(model.pages.find((page) => page.page === "designer-appearance")
         .fields.map((field) => field.id),
-        ["canvas.accentLight", "canvas.backgroundLight", "canvas.surfaceLight",
+        ["canvas.logo", "canvas.mainPageLogo",
+            "canvas.accentLight", "canvas.backgroundLight", "canvas.surfaceLight",
             "canvas.secondaryLight", "canvas.textLight",
             "canvas.accentDark", "canvas.backgroundDark", "canvas.surfaceDark",
-            "canvas.secondaryDark", "canvas.textDark", "canvas.logo", "canvas.mainPageLogo"]);
+            "canvas.secondaryDark", "canvas.textDark"]);
     assert.deepEqual(model.pages.find((page) => page.page === "designer-essentials")
         .fields.map((field) => field.id), ["canvas.id", "canvas.displayName"]);
     assert.equal(model.values["canvas.accentLight"], "");
@@ -1209,20 +1630,33 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     assert.equal(model.values["canvas.mainPageLogo"], "");
     assert.deepEqual(model.pages.find((page) => page.page === "designer-appearance")
         .fields.map((field) => field.id), ["canvas.logo", "canvas.mainPageLogo"]);
+    const paletteOrder = JSON.parse(await readFile(join(source, "designer-host",
+        "appearance-settings", "light-accent.json"), "utf8")).order;
+    assert.ok(model.contributions.find((item) => item.field.id === "canvas.logo").order < paletteOrder);
+    assert.ok(model.contributions.find((item) => item.field.id === "canvas.mainPageLogo").order < paletteOrder);
     assert.deepEqual(model.pages.find((page) => page.page === "designer-essentials")
         .fields.map((field) => field.id), ["canvas.id", "canvas.displayName"]);
-    const originalAppearance = await readFile(entries[2].path, "utf8");
+    const shell = await startShell(handoff, model, { project, workspace });
+    t.after(() => shell.close());
+    const adapterUrl = new URL(shell.url);
+    adapterUrl.pathname = "/adapters/designer-control-adapter-image.mjs";
+    const adapterResponse = await fetch(adapterUrl);
+    assert.equal(adapterResponse.status, 200);
+    assert.match(adapterResponse.headers.get("content-type"), /^text\/javascript/);
+    assert.match(await adapterResponse.text(), /export function mount/);
+    const appearancePath = entries.find((entry) => entry.name === "designer-appearance").path;
+    const originalAppearance = await readFile(appearancePath, "utf8");
     const originalLogo = await readFile(path, "utf8");
     const appearance = JSON.parse(originalAppearance);
     appearance.slots.push({ id: "appearance.logo" });
-    await writeFile(entries[2].path, JSON.stringify(appearance));
+    await writeFile(appearancePath, JSON.stringify(appearance));
     const logoContribution = JSON.parse(originalLogo);
     await writeFile(path, JSON.stringify({ ...logoContribution, slot: "appearance.logo" }));
     const moved = await load();
     assert.equal(moved.pages.find((page) => page.page === "designer-appearance")
         .fields.at(-1).id, "canvas.logo");
     await writeFile(path, originalLogo);
-    await writeFile(entries[2].path, originalAppearance);
+    await writeFile(appearancePath, originalAppearance);
     const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64");
     const gif = Buffer.from("R0lGODlhAQABAAD/ACwAAAAAAQABAAACAUwAOw==", "base64");
     const logo = `data:image/png;base64,${png.toString("base64")}`;
@@ -1323,8 +1757,8 @@ test("stock Logo validates, persists, freezes and packages a portable header ima
     assert.deepEqual(portable.readConfig().mainPageAsset, config.mainPageAsset);
     assert.match(portable.renderHtml(config, "secret"), /data-stock-image="header\.brand"/);
     assert.match(portable.renderHtml(config, "secret"), /data-image-file="logo\.png"/);
-    assert.match(portable.renderHtml(config, "secret"), /data-stock-image="workflow\.intro"/);
-    assert.match(portable.renderHtml(config, "secret"), /data-image-file="main-page-logo\.gif"/);
+    assert.match(stockMarkup(config), /data-stock-image="workflow\.intro"/);
+    assert.match(stockMarkup(config), /data-image-file="main-page-logo\.gif"/);
     assert.match(portable.renderHtml({ ...config, brandAsset: undefined }), /class="brand-mark" aria-hidden="true">&#9671;/);
     const routed = createServer(portable.createWorkflowRoutes(config, { token: "secret" }).handle);
     await new Promise((resolve) => routed.listen(0, "127.0.0.1", resolve));
@@ -1850,7 +2284,12 @@ test("shell serves validated pages behind its token", async (t) => {
         good.headers.get("content-security-policy"));
     const state = await stateResponse.json();
     assert.equal(state.pages[0].title, "Essentials");
+    assert.deepEqual(state.badges, []);
     assert.equal(state.handoffId, handoff.handoffId);
+    const badgeControl = await fetch(new URL(
+        `/ui/badges-control.js?token=${url.searchParams.get("token")}`, url));
+    assert.equal(badgeControl.status, 200);
+    assert.match(await badgeControl.text(), /mountBadges/);
     assert.equal((await fetch(new URL(`/events?token=${url.searchParams.get("token")}`, url))).status, 404);
     for (const [address, options] of [
         [url.origin, undefined],
@@ -2172,9 +2611,34 @@ test("empty shell renders without a handoff and keeps the token gate", async (t)
     assert.equal((await fetch(url.origin)).status, 404);
 });
 
+test("sample-only preview renders badges without a handoff and rejects writes", async (t) => {
+    const shell = await startShell(null, previewModel(), { preview: true });
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    assert.match(await (await fetch(shell.url)).text(), /id="preview-banner"/);
+    const state = await (await fetch(new URL(`/api/state?token=${url.searchParams.get("token")}`, url))).json();
+    assert.equal(state.preview, true);
+    assert.equal(state.handoffId, undefined);
+    assert.equal(state.generationAvailable, false);
+    assert.deepEqual(state.pages.map((page) => page.page), ["designer-badges"]);
+    assert.ok(state.badgeTypes.some((type) => type.id === "value-match"));
+    assert.ok(state.pipelineOutputs.clarify.outputs.length);
+    for (const action of ["save", "generate"]) {
+        const response = await fetch(new URL(`/api/${action}?token=${url.searchParams.get("token")}`, url),
+            { method: "POST" });
+        assert.equal(response.status, 403);
+        assert.match((await response.json()).error, /Preview cannot save settings or generate/);
+    }
+    assert.equal((await fetch(url.origin)).status, 404);
+    await assert.rejects(startShell(validHandoff(), previewModel(), { preview: true }),
+        /requires a sample model and no Wizard handoff/);
+});
+
 test("reads the complete effective page set from the child checkout without a snapshot", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
     await assertPageCommand(project);
@@ -2188,8 +2652,32 @@ test("reads the complete effective page set from the child checkout without a sn
     assert.equal(model.pages[0].title, "Custom Essentials");
     assert.equal(model.pages[0].provenance.path, override);
     assert.equal((await loadResolvedDesignerPages(handoff, project, effective)).revision, model.revision);
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries.slice(1)),
-        /all three Canvas Design pages/);
+    const partial = await loadResolvedDesignerPages(handoff, project, entries.slice(1));
+    assert.deepEqual(partial.pages.map((page) => page.page),
+        entries.slice(1).map((entry) => entry.name));
+    assert.match(generationBlockers(partial)[0], /Essentials must contain Canvas ID and Title/);
+    const withoutBadges = await loadResolvedDesignerPages(handoff, project,
+        entries.filter((entry) => entry.name !== "designer-badges"));
+    assert.deepEqual(generationBlockers(withoutBadges), []);
+    const ready = await freezeGeneration({ model: withoutBadges, handoff, project, workspace,
+        values: { ...withoutBadges.values, "canvas.id": "without-badges",
+            "canvas.displayName": "Without badges" } });
+    assert.ok(ready.requestId);
+    const empty = await loadPages(handoff, project, [], []);
+    assert.deepEqual(empty.pages, []);
+    assert.match(empty.compositionErrors.join(" "), /Workflow page is not registered/);
+    const workflow = scalarFixtures.get(project).find((item) => item.name === "generated-workflow");
+    const originalWorkflow = await readFile(workflow.path);
+    try {
+        await writeFile(workflow.path, "{invalid json");
+        const malformed = await loadResolvedDesignerPages(handoff, project, entries);
+        assert.deepEqual(malformed.pages.map((page) => page.page), entries.map((entry) => entry.name));
+        assert.match(malformed.compositionErrors.join(" "),
+            /generated-workflow \(from extension:extension-canvas-design\): Invalid Designer JSON/);
+        assert.match(generationBlockers(malformed).join(" "), /generated-workflow/);
+    } finally {
+        await writeFile(workflow.path, originalWorkflow);
+    }
     await assert.rejects(loadResolvedDesignerPages(handoff, project, [...entries, entries[0]]),
         /duplicate Designer page name/);
     const missing = await loadResolvedDesignerPages(handoff, project,
@@ -2214,7 +2702,7 @@ test("reads the complete effective page set from the child checkout without a sn
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.tab-definition", strategy: "replace" }]);
     assert.equal(withExtra.pages[0].title, "Extra");
-    assert.equal(withExtra.pages.length, 4);
+    assert.equal(withExtra.pages.length, 5);
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.default-tab-definition", strategy: "replace" }]),
@@ -2226,13 +2714,13 @@ test("reads the complete effective page set from the child checkout without a sn
         title: "Extra", order: 5, enabled: false, fields: [] }));
     assert.equal((await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
-            kind: "designer.tab-definition", strategy: "replace" }])).pages.length, 3);
+            kind: "designer.tab-definition", strategy: "replace" }])).pages.length, 4);
     await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
         enabled: false, order: "invalid", fields: "invalid" }));
     const disabled = await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.tab-definition", strategy: "replace" }]);
-    assert.equal(disabled.pages.length, 3);
+    assert.equal(disabled.pages.length, 4);
     assert.equal(disabled.pages.some((page) => page.error), false);
     const disabledValues = { ...disabled.values, "canvas.id": "disabled-page",
         "canvas.displayName": "Disabled page" };
@@ -2318,12 +2806,12 @@ test("registered contributions validate slots, sources, references and determini
             await t.test(slot, async () => {
                 await writeFile(contributionPath, JSON.stringify({ ...contribution, slot }));
                 const unregistered = await loadResolvedDesignerPages(handoff, project, entries);
-                assert.equal(unregistered.pages.length, 3);
+                assert.equal(unregistered.pages.length, 4);
                 assert.equal(unregistered.values["billing.costCode"], undefined);
                 const model = await loadResolvedDesignerPages(handoff, project,
                     [...entries, pageEntry], templates);
                 assert.deepEqual(model.pages.map((page) => page.title),
-                    ["Essentials", "Outputs", "Appearance", "Billing"]);
+                    ["Essentials", "Outputs", "Badges", "Appearance", "Billing"]);
                 assert.equal(model.pages.find((page) => page.fields.some((field) =>
                     field.id === "billing.costCode")).page,
                 slot === "essentials.options" ? "designer-essentials" : "canvas-settings-billing");
@@ -2362,9 +2850,11 @@ test("registered contributions validate slots, sources, references and determini
             });
             if (slot === "billing.options") {
                 const model = await loadResolvedDesignerPages(handoff, project, [...entries, pageEntry], templates);
-                await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
-                    /unknown Designer slot billing.options/);
-                assert.equal(model.pages.length, 4);
+                const missingSlot = await loadResolvedDesignerPages(handoff, project, entries, templates);
+                assert.match(missingSlot.compositionErrors.join(" "),
+                    /canvas-contributions-billing \(from copilot-billing-canvas-test\):.*unknown Designer slot billing.options/);
+                assert.ok(!missingSlot.values["billing.costCode"]);
+                assert.equal(model.pages.length, 5);
                 await rm(join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
                     "settings.json"));
             }
@@ -2416,7 +2906,7 @@ test("registered contributions validate slots, sources, references and determini
         ["billing.alpha", "billing.beta"]);
     assert.equal(model.constraints["billing.alpha"].maxLength, 1000);
     assert.equal(model.values["billing.alpha"], "");
-    assert.equal(model.pages.length, 3);
+    assert.equal(model.pages.length, 4);
     const defaultModel = await loadResolvedDesignerPages(handoff, project, entries);
     assert.deepEqual(defaultModel.contributions, []);
     assert.equal(defaultModel.pages[0].fields.length, 2);
@@ -2437,11 +2927,19 @@ test("registered contributions validate slots, sources, references and determini
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
         /canvas-contribution-beta: duplicate field canvas.id also defined by designer-essentials/);
     await writeFile(beta.path, JSON.stringify({ ...beta.document, slot: "unknown.slot" }));
+    const missingSlot = await loadResolvedDesignerPages(handoff, project, entries, paths);
+    assert.match(missingSlot.compositionErrors.join(" "),
+        /canvas-contribution-beta \(from zzz\):.*unknown Designer slot unknown.slot/);
+    assert.deepEqual(missingSlot.contributions.map((item) => item.name), ["canvas-contribution-alpha"]);
+    await writeFile(beta.path, JSON.stringify({ ...beta.document, slot: "unknown.slot",
+        field: { ...beta.document.field, label: "" } }));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
-        /canvas-contribution-beta: unknown Designer slot unknown.slot/);
+        /incompatible field or control definition/);
     await writeFile(beta.path, JSON.stringify({ ...beta.document, requires: ["missing-template"] }));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
-        /missing or incompatible shared control definition/);
+    const missingControl = await loadResolvedDesignerPages(handoff, project, entries, paths);
+    assert.match(missingControl.compositionErrors.join(" "),
+        /canvas-contribution-beta \(from zzz\): missing or incompatible shared control definition stock.text/);
+    assert.deepEqual(missingControl.contributions.map((item) => item.name), ["canvas-contribution-alpha"]);
     await writeFile(beta.path, JSON.stringify(beta.document));
     const replacement = join(directory, "project-replacement.json");
     await writeFile(replacement, JSON.stringify({ ...beta.document,
@@ -2478,8 +2976,9 @@ test("registered contributions validate slots, sources, references and determini
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
         [...paths, moduleEntry], registration), /invalid generated renderer/);
     await writeFile(modulePath, Buffer.from([0xff]));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
-        [...paths, moduleEntry], registration), /Invalid Designer UTF-8/);
+    const invalidModule = await loadResolvedDesignerPages(handoff, project, entries,
+        [...paths, moduleEntry], registration);
+    assert.match(invalidModule.compositionErrors.join(" "), /canvas-control-new \(from aaa\): Invalid Designer UTF-8/);
     await writeFile(modulePath, "export function renderPage({ root }) { root.textContent = 'ok'; }\n");
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
         [...paths, { ...moduleEntry, path: join(directory, "missing.mjs") }],
@@ -2550,7 +3049,7 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
     assert.equal(broken.pages[1].title, "Outputs");
     const allMissing = await loadResolvedDesignerPages(handoff, project, entries.map((entry, i) =>
         ({ ...entry, path: join(project, ".specify", `missing-${i}.json`) })));
-    assert.equal(allMissing.pages.length, 3);
+    assert.equal(allMissing.pages.length, 4);
     assert.ok(allMissing.pages.every((page) => page.error && !page.fields));
     assert.deepEqual(Object.keys(allMissing.values), []);
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
@@ -2648,8 +3147,11 @@ test("generated-only page validates typed assets, freezes winners and packages w
                 active: true, ...source, strategy: "replace",
             }] })), /replace-only Specify template/);
     }
+    const missingRenderer = await load(pages.slice(0, 1));
+    assert.match(missingRenderer.compositionErrors.join(" "),
+        /canvas-generated-overview \(from copilot-generated-page-test\): missing generated renderer/);
+    assert.ok(generationBlockers(missingRenderer).length);
     for (const candidate of [
-        [pages.slice(0, 1), /missing generated renderer/],
         [pages.slice(1), /renderer must belong to exactly one page/],
         [[{ ...pages[0], kind: "designer.setting-definition" }, pages[1]], /Canvas Design contribution/],
         [[{ ...pages[0], path: rendererPath }, pages[1]], /must be a \.json/],
@@ -2669,7 +3171,7 @@ test("generated-only page validates typed assets, freezes winners and packages w
     ]) await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, pages,
         () => invalid), /replace-only Specify template/);
     await writeFile(definitionPath, JSON.stringify({ ...definition, renderer: "missing-renderer" }));
-    await assert.rejects(load(pages), /missing generated renderer/);
+    await assert.rejects(load(pages), /generated renderer must belong to exactly one page/);
     await writeFile(definitionPath, JSON.stringify({ ...definition, extra: true }));
     await assert.rejects(load(pages), /invalid generated page definition/);
     await writeFile(definitionPath, JSON.stringify({ ...definition, id: "workflow" }));
@@ -2722,7 +3224,7 @@ test("generated-only page validates typed assets, freezes winners and packages w
     const model = await load([...pages, { name: "canvas-contributions-billing",
         path: billingPath, sourceId: "copilot-billing-canvas-test",
         kind: "designer.setting-definition", strategy: "replace" }]);
-    assert.equal(model.pages.length, 3);
+    assert.equal(model.pages.length, 4);
     assert.ok(model.pages[0].fields.some((field) => field.id === "billing.costCode"));
     const values = { ...model.values, "canvas.id": "generated-only",
         "canvas.displayName": "Generated Only", "billing.costCode": "CC-481" };
@@ -3404,9 +3906,13 @@ test("paired control validates both adapters, typed values and portable generate
         { modelRevision: model.revision, revision: 1, values });
     const reopened = await loadDesignerSettings(workspace, handoff, await load());
     assert.deepEqual(saved.values["risk.rating"], reopened.values["risk.rating"]);
+    for (const kind of ["designer.control-adapter", "generated.control-adapter"]) {
+        const missingAdapter = await load(templates.filter((item) => item.kind !== kind));
+        assert.match(missingAdapter.compositionErrors.join(" "),
+            new RegExp(`missing ${kind.split(".")[0]} adapter`));
+        assert.ok(generationBlockers(missingAdapter).length);
+    }
     for (const [assets, message] of [
-        [templates.filter((item) => item.kind !== "designer.control-adapter"), /missing designer adapter/],
-        [templates.filter((item) => item.kind !== "generated.control-adapter"), /missing generated adapter/],
         [templates.map((item) => item.kind === "shared.control-definition"
             ? { ...item, kind: "designer.setting-definition" } : item), /Canvas Design contribution/],
         [templates.map((item) => item.kind === "generated.control-adapter"
@@ -3425,7 +3931,7 @@ test("paired control validates both adapters, typed values and portable generate
         /replace-only Specify template/);
     const definition = templates[0];
     for (const requires of [
-        null, [], [templates[2].name],
+        null, [],
         [templates[2].name, definition.name], [definition.name, definition.name],
     ]) {
         const invalid = { ...contributionDocument };
@@ -3433,6 +3939,11 @@ test("paired control validates both adapters, typed values and portable generate
         await writeFile(templates[1].path, JSON.stringify(invalid));
         await assert.rejects(load(), /requires must name exactly one control definition template|missing or incompatible shared control definition/);
     }
+    await writeFile(templates[1].path, JSON.stringify({
+        ...contributionDocument, requires: [templates[2].name],
+    }));
+    assert.match((await load()).compositionErrors.join(" "),
+        /missing or incompatible shared control definition risk-matrix/);
     await writeFile(templates[1].path, contributionSource);
     const original = await readFile(definition.path, "utf8");
     await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
@@ -3614,7 +4125,7 @@ test("paired control validates both adapters, typed values and portable generate
         assert.throws(() => readConfig(), /Invalid generated canvas configuration/);
     }
     await writeFile(configPath, JSON.stringify(config));
-    assert.match(renderHtml(config), /data-control-id="risk.rating"/);
+    assert.match(stockMarkup(config), /data-control-id="risk.rating"/);
     assert.equal((await import(pathToFileURL(join(portable, "controls",
         `${generated.name}.mjs`)).href)).mount.name, "mount");
     assert.equal(await readFile(join(portable, "controls", `${generated.name}.mjs`), "utf8"), module);
@@ -3628,7 +4139,7 @@ test("paired control validates both adapters, typed values and portable generate
     const origin = `http://127.0.0.1:${server.address().port}`;
     const html = await fetch(`${origin}/?token=portable-token`);
     assert.equal(html.status, 200);
-    assert.match(await html.text(), /data-control-id="risk.rating"/);
+    assert.match(await html.text(), /data-page-module="\/pages\/generated-workflow-page-adapter.mjs"/);
     const packaged = await fetch(`${origin}/controls/${generated.name}.mjs?token=portable-token`);
     assert.equal(packaged.status, 200);
     assert.equal(await packaged.text(), module);
@@ -3670,7 +4181,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     assert.equal(model.pages[1].title, "Outputs");
 });
 
-test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {
+test("canvas opens with a partial inventory and rebuilds on reopening", async (t) => {
     if (spawnSync("specify", ["--version"], { encoding: "utf8" }).error?.code === "ENOENT") {
         t.skip("Specify CLI is required for resolved-template integration");
         return;
@@ -3681,8 +4192,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
-        "settings.mjs", "generation.mjs", "image.mjs"]) {
+    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
+        "settings.mjs", "generation.mjs", "image.mjs", "badges.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
     await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
@@ -3703,7 +4214,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             join(shared, file));
     }
     await mkdir(join(extension, "ui"));
-    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js", "styles.css"]) {
+    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js",
+        "badges-control.js", "badge-duplicates.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
     const { project, entries } = await projectFixture(t, workspace);
@@ -3733,15 +4245,19 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.deepEqual(tools.map((tool) => tool.name), ["speckit_designer_reload_skills"]);
     assert.deepEqual(canvas.actions ?? [], []);
     assert.deepEqual(canvas.inputSchema.required, undefined);
+    assert.equal(canvas.inputSchema.properties.preview.type, "boolean");
     assert.deepEqual(canvas.inputSchema.properties.handoffId.type, "string");
-    assert.equal(canvas.inputSchema.properties.pages.minItems, 3);
+    assert.equal(canvas.inputSchema.properties.pages.minItems, undefined);
     assert.equal(canvas.inputSchema.properties.pages.maxItems, 100);
     assert.equal(canvas.inputSchema.properties.pages.items.properties.kind.const,
         "designer.tab-definition");
     assert.equal(canvas.inputSchema.properties.templates.maxItems, 100);
     assert.deepEqual(canvas.inputSchema.properties.templates.items.properties.kind.enum,
         ["designer.setting-definition", "generated.workflow-page-definition",
+            "generated.workflow-page-adapter",
             "generated.phase-control-definition", "generated.phase-control-adapter",
+            "designer.badges-settings-definition", "generated.badge-rule-definition",
+            "generated.badge-rule-adapter",
             "generated.field-placement",
             "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",
@@ -3755,6 +4271,14 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     try {
         await assert.rejects(readFile(join(extension, "node_modules", "es-module-lexer", "package.json")),
             { code: "ENOENT" });
+        const sample = await canvas.open({ instanceId: "preview", input: { preview: true } });
+        const sampleStateUrl = new URL(sample.url);
+        sampleStateUrl.pathname = "/api/state";
+        assert.equal((await (await fetch(sampleStateUrl)).json()).preview, true);
+        await canvas.onClose({ instanceId: "preview" });
+        await assert.rejects(canvas.open({ instanceId: "preview", input: {
+            preview: true, handoffId: ID, pages: entries, templates: [],
+        } }), /preview cannot include a Wizard handoff/);
         await assert.rejects(canvas.open({ instanceId: "same", input: {} }),
             /Designer requires es-module-lexer.*Wizard.*environment setup/);
         await cp(join(source, "node_modules", "es-module-lexer"),
@@ -3769,9 +4293,14 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             handoffId: ID, pages: entries, templates: [],
         } }), (error) => error.code === "designer_handoff_invalid");
         await saveHandoff(workspace);
-        await assert.rejects(canvas.open({ instanceId: "same", input: {
+        const partial = await canvas.open({ instanceId: "partial", input: {
             handoffId: ID, pages: entries.slice(1), templates: [],
-        } }), /all three Canvas Design pages/);
+        } });
+        const partialState = new URL(partial.url);
+        partialState.pathname = "/api/state";
+        assert.match((await (await fetch(partialState)).json()).generationBlockers.join(" "),
+            /Essentials must contain Canvas ID and Title/);
+        await canvas.onClose({ instanceId: "partial" });
         await assert.rejects(canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [...entries, entries[0]], templates: [],
         } }), /duplicate Designer page name/);
@@ -3802,7 +4331,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         const stateUrl = new URL(filled.url);
         stateUrl.pathname = "/api/state";
         const initial = await (await fetch(stateUrl)).json();
-        assert.equal(initial.pages.length, 3);
+        assert.equal(initial.pages.length, 4);
         assert.equal((await fetch(new URL("/api/reload", filled.url), { method: "POST" })).status, 404);
         const templatePath = join(project, ".specify", "billing.json");
         await writeFile(templatePath, JSON.stringify({
@@ -3875,7 +4404,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         const brokenStateUrl = new URL(broken.url);
         brokenStateUrl.pathname = "/api/state";
         const brokenState = await (await fetch(brokenStateUrl)).json();
-        assert.equal(brokenState.pages.length, 3);
+        assert.equal(brokenState.pages.length, 4);
         assert.match(brokenState.pages[1].error.reason, /Invalid Designer JSON/);
         assert.notEqual(brokenState.revision, updated.revision);
         const saveUrl = new URL(broken.url);

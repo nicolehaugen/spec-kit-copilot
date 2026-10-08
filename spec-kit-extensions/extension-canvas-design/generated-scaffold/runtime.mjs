@@ -10,8 +10,31 @@ import { UserError, confined, readBounded, readBoundedBytes, directories, atomic
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 import { createSetup } from "./setup.mjs";
+import { evaluateBadges, verifyBadgeModules } from "./badge-runtime.mjs";
+
+function staleRevision(message) {
+    const error = new UserError(message, 409);
+    error.code = "STALE_REVISION";
+    return error;
+}
+
+export async function existingOutputFolder(root, path) {
+    let candidate = path === "." ? "." : safePath(path);
+    while (candidate !== ".") {
+        try {
+            const folder = await confined(root, candidate);
+            if (!(await lstat(folder)).isDirectory()) throw new UserError("The output path is not a folder.");
+            return folder;
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            candidate = posix.dirname(candidate);
+        }
+    }
+    return realpath(root);
+}
 
 const PROVIDER_REFRESH_LIMIT_MS = 3000;
+const PROVIDER_EVALUATION_LIMIT_MS = 300;
 const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
 
 if (!isMainThread && workerData?.canvasValueProvider) {
@@ -28,7 +51,7 @@ if (!isMainThread && workerData?.canvasValueProvider) {
             + "const result = provide({ workflow });\n"
             + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
             + "JSON.stringify(result);",
-            context, { timeout: 300 });
+            context, { timeout: PROVIDER_EVALUATION_LIMIT_MS });
         if (typeof serialized !== "string" || serialized.length > 8192) throw new Error("Invalid provider result");
         parentPort.postMessage({ value: JSON.parse(serialized) });
     } catch (error) {
@@ -45,7 +68,7 @@ async function evaluateProvider(module, hash, workflow, deadline) {
     }
     const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const remaining = Math.ceil(deadline - performance.now());
-    if (remaining <= 0) throw new UserError(PROVIDER_REFRESH_ERROR);
+    if (remaining < PROVIDER_EVALUATION_LIMIT_MS) throw new UserError(PROVIDER_REFRESH_ERROR);
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL(import.meta.url), {
             workerData: { canvasValueProvider: { source, workflow } },
@@ -53,20 +76,29 @@ async function evaluateProvider(module, hash, workflow, deadline) {
             resourceLimits: { maxOldGenerationSizeMb: 48, maxYoungGenerationSizeMb: 16 },
         });
         let finished = false;
-        const timer = setTimeout(() => finish(remaining < 2000
-            ? new UserError(PROVIDER_REFRESH_ERROR) : new Error("Provider exceeded its execution limit")),
-        Math.min(2000, remaining));
-        function finish(error, value) {
+        // The VM bounds execution; do not terminate it at the shared refresh deadline.
+        const timer = setTimeout(() => finish(performance.now() >= deadline
+            ? new UserError(PROVIDER_REFRESH_ERROR) : new Error("Provider exceeded its execution limit")), 2000);
+        async function finish(error, value, stopWorker = true) {
             if (finished) return;
             finished = true;
             clearTimeout(timer);
-            void worker.terminate();
+            if (stopWorker) {
+                try { await worker.terminate(); }
+                catch (cause) {
+                    reject(new Error("Value provider worker could not stop.", { cause }));
+                    return;
+                }
+            }
             if (error) reject(error);
+            else if (performance.now() >= deadline) reject(new UserError(PROVIDER_REFRESH_ERROR));
             else resolve(value);
         }
-        worker.once("message", (result) => finish(result.error ? new Error(result.error) : null, result.value));
+        worker.once("message", (result) => finish(result.error ? new Error(result.error) : null,
+            result.value, false));
         worker.once("error", (error) => finish(error));
-        worker.once("exit", (code) => finish(new Error(`Provider exited before returning a value (${code}).`)));
+        worker.once("exit", (code) => finish(new Error(`Provider exited before returning a value (${code}).`),
+            undefined, false));
     });
 }
 
@@ -75,6 +107,7 @@ const newItem = (id) => id === "__new__" || pendingId(id);
 const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null, slug: "",
     name: "", names: {}, drafts: {}, runs: [], values: {}, pendingWorkflows: [], workflowSerial: 0 });
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
+    if (config.badges?.instances?.length) await verifyBadgeModules(config.badges);
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
     const setup = createSetup({ config, cwd, session, phases, notify,
@@ -204,7 +237,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (!output) return false;
         try {
             if (!(await lstat(await confined(cwd, output))).isFile()) {
-                throw new UserError("The project constitution is not a regular file.");
+                throw new UserError("The constitution is not a regular file.");
             }
             return true;
         } catch (error) {
@@ -214,7 +247,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     async function requireConstitution() {
         if (!(await hasConstitution())) {
-            throw new UserError("Create a project constitution before starting a workflow.");
+            throw new UserError("Create a constitution before starting a workflow.");
         }
     }
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
@@ -257,9 +290,12 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
         }
     }
-    async function outputPath(step, item, view = state, entries) {
+    async function outputPath(step, item, view = state, entries, directory = false) {
         const run = runFor(step, item, view);
-        if (!step.configuredArtifacts && run?.artifact) { authorizeReport(step, run.artifact, run.item); return run.artifact; }
+        if (!step.configuredArtifacts && run?.artifact) {
+            authorizeReport(step, run.artifact, run.item);
+            return directory ? posix.dirname(run.artifact) : run.artifact;
+        }
         if (!step.output) return null;
         let path = step.output;
         if (path.includes("<slug>")) {
@@ -273,6 +309,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("This phase output belongs to a different workflow.");
             }
         }
+        if (directory) return posix.dirname(safePath(path, true));
         if (path.endsWith("<name>.md")) {
             const parent = posix.dirname(path);
             try {
@@ -385,6 +422,18 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             automation.status = "Blocked";
             automation.message = "Autopilot outcome is unconfirmed. Check chat before resuming.";
         }
+        const badges = config.badges?.instances?.length ? await evaluateBadges(config.badges, {
+            cwd, workflows: entries.map(({ id }) => id), phases,
+            outputPath: async ({ phase, output }, workflow, options = {}) => {
+                const step = phaseFor(phase);
+                return outputPath(output === undefined ? step : {
+                    ...step, output, configuredArtifacts: true,
+                }, step.project ? "project" : workflow, view, entries, options.directory === true);
+            },
+            runFor: (step, workflow) => runFor(step, workflow, view),
+            log: (message) => { void diagnostic(message); },
+        }) : undefined;
+        if (badges) badges.selected = badges.items[item] ?? [];
         const project = phases.find((phase) => phase.project);
         const pending = (view.pendingWorkflows ?? []).map(({ id, name, slug }) => {
             const run = view.runs.findLast((entry) => entry.item === id);
@@ -404,6 +453,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             slug: pendingFor(item, view)?.slug ?? view.slug,
             phases, items: [...entries, ...legacyDraft, ...pending],
             statuses, valueFields: visibleValues, pageValues, valueErrors,
+            ...(badges ? { badges } : {}),
             setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
                 : { stage: "legacy", ready: true, pending: [], planId: null, error: null } };
     }
@@ -416,7 +466,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (!field) throw new UserError("This value is not editable.");
         const value = validateValue(field.schema, input.value, field.id);
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before saving.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before saving.");
             (next.values ??= {})[field.id] = value;
         }, true);
         return { revision: state.revision };
@@ -445,7 +495,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             || (pendingId(input.draft.item) && !pendingFor(input.draft.item)))) throw new UserError("Invalid phase draft.");
         if (input.draft) phaseFor(input.draft.phase);
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before saving.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before saving.");
             for (const key of ["selected", "phase"]) if (input[key] !== undefined) next[key] = input[key];
             for (const key of ["slug", "name"]) {
                 if (input[key] === undefined) continue;
@@ -463,7 +513,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const existing = await items();
         let id;
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before creating a workflow.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before creating a workflow.");
             const drafts = next.pendingWorkflows ??= [];
             if (drafts.length >= 100) throw new UserError("Too many unstarted workflows. Remove one before adding another.");
             let number = next.workflowSerial ?? 0;
@@ -489,7 +539,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
         const existing = await items();
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before removing this workflow.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before removing this workflow.");
             const index = (next.pendingWorkflows ?? []).findIndex((entry) => entry.id === input.itemId);
             if (index < 0) throw new UserError("This unstarted workflow no longer exists.");
             if (next.runs.some((run) => run.item === input.itemId && run.status !== "Failed")) {
@@ -742,6 +792,7 @@ Steps:\n${instructions}` });
                     slug: null, name: pendingFor(current.item, next)?.name ?? next.name ?? "",
                     before: before.map((entry) => entry.id),
                     sessionId: session.sessionId, messageId: current.messageId,
+                    startedAt: new Date().toISOString(),
                     status: "Running", artifact: null, artifacts: [], error: null });
             });
             liveRuns.add(runId);
@@ -780,6 +831,7 @@ Steps:\n${instructions}` });
             const record = next.runs.find((entry) => entry.runId === run.runId);
             if (record?.status !== "Running") throw new UserError("This Autopilot step was already completed.");
             record.status = "Completed";
+            record.completedAt = new Date().toISOString();
             current.item = record.item;
             current.current++;
             if (current.current === workflowSteps.length) current.status = "Finishing";
@@ -830,6 +882,7 @@ Steps:\n${instructions}` });
             const record = { runId, instanceId, phase: step.id, item, args: input.args,
                 slug: slug || null, name,
                 before: before.map((entry) => entry.id), sessionId: session.sessionId,
+                startedAt: new Date().toISOString(),
                 messageId: null, status: "Request sent", artifact: null, artifacts: [], error: null };
             await update((next) => {
                 next.runs.push(record);
@@ -988,6 +1041,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     continue;
                 }
                 run.status = response.success ? "Completed" : "Failed";
+                if (response.success) run.completedAt ??= new Date().toISOString();
                 run.error = response.error ?? null;
             }
             const automation = next.autopilot;
@@ -1053,7 +1107,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         let removed = false;
         try {
             await writes;
-            if (input.revision !== state.revision) throw new UserError("Canvas state changed. Refresh before deleting.", 409);
+            if (input.revision !== state.revision) throw staleRevision("Canvas state changed. Refresh before deleting.");
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
             if (state.autopilot?.item === item.id
@@ -1082,14 +1136,15 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         } finally { deleting = false; }
     }
     async function reveal(input) {
-        const path = await outputPath(phaseFor(input.phase), input.itemId);
-        if (!path) throw new UserError("No output folder is available. Select a workflow or run the phase first.");
-        let folder;
-        try { folder = posix.dirname(path) === "." ? await realpath(cwd) : await confined(cwd, posix.dirname(path)); }
-        catch (error) {
-            if (error.code === "ENOENT") throw new UserError("The output folder does not exist yet. Run the phase, then try again.", 404);
-            throw error;
+        const step = phaseFor(input.phase);
+        if (input.output !== undefined && !step.outputs.includes(input.output)) {
+            throw new UserError("This output is not declared for the selected phase.", 403);
         }
+        const selected = input.output === undefined ? step
+            : { ...step, output: input.output, configuredArtifacts: true };
+        const path = await outputPath(selected, input.itemId, state, undefined, true);
+        if (!path) throw new UserError("No output folder is available. Select a workflow or run the phase first.");
+        const folder = await existingOutputFolder(cwd, path);
         const [command, args] = process.platform === "win32" ? ["explorer.exe", [folder]]
             : process.platform === "darwin" ? ["open", [folder]] : ["xdg-open", [folder]];
         await new Promise((resolve, reject) => {
@@ -1099,7 +1154,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         });
         return { message: "Opened the output folder." };
     }
-    return { snapshot, refresh, save, saveValue, createPending, removePending, run,
+
+        return { snapshot, refresh, save, saveValue, createPending, removePending, run,
         startAutopilot, stopAutopilot, reportAutopilotStep,
         report, reportSlug, artifact, reveal, deleteWorkflow,
         setupStart: setup.start, setupConfirm: setup.confirm, setupStatus: setup.status,

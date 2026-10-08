@@ -77,7 +77,6 @@ dialog.artifact-viewer:not([open]) { display: none; }
     .artifact-viewer-body { padding-inline: 16px; }
 }
 [role="status"] { overflow-wrap: anywhere; }
-#canvas-message:empty { display: none; }
 .workflow-error { color: var(--danger-color, #cf222e); }
 button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible, summary:focus-visible {
     outline: 2px solid var(--color-focus-outline, #0969da);
@@ -89,9 +88,20 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 }
 #view-artifact[hidden], #view-constitution[hidden] { display: none; }
 #phase-other-outputs { overflow-wrap: anywhere; }
-.phase-output-list { display: grid; gap: .4rem; padding: .75rem 1rem; }
 .phase-output-list strong { font-size: 12px; text-transform: uppercase; color: var(--text-color-muted); }
 .phase-output-list .phase-artifact-link { justify-self: start; font: inherit; }
+.phase-output-row { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; min-width: 0; }
+.canvas-badges { display: inline-flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.canvas-badge { display: inline-block; border-radius: 999px; padding: .12rem .5rem;
+    border: 1px solid var(--border-color-default); font-size: .75rem; font-weight: 600;
+    background: var(--background-color-secondary); color: var(--text-color-default); }
+.canvas-badge[data-color="green"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--success-color)); }
+.canvas-badge[data-color="amber"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--warn-color)); }
+.canvas-badge[data-color="red"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--danger-color)); }
+.canvas-badge[data-color="blue"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--accent-color)); }
+.canvas-badge[data-color="purple"] { color: color-mix(in srgb, var(--text-color-default) 45%, #8250df); }
+.canvas-badge[data-color="pink"] { color: color-mix(in srgb, var(--text-color-default) 45%, #bf3989); }
+.canvas-badge[data-color="orange"] { color: color-mix(in srgb, var(--text-color-default) 45%, #bc4c00); }
 .app-header { flex-wrap: wrap; }
 .header-status { flex-wrap: wrap; justify-content: flex-end; }
 .header-status .conn { white-space: nowrap; }

@@ -8,7 +8,7 @@
  * mount: The Designer creates an empty <div> for each control and passes it
  * as root. Render and style only inside that div. onChange(nextValue) updates
  * the unsaved draft without remounting; return { isReady(): boolean }.
- * The Designer requires isReady() === true before Save, Generate, or tab exit.
+ * The Designer requires isReady() === true before Save or Generate, not tab navigation.
  * validate: Return a pure, synchronous boolean using the canonical field.
  * Generate calls it in Node on the value being frozen; false, a throw, or
  * a non-boolean result blocks generation. Do not depend on browser APIs.

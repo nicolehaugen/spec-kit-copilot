@@ -3,10 +3,11 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
+import { validateBadges } from "./badges.mjs";
 import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
     loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
-import { freezeGeneration, readCurrentInstalledVersions } from "./generation.mjs";
+import { freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -35,6 +36,8 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
     "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
     "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
+    "/ui/badges-control.js": ["badges-control.js", "text/javascript"],
+    "/ui/badge-duplicates.js": ["badge-duplicates.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
 const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.";
@@ -48,12 +51,15 @@ async function hasGenerateSkill(project) {
     }
 }
 
-export async function startShell(handoff = null, model = null, { project, workspace, session } = {}) {
+export async function startShell(handoff = null, model = null, { project, workspace, session, preview = false } = {}) {
+    if (preview && (handoff || !model)) {
+        throw new Error("Designer preview requires a sample model and no Wizard handoff");
+    }
     if (handoff && !model) throw new Error("Designer pages must be validated before opening");
     if (handoff && (typeof workspace !== "string" || !workspace.trim())) {
         throw new Error("Designer session workspace is required to save settings");
     }
-    const assets = handoff
+    const assets = (handoff || preview)
         ? new Map(await Promise.all(Object.entries(ASSETS).map(async ([path, [file, type]]) =>
             [path, { type, content: await readFile(new URL(`./ui/${file}`, import.meta.url), "utf8") }])))
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
@@ -74,11 +80,14 @@ export async function startShell(handoff = null, model = null, { project, worksp
     const skillAvailable = project ? await hasGenerateSkill(project) : false;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? GENERATE_UNAVAILABLE : null;
-    const state = () => ({ ...model, phases: handoff?.workflow.selectedPhases ?? [],
-        pipelineOutputs: handoff ? initialOutputs(handoff) : {},
+    const state = () => ({ ...model, badges: model?.badges ?? [],
+        generationBlockers: model ? generationBlockers(model) : [],
+        phases: handoff?.workflow.selectedPhases ?? model?.phases ?? [],
+        pipelineOutputs: handoff ? initialOutputs(handoff) : model?.pipelineOutputs ?? {},
         handoffId: handoff?.handoffId,
+        preview,
         generationAvailable: !!handoff?.workflow?.installed && !!session?.send
-            && !!project && skillAvailable,
+            && !!project && skillAvailable && generationBlockers(model).length === 0,
         generationError });
     let generating = false;
     let queued = false;
@@ -101,6 +110,12 @@ export async function startShell(handoff = null, model = null, { project, worksp
         res.setHeader("X-Content-Type-Options", "nosniff");
         res.setHeader("Content-Security-Policy",
             "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+        if (preview && req.method === "POST"
+            && ["/api/save", "/api/generate"].includes(url.pathname)) {
+            res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" })
+                .end(JSON.stringify({ error: "Preview cannot save settings or generate a canvas" }));
+            return;
+        }
         if (handoff && workspace && req.method === "POST" && url.pathname === "/api/save") {
             const sendError = (status, message) => {
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -111,6 +126,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 return;
             }
             try {
+                if (!model.pages.length) throw new Error("Invalid Designer save: no pages are registered");
                 const chunks = [];
                 let size = 0;
                 for await (const chunk of req) {
@@ -161,6 +177,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 if (!req.headers["content-type"]?.startsWith("application/json")) {
                     throw new Error("Expected JSON Designer settings");
                 }
+                const blockers = generationBlockers(model);
+                if (blockers.length) throw new Error(`Cannot generate: ${blockers.join("; ")}`);
                 const chunks = [];
                 let size = 0;
                 for await (const chunk of req) {
@@ -169,15 +187,13 @@ export async function startShell(handoff = null, model = null, { project, worksp
                     chunks.push(chunk);
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                const expectedKeys = ["modelRevision", "settingsRevision", "values",
+                    ...(Object.hasOwn(input ?? {}, "outputs") ? ["outputs"] : []),
+                    ...(Object.hasOwn(input ?? {}, "badges") ? ["badges"] : []),
+                    ...(model.templates?.some((item) => item.kind === "generated.computed-value-provider")
+                        ? ["approvedProviders"] : [])];
                 if (!input || typeof input !== "object" || Array.isArray(input)
-                    || Object.keys(input).sort().join() !== (model.templates?.some(
-                        (item) => item.kind === "generated.computed-value-provider")
-                        ? (input.outputs === undefined
-                            ? "approvedProviders,modelRevision,settingsRevision,values"
-                            : "approvedProviders,modelRevision,outputs,settingsRevision,values")
-                        : (input.outputs === undefined
-                            ? "modelRevision,settingsRevision,values"
-                            : "modelRevision,outputs,settingsRevision,values"))
+                    || Object.keys(input).sort().join() !== expectedKeys.sort().join()
                     || input.modelRevision !== model.revision
                     || !Number.isSafeInteger(input.settingsRevision) || input.settingsRevision < 0) {
                     throw new Error("Invalid Designer generation request");
@@ -186,6 +202,9 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 if (input.settingsRevision !== current.settingsRevision) {
                     throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");
                 }
+                validateBadges(Object.hasOwn(input, "badges") ? input.badges : current.badges,
+                    { ...current, phases: handoff.workflow.selectedPhases,
+                        outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs });
                 const providers = (model.templates ?? []).filter((item) => item.kind === "generated.computed-value-provider")
                     .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
                 if (providers.length) {
@@ -215,6 +234,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 }
                 const result = await freezeGeneration({ model: current, values: input.values,
                     outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs,
+                    badges: Object.hasOwn(input, "badges") ? input.badges : current.badges,
                     handoff, project, workspace, runtimeInventory, inventoryWarning });
                 try {
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });
@@ -235,7 +255,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
             return;
         }
         if (req.method !== "GET") { res.writeHead(404).end(); return; }
-        if (handoff && url.pathname === "/api/state") {
+        if ((handoff || preview) && url.pathname === "/api/state") {
             res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
             res.end(JSON.stringify(state()));
         } else if (assets.has(url.pathname)) {
