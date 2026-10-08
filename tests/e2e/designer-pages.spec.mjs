@@ -1,12 +1,13 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { stripVTControlCharacters } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 import { test, expect } from "./playwright.mjs";
+import { addLoopbackSpecifyExtension, serveSpecifyPackages } from "./specify-packages.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
@@ -252,6 +253,7 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
         available.stdout).toBe(true);
     const workspace = await mkdtemp(join(tmpdir(), "minimal-designer-e2e-"));
     const project = join(workspace, "project");
+    let packages;
     const workflow = { selectedPhases: [] };
     const selections = { presets: [], extensions: [], bundles: [] };
     const handoff = { schemaVersion: 1, handoffId: "minimal-test", workflow, selections,
@@ -268,10 +270,24 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
-        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
-        await materializeDevSkills(project);
-        run("preset", "add", "--dev", fileURLToPath(minimalRoot));
-        const inventory = await verifyComposition(project);
+        packages = await serveSpecifyPackages(workspace, {
+            "extension-canvas-design": fileURLToPath(extensionRoot),
+            "copilot-minimal-essentials-test": fileURLToPath(minimalRoot),
+        });
+        await addLoopbackSpecifyExtension(project, "extension-canvas-design",
+            packages.url("extension-canvas-design"));
+        const installed = await promisify(execFile)("specify",
+            ["preset", "add", "--from", packages.url("copilot-minimal-essentials-test")],
+            { cwd: project, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+        expect(installed.stdout).toContain("Copilot Minimal Essentials Test");
+        const inventory = await verifyComposition(project).catch((error) => {
+            const resolution = spawnSync("specify", ["preset", "resolve", "designer-essentials"],
+                { cwd: project, encoding: "utf8", timeout: 10_000,
+                    env: { ...process.env, COLUMNS: "8192", NO_COLOR: "1" } });
+            throw new Error(`${error.message}; designer-essentials resolution: `
+                + `${JSON.stringify(resolution.stdout)} ${JSON.stringify(resolution.stderr)}`,
+            { cause: error });
+        });
         expect(inventory.pages.map((entry) => entry.name)).toEqual(
             ["designer-essentials", "designer-artifacts", "designer-appearance"]);
         expect(inventory.templates.map((entry) => entry.name)).not.toContain("generated-workflow-page-adapter");
@@ -298,6 +314,7 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
         expect((await response.json()).error).toContain("generated-workflow-page-adapter");
     } finally {
         await shell?.close();
+        await packages?.close();
         await rm(workspace, { recursive: true, force: true });
     }
 });

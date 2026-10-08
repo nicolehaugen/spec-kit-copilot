@@ -16,6 +16,7 @@ export async function serveSpecifyPackages(workspace, packages) {
             { cwd: source, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
         archives.set(`/${name}.zip`, await readFile(archive));
     }
+
     const server = createServer((request, response) => {
         const archive = archives.get(request.url);
         if (!archive) {
@@ -33,4 +34,18 @@ export async function serveSpecifyPackages(workspace, packages) {
         close: () => new Promise((resolve, reject) =>
             server.close((error) => error ? reject(error) : resolve())),
     };
+}
+
+export function addLoopbackSpecifyExtension(project, name, url) {
+    if (new URL(url).hostname !== "127.0.0.1") {
+        throw new Error("Test extension archive must be served from loopback");
+    }
+    return new Promise((resolve, reject) => {
+        const child = execFile("specify", ["extension", "add", name, "--from", url],
+            { cwd: project, timeout: 90_000, maxBuffer: 2 * 1024 * 1024 },
+            (error, stdout, stderr) => error
+                ? reject(new Error(`${error.message}\n${stdout}\n${stderr}`, { cause: error }))
+                : resolve(stdout));
+        child.stdin.end("y\n");
+    });
 }
