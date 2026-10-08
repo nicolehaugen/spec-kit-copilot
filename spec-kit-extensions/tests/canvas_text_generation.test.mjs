@@ -7,11 +7,23 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture } from "./designer_adapter_fixture.mjs";
 
 const source = new URL("../extension-canvas-design/", import.meta.url);
 const digest = (data) => createHash("sha256").update(data).digest("hex");
+function workflowMarkup(config) {
+    const root = { innerHTML: "" };
+    renderStockPage(root, { canvas: config.canvas, mainPageAsset: config.mainPageAsset,
+        readOnlyFields: config.readOnlyFields ?? [], textPlacements: config.textPlacements ?? [],
+        generatedControls: config.generatedControls ?? [],
+        hasConstitution: config.phases.includes("constitution"),
+        hasBadges: Boolean(config.badges?.instances?.length),
+        hasValues: Boolean(config.valueSources?.length),
+        badgeDestinations: config.workflowPage.badgeDestinations, fieldSlots: [] });
+    return root.innerHTML;
+}
 const handoff = { handoffId: "text-handoff", selections: {}, workflow: {
     selectedPhases: ["specify"], installed: { presets: [], extensions: [], bundles: [] },
 } };
@@ -107,7 +119,7 @@ test("frozen stock.text is packaged once and mounted at visible slots without de
     assert.equal(config.textControl.adapter, "generated-control-adapter-text");
     assert.deepEqual((await readdir(join(sdk, "controls"))).sort(),
         ["generated-control-adapter-text.mjs", "shared-controls-text.json"]);
-    const html = renderHtml(config, "secret");
+    const html = `${renderHtml(config, "secret")}${workflowMarkup(config)}`;
     assert.match(html, /data-stock-text="workflow.description"[^>]*>Hello &lt;script&gt;&quot;there&quot;&lt;\/script&gt;/);
     assert.match(html, /data-stock-text="workflow.heading"[^>]*>My workflows<\/span> <span class="muted" id="workflow-count">\(0\)/);
     assert.match(html, /data-field-id="billing.code" data-stock-text="details.content"[^>]*>CC-481/);
@@ -206,7 +218,7 @@ test("header text requires declared placements; absent contributions retain shel
     const config = readConfig();
     assert.equal(config.textControl, undefined);
     await assert.rejects(readdir(join(sdk, "controls")), { code: "ENOENT" });
-    const html = renderHtml(config);
+    const html = `${renderHtml(config)}${workflowMarkup(config)}`;
     assert.match(html, /<h2 id="workflow-heading">Workflows <span class="muted" id="workflow-count">\(0\)/);
     assert.match(html, /<p class="collection-description muted">Spec Kit workflow canvas\.<\/p>/);
     assert.doesNotMatch(html, /data-stock-text|stock-text-registration/);
@@ -237,7 +249,7 @@ test("stock.readonly text resolves the winning shared definition by control ID",
     });
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     const { readConfig, renderHtml } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
-    assert.match(renderHtml(readConfig()), /data-field-id="billing.code" data-stock-text="details.content"/);
+    assert.match(workflowMarkup(readConfig()), /data-field-id="billing.code" data-stock-text="details.content"/);
     const invalid = { ...model, templates: model.templates.filter((entry) =>
         entry.name !== "shared-controls-text") };
     await assert.rejects(freezeGeneration({ model: invalid, values, handoff, project, workspace }),

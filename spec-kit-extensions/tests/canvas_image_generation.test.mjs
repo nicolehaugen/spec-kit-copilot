@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { saveDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { mountPageAssets, createStockImageRenderer } from
     "../extension-canvas-design/generated-scaffold/ui/page-assets.mjs";
@@ -228,7 +229,14 @@ test("one frozen stock.image adapter renders Header, Main and gallery without de
     await writeFile(configPath, configText);
     const html = renderHtml(config, "secret");
     assert.match(html, /data-stock-image="header.brand"/);
-    assert.match(html, /data-stock-image="workflow.intro"/);
+    const page = { innerHTML: "" };
+    renderStockPage(page, { canvas: config.canvas, mainPageAsset: config.mainPageAsset,
+        readOnlyFields: config.readOnlyFields ?? [], textPlacements: config.textPlacements ?? [],
+        generatedControls: config.generatedControls ?? [], hasConstitution: false,
+        hasBadges: false, hasValues: false,
+        badgeDestinations: config.workflowPage.badgeDestinations, fieldSlots: [] });
+    assert.match(html, /data-page-module="\/pages\/generated-workflow-page-adapter\.mjs"/);
+    assert.match(page.innerHTML, /data-stock-image="workflow.intro"/);
     assert.match(html, /gallery.logo/);
     assert.doesNotMatch(html, /<img src="\/assets\/logo/);
     const packaged = join(sdk, "controls", "generated-control-adapter-image.mjs");

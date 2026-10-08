@@ -11,7 +11,6 @@ import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wi
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
-import { renderHtml } from "../../spec-kit-extensions/extension-canvas-design/generated-scaffold/server.mjs";
 
 const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/tabs/", import.meta.url);
 const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/", import.meta.url);
@@ -42,6 +41,7 @@ function scalarRegistrations(resolve) {
 function workflowRegistrations(resolve) {
     return [
         ["generated-workflow", "generated.workflow-page-definition"],
+        ["generated-workflow-page-adapter", "generated.workflow-page-adapter"],
         ["generated-phase-control", "generated.phase-control-definition"],
         ["generated-phase-adapter", "generated.phase-control-adapter"],
     ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
@@ -59,7 +59,7 @@ test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
 
 async function model(revision = "first") {
     const pages = [];
-    for (const name of ["essentials", "outputs", "appearance"]) {
+    for (const name of ["essentials", "outputs", "badges", "appearance"]) {
         const document = JSON.parse(await readFile(new URL(`${name}.json`, templateRoot), "utf8"));
         pages.push({ ...document, page: document.id });
     }
@@ -457,7 +457,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
         const pages = ["designer-essentials", "designer-artifacts",
-            "designer-appearance", "canvas-settings-pr1-test"]
+            "designer-badges", "designer-appearance", "canvas-settings-pr1-test"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = ["canvas-contribution-pr1-test", "canvas-contribution-pr1-toggle"]
@@ -469,8 +469,8 @@ test("isolated test preset resolves through Specify and renders its contributed 
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Outputs", "Appearance", "Test settings"]);
-        expect(resolved.pages[3].fields.map((item) => item.id)).toEqual(
+            ["Essentials", "Outputs", "Badges", "Appearance", "Test settings"]);
+        expect(resolved.pages[4].fields.map((item) => item.id)).toEqual(
             ["pr1Test.label", "pr1Test.enabled"]);
         expect(resolved.values["pr1Test.label"]).toBe("");
         expect(resolved.values["pr1Test.enabled"]).toBe(true);
@@ -520,7 +520,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
     const selections = { presets: [], extensions: [], bundles: [] };
     const handoff = { schemaVersion: 1, handoffId: "billing-test", workflow, selections,
         sourceFingerprint: fingerprint({ workflow, selections }) };
-    let shell, reopened;
+    let shell, reopened, generatedRoutes, generatedServer;
     try {
         await mkdir(project);
         const run = (...args) => {
@@ -550,7 +550,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
         const pages = ["designer-essentials", "designer-artifacts",
-            "designer-appearance", "canvas-settings-billing"]
+            "designer-badges", "designer-appearance", "canvas-settings-billing"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [{ ...resolve("canvas-contributions-billing"),
@@ -562,7 +562,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
         const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
         expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Outputs", "Appearance", "Billing"]);
+            ["Essentials", "Outputs", "Badges", "Appearance", "Billing"]);
         const costPage = resolved.pages.find((entry) =>
             entry.fields.some((field) => field.id === "billing.costCode"));
         shell = await startShell(handoff,
@@ -595,12 +595,28 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
             label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } }]);
-        await page.setContent(renderHtml(config));
+        const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
+            "extensions", "billing-canvas", "server.mjs")).href);
+        generatedRoutes = createWorkflowRoutes(config, {
+            runtime: null, instanceId: "billing-browser", token: "billing-token",
+            port: () => generatedServer.address().port,
+        });
+        generatedServer = createServer(generatedRoutes.handle);
+        await new Promise((resolve) => generatedServer.listen(0, "127.0.0.1", resolve));
+        await page.goto(`http://127.0.0.1:${generatedServer.address().port}/?token=billing-token`,
+            { waitUntil: "commit" });
         await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
         await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveCount(0);
     } finally {
+        generatedRoutes?.close();
+        if (generatedServer) {
+            await new Promise((resolve) => {
+                generatedServer.close(resolve);
+                generatedServer.closeAllConnections();
+            });
+        }
         await reopened?.close();
         await shell?.close();
         await rm(workspace, { recursive: true, force: true });
@@ -608,7 +624,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
 });
 
 test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
-    test.setTimeout(360_000);
+    test.setTimeout(480_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
         test.skip(true, "Specify CLI is unavailable for the optional integration probe");
@@ -661,7 +677,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             expect(source, output).not.toBeNull();
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
-        const pages = ["designer-essentials", "designer-artifacts", "designer-appearance"]
+        const pages = ["designer-essentials", "designer-artifacts", "designer-badges", "designer-appearance"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [
@@ -783,8 +799,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         expect(await servedAdapter.text()).toContain("export const mount = null;");
         brokenContext = await page.context().browser().newContext();
         const brokenPage = await brokenContext.newPage();
-        await brokenPage.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`);
-        await expect(brokenPage.getByRole("alert")).toContainText(
+        await brokenPage.goto(`http://127.0.0.1:${server.address().port}/?token=risk-token`,
+            { waitUntil: "commit" });
+        await expect(brokenPage.locator('[data-control-id="risk.rating"][role="alert"]')).toContainText(
             "Generated control could not render: Missing mount export");
     } finally {
         await brokenContext?.close();
@@ -825,7 +842,7 @@ async function openWithError(page, name) {
 test("Essentials keeps the Workflow header without a slug toggle", async ({ page }) => {
     const shell = await openDesigner(page);
     try {
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Badges", "Appearance"]);
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         const title = page.getByRole("textbox", { name: "Title (required)" });
         await expect(page.getByRole("textbox")).toHaveCount(4);

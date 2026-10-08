@@ -59,7 +59,8 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
             await route.fulfill({ body: await readFile(new URL(`shared-controls/${name}/designer.mjs`, extension)),
                 contentType: "text/javascript" });
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css"
-            || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js") {
+            || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js"
+            || path === "/ui/badges-control.js" || path === "/ui/badge-duplicates.js") {
             const file = path === "/" ? "index.html" : path.slice(4);
             await route.fulfill({ body: await readFile(new URL(file, ui)), contentType:
                 file.endsWith(".html") ? "text/html" : file.endsWith(".css")

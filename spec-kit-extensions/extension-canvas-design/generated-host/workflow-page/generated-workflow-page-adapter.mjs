@@ -123,7 +123,7 @@ export function mount({ root, definition, state, actions }) {
     let query = "";
     let previousRows;
     const onSearch = (event) => {
-        query = event.target.value.toLowerCase().trim();
+        query = event.target.value;
         filter();
     };
     find("workflow-search")?.addEventListener("input", onSearch);
@@ -131,7 +131,7 @@ export function mount({ root, definition, state, actions }) {
         const rows = [...(find("workflow-rows")?.children ?? [])];
         let shown = 0;
         for (const row of rows) {
-            row.hidden = !row.dataset.search.includes(query);
+            row.hidden = !row.dataset.search.includes(query.toLowerCase().trim());
             if (!row.hidden) shown++;
         }
         const notice = find("workflow-list-status");
@@ -414,6 +414,9 @@ export function mount({ root, definition, state, actions }) {
             if (button.dataset.workflowId) return actions.selectWorkflow(button.dataset.workflowId);
             if (button.id === "new-workflow") {
                 await actions.createWorkflow();
+                query = "";
+                find("workflow-search").value = "";
+                filter();
                 find("workflow-name")?.focus();
             } else if (button.id === "view-constitution") return actions.viewConstitution();
             else if (button.id === "run-constitution") {

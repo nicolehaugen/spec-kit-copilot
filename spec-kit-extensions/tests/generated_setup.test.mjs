@@ -351,9 +351,10 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     let phasePending;
     const context = { model: { showSetup: true, setup: { stage: "needs-setup", ready: false,
         checks: { cli: "Ready", project: "Ready", packages: "1 to install" } } },
-    setupBusy: false, activeSetupPlan: null, buttons: [], phaseControl: { update: (state) => {
+    setupBusy: false, activeSetupPlan: null, buttons: [], workflowPage: null, phaseControl: { update: (state) => {
         phasePending = state.setupPending;
-    } }, phaseState: () => ({ setupPending: Boolean(context.model.showSetup && !context.model.setup?.ready) }),
+    } }, pendingLabel: () => null, phaseState: () => ({
+        setupPending: Boolean(context.model.showSetup && !context.model.setup?.ready) }),
     constitution: () => null, hasSelectedWorkflow: () => false, renderName() {}, renderSlug() {},
     $: (id) => nodes.get(id), Map, Object, Boolean };
     runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);
@@ -384,7 +385,7 @@ test("setup activation errors unhide the status even after an idle render", asyn
     const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
         import.meta.url), "utf8");
     const messageCode = source.slice(source.indexOf("function message("), source.indexOf("function displayValue("));
-    const status = { hidden: true, textContent: "", classList: { toggle() {} } };
+    const status = { hidden: true, textContent: "", classList: { toggle() {} }, setAttribute() {} };
     const context = { $: () => status };
     runInNewContext(`${messageCode}\nmessage("Specify probe failed", "setup-status", true);`, context);
     assert.equal(status.hidden, false);

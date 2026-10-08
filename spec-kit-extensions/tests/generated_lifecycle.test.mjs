@@ -15,10 +15,12 @@ test("closing the last started panel while another opens retains the shared runt
     const definition = await readFile(new URL("../extension-canvas-design/generated-host/workflow-page/workflow.json", import.meta.url));
     const control = await readFile(new URL("../extension-canvas-design/generated-host/phase-control/phase-control.json", import.meta.url));
     const adapter = await readFile(new URL("../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs", import.meta.url));
+    const pageAdapter = await readFile(new URL("../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs", import.meta.url));
     await mkdir(join(target, "pages"), { recursive: true });
     await writeFile(join(target, "pages", "workflow.json"), definition);
     await writeFile(join(target, "pages", "phase-control.json"), control);
     await writeFile(join(target, "pages", "generated-phase-adapter.mjs"), adapter);
+    await writeFile(join(target, "pages", "generated-workflow-page-adapter.mjs"), pageAdapter);
     await writeFile(join(target, "canvas-config.json"), JSON.stringify({
         schemaVersion: 1, userProvidesSlug: false,
         canvas: { id: "lifecycle", displayName: "Lifecycle",
@@ -26,7 +28,11 @@ test("closing the last started panel while another opens retains the shared runt
         workflowPage: { title: JSON.parse(definition).title, order: JSON.parse(definition).order,
             managedRun: false,
             slots: JSON.parse(definition).slots,
+            phaseSlots: JSON.parse(control).slots,
             phaseControl: "generated-phase-control", adapter: "generated-phase-adapter",
+            pageAdapter: "generated-workflow-page-adapter",
+            pageAdapterHash: createHash("sha256").update(pageAdapter).digest("hex"),
+            badgeDestinations: JSON.parse(definition).badgeDestinations,
             placement: JSON.parse(control).placement, viewLabels: {},
             definitionHash: createHash("sha256").update(definition).digest("hex"),
             controlHash: createHash("sha256").update(control).digest("hex"),
