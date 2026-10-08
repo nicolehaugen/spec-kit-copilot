@@ -48,6 +48,12 @@ jobs:
       - name: Install Designer provider dependencies
         run: npm ci
         working-directory: plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Specify CLI
+        run: |
+          uv tool install specify-cli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/specify" --version
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
