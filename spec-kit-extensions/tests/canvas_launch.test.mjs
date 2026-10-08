@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { declarations, isInside, verifyComposition } from "../extension-canvas-design/scripts/verify-launch.mjs";
+import { declarations, inventoryEntries, isInside, templateWinner, verifyComposition } from "../extension-canvas-design/scripts/verify-launch.mjs";
 
 const source = fileURLToPath(new URL("../extension-canvas-design/", import.meta.url));
 
@@ -52,6 +52,25 @@ test("generated skill declarations include appended pages and templates anywhere
         /Invalid Canvas Design kind or strategy/);
     assert.throws(() => declarations(`${base}\n## Additional Canvas Design templates\n- \`con\` — \`generated.phase-control-adapter\`, \`replace\``),
         /Invalid Canvas Design registration/);
+});
+
+test("inventory requires unique template IDs and one replace-only active winner", () => {
+    const base = { id: "template:extra-page", kind: "template", name: "extra-page",
+        stack: [{ active: true, layer: "project", sourceId: "_",
+            sourcePath: ".specify/templates/extra page.json", strategy: "replace" }] };
+    assert.equal(templateWinner(inventoryEntries(JSON.stringify([base])),
+        "extra-page", false).sourcePath, ".specify/templates/extra page.json");
+    assert.throws(() => inventoryEntries(JSON.stringify([base, base])), /Duplicate/);
+    assert.throws(() => inventoryEntries('[]\nWarning: composition changed'), /Invalid Specify artifact inventory JSON/);
+    assert.throws(() => templateWinner(inventoryEntries(JSON.stringify([{
+        ...base, stack: [...base.stack, { ...base.stack[0], active: true }],
+    }])), "extra-page", false), /ambiguous/);
+    assert.throws(() => templateWinner(inventoryEntries(JSON.stringify([{
+        ...base, stack: [...base.stack, { ...base.stack[0], active: false, strategy: "append" }],
+    }])), "extra-page", false), /replace-only/);
+    assert.throws(() => templateWinner(inventoryEntries(JSON.stringify([
+        base, { id: "script:extra-page", kind: "script", name: "extra-page", stack: [] },
+    ])), "extra-page", true), /native script collision/);
 });
 
 test("composed verification resolves every name, rejects warnings and native scripts before open", async (t) => {
@@ -117,28 +136,29 @@ test("composed verification resolves every name, rejects warnings and native scr
     };
     const stockTemplateCount = declarations(base).filter((entry) => entry.kind !== "designer.tab-definition").length;
     const minimalBase = base.replace(/## Canvas Design templates[\s\S]*?(?=## Steps)/, "");
-    let warning = "", collision = false, strategy = "replace";
+    let warning = "", collision = false, strategy = "replace", calls = 0, override = false;
     const run = async (_binary, args) => {
-        const name = args[0] === "preset" ? args[2] : args[2].split(":")[1];
-        if (args[0] === "preset") return { stdout: warning === "missing"
-            ? `${name}: not found`
-            : `${name}: ${paths[name]}\n(top layer from: ${name.startsWith("sample-")
-                ? "sample v1.0.0" : "extension:extension-canvas-design v0.1.11"})`
-                + (warning === "composition" ? "\nWarning: composition cannot produce output" : "") };
-        if (args[2].startsWith("script:")) {
-            if (collision) return { stdout: '{"kind":"script"}' };
-            throw Object.assign(new Error("Unknown script"), { code: 1,
-                stdout: JSON.stringify({ error: `unknown artifact script:${name}` }) });
-        }
-        const example = name.startsWith("sample-");
-        return { stdout: JSON.stringify({
-            kind: "template", name, stack: [{ active: true, strategy,
-                layer: example ? "preset" : "extension",
-                sourceId: example ? "sample" : "extension-canvas-design",
-                sourcePath: paths[name] }],
-        }) };
+        calls++;
+        assert.deepEqual(args, ["artifact", "list", "--json"]);
+        const inventory = Object.entries(paths).filter(([name]) =>
+            warning !== "missing" || name !== "sample-page").map(([name, path]) => ({
+            id: `template:${name}`, kind: "template", name,
+            stack: [{ active: true, strategy,
+                layer: override && name === "sample-renderer" ? "project"
+                    : name.startsWith("sample-") ? "preset" : "extension",
+                sourceId: override && name === "sample-renderer" ? "_"
+                    : name.startsWith("sample-") ? "sample" : "extension-canvas-design",
+                sourcePath: path }],
+        }));
+        if (collision) inventory.push({ id: "script:sample-renderer", kind: "script",
+            name: "sample-renderer", stack: [] });
+        return { stderr: warning === "stderr" ? "Warning: incomplete composition" : "",
+            stdout: warning === "composition"
+            ? `${JSON.stringify(inventory)}\nWarning: composition cannot produce output`
+            : JSON.stringify(inventory) };
     };
     const result = await verifyComposition(project, run);
+    assert.equal(calls, 1);
     assert.equal(result.pages.length, 5);
     assert.equal(result.templates.length, stockTemplateCount + 1);
     assert.deepEqual(result.templates.find((entry) => entry.name === "sample-renderer").sourceId, "sample");
@@ -146,17 +166,28 @@ test("composed verification resolves every name, rejects warnings and native scr
     const baseOnly = await verifyComposition(project, run);
     assert.equal(baseOnly.pages.length, 4);
     assert.equal(baseOnly.templates.length, stockTemplateCount);
+    assert.equal(calls, 2);
     await writeFile(skill, `${base}\n${contribution}`);
     warning = "missing";
-    await assert.rejects(verifyComposition(project, run), /warning or missing result/);
+    await assert.rejects(verifyComposition(project, run), /missing or ambiguous/);
     warning = "composition";
-    await assert.rejects(verifyComposition(project, run), /warning or missing result/);
+    await assert.rejects(verifyComposition(project, run), /Invalid Specify artifact inventory JSON/);
+    warning = "stderr";
+    await assert.rejects(verifyComposition(project, run), /reported a warning/);
     warning = "";
+    override = true;
+    assert.equal((await verifyComposition(project, run)).templates
+        .find((entry) => entry.name === "sample-renderer").sourceId, "project");
+    override = false;
+    const originalRenderer = paths["sample-renderer"];
+    paths["sample-renderer"] = join(project, ".specify", "missing-renderer.mjs");
+    await assert.rejects(verifyComposition(project, run), /ENOENT/);
+    paths["sample-renderer"] = originalRenderer;
     collision = true;
     await assert.rejects(verifyComposition(project, run), /native script collision/);
     collision = false;
     strategy = "append";
-    await assert.rejects(verifyComposition(project, run), /replace-only template stack/);
+    await assert.rejects(verifyComposition(project, run), /replace-only Specify template/);
     strategy = "replace";
     await writeFile(skill, `${minimalBase}\n${contribution}`);
     const intentionalReplacement = await verifyComposition(project, run);

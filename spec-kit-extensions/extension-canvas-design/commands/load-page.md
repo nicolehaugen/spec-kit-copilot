@@ -19,7 +19,7 @@ Load these default pages:
 
 Use **Essentials** in progress messages and other user-facing descriptions of
 the first page. `designer-essentials` is its template ID for
-`specify preset resolve` and the Designer page input; do not rename the ID.
+the artifact inventory and the Designer page input; do not rename the ID.
 
 Presets may add pages in sections titled **Additional Designer pages** anywhere
 in this command, including after the Steps. These additions extend the default
@@ -189,31 +189,24 @@ hosted packages without this verifier must perform steps 1-3 manually.
    for a name are an error. Names must start with a lowercase letter and contain only lowercase letters,
    digits and hyphens (at most 80 characters). Keep pages separate from
    non-page templates; a name in both groups is an error.
-2. Follow the `speckit-preset` skill to run `specify preset resolve <name>` for
-   each name from the project root. Resolve the complete named inventory before
-   opening Designer. Its order and winning files belong to Specify.
-   Use Specify CLI >=1.0.7. Its human-readable output looks like:
-
-       designer-essentials: C:\project\.specify\extensions\extension-canvas-design\designer\tabs\essentials.json
-         (top layer from: extension:extension-canvas-design v0.1.19)
-
-   Ignore leading indentation and record the complete path following the exact
-   `<name>:` prefix. Preserve spaces and drive-letter colons; do not split on
-   every colon. If output wraps, rerun with a sufficiently wide `COLUMNS`
-   environment setting rather than guessing a truncated path.
-3. Inspect the output AND exit status. `not found` can return exit code 0.
-   Stop on missing/ambiguous results, command errors, or a composition warning
-   for any name. Never choose a file by scanning `.specify`, reconstruct
-   precedence, or substitute an extension default. Appended instructions in
-   this command are allowed; composing multiple complete JSON documents or
-   appending executable JavaScript is not. For every registered name,
-   inspect `specify artifact info template:<name> --json` and confirm that
-   `kind` is `template` and every stack layer has `strategy: replace`
-   (extension templates replace implicitly). For executable assets, also inspect
-   `specify artifact info script:<name> --json`; an unknown-script error is
-   expected, but a native script of the same name is unsupported. Reject
-   `append`, `prepend`, or `wrap` asset registrations even if Specify
-   resolved a path. Do not use metadata to choose or reconstruct the winner.
+2. Run `specify artifact list --json` once from the project root after reading
+   this composed skill. Use Specify CLI >=1.0.7. Match each registered name
+   against its exact `template:<name>` artifact ID; do not scan `.specify`,
+   reconstruct precedence, or substitute an extension default. Derive the
+   winning file from the single active stack layer's `sourcePath`, relative to
+   the project root, and validate that it resolves to a readable file inside
+   the project's `.specify` directory.
+3. Inspect the inventory, stderr, and exit status. Stop on warnings, invalid
+   or duplicate metadata, missing/ambiguous names or winners, and command
+   errors, even when exit status is zero. Require every layer in each
+   registered **template** stack to have `strategy: replace` (extension
+   templates replace implicitly). Reject a native `script:<name>` entry for
+   an executable asset; reject `append`, `prepend`, or `wrap` asset stacks.
+   The composed **load-page command** itself may contain appended preset
+   layers; those additions are why this generated skill must be read in full.
+   Do not require replace-only composition for that command. Appended
+   instructions in the command are allowed; composing multiple complete JSON
+   documents or appending executable JavaScript is not.
 4. Only after every name resolves, open the official installed Copilot provider
    exactly once with the complete collected set:
    `open_canvas({canvasId:"speckit-canvas-designer",
@@ -222,17 +215,16 @@ hosted packages without this verifier must perform steps 1-3 manually.
    pages:[{"name":"<default-page-name>","path":"<resolved-path>","kind":"designer.tab-definition","strategy":"replace"},
           {"name":"<additional-page-name>","path":"<resolved-path>","kind":"designer.tab-definition","strategy":"replace"},...],
    templates:[{"name":"<asset-name>","path":"<resolved-path>","sourceId":"<Specify-reported-source-ID>","kind":"<declared-kind>","strategy":"replace"},...]}})`.
-   Obtain each `sourceId` from that name's `top layer from:` metadata:
-   map the exact versionless `project override` marker to `project`; for a
-   preset or extension source, strip only its trailing ` v<version>` (for
-   example, keep `copilot-billing-canvas` or
-   `extension:extension-canvas-design`). Stop if neither form matches; do
-   not infer the source from the file path. Use
+   Obtain each `sourceId` from the active layer's `layer` and `sourceId`:
+   map the project layer to `project`, retain a preset ID as-is, and prefix
+   an extension ID with `extension:`. Stop on missing or invalid source
+   metadata; do not infer the source from the file path. Use
    an empty `templates` array if none are registered. Submit all defaults,
    additional pages, and registered templates in this single call. The provider
    validates the handoff and complete inventory before returning a URL. A
-   resolved page with invalid or missing file contents appears as an error tab
-   with its path and reason; other pages remain available. Malformed, safely
+   resolved page with invalid JSON in a readable file appears as an error tab
+   with its path and reason; other pages remain available. A missing or unreadable
+   winning file prevents opening. Malformed, safely
    readable non-page files show a named composition error; invalid registrations
    and unsupported dependencies stop the open with an actionable error. Generated
    pages require a matching registered renderer and do not create Designer tabs. Do not

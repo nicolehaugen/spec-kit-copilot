@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -64,7 +65,7 @@ export function declarations(command) {
 
 async function cli(project, args, run) {
     const { stdout, stderr = "" } = await run(process.platform === "win32" ? "specify.exe" : "specify",
-        args, { cwd: project, timeout: 10000, maxBuffer: 128 * 1024,
+        args, { cwd: project, timeout: 10000, maxBuffer: 2 * 1024 * 1024,
             env: { ...process.env, COLUMNS: "8192", NO_COLOR: "1" } });
     if (stderr.trim()) {
         throw new Error(`Specify ${args.join(" ")} reported a warning or missing result: ${stdout} ${stderr}`);
@@ -72,64 +73,71 @@ async function cli(project, args, run) {
     return stdout;
 }
 
+export function inventoryEntries(output) {
+    let items;
+    try { items = JSON.parse(output); }
+    catch (error) { throw new Error("Invalid Specify artifact inventory JSON.", { cause: error }); }
+    if (!Array.isArray(items)) throw new Error("Specify artifact inventory is not an array.");
+    const byId = new Map();
+    for (const item of items) {
+        if (!item || typeof item.id !== "string" || byId.has(item.id)) {
+            throw new Error(`Duplicate or invalid Specify artifact ID: ${item?.id}`);
+        }
+        byId.set(item.id, item);
+    }
+    return byId;
+}
+
+export function templateWinner(inventory, name, executable) {
+    const info = inventory.get(`template:${name}`);
+    const layers = info?.stack;
+    if (info?.id !== `template:${name}` || info.kind !== "template" || info.name !== name
+        || !Array.isArray(layers) || !layers.length
+        || layers.some((layer) => !layer || layer.strategy !== "replace")
+        || layers.filter((layer) => layer.active === true).length !== 1) {
+        throw new Error(`${name}: missing or ambiguous replace-only Specify template.`);
+    }
+    if (executable && inventory.has(`script:${name}`)) {
+        throw new Error(`${name}: native script collision.`);
+    }
+    const winner = layers.find((layer) => layer.active === true);
+    if (typeof winner.sourcePath !== "string" || !winner.sourcePath
+        || typeof winner.sourceId !== "string"
+        || !(winner.layer === "project" && winner.sourceId === "_"
+            || winner.layer === "extension" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId)
+            || winner.layer === "preset" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId))) {
+        throw new Error(`${name}: invalid active Specify template layer.`);
+    }
+    return winner;
+}
+
 export async function verifyComposition(project, run = exec) {
     const child = await realpath(project);
     const skill = join(child, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md");
     const entries = declarations(await readFile(skill, "utf8"));
     const pages = [], templates = [];
+    const inventory = inventoryEntries(await cli(child, ["artifact", "list", "--json"], run));
+    const root = await realpath(join(child, ".specify"));
     for (const entry of entries) {
-        const output = await cli(child, ["preset", "resolve", entry.name], run);
-        const lines = output.trim().split(/\r?\n/).map((line) => line.trim());
-        const prefix = `${entry.name}:`;
-        if (lines.some((line) => /^Warning:/i.test(line))
-            || lines[0] === `${prefix} not found`) {
-            throw new Error(`Specify did not resolve ${entry.name}: warning or missing result.`);
+        const winner = templateWinner(inventory, entry.name, EXECUTABLE.has(entry.kind));
+        const requested = resolve(child, winner.sourcePath);
+        if (!isInside(root, requested) || !isInside(root, await realpath(requested))) {
+            throw new Error(`${entry.name}: invalid winning Specify template path.`);
         }
-        if (!lines[0]?.startsWith(prefix)) throw new Error(`Specify did not resolve ${entry.name}.`);
-        const path = (lines[0].slice(prefix.length).trim() || lines[1] || "").trim();
-        const meta = lines.find((line) => line.startsWith("(top layer from: ")
-            && line.endsWith(")"));
-        if (!isAbsolute(path) || !meta || lines.length > 3
-            || lines.filter((line) => line.startsWith(prefix)).length !== 1) {
-            throw new Error(`Specify returned an incomplete resolution for ${entry.name}.`);
-        }
-        const raw = meta.slice("(top layer from: ".length, -1);
-        const sourceId = raw === "project override" ? "project"
-            : raw.replace(/ v[A-Za-z0-9][A-Za-z0-9._+-]*$/, "");
-        if (sourceId !== "project" && !/^(?:extension:)?[A-Za-z0-9][A-Za-z0-9._-]*$/.test(sourceId)) {
-            throw new Error(`Specify returned an unknown source for ${entry.name}.`);
-        }
-        const info = JSON.parse(await cli(child,
-            ["artifact", "info", `template:${entry.name}`, "--json"], run));
-        const layers = info.stack;
-        const winner = layers?.find((layer) => layer.active);
-        const target = await realpath(path);
-        const root = await realpath(join(child, ".specify"));
-        if (info.kind !== "template" || info.name !== entry.name
-            || !Array.isArray(layers) || !layers.length
-            || layers.some((layer) => layer.strategy !== "replace")
-            || !winner || layers.filter((layer) => layer.active).length !== 1
-            || !isInside(root, target)
-            || !winner.sourcePath || target !== await realpath(resolve(child, winner.sourcePath))) {
-            throw new Error(`${entry.name}: resolution or replace-only template stack does not match Specify.`);
-        }
-        const expectedSource = winner.layer === "project" ? "project"
-            : `${winner.layer === "extension" ? "extension:" : ""}${winner.sourceId}`;
-        if (sourceId !== expectedSource) throw new Error(`${entry.name}: resolved source does not match the winner.`);
-        if (EXECUTABLE.has(entry.kind)) {
-            try {
-                await cli(child, ["artifact", "info", `script:${entry.name}`, "--json"], run);
-                throw new Error(`${entry.name}: native script collision.`);
-            } catch (error) {
-                if (error.code !== 1) throw error;
-                let detail;
-                try { detail = JSON.parse(error.stdout || error.stderr); }
-                catch { throw new Error(`${entry.name}: unverified script metadata.`, { cause: error }); }
-                if (detail.error !== `unknown artifact script:${entry.name}`) {
-                    throw new Error(`${entry.name}: native script collision or unverified script metadata.`);
-                }
+        const file = await open(requested, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+        try {
+            const [pathStat, fileStat] = await Promise.all([lstat(requested), file.stat()]);
+            if (!pathStat.isFile() || pathStat.isSymbolicLink() || !fileStat.isFile()
+                || pathStat.dev !== fileStat.dev || pathStat.ino !== fileStat.ino) {
+                throw new Error(`${entry.name}: invalid winning Specify template file.`);
             }
+        } finally {
+            await file.close();
         }
+        const path = await realpath(requested);
+        const sourceId = winner.layer === "project" ? "project"
+            : `${winner.layer === "extension" ? "extension:" : ""}${winner.sourceId}`;
         const verified = { ...entry, path };
         if (entry.kind === "designer.tab-definition") pages.push(verified);
         else templates.push({ ...verified, sourceId });

@@ -539,40 +539,84 @@ function validateValueSource(document, name, fieldOrigins) {
     fieldOrigins.set(document.id, name);
 }
 
-async function executableRegistration(project, name) {
-    const options = await specifySpawnOptions(project, { encoding: "utf8", maxBuffer: 128 * 1024 });
-    const result = spawnSync("specify", ["artifact", "info", `template:${name}`, "--json"],
-        options);
-    if (result.error || result.status !== 0) {
-        throw new Error(`${name}: cannot verify replace-only Specify template registration: ${result.stderr || result.error || result.stdout}`);
+async function specifyInventory(project) {
+    const options = await specifySpawnOptions(project, { encoding: "utf8", timeout: 10000,
+        maxBuffer: 2 * 1024 * 1024 });
+    options.env.NO_COLOR = "1";
+    const result = spawnSync("specify", ["artifact", "list", "--json"], options);
+    if (result.error || result.status !== 0 || result.stderr?.trim()) {
+        throw new Error(`Cannot verify Specify artifact inventory: ${result.stderr || result.error || result.stdout}`);
     }
-    try {
-        const info = JSON.parse(result.stdout);
-        const script = spawnSync("specify", ["artifact", "info", `script:${name}`, "--json"],
-            options);
-        if (script.error || ![0, 1].includes(script.status)) {
-            throw new Error(`${name}: cannot verify native script registration: ${script.stderr || script.error}`);
+    let items;
+    try { items = JSON.parse(result.stdout); }
+    catch (error) { throw new Error("Invalid Specify artifact inventory JSON", { cause: error }); }
+    if (!Array.isArray(items)) throw new Error("Specify artifact inventory is not an array");
+    const byId = new Map();
+    for (const item of items) {
+        if (!item || typeof item.id !== "string" || byId.has(item.id)) {
+            throw new Error(`Duplicate or invalid Specify artifact ID: ${item?.id}`);
         }
-        const scriptInfo = JSON.parse(script.stdout || script.stderr);
-        if (script.status === 1 && scriptInfo.error !== `unknown artifact script:${name}`) {
-            throw new Error(`${name}: cannot verify native script registration: ${scriptInfo.error || script.stderr}`);
-        }
-        if (script.status === 0 && scriptInfo.kind !== "script") {
-            throw new Error(`${name}: unexpected native script registration metadata`);
-        }
-        if (scriptInfo.kind === "script") {
-            throw new Error(`${name}: native Specify script registrations are not supported for executable adapters/renderers`);
-        }
-        return info;
+        byId.set(item.id, item);
     }
-    catch (error) {
-        if (error.message.startsWith(`${name}:`)) throw error;
-        throw new Error(`${name}: invalid Specify registration metadata`, { cause: error });
+    return byId;
+}
+
+async function verifyWinner(inventory, checkout, root, item, executable = false) {
+    const info = inventory.get(`template:${item.name}`);
+    const layers = info?.stack;
+    const winner = layers?.find((layer) => layer?.active === true);
+    const sourceLayer = item.sourceId === undefined ? undefined
+        : item.sourceId === "project" ? "project"
+            : item.sourceId.startsWith("extension:") ? "extension" : "preset";
+    const sourceId = sourceLayer === "project" ? "_"
+        : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
+    if (info?.id !== `template:${item.name}` || info.kind !== "template"
+        || info.name !== item.name || !Array.isArray(layers) || !layers.length
+        || layers.some((layer) => !layer || layer.strategy !== "replace")
+        || layers.filter((layer) => layer.active === true).length !== 1
+        || !winner || (sourceLayer !== undefined
+            && (winner.sourceId !== sourceId || winner.layer !== sourceLayer))
+        || typeof winner.sourcePath !== "string" || !winner.sourcePath) {
+        throw new Error(`${item.name}: registration must be a replace-only Specify template from ${item.sourceId}`);
+    }
+    if (typeof winner.sourceId !== "string"
+        || !(winner.layer === "project" && winner.sourceId === "_"
+            || winner.layer === "extension" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId)
+            || winner.layer === "preset" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId))) {
+        throw new Error(`${item.name}: invalid active Specify template layer`);
+    }
+    if (executable && inventory.has(`script:${item.name}`)) {
+        throw new Error(`${item.name}: native Specify script registrations are not supported for executable adapters/renderers`);
+    }
+    const expected = resolve(checkout, winner.sourcePath);
+    const submitted = resolve(checkout, item.path);
+    if (!inside(root, expected) || !inside(root, submitted) || expected !== submitted) {
+        throw new Error(`${item.name}: submitted path does not match the active Specify template`);
+    }
+    let parent = dirname(expected);
+    while (parent !== root) {
+        try {
+            const actual = await realpath(parent);
+            if (!inside(root, actual)) {
+                throw new Error(`${item.name}: Designer file escapes its allowed directory: ${expected}`);
+            }
+            break;
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            parent = dirname(parent);
+        }
+    }
+    const target = await realpath(expected);
+    if (!inside(root, target)) {
+        throw new Error(`${item.name}: Designer file escapes its allowed directory: ${expected}`);
+    }
+    if (target !== expected || await realpath(root) !== root) {
+        throw new Error(`${item.name}: submitted path does not match the active Specify template`);
     }
 }
 
 async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes,
-    registration) {
+    inventory) {
     if (!Array.isArray(templates) || templates.length > 100) {
         throw new Error("Invalid Canvas Design template inventory");
     }
@@ -583,20 +627,6 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     const loaded = [];
     const compositionErrors = [];
     const slots = new Map();
-    const verifyRegistration = async (item) => {
-        const info = await registration(dirname(specify), item.name);
-        const layers = info?.stack;
-        const winner = layers?.find((layer) => layer.active);
-        const sourceLayer = item.sourceId === "project" ? "project"
-            : item.sourceId.startsWith("extension:") ? "extension" : "preset";
-        const sourceId = sourceLayer === "project" ? "_"
-            : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
-        if (info?.kind !== "template" || !Array.isArray(layers) || !layers.length
-            || layers.some((layer) => layer.strategy !== "replace")
-            || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
-            throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
-        }
-    };
     for (const page of pageEntries.filter((entry) => !entry.error)) {
         for (const slot of page.slots ?? []) {
             if (slots.has(slot.id)) {
@@ -641,12 +671,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
         }
+        await verifyWinner(inventory, dirname(specify), specify, item, executable);
         let content;
         try {
             content = await boundedJson(path, specify, FILE_LIMIT, open, !executable);
         } catch (error) {
             if (!(error instanceof PageContentError)) throw error;
-            if (item.kind !== "designer.setting-definition") await verifyRegistration(item);
             compositionErrors.push(`${item.name} (from ${item.sourceId}): ${error.message.slice(0, ERROR_LIMIT)}`);
             continue;
         }
@@ -668,7 +698,6 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             validateValueSource(document, item.name, fieldOrigins);
         }
         if (item.kind !== "designer.setting-definition") {
-            await verifyRegistration(item);
             if (item.kind === "generated.added-page-definition") {
                 validateGeneratedPage(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
@@ -1169,13 +1198,14 @@ export async function assertPageCommand(project) {
 }
 
 export async function loadResolvedDesignerPages(handoff, project, input, templates = [],
-    registration = executableRegistration) {
+    inventoryReader = specifyInventory) {
     const { checkout, schema } = await context(project);
     if (!Array.isArray(input) || input.length > 100) {
         throw new Error("Designer requires at most 100 resolved page paths");
     }
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
+    const inventory = await inventoryReader(checkout);
     const names = new Set();
     const paths = input.map((item) => {
         if (!item || typeof item !== "object" || Array.isArray(item)
@@ -1193,6 +1223,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         }
         return { name: item.name, path };
     });
+    for (const entry of paths) await verifyWinner(inventory, checkout, specify, entry);
     const entries = [];
     let size = 0;
     for (const { name, path } of paths) {
@@ -1226,7 +1257,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
     const { loaded, ordered, controls, placementControls, invalidPlacements, compositionErrors } = await loadTemplates(
-        templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
+        templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, inventory);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")

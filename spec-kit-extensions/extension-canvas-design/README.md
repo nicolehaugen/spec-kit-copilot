@@ -387,20 +387,20 @@ or changing composed skills to make them available in the current session.
 
 The [page-loading command](commands/load-page.md) collects default page
 names and additional page or Canvas Design template names explicitly registered
-in the composed command by presets. It uses `specify preset resolve <name>`
-to find each project's effective named file; package tags alone do not register
+in the composed command by presets. One `specify artifact list --json` inventory
+supplies each active replace-only template layer's winning path; package tags alone do not register
 files. Only after all paths resolve does it open the official Designer provider
 once with the complete typed, replace-only set. Missing or ambiguous CLI
-resolutions, unsafe paths, invalid handoffs, and an unavailable provider stop
-the operation before an open URL is returned. A resolved page whose file is
-missing or invalid shows an error tab with a path and reason; healthy pages
-stay usable.
+resolutions, unsafe paths, missing or unreadable winning files, invalid handoffs,
+and an unavailable provider stop the operation before an open URL is returned.
+A readable page with invalid JSON shows an error tab with a path and reason;
+healthy pages stay usable.
 
 `scripts/verify-launch.mjs` reads the generated skill's declarations and
-verifies each name with Specify's resolution and template-stack metadata
+verifies every declared name against one fresh Specify artifact inventory
 before returning the complete pages/templates input. It performs no
 installation or provider evaluation. A warning (even on exit status 0),
-missing name, resolution mismatch, or executable script collision stops the
+missing name, invalid or unreadable winning path, ambiguous stack, or executable script collision stops the
 open.
 
 The Generate command checks the integrity and checkout binding of its frozen

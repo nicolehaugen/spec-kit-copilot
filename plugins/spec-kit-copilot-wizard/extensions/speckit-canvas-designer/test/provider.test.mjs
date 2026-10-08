@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
 import { appendFile, copyFile, cp, mkdtemp, mkdir, open, readFile, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
@@ -44,11 +43,29 @@ async function loadResolvedDesignerPages(handoff, project, entries, templates = 
     const scalar = scalarFixtures.get(project) ?? [];
     const present = new Set(templates.map((entry) => entry.name));
     const complete = [...templates, ...scalar.filter((entry) => !present.has(entry.name))];
-    const verify = (root, name) => scalar.some((entry) => entry.name === name)
-        ? { kind: "template", stack: [{ active: true, sourceId: "extension-canvas-design",
-            layer: "extension", strategy: "replace" }] }
-        : registration?.(root, name);
-    return loadPages(handoff, project, entries, complete, verify);
+    return loadFixturePages(handoff, project, entries, complete, registration);
+}
+
+async function loadFixturePages(handoff, project, entries, complete, registration) {
+    const inventory = new Map();
+    const scalar = scalarFixtures.get(project) ?? [];
+    for (const entry of [...entries, ...complete]) {
+        if (inventory.has(`template:${entry.name}`)) continue;
+        const stock = scalar.some((item) => item.name === entry.name);
+        const sourceId = entry.sourceId ?? "extension:extension-canvas-design";
+        const layer = sourceId === "project" ? "project"
+            : sourceId.startsWith("extension:") ? "extension" : "preset";
+        const fallback = { kind: "template", stack: [{ active: true,
+            sourceId: layer === "project" ? "_" : sourceId.replace(/^extension:/, ""),
+            layer, strategy: "replace" }] };
+        const info = stock || entry.kind === "designer.setting-definition"
+            || entry.kind === "designer.tab-definition"
+            ? fallback : registration?.(project, entry.name) ?? fallback;
+        inventory.set(`template:${entry.name}`, { ...info, id: `template:${entry.name}`,
+            name: entry.name, stack: info.stack?.map((item) => ({
+                ...item, sourcePath: item.sourcePath ?? entry.path })) });
+    }
+    return loadPages(handoff, project, entries, complete, async () => inventory);
 }
 
 test("Designer packages the same control validator as the generated app", async () => {
@@ -56,6 +73,59 @@ test("Designer packages the same control validator as the generated app", async 
         await readFile(new URL(
             "../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
             import.meta.url)));
+});
+
+test("open boundary reads one fresh inventory and rejects changed winners and script collisions", async (t) => {
+    const workspace = await fixture(t);
+    const { project, entries } = await projectFixture(t, workspace);
+    const templates = scalarFixtures.get(project);
+    const inventory = new Map([...entries, ...templates].map((entry) => {
+        const sourcePath = entry.path;
+        return [`template:${entry.name}`, {
+            id: `template:${entry.name}`, kind: "template", name: entry.name,
+            stack: [{ active: true, layer: "extension", sourceId: "extension-canvas-design",
+                strategy: "replace", sourcePath }],
+        }];
+    }));
+    let calls = 0;
+    const reader = async () => { calls++; return inventory; };
+    await loadPages(validHandoff(), project, entries, templates, reader);
+    assert.equal(calls, 1);
+    const original = inventory.get("template:designer-essentials").stack[0].sourcePath;
+    inventory.get("template:designer-essentials").stack[0].sourcePath = entries[1].path;
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /submitted path does not match/);
+    assert.equal(calls, 2);
+    inventory.get("template:designer-essentials").stack[0].sourcePath = original;
+    inventory.set("script:generated-phase-adapter", { id: "script:generated-phase-adapter",
+        kind: "script", name: "generated-phase-adapter", stack: [] });
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /native Specify script/);
+    assert.equal(calls, 3);
+    inventory.delete("script:generated-phase-adapter");
+    const layer = inventory.get("template:generated-phase-adapter").stack[0];
+    inventory.get("template:generated-phase-adapter").stack.push({
+        ...layer, active: false, strategy: "wrap" });
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /replace-only Specify template/);
+    inventory.get("template:generated-phase-adapter").stack.pop();
+    inventory.get("template:generated-phase-adapter").stack.push({
+        ...layer, active: true });
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /replace-only Specify template/);
+    inventory.get("template:generated-phase-adapter").stack.pop();
+    const pageLayer = inventory.get("template:designer-essentials").stack[0];
+    pageLayer.layer = "unknown";
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /designer-essentials: invalid active Specify template layer/);
+    pageLayer.layer = "extension";
+    pageLayer.sourceId = 42;
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /designer-essentials: invalid active Specify template layer/);
+    pageLayer.sourceId = "extension-canvas-design";
+    pageLayer.layer = "project";
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /designer-essentials: invalid active Specify template layer/);
 });
 
 test("Outputs persist with Designer settings and reject unsafe or stale edits", async (t) => {
@@ -616,7 +686,7 @@ test("Generate freezes winning dialog and button assets with their registrations
             }));
         }
         templates.push({ name, path, kind, sourceId: root === source
-            ? "extension:extension-canvas-design" : "preset:copilot-dialog-buttons-test",
+            ? "extension:extension-canvas-design" : "copilot-dialog-buttons-test",
         strategy: "replace" });
     }
     const sourceFor = (_root, name) => {
@@ -1007,14 +1077,14 @@ export function mount() {}`);
         /invalid phase control definition/);
     await writeFile(controlFile, originalControl);
     await writeFile(adapterFile, originalAdapter);
-    const missingControls = await loadPages(handoff, project, entries,
+    const missingControls = await loadFixturePages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
             || item.kind === "generated.workflow-page-adapter"
             || item.kind === "generated.phase-control-definition"
             || item.kind === "generated.phase-control-adapter"), verify);
     assert.match(missingControls.compositionErrors.join(" "), /missing shared control definition for canvas.id/);
     assert.deepEqual(missingControls.pages.map((page) => page.page), entries.map((entry) => entry.name));
-    const missingGeneratedAdapter = await loadPages(handoff, project, entries,
+    const missingGeneratedAdapter = await loadFixturePages(handoff, project, entries,
         [...fields, ...scalar.filter((item) => item.name !== "generated-control-adapter-text")],
         verify);
     assert.match(missingGeneratedAdapter.compositionErrors.join(" "),
@@ -2663,7 +2733,7 @@ test("reads the complete effective page set from the child checkout without a sn
         values: { ...withoutBadges.values, "canvas.id": "without-badges",
             "canvas.displayName": "Without badges" } });
     assert.ok(ready.requestId);
-    const empty = await loadPages(handoff, project, [], []);
+    const empty = await loadFixturePages(handoff, project, [], []);
     assert.deepEqual(empty.pages, []);
     assert.match(empty.compositionErrors.join(" "), /Workflow page is not registered/);
     const workflow = scalarFixtures.get(project).find((item) => item.name === "generated-workflow");
@@ -2680,17 +2750,12 @@ test("reads the complete effective page set from the child checkout without a sn
     }
     await assert.rejects(loadResolvedDesignerPages(handoff, project, [...entries, entries[0]]),
         /duplicate Designer page name/);
-    const missing = await loadResolvedDesignerPages(handoff, project,
-        [{ ...entries[0], path: join(project, ".specify", "missing.json") }, ...entries.slice(1)]);
-    assert.equal(missing.pages[0].error.name, "designer-essentials");
-    assert.match(missing.pages[0].error.reason, /missing/);
-    assert.equal(Object.hasOwn(missing.constraints, "canvas.id"), false);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [{ ...entries[0], path: join(project, ".specify", "missing.json") }, ...entries.slice(1)]),
+    /ENOENT/);
     const missingParentPath = join(project, ".specify", "not-created", "nested", "setup.json");
-    const missingParent = await loadResolvedDesignerPages(handoff, project,
-        [{ ...entries[0], path: missingParentPath }, ...entries.slice(1)]);
-    assert.equal(missingParent.pages[0].error.path, missingParentPath);
-    assert.match(missingParent.pages[0].error.reason, /missing/);
-    assert.equal(missingParent.pages[1].title, "Outputs");
+    await assert.rejects(loadResolvedDesignerPages(handoff, project,
+        [{ ...entries[0], path: missingParentPath }, ...entries.slice(1)]), /ENOENT/);
     await writeFile(join(workspace, "outside.json"), JSON.stringify(changed));
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [{ ...entries[0], path: join(workspace, "outside.json") }, ...entries.slice(1)]),
@@ -3047,11 +3112,8 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
     assert.equal(broken.pages[0].error.path, entries[0].path);
     assert.equal(Object.hasOwn(broken.values, "canvas.id"), false);
     assert.equal(broken.pages[1].title, "Outputs");
-    const allMissing = await loadResolvedDesignerPages(handoff, project, entries.map((entry, i) =>
-        ({ ...entry, path: join(project, ".specify", `missing-${i}.json`) })));
-    assert.equal(allMissing.pages.length, 4);
-    assert.ok(allMissing.pages.every((page) => page.error && !page.fields));
-    assert.deepEqual(Object.keys(allMissing.values), []);
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries.map((entry, i) =>
+        ({ ...entry, path: join(project, ".specify", `missing-${i}.json`) }))), /ENOENT/);
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [...entries.slice(0, 2), { ...entries[2], path: join(workspace, "outside.json") }]),
     /inside \.specify/);
@@ -3753,12 +3815,8 @@ test("paired control validates both adapters, typed values and portable generate
     await writeFile(designerAdapter.path, `${designerModule}\nprocess.exit(57);`);
     assert.equal((await load()).adapters["risk-matrix"], designerAdapter.name);
     await writeFile(designerAdapter.path, designerModule);
-    const raced = await load(templates, (checkout, name) => {
-        if (name === designerAdapter.name) {
-            writeFileSync(designerAdapter.path, "export const mount = null;");
-        }
-        return registration(checkout, name);
-    });
+    const raced = await load();
+    await writeFile(designerAdapter.path, "export const mount = null;");
     assert.equal(raced.templates.find((item) => item.name === designerAdapter.name).hash,
         model.templates.find((item) => item.name === designerAdapter.name).hash);
     await assert.rejects(startShell(handoff, raced, { project, workspace }),
@@ -4197,6 +4255,26 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         await copyFile(join(source, file), join(extension, file));
     }
     await cp(join(source, "contracts"), join(extension, "contracts"), { recursive: true });
+    const extensionSource = await readFile(join(extension, "extension.mjs"), "utf8");
+    const openCall = "model = await loadResolvedDesignerPages(handoff, project, pages, templates);";
+    assert.ok(extensionSource.includes(openCall));
+    await writeFile(join(extension, "extension.mjs"), extensionSource.replace(openCall, `
+        model = await loadResolvedDesignerPages(handoff, project, pages, templates, async () => {
+            const inventory = new Map();
+            for (const item of [...pages, ...templates]) {
+                if (inventory.has("template:" + item.name)) continue;
+                const source = item.sourceId ?? "extension:extension-canvas-design";
+                const layer = source === "project" ? "project"
+                    : source.startsWith("extension:") ? "extension" : "preset";
+                inventory.set("template:" + item.name, {
+                    id: "template:" + item.name, kind: "template", name: item.name,
+                    stack: [{ active: true, strategy: "replace", layer,
+                        sourceId: layer === "project" ? "_" : source.replace(/^extension:/, ""),
+                        sourcePath: item.path }],
+                });
+            }
+            return inventory;
+        });`));
     await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
     await writeFile(join(extension, "server.mjs"), `
         import { startShell as actualStartShell } from "./shell.mjs";
@@ -4317,13 +4395,10 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
                 && /Repair or reinstall extension-canvas-design/.test(error.message));
         await assert.rejects(fetch(empty.url));
         await writeFile(schema, installedSchema);
-        const missing = await canvas.open({ instanceId: "same", input: {
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [{ ...entries[0], path: join(project, ".specify", "missing.json") },
                 ...entries.slice(1)], templates: scalarFixtures.get(project),
-        } });
-        const missingStateUrl = new URL(missing.url);
-        missingStateUrl.pathname = "/api/state";
-        assert.match((await (await fetch(missingStateUrl)).json()).pages[0].error.reason, /missing/);
+        } }), /ENOENT/);
         const filled = await canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: entries, templates: scalarFixtures.get(project),
         } });
