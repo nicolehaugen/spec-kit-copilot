@@ -222,7 +222,7 @@ const selectedPending = () => model?.items.some((entry) => entry.id === model.se
 const hasSelectedWorkflow = () => model?.items.some((entry) => entry.id === model.selected);
 function slugError() {
     const value = model?.slug ?? "";
-    if (!value) return "Enter an artifact folder name (slug) before creating a workflow.";
+    if (!value) return "";
     if (value.length > 100 || !slugPattern.test(value) || reservedSlug.test(value)) {
         return "Use lowercase letters, numbers, and single hyphens; avoid reserved folder names.";
     }
@@ -745,7 +745,7 @@ function phaseState(pendingLabel = () => null) {
     const status = selected ? model?.statuses[selected.id] : null;
     const item = model?.items.find((entry) => entry.id === model.selected);
     const pending = Boolean(item?.pending || model?.selected === "__new__");
-    const slug = item?.slug ?? (pending ? model.slug : "");
+    const slug = pending && !model?.userProvidesSlug ? "" : item?.slug ?? (pending ? model.slug : "");
     const resolveOutput = (output) => slug && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
         && (!pending || !slugError())
         ? output?.replace("<slug>", slug) : output;
@@ -829,7 +829,7 @@ function renderStatus() {
         $("constitution-args").required = !available;
     }
     const input = $("workflow-slug");
-    if (input && selectedPending()) {
+    if (input && selectedPending() && model.userProvidesSlug) {
         const error = slugTouched && input.value.trim() ? slugError() : "";
         $("workflow-slug-error").textContent = error;
         $("workflow-slug-error").hidden = !error;
@@ -844,6 +844,7 @@ function renderPhase() {
 function renderSlug() {
     const input = $("workflow-slug");
     if (!input) return;
+    input.closest(".field").hidden = !model.userProvidesSlug;
     const first = creationPhase();
     const status = model.items.find((entry) => entry.id === model.selected)?.status;
     input.readOnly = !selectedPending()
@@ -851,7 +852,6 @@ function renderSlug() {
         || Boolean(sending && sending.phase === first?.id)
         || ["Request sent", "Running"].includes(model.statuses[first?.id]?.status);
     input.placeholder = input.readOnly ? "Automatically assigned" : "workflow-1";
-    $("workflow-slug-label").querySelector(".muted").hidden = input.readOnly;
     if (document.activeElement !== input && !timer) {
         input.value = selectedPending() ? model.slug
             : model.items.find((entry) => entry.id === model.selected)?.slug ?? "";
@@ -1132,7 +1132,7 @@ async function send(step, value, target = "phase-action-error") {
         await api("/api/run", { phase: step.id, args: value,
             ...(!step.project ? { itemId: model.selected,
                 ...(selectedPending() && model.name?.trim() ? { name: model.name.trim() } : {}),
-                ...(selectedPending() && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) },
+                ...(selectedPending() && model.userProvidesSlug && model.slug ? { slug: model.slug } : {}) } : {}) },
         { signal: runSignal });
         accepted = true;
         if (step.project) {

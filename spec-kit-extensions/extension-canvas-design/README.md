@@ -36,6 +36,7 @@ the generic `create-canvas` browser/server protocol.
 | `designer-essentials` | Essentials | Required Canvas ID and Title |
 | `designer-essentials-description` | Essentials slot | Optional Description |
 | `designer-essentials-workflow-heading` | Essentials slot | Optional Workflow header |
+| `designer-essentials-custom-slug` | Essentials slot | Default-off Allow custom slug option |
 | `designer-essentials-header-logo` | Appearance slot | Optional small header logo (existing template name retained) |
 | `designer-essentials-main-page-logo` | Appearance slot | Optional larger main-page logo (existing template name retained) |
 | `designer-appearance-light-accent` | Appearance slot | Optional light-mode accent hex |
@@ -80,8 +81,11 @@ generated presentation. Authors may set `"required": true` on a text field
 in a page or a field contribution to reject empty or whitespace-only values.
 The shared Designer adapter shows the field's syntax guidance; Generate verifies
 the constraint independently. Omitted `required` preserves optional text.
-The artifact folder name (slug) is collected in the generated workflow shell,
-not as a Designer setting. The optional Show setup checkbox uses the stock
+Allow custom slug is a stock-checkbox Designer setting with no generated visual
+adapter; its frozen boolean controls the generated workflow shell. When enabled,
+a user may enter an optional Artifact directory slug to preview the target;
+otherwise Specify chooses the actual directory, including any numeric prefix.
+When disabled or absent, no slug is requested. The optional Show setup checkbox uses the stock
 checkbox pattern; privileged setup stays in the generated host.
 The composed load-page command explicitly resolves stock contributions into
 `essentials.options` or `appearance.options` in their declared order. Omitting or replacing a stock contribution
@@ -147,10 +151,10 @@ The Workflow header names the collection with the description just below it.
 The generated canvas keeps New workflow in the header and shows a bordered,
 searchable workflow list immediately, with "No workflows yet" inside the empty
 list. New adds a selected **Not started** row in the list, prefilled with
-**Workflow 1** and **workflow-1** (then Workflow 2/workflow-2, and so on). Its
-editable Workflow name comes before its required Artifact folder name (slug).
-The name labels the list row; the slug previews artifact output paths and names
-the directory where Specify will write them. No directory is created until
+**Workflow 1** (then Workflow 2, and so on). Its editable Workflow name comes
+before the optional Artifact directory slug, shown only when enabled in Essentials.
+The name labels the list row; a supplied slug previews artifact output paths.
+Without one, Specify chooses the artifact directory. No directory is created until
 Specify runs; its scripts may add a numeric prefix to the actual directory name.
 New stays available while editing, and Remove discards an unstarted row without
 deleting any directory. Pending rows and their phase drafts survive a reload.

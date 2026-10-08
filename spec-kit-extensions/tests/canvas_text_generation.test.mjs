@@ -124,7 +124,8 @@ test("frozen stock.text is packaged once and mounted at visible slots without de
     assert.match(html, /data-stock-text="workflow.heading"[^>]*>My workflows<\/span> <span class="muted" id="workflow-count">\(0\)/);
     assert.match(html, /data-field-id="billing.code" data-stock-text="details.content"[^>]*>CC-481/);
     assert.match(html, /id="stock-text-registration"/);
-    assert.match(html, /id="workflow-slug"[^>]+required/);
+    assert.match(html, /id="workflow-slug"[^>]+maxlength="100"/);
+    assert.doesNotMatch(html, /id="workflow-slug"[^>]+required/);
     const routes = createWorkflowRoutes(config, { token: "secret", runtime: null });
     const server = createServer(routes.handle);
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

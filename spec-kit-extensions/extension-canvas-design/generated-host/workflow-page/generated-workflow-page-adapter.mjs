@@ -48,12 +48,12 @@ export function renderStockPage(root, definition) {
                 <input class="phase-input-control" id="workflow-name" type="text" maxlength="120"
                     placeholder="Workflow 1" aria-describedby="workflow-name-help">
                 <span class="muted" id="workflow-name-help">Shown in the workflow list.</span></label>
-            <label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact folder name (slug) <span class="muted">Required</span></span>
-                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100" required
+            <label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact directory slug <span class="muted">Optional</span></span>
+                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100"
                     pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="workflow-1"
                     aria-describedby="workflow-slug-help workflow-slug-error">
-                <span class="muted" id="workflow-slug-help">Folder for workflow artifacts. Created when Specify runs;
-                    use lowercase, numbers, or hyphens.</span>
+                <span class="muted" id="workflow-slug-help">Leave blank to let Spec Kit choose the directory.
+                    Use lowercase, numbers, or hyphens.</span>
                 <span id="workflow-slug-error" class="workflow-error" role="alert" hidden></span></label>
         </div>
         ${hasBadges && definition.badgeDestinations.includes("workflow.summary")
@@ -479,9 +479,9 @@ export function mount({ root, definition, state, actions }) {
                 ? model.name ?? "" : item?.label ?? "";
         }
         if (input) {
+            input.closest(".field").hidden = !model.userProvidesSlug;
             input.readOnly = locked;
             input.placeholder = locked ? "Automatically assigned" : "workflow-1";
-            find("workflow-slug-label").querySelector(".muted").hidden = locked;
             if (document.activeElement !== input && !state.inputPending) input.value = pending
                 ? model.slug : item?.slug ?? "";
         }

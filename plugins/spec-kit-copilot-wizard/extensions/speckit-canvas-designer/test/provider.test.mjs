@@ -619,7 +619,7 @@ async function stockTemplates(project) {
         "designer-host", "essentials-settings");
     await mkdir(directory, { recursive: true });
     const templates = [];
-    for (const name of ["description", "workflow-heading"]) {
+    for (const name of ["description", "workflow-heading", "custom-slug"]) {
         const path = join(directory, `${name}.json`);
         await copyFile(join(source, "designer-host", "essentials-settings", `${name}.json`), path);
         templates.push({ name: `designer-essentials-${name}`, path,
@@ -1392,7 +1392,7 @@ test("stock image requires one compatible control definition and paired self-con
         ? { ...entry, strategy: "append" } : entry)), /Invalid or duplicate Canvas Design template/);
 });
 
-test("stock contributions retain the four-field layout and minimal replaced Essentials generate defaults", async (t) => {
+test("stock contributions retain the optional slug setting and minimal replaced Essentials generate defaults", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
@@ -1406,11 +1406,12 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     assert.deepEqual(full.pages[0].fields.map(({ id, label }) => [id, label]), [
         ["canvas.id", "Canvas ID"], ["canvas.displayName", "Title"],
         ["canvas.description", "Description"], ["canvas.workflowListName", "Workflow header"],
+        ["workflowSlug.userProvided", "Allow custom slug"],
     ]);
-    assert.equal(Object.hasOwn(full.values, "workflowSlug.userProvided"), false);
+    assert.equal(full.values["workflowSlug.userProvided"], false);
     const values = { ...full.values, "canvas.id": "stock-canvas",
         "canvas.displayName": "Stock Canvas", "canvas.description": "Stock description",
-        "canvas.workflowListName": "Stock heading" };
+        "canvas.workflowListName": "Stock heading", "workflowSlug.userProvided": true };
     await assert.rejects(freezeGeneration({ model: full, values, project, workspace,
         handoff: { ...handoff, workflow: { ...handoff.workflow, installed: {
             ...handoff.workflow.installed, presets: [{ id: "local-runtime", source: "local",
@@ -1450,6 +1451,7 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     assert.deepEqual(config.canvas, { id: "stock-canvas", displayName: "Stock Canvas",
         description: "Stock description", workflowListName: "Stock heading" });
     assert.equal(config.userProvidesSlug, true);
+    assert.equal(phaseRequest.values["workflowSlug.userProvided"], true);
 
     for (const [id, description, heading, expectedDescription, expectedHeading] of [
         ["blank-stock", "   ", "  ", "Spec Kit workflow canvas.", "Workflows"],
@@ -1482,13 +1484,13 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const defaults = JSON.parse(await readFile(join(project, next.target, "canvas-config.json"), "utf8"));
     assert.equal(defaults.canvas.description, "Spec Kit workflow canvas.");
     assert.equal(defaults.canvas.workflowListName, "Workflows");
-    assert.equal(defaults.userProvidesSlug, true);
+    assert.equal(defaults.userProvidesSlug, false);
     const { renderHtml } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/server.mjs",
         import.meta.url));
     const defaultHtml = renderHtml(defaults);
     assert.match(defaultHtml, /Workflows/);
     assert.match(defaultHtml, /Spec Kit workflow canvas\./);
-    assert.match(stockMarkup(defaults), /id="workflow-slug"[^>]+required/);
+    assert.match(stockMarkup(defaults), /id="workflow-slug"[^>]+maxlength="100"/);
     assert.equal(await readFile(join(project, next.target, "ui", "runtime.css"), "utf8"),
         await readFile(join(project, prepared.target, "ui", "runtime.css"), "utf8"));
     const originalPages = await Promise.all(entries.slice(0, 2)
