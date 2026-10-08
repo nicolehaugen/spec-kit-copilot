@@ -1,5 +1,5 @@
 ---
-applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**/*,spec-kit-extensions/extension-canvas-design/**/*,spec-kit-extensions/tests/**/*,spec-kit-presets/*/generated/**/*,spec-kit-presets/copilot-wizard-layer-test/**/*,tests/e2e/**/*,tests/fixtures/specify/**/*"
+applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**/*,spec-kit-extensions/extension-canvas-design/**/*,spec-kit-extensions/tests/**/*,spec-kit-presets/*/generated/**/*,spec-kit-presets/copilot-*-test/**/*,tests/e2e/**/*,tests/fixtures/specify/**/*"
 ---
 
 Do not change a Wizard, Designer, or generated-canvas data contract without
