@@ -16,12 +16,11 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
         "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
         "canvas.description": { type: "string", maxLength: 240 },
         "canvas.workflowListName": { type: "string", maxLength: 80 },
-        "workflowSlug.userProvided": { type: "boolean" },
         "billing.costCode": { type: "string", maxLength: 64 },
     };
     const values = { "canvas.id": "", "canvas.displayName": "",
         "canvas.description": "", "canvas.workflowListName": "",
-        "workflowSlug.userProvided": false, "billing.costCode": "" };
+        "billing.costCode": "" };
     const ids = [...fields, ...(extraPage?.fields ?? [])].map((field) => field.id);
     for (const field of [...fields, ...(extraPage?.fields ?? [])]) {
         field.validation = { ...constraints[field.id],
@@ -75,8 +74,7 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
 const core = [{ id: "canvas.id", label: "Canvas ID" },
     { id: "canvas.displayName", label: "Title" }];
 const stock = [{ id: "canvas.description", label: "Description" },
-    { id: "canvas.workflowListName", label: "Workflow header" },
-    { id: "workflowSlug.userProvided", label: "Allow custom slug", type: "boolean" }];
+    { id: "canvas.workflowListName", label: "Workflow header" }];
 
 test("Generate remains queued and displays installed-version warnings", async ({ page }) => {
     const requests = await openDesigner(page, core, undefined,
@@ -89,11 +87,11 @@ test("Generate remains queued and displays installed-version warnings", async ({
     expect(requests).toHaveLength(1);
 });
 
-test("stock Essentials keep five ordered controls and Generate submits all enabled values", async ({ page }) => {
+test("stock Essentials keep four ordered controls and Generate submits all enabled values", async ({ page }) => {
     const requests = await openDesigner(page, [...core, ...stock]);
     await expect(page.locator(".settings-field label")).toHaveText([
         "Canvas ID (required)", "Title (required)", "Description",
-        "Workflow header", "Allow custom slug",
+        "Workflow header",
     ]);
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect(page.locator("#page-error")).toContainText("Invalid Canvas ID (canvas.id)");
@@ -101,13 +99,11 @@ test("stock Essentials keep five ordered controls and Generate submits all enabl
     await page.getByRole("textbox", { name: /Title/ }).fill("Stock Canvas");
     await page.getByRole("textbox", { name: "Description" }).fill("A description");
     await page.getByRole("textbox", { name: "Workflow header" }).fill("My workflows");
-    await page.getByRole("checkbox", { name: "Allow custom slug" }).check();
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1].values).toEqual({
         "canvas.id": "stock-canvas", "canvas.displayName": "Stock Canvas",
         "canvas.description": "A description", "canvas.workflowListName": "My workflows",
-        "workflowSlug.userProvided": true,
     });
 });
 

@@ -8,7 +8,21 @@
     "schemaVersion": {"const": 1},
     "id": {"const": "workflow-phases"},
     "adapter": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"},
+    "managedRun": {"type": "boolean"},
     "placement": {"type": "object", "additionalProperties": false, "required": ["page", "slot"],
-      "properties": {"page": {"const": "workflow"}, "slot": {"const": "workflow.phases"}}}
+      "properties": {"page": {"const": "workflow"}, "slot": {"const": "workflow.phases"}}},
+    "viewLabels": {
+      "type": "object",
+      "maxProperties": 40,
+      "patternProperties": {
+        "^(?:speckit\\.)?[a-z0-9]+(?:[.-][a-z0-9]+)*$": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "\\S"
+        }
+      },
+      "additionalProperties": false
+    }
   }
 }

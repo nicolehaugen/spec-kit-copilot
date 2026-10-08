@@ -148,6 +148,15 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     const essentials = validateEssentials(model, values);
     if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases,
         initialOutputs(handoff));
+    for (const kind of ["presets", "extensions"]) {
+        for (const item of handoff?.workflow?.installed?.[kind] ?? []) {
+            if (item.source === "local" && item.id !== "extension-canvas-design"
+                && !item.path && !handoff.localSelections?.[kind]?.some((selection) =>
+                    selection.id === item.id && selection.path)) {
+                throw new Error(`Cannot generate portable runtime setup: local ${kind} ${item.id} has no verified path`);
+            }
+        }
+    }
     await validateAdapterValues(model, essentials, project);
     if (!canvasIdPattern.test(essentials["canvas.id"])
         || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {
@@ -273,12 +282,41 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     if (!workflowDefinition || !controlDefinition || !adapter
         || phaseControl?.id !== "workflow-phases"
         || phaseControl?.placement?.page !== "workflow"
-        || phaseControl?.placement?.slot !== "workflow.phases") {
+        || phaseControl?.placement?.slot !== "workflow.phases"
+        || Object.keys(phaseControl.viewLabels ?? {}).some((id) =>
+            !handoff.workflow.selectedPhases.includes(id)
+            || id.replace(/^speckit\./, "") === "constitution")) {
         throw new Error("Missing validated Workflow page, phase control, or adapter");
     }
     const workflowPage = { id: "workflow", title: model.workflowPage.title,
         order: model.workflowPage.order, slots: model.workflowPage.slots,
+        managedRun: model.workflowPage.managedRun,
         assets: await Promise.all([workflowDefinition, controlDefinition, adapter].map(asset)) };
+    const namedTemplate = (name, kind) => {
+        const match = model.templates?.find((item) => item.name === name && item.kind === kind);
+        if (!match) throw new Error(`${name}: missing validated ${kind} asset`);
+        return match;
+    };
+    const dialogDefinitions = await Promise.all((model.dialogDefinitions ?? []).map(async ({
+        sourceId, $schema, ...dialog
+    }) => ({ ...dialog, assets: await Promise.all([
+        namedTemplate(dialog.name, "generated.dialog-definition"),
+        namedTemplate(dialog.adapter, "generated.dialog-adapter"),
+    ].map(asset)) })));
+    const phaseDialogBindings = await Promise.all((model.phaseDialogBindings ?? []).map(async ({
+        sourceId, $schema, ...binding
+    }) => ({ ...binding, assets: [await asset(
+        namedTemplate(binding.name, "generated.phase-dialog-binding"))] })));
+    const buttonPlacements = await Promise.all((model.buttonPlacements ?? []).map(async ({
+        sourceId, $schema, ...placement
+    }) => ({ ...placement, assets: [await asset(
+        namedTemplate(placement.name, "generated.button-placement"))] })));
+    const buttonControls = await Promise.all((model.buttonControls ?? []).map(async ({
+        $schema, ...definition
+    }) => ({ ...definition, assets: await Promise.all([
+        namedTemplate(definition.name, "generated.button-control-definition"),
+        namedTemplate(definition.adapter, "generated.button-adapter"),
+    ].map(asset)) })));
     const designerFields = new Map();
     const fieldPlacements = await Promise.all((model.fieldPlacements ?? []).map(async (placement) => {
         const definition = model.templates.find((item) => item.name === placement.name
@@ -385,12 +423,17 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         workflow: { selectedPhases: handoff.workflow.selectedPhases,
             ...(outputs !== undefined ? { phaseArtifacts: outputs } : {}) },
         installed: handoff.workflow.installed,
+        ...(handoff.workflow.runtimeSetup ? { runtimeSetup: handoff.workflow.runtimeSetup } : {}),
         ...(actual ? { actualInstalled: actual.installed } : {}),
         values: essentials,
         fieldConstraints: model.constraints,
         ...(generatedFields.length ? { generatedFields } : {}),
         ...(generatedPages.length ? { generatedPages } : {}),
         workflowPage,
+        ...(dialogDefinitions.length ? { dialogDefinitions } : {}),
+        ...(phaseDialogBindings.length ? { phaseDialogBindings } : {}),
+        ...(buttonControls.length ? { buttonControls } : {}),
+        ...(buttonPlacements.length ? { buttonPlacements } : {}),
         ...(fieldPlacements.length ? { fieldPlacements } : {}),
         ...(designerFields.size ? { designerFields: [...designerFields.values()] } : {}),
         ...(generatedControls.length ? { generatedControls } : {}),

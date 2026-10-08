@@ -9,6 +9,7 @@ import { UserError, confined, readBounded, readBoundedBytes, directories, atomic
     deleteConfinedDirectory } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
+import { createSetup } from "./setup.mjs";
 
 const PROVIDER_REFRESH_LIMIT_MS = 3000;
 const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
@@ -69,11 +70,19 @@ async function evaluateProvider(module, hash, workflow, deadline) {
     });
 }
 
+const pendingId = (id) => /^__new__:[1-9]\d*$/.test(id);
+const newItem = (id) => id === "__new__" || pendingId(id);
 const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null, slug: "",
-    name: "", names: {}, drafts: {}, runs: [], values: {} });
+    name: "", names: {}, drafts: {}, runs: [], values: {}, pendingWorkflows: [], workflowSerial: 0 });
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
+    const setup = createSetup({ config, cwd, session, phases, notify,
+        approvedSources: () => state.approvedUrlSources ?? [],
+        saveApprovedSources: (receipts) => update((next) => {
+            next.approvedUrlSources = [...new Set([...(next.approvedUrlSources ?? []), ...receipts])]
+                .slice(-80);
+        }) });
     const key = createHash("sha256").update(JSON.stringify([cwd, config.canvas.id])).digest("hex");
     const statePath = `generated-canvases/${key}/state.json`;
     let state;
@@ -82,10 +91,22 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (state.version !== 1 || !Number.isSafeInteger(state.revision) || !Array.isArray(state.runs)
             || typeof state.drafts !== "object" || !state.drafts || Array.isArray(state.drafts)
             || typeof state.selected !== "string" || typeof state.slug !== "string"
+            || (state.approvedUrlSources !== undefined
+                && (!Array.isArray(state.approvedUrlSources) || state.approvedUrlSources.length > 80
+                    || state.approvedUrlSources.some((receipt) =>
+                        typeof receipt !== "string" || receipt.length > 8192)))
             || (state.name !== undefined && (typeof state.name !== "string" || state.name.length > 120))
             || (state.names !== undefined && (!state.names || typeof state.names !== "object"
                 || Array.isArray(state.names) || Object.values(state.names).some((name) =>
                     typeof name !== "string" || name.length > 120)))
+            || (state.workflowSerial !== undefined && (!Number.isSafeInteger(state.workflowSerial)
+                || state.workflowSerial < 0))
+            || (state.pendingWorkflows !== undefined && (!Array.isArray(state.pendingWorkflows)
+                || state.pendingWorkflows.length > 100
+                || state.pendingWorkflows.some((entry) => !entry || !pendingId(entry.id)
+                    || typeof entry.name !== "string" || entry.name.length > 120
+                    || typeof entry.slug !== "string" || entry.slug.length > 100)
+                || new Set(state.pendingWorkflows.map((entry) => entry.id)).size !== state.pendingWorkflows.length))
             || state.runs.some((run) => !run || typeof run.runId !== "string" || typeof run.item !== "string"
                 || !phases.some((phase) => phase.id === run.phase) || typeof run.sessionId !== "string"
                 || typeof run.instanceId !== "string" || typeof run.args !== "string" || !Array.isArray(run.before)
@@ -131,11 +152,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
     const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
-    async function restoreMode(automation) {
+    const cleanupDiagnostic = async (message) => {
+        try { await diagnostic(message); } catch { /* Cleanup reporting must not mask the original failure. */ }
+    };
+    async function restoreMode(automation, log = diagnostic) {
         if (!automation?.previousMode || automation.previousMode === "autopilot") return;
         if (await session.rpc.mode.get() !== "autopilot") return;
         const result = await session.rpc.mode.set({ mode: automation.previousMode, expectedMode: "autopilot" });
-        if (result.modeApplied === false) await diagnostic("Copilot session mode changed; Autopilot did not restore the previous mode.");
+        if (result.modeApplied === false) await log("Copilot session mode changed; Autopilot did not restore the previous mode.");
     }
     const update = (fn, uiChange = false, announce = true) => {
         const pending = writes.then(async () => {
@@ -173,6 +197,26 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             throw error;
         }
     }
+    async function hasConstitution() {
+        const step = phases.find((phase) => phase.project);
+        if (!step) return true;
+        const output = await outputPath(step, "project");
+        if (!output) return false;
+        try {
+            if (!(await lstat(await confined(cwd, output))).isFile()) {
+                throw new UserError("The project constitution is not a regular file.");
+            }
+            return true;
+        } catch (error) {
+            if (error.code === "ENOENT") return false;
+            throw error;
+        }
+    }
+    async function requireConstitution() {
+        if (!(await hasConstitution())) {
+            throw new UserError("Create a project constitution before starting a workflow.");
+        }
+    }
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
         ? [config.phaseOutputs?.[step.id]?.outputPath].filter(Boolean) : step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
@@ -187,6 +231,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
         return found;
     }
+    const pendingFor = (id, view = state) => view.pendingWorkflows?.find((entry) => entry.id === id);
     function runFor(step, item, view = state) {
         return view.runs.findLast((run) => run.phase === step.id && run.item === (step.project ? "project" : item));
     }
@@ -219,10 +264,12 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         let path = step.output;
         if (path.includes("<slug>")) {
             const selected = (entries ?? await items(view)).find((entry) => entry.id === item);
-            const slug = selected?.slug ?? (item === "__new__" && config.userProvidesSlug && validSlug(view.slug) ? view.slug : null);
+            const draftSlug = item === "__new__" ? view.slug : pendingFor(item, view)?.slug;
+            const slug = validSlug(selected?.slug) ? selected.slug
+                : selected ? null : validSlug(draftSlug) ? draftSlug : null;
             if (!slug) return null;
             path = path.replace("<slug>", slug);
-            if (selected && !step.configuredArtifacts && !path.startsWith(`${selected.id}/`)) {
+            if (selected && !newItem(item) && !step.configuredArtifacts && !path.startsWith(`${selected.id}/`)) {
                 throw new UserError("This phase output belongs to a different workflow.");
             }
         }
@@ -267,7 +314,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const view = structuredClone(state);
         const entries = await items(view);
         const item = view.selected;
-        const selectedWorkflow = item === "__new__" ? null : entries.find((entry) => entry.id === item);
+        const selectedWorkflow = newItem(item) ? null : entries.find((entry) => entry.id === item);
         const visibleValues = [], pageValues = Object.create(null), valueErrors = {};
         const providerDeadline = performance.now() + PROVIDER_REFRESH_LIMIT_MS;
         let reportedDeadline = false;
@@ -329,7 +376,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
-        const automation = view.autopilot?.item === item
+        const automation = view.autopilot
             ? { ...view.autopilot, message: view.autopilot.error
                 ?? `${view.autopilot.status}: step ${Math.min(view.autopilot.current + 1, workflowSteps.length)} of ${workflowSteps.length}` }
             : null;
@@ -338,9 +385,27 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             automation.status = "Blocked";
             automation.message = "Autopilot outcome is unconfirmed. Check chat before resuming.";
         }
-        return { ...view, userProvidesSlug: config.userProvidesSlug, autopilot: automation,
+        const project = phases.find((phase) => phase.project);
+        const pending = (view.pendingWorkflows ?? []).map(({ id, name, slug }) => {
+            const run = view.runs.findLast((entry) => entry.item === id);
+            return { id, slug, label: name.trim() || slug || "Unstarted workflow", pending: true,
+                status: run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
+                    ? "Unconfirmed" : run?.status ?? "Not started" };
+        });
+        const legacyDraft = (view.name || view.slug
+            || Object.keys(view.drafts).some((key) => key.startsWith('["__new__",')))
+            ? [{ id: "__new__", slug: view.slug,
+                label: view.name?.trim() || view.slug || "Unstarted workflow", pending: true }] : [];
+        return { ...view, userProvidesSlug: true,
+            constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
+            autopilot: automation, showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
-            phases, items: entries, statuses, valueFields: visibleValues, pageValues, valueErrors };
+            name: pendingFor(item, view)?.name ?? view.name,
+            slug: pendingFor(item, view)?.slug ?? view.slug,
+            phases, items: [...entries, ...legacyDraft, ...pending],
+            statuses, valueFields: visibleValues, pageValues, valueErrors,
+            setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
+                : { stage: "legacy", ready: true, pending: [], planId: null, error: null } };
     }
     async function saveValue(input) {
         if (!input || Object.keys(input).sort().join() !== "id,revision,value"
@@ -359,23 +424,94 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     async function save(input) {
         if (deleting) throw new UserError("A workflow is being deleted. Refresh and try again.", 409);
         if (!input || Object.keys(input).some((key) => !["revision", "selected", "phase", "slug", "name", "draft"].includes(key))) throw new UserError("Invalid canvas state update.");
-        if (input.selected !== undefined && input.selected !== "__new__" && !(await items()).some((item) => item.id === input.selected)) throw new UserError("That workflow is no longer available. Refresh the workflow list.");
+        if (input.selected !== undefined && input.selected !== "__new__"
+            && !pendingFor(input.selected) && !(await items()).some((item) => item.id === input.selected)) {
+            throw new UserError("That workflow is no longer available. Refresh the workflow list.");
+        }
         if (input.phase !== undefined) phaseFor(input.phase);
-        if (input.slug !== undefined && (typeof input.slug !== "string" || input.slug.length > 100)) throw new UserError("Workflow slug is too long.");
-        if (input.slug !== undefined && !config.userProvidesSlug) throw new UserError("Custom workflow slugs are disabled for this canvas.");
+        if (input.slug !== undefined && (typeof input.slug !== "string" || input.slug.length > 100)) throw new UserError("Artifact folder name (slug) is too long.");
         if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120
             || /[\x00-\x1f\x7f]/.test(input.name))) throw new UserError("Workflow name must be text of at most 120 characters.");
-        if (input.name !== undefined && (input.selected ?? state.selected) !== "__new__") {
+        if (input.name !== undefined && !newItem(input.selected ?? state.selected)) {
             throw new UserError("Only a new workflow can be given a display name.");
+        }
+        if (input.slug !== undefined && !newItem(input.selected ?? state.selected)) {
+            throw new UserError("Only a new workflow can change its artifact folder name.");
         }
         if (input.draft && (typeof input.draft.value !== "string" || input.draft.value.length > 32000
             || typeof input.draft.item !== "string"
-            || (input.draft.item !== "__new__" && input.draft.item !== "project" && !(await items()).some((item) => item.id === input.draft.item)))) throw new UserError("Invalid phase draft.");
+            || (!newItem(input.draft.item) && input.draft.item !== "project"
+                && !(await items()).some((item) => item.id === input.draft.item))
+            || (pendingId(input.draft.item) && !pendingFor(input.draft.item)))) throw new UserError("Invalid phase draft.");
         if (input.draft) phaseFor(input.draft.phase);
         await update((next) => {
             if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before saving.", 409);
-            for (const key of ["selected", "phase", "slug", "name"]) if (input[key] !== undefined) next[key] = input[key];
+            for (const key of ["selected", "phase"]) if (input[key] !== undefined) next[key] = input[key];
+            for (const key of ["slug", "name"]) {
+                if (input[key] === undefined) continue;
+                const pending = pendingFor(next.selected, next);
+                if (pending) pending[key] = input[key];
+                else next[key] = input[key];
+            }
             if (input.draft) next.drafts[JSON.stringify([input.draft.item, input.draft.phase])] = input.draft.value;
+        }, true);
+        return { revision: state.revision };
+    }
+    async function createPending(input) {
+        if (!input || Object.keys(input).sort().join() !== "revision"
+            || !Number.isSafeInteger(input.revision)) throw new UserError("Invalid new workflow request.");
+        const existing = await items();
+        let id;
+        await update((next) => {
+            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before creating a workflow.", 409);
+            const drafts = next.pendingWorkflows ??= [];
+            if (drafts.length >= 100) throw new UserError("Too many unstarted workflows. Remove one before adding another.");
+            let number = next.workflowSerial ?? 0;
+            let slug;
+            do {
+                if (number >= Number.MAX_SAFE_INTEGER) throw new UserError("Workflow numbering has reached its limit.");
+                number++;
+                slug = `workflow-${number}`;
+            } while (existing.some((entry) => entry.slug === slug || new RegExp(`^\\d+-${slug}$`).test(entry.slug))
+                || drafts.some((entry) => entry.slug === slug));
+            next.workflowSerial = number;
+            id = `__new__:${number}`;
+            drafts.push({ id, name: `Workflow ${number}`, slug });
+            next.selected = id;
+            next.phase = workflowSteps[0]?.id ?? next.phase;
+        }, true);
+        return { revision: state.revision, id };
+    }
+    async function removePending(input) {
+        if (!input || Object.keys(input).sort().join() !== "itemId,revision"
+            || !pendingId(input.itemId) || !Number.isSafeInteger(input.revision)) {
+            throw new UserError("Invalid unstarted workflow removal.");
+        }
+        const existing = await items();
+        await update((next) => {
+            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before removing this workflow.", 409);
+            const index = (next.pendingWorkflows ?? []).findIndex((entry) => entry.id === input.itemId);
+            if (index < 0) throw new UserError("This unstarted workflow no longer exists.");
+            if (next.runs.some((run) => run.item === input.itemId && run.status !== "Failed")) {
+                throw new UserError("This row cannot be removed: a run may have created a workflow directory without reporting it, even if completed. Check chat and artifacts.");
+            }
+            if (next.runs.some((run) => run.item === input.itemId && run.status === "Failed"
+                && existing.some((entry) => !run.before.includes(entry.id)
+                    && (entry.slug === run.slug || new RegExp(`^\\d+-${run.slug}$`).test(entry.slug))))) {
+                throw new UserError("A workflow directory may have been created by the failed run. Check its artifacts before removing this row.");
+            }
+            if (next.autopilot?.item === input.itemId
+                && (["Request sent", "Running", "Finishing"].includes(next.autopilot.status)
+                    || (next.autopilot.status === "Blocked" && liveRuns.has(next.autopilot.id)))) {
+                throw new UserError("Stop Autopilot before removing this workflow.");
+            }
+            next.pendingWorkflows.splice(index, 1);
+            next.runs = next.runs.filter((run) => run.item !== input.itemId);
+            for (const key of Object.keys(next.drafts)) {
+                if (key.startsWith(`[${JSON.stringify(input.itemId)},`)) delete next.drafts[key];
+            }
+            if (next.selected === input.itemId) next.selected =
+                next.pendingWorkflows.at(-1)?.id ?? existing[0]?.id ?? "__new__";
         }, true);
         return { revision: state.revision };
     }
@@ -393,21 +529,22 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (result?.errors?.length) throw new UserError("Session skills could not reload. Check Copilot's skill diagnostics and retry.");
     }
     async function enabledAutopilot() {
+        if (!config.workflowPage.managedRun) {
+            throw new UserError("This phase control does not provide Autopilot.");
+        }
         const module = config.workflowPage.adapter;
         const bytes = await readBoundedBytes(fileURLToPath(new URL(".", import.meta.url)),
             `pages/${module}.mjs`, 128 * 1024);
         if (createHash("sha256").update(bytes).digest("hex") !== config.workflowPage.hash) {
             throw new UserError("Packaged phase control changed; restore the generated canvas files.");
         }
-        const adapter = await import(new URL(`./pages/${module}.mjs`, import.meta.url));
-        if (!Array.isArray(adapter.requiredCapabilities)
-            || !adapter.requiredCapabilities.includes("workflow.managed-run.v1")) {
-            throw new UserError("This phase control does not provide Autopilot.");
-        }
     }
     async function startAutopilot(input, instanceId) {
         if (!input || Object.keys(input).some((key) => !["itemId"].includes(key))
             || typeof input.itemId !== "string") throw new UserError("Select a workflow for Autopilot.");
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry Autopilot.", 409);
+        }
         if (dispatching || autopilotDispatching || deleting) throw new UserError("A workflow request is being sent. Retry after it finishes.", 409);
         if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
             && liveRuns.has(state.autopilot.id)) throw new UserError("Autopilot is already running. Stop it before retrying.", 409);
@@ -416,12 +553,23 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         try {
             await enabledAutopilot();
             if (!workflowSteps.length) throw new UserError("No workflow steps are configured.");
+            const boundStep = workflowSteps.find((step) =>
+                config.phaseDialogs?.some((binding) => binding.phase === step.command));
+            if (boundStep) {
+                throw new UserError(`Autopilot cannot run ${boundStep.label} because it requires confirmation. Run the phases manually instead.`, 409);
+            }
             const entries = await items();
-            if (input.itemId !== "__new__" && !entries.some((entry) => entry.id === input.itemId)) {
+            if (!newItem(input.itemId) && !entries.some((entry) => entry.id === input.itemId)
+                || pendingId(input.itemId) && !pendingFor(input.itemId)) {
                 throw new UserError("The selected workflow no longer exists. Refresh before starting.");
             }
-            if (input.itemId === "__new__" && !workflowSteps[0].first) {
+            if (newItem(input.itemId) && !workflowSteps[0].first) {
                 throw new UserError("Select an existing workflow before starting Autopilot.");
+            }
+            await requireConstitution();
+            const draft = pendingFor(input.itemId);
+            if (newItem(input.itemId) && !validSlug(draft?.slug ?? state.slug)) {
+                throw new UserError("Enter an artifact folder name (slug) before starting a workflow.");
             }
             for (const step of workflowSteps) await skill(step);
             if (!session.rpc?.mode?.get || !session.rpc.mode.set) {
@@ -433,8 +581,16 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("All Autopilot steps were verified. Check chat for the final outcome; no step remains to retry.");
             }
             const start = resuming ? prior.current : 0;
-            id = randomUUID();
             const currentMode = await session.rpc.mode.get();
+            if (currentMode === "autopilot" && prior) {
+                if (prior.item !== input.itemId && prior.status === "Blocked") {
+                    throw new UserError("Stop the blocked Autopilot run before starting another workflow.");
+                }
+                if (prior.previousMode !== "autopilot" && !(resuming && prior.status === "Blocked")) {
+                    throw new UserError(`Copilot is still in Autopilot mode after the previous run. Switch Copilot to ${prior.previousMode} mode before starting another workflow.`, 409);
+                }
+            }
+            id = randomUUID();
             previousMode = resuming ? prior.previousMode : currentMode;
             if (currentMode !== "autopilot") {
                 const changed = await session.rpc.mode.set({
@@ -469,8 +625,8 @@ After each skill finishes, call report_autopilot_step with action:"complete" for
 Only proceed when completion is accepted. Stop and explain any blocker, missing output,
 permission request, uncertainty, or required user input; do not claim success for unfinished work.
 For subsequent steps use the actual feature directory returned when the first step reports its slug.
-Selected workflow: ${JSON.stringify(input.itemId)}. New workflow name: ${JSON.stringify(state.name ?? "")}.
-Requested slug: ${JSON.stringify(config.userProvidesSlug ? state.slug : "")}.
+Selected workflow: ${JSON.stringify(input.itemId)}. New workflow name: ${JSON.stringify(draft?.name ?? state.name ?? "")}.
+Requested artifact folder name (slug): ${JSON.stringify(draft?.slug ?? state.slug)}.
 Use each step's supplied input as data for its skill. Ask for necessary missing input rather than inventing it.
 Steps:\n${instructions}` });
             sent = true;
@@ -480,26 +636,56 @@ Steps:\n${instructions}` });
             });
             return { ok: true, autopilotId: id };
         } catch (error) {
-            if (id) await update((next) => {
-                if (next.autopilot?.id === id) {
-                    next.autopilot.status = "Blocked";
-                    next.autopilot.error = sent
-                        ? "Autopilot was sent but tracking failed. Check chat before retrying."
-                        : error.message;
+            let persistenceError;
+            try {
+                if (id) await update((next) => {
+                    if (next.autopilot?.id === id) {
+                        next.autopilot.status = "Blocked";
+                        next.autopilot.error = sent
+                            ? "Autopilot was sent but tracking failed. Check chat before retrying."
+                            : error.message;
+                    }
+                });
+            } catch (failure) {
+                persistenceError = failure;
+            }
+            let restoreError;
+            try {
+                if (modeChanged && !sent) {
+                    await restoreMode({ previousMode }, cleanupDiagnostic);
+                    if (await session.rpc.mode.get() === "autopilot") {
+                        throw new Error("Copilot did not restore the previous mode.");
+                    }
                 }
-            });
-            if (modeChanged && !sent) await restoreMode({ previousMode });
-            if (!sent) {
-                liveRuns.delete(id);
-                busy.value = false;
+            } catch (failure) {
+                restoreError = failure;
+            } finally {
+                if (!sent) {
+                    liveRuns.delete(id);
+                    busy.value = false;
+                }
+            }
+            if (persistenceError) await cleanupDiagnostic(
+                `Could not persist the Autopilot dispatch outcome: ${persistenceError.message}`);
+            if (restoreError) await cleanupDiagnostic(
+                `Could not restore the Copilot session mode: ${restoreError.message}`);
+            if (persistenceError || restoreError) {
+                const details = [`Autopilot failed: ${error.message}`];
+                if (persistenceError) details.push(`Its state could not be saved: ${persistenceError.message}`);
+                if (restoreError) {
+                    details.push(`Mode restoration also failed: ${restoreError.message}`);
+                    details.push(`Switch Copilot to ${previousMode} mode manually before retrying`);
+                }
+                if (sent) details.push("Autopilot was sent; check chat before retrying");
+                throw new UserError(`${details.join(". ")}.`, 500);
             }
             throw error;
         } finally { autopilotDispatching = false; }
     }
-    async function stopAutopilot(input, instanceId) {
+    async function stopAutopilot(input) {
         if (!input || Object.keys(input).length) throw new UserError("Invalid stop request.");
         const automation = state.autopilot;
-        if (!automation || automation.instanceId !== instanceId || automation.sessionId !== session.sessionId
+        if (!automation || automation.sessionId !== session.sessionId
             || !["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)) {
             throw new UserError("No active Autopilot run is available to stop.");
         }
@@ -508,7 +694,10 @@ Steps:\n${instructions}` });
         }
         if (typeof session.abort !== "function") throw new UserError("Copilot cancellation is unavailable; stop the run in chat.");
         await session.abort();
-        await restoreMode(automation);
+        await restoreMode(automation, cleanupDiagnostic);
+        if (automation.previousMode !== "autopilot" && await session.rpc.mode.get() === "autopilot") {
+            throw new UserError(`Copilot could not restore the previous mode. Switch Copilot to ${automation.previousMode} mode manually before starting another workflow.`, 500);
+        }
         await update((next) => {
             if (next.autopilot?.id === automation.id) {
                 next.autopilot.status = "Paused";
@@ -550,7 +739,8 @@ Steps:\n${instructions}` });
                 current.status = "Running";
                 next.runs.push({ runId, autopilotId: current.id, instanceId,
                     phase: currentStep.id, item: current.item, args: next.drafts[JSON.stringify([current.item, currentStep.id])] ?? "",
-                    slug: null, name: next.name ?? "", before: before.map((entry) => entry.id),
+                    slug: null, name: pendingFor(current.item, next)?.name ?? next.name ?? "",
+                    before: before.map((entry) => entry.id),
                     sessionId: session.sessionId, messageId: current.messageId,
                     status: "Running", artifact: null, artifacts: [], error: null });
             });
@@ -561,7 +751,7 @@ Steps:\n${instructions}` });
         if (!run || run.status !== "Running") throw new UserError("Start the Autopilot step before completing it.");
         try {
             if (step.output) {
-                if (run.item === "__new__") throw new UserError("Report the new workflow directory before completing this step.");
+                if (newItem(run.item)) throw new UserError("Report the new workflow directory before completing this step.");
                 const expected = step.output.replace("<slug>", run.item.split("/").at(-1));
                 if (!run.artifacts?.some((path) => expected.endsWith("<name>.md")
                     ? path.startsWith(`${run.item}/`) : path === expected)) {
@@ -598,20 +788,26 @@ Steps:\n${instructions}` });
         return { accepted: true, nextPhase: workflowSteps[state.autopilot.current]?.id ?? null };
     }
     async function run(input, instanceId) {
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry this phase.", 409);
+        }
         if (deleting) throw new UserError("A workflow is being deleted. Refresh and try again.", 409);
         if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
             && liveRuns.has(state.autopilot.id)) throw new UserError("Stop Autopilot before starting a manual step.", 409);
         if (!input || Object.keys(input).some((key) => !["phase", "itemId", "args", "slug", "name"].includes(key))) throw new UserError("Invalid phase request.");
         const step = phaseFor(input.phase);
         if (typeof input.args !== "string" || input.args.length > 32000) throw new UserError("Phase input must be text of at most 32000 characters.");
-        if (input.slug !== undefined && input.slug !== "" && !validSlug(input.slug)) throw new UserError("Use a workflow slug with lowercase letters, numbers, and single hyphens, not a reserved filename.");
-        if (input.slug !== undefined && !config.userProvidesSlug) throw new UserError("Custom workflow slugs are disabled for this canvas.");
+        if (input.slug !== undefined && input.slug !== "" && !validSlug(input.slug)) throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
         if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120
             || /[\x00-\x1f\x7f]/.test(input.name))) throw new UserError("Workflow name must be text of at most 120 characters.");
-        if (input.name !== undefined && (step.project || (input.itemId ?? "__new__") !== "__new__")) {
+        if (input.name !== undefined && (step.project || !newItem(input.itemId ?? "__new__"))) {
             throw new UserError("Only a new workflow can be given a display name.");
         }
         if (step.project && (input.itemId || input.slug)) throw new UserError("Constitution applies to the project; omit the feature and slug.");
+        if (step.project && !(await hasConstitution()) && !input.args.trim()) {
+            throw new UserError("Enter project principles before creating the constitution.");
+        }
+        if (!step.project) await requireConstitution();
         if (dispatching) throw new UserError("This request is being sent. Check chat before trying again.", 409);
         dispatching = true;
         let runId, sent = false;
@@ -619,12 +815,17 @@ Steps:\n${instructions}` });
             await skill(step);
             const before = await items();
             const item = step.project ? "project" : input.itemId ?? "__new__";
-            if (!step.project && item !== "__new__" && !before.some((entry) => entry.id === item)) throw new UserError("Select an existing workflow or choose New.");
-            if (!step.project && item === "__new__" && !step.first && phases.some((phase) => phase.first)) throw new UserError("Select an existing workflow or run Specify to create one first.");
-            const slug = item === "__new__" && config.userProvidesSlug
-                ? (input.slug === undefined ? state.slug : input.slug) : null;
-            const name = item === "__new__" ? (input.name === undefined ? state.name ?? "" : input.name).trim() : "";
-            if (slug && !validSlug(slug)) throw new UserError("Use a workflow slug with lowercase letters, numbers, and single hyphens, not a reserved filename.");
+            if (!step.project && (pendingId(item) && !pendingFor(item)
+                || !newItem(item) && !before.some((entry) => entry.id === item))) {
+                throw new UserError("Select an existing workflow or choose New.");
+            }
+            if (!step.project && newItem(item) && !step.first && phases.some((phase) => phase.first)) throw new UserError("Select an existing workflow or run Specify to create one first.");
+            const pending = pendingFor(item);
+            const slug = newItem(item) ? (input.slug === undefined ? pending?.slug ?? state.slug : input.slug) : null;
+            const name = newItem(item) ? (input.name === undefined ? pending?.name ?? state.name ?? "" : input.name).trim() : "";
+            if (newItem(item) && !validSlug(slug)) {
+                throw new UserError("Enter an artifact folder name (slug) using lowercase letters, numbers, and single hyphens, not a reserved filename.");
+            }
             runId = randomUUID();
             const record = { runId, instanceId, phase: step.id, item, args: input.args,
                 slug: slug || null, name,
@@ -633,20 +834,23 @@ Steps:\n${instructions}` });
             await update((next) => {
                 next.runs.push(record);
                 next.drafts[JSON.stringify([item, step.id])] = input.args;
-                if (item === "__new__" && next.selected === "__new__" && slug && next.slug !== slug) {
-                    next.slug = slug;
+                if (newItem(item) && next.selected === item && slug
+                    && (pendingFor(item, next)?.slug ?? next.slug) !== slug) {
+                    const draft = pendingFor(item, next);
+                    if (draft) draft.slug = slug;
+                    else next.slug = slug;
                     next.revision++;
                 }
             });
             liveRuns.add(runId);
-            const context = step.project ? "Project-scoped Constitution." : item === "__new__"
+            const context = step.project ? "Project-scoped Constitution." : newItem(item)
                 ? `Create a new feature using the installed skill's normal scripts.${slug ? ` Requested short name: ${JSON.stringify(slug)}.` : ""}
 Before writing workflow artifacts, invoke report_workflow_slug on canvas instance ${JSON.stringify(instanceId)} with {phaseRunId:${JSON.stringify(runId)},slug:<actual created workflow directory name>}. If the installed scripts add a numeric prefix, report the actual directory name, including that prefix, as soon as it is known. Use the returned resolved paths for this workflow. The path templates below describe expected outputs, not permission to override an installed skill's explicit output location; surface a conflict instead of silently writing elsewhere.`
                 : `Use the existing feature directory ${JSON.stringify(item)} in this checkout. Set SPECIFY_FEATURE to its directory name for the skill's scripts; do not switch branches or use another feature.`;
             const instructions = `\n\nCanvas execution context: ${context}
 Run the installed skill above in the current checkout. Do not run init or install packages.
 Workflow output paths: ${JSON.stringify(phases.filter((phase) => !step.project || phase.project).map((phase) => ({ phase: phase.id,
-                outputs: phase.outputs.map((path) => path.replace("<slug>", item === "__new__" ? slug || "<slug>" : item.split("/").at(-1))) })))}
+                outputs: phase.outputs.map((path) => path.replace("<slug>", newItem(item) ? slug || "<slug>" : item.split("/").at(-1))) })))}
 For each Markdown artifact this phase creates or updates, invoke report_phase_artifact separately with {phaseRunId:${JSON.stringify(runId)},path:<actual checkout-relative Markdown path>}. Report the primary artifact first, then additional artifacts of this phase; never a path from another checkout. If no artifact was produced, do not invent one.
 Use canvas instance ${JSON.stringify(instanceId)} for artifact reporting too.
 User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
@@ -685,22 +889,33 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     }
     async function reportSlug(input, instanceId) {
         const run = reportingRun(input, instanceId);
-        if (phaseFor(run.phase).project || (run.item !== "__new__" && !run.confirmedSlug)) throw new UserError("Only a new workflow can report a directory slug.");
-        if (!validSlug(input.slug)) throw new UserError("Use a workflow slug with lowercase letters, numbers, and single hyphens, not a reserved filename.");
+        if (phaseFor(run.phase).project || (!newItem(run.item) && !run.confirmedSlug)) throw new UserError("Only a new workflow can report a directory slug.");
+        if (!validSlug(input.slug)) throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
         if (run.confirmedSlug && run.slug !== input.slug) throw new UserError("This run already reported a different workflow directory.");
         if (run.before.some((item) => item.split("/").at(-1) === input.slug)) throw new UserError("That workflow already exists. Select it instead of creating a new workflow.");
         const created = (await items()).find((item) => item.slug === input.slug
-            && !run.before.includes(item.id) && (run.item === "__new__" || run.item === item.id));
+            && !run.before.includes(item.id) && (newItem(run.item) || run.item === item.id));
         if (!created) throw new UserError("The reported workflow directory does not exist yet. Create it before reporting its name.");
         await update((next) => {
             Object.assign(next.runs.find((entry) => entry.runId === run.runId),
                 { item: created.id, slug: input.slug, confirmedSlug: true });
             if (run.autopilotId && next.autopilot?.id === run.autopilotId) next.autopilot.item = created.id;
+            if (newItem(run.item)) {
+                for (const step of phases) {
+                    const key = JSON.stringify([run.item, step.id]);
+                    if (Object.hasOwn(next.drafts, key)) {
+                        next.drafts[JSON.stringify([created.id, step.id])] = next.drafts[key];
+                        delete next.drafts[key];
+                    }
+                }
+            }
             next.drafts[JSON.stringify([created.id, run.phase])] = run.args;
             if (run.name) (next.names ??= {})[created.id] = run.name;
-            if (next.selected === "__new__") {
+            if (newItem(run.item)) next.pendingWorkflows = (next.pendingWorkflows ?? [])
+                .filter((entry) => entry.id !== run.item);
+            if (run.item === "__new__") { next.name = ""; next.slug = ""; }
+            if (next.selected === run.item) {
                 next.selected = created.id;
-                next.slug = input.slug;
                 next.revision++;
             }
         });
@@ -719,8 +934,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             const entries = await items();
             const owner = entries.filter((entry) => path.startsWith(`${entry.id}/`))
                 .sort((left, right) => right.id.length - left.id.length)[0];
-            if (!owner || (run.item !== "__new__" && run.item !== owner.id)
-                || (run.item === "__new__" && (run.before.includes(owner.id)
+            if (!owner || (!newItem(run.item) && run.item !== owner.id)
+                || (newItem(run.item) && (run.before.includes(owner.id)
                     || (run.confirmedSlug && owner.slug !== run.slug)))) throw new UserError("Reported artifact is outside this workflow.");
             item = owner.id;
             authorizeReport(step, path, item);
@@ -735,11 +950,23 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }
             target.artifacts = paths;
             target.artifact ??= path;
-            if (item && target.item === "__new__") {
+            if (item && newItem(target.item)) {
                 if (target.name) (next.names ??= {})[item] = target.name;
+                for (const step of phases) {
+                    const key = JSON.stringify([target.item, step.id]);
+                    if (Object.hasOwn(next.drafts, key)) {
+                        next.drafts[JSON.stringify([item, step.id])] = next.drafts[key];
+                        delete next.drafts[key];
+                    }
+                }
                 target.item = item;
                 next.drafts[JSON.stringify([item, target.phase])] = target.args;
-                if (next.selected === "__new__") { next.selected = item; next.slug = item.split("/").at(-1); next.revision++; }
+                next.pendingWorkflows = (next.pendingWorkflows ?? [])
+                    .filter((entry) => entry.id !== run.item);
+                if (run.item === "__new__") { next.name = ""; next.slug = ""; }
+                if (next.selected === run.item) {
+                    next.selected = item; next.revision++;
+                }
             }
         });
         return { accepted: true };
@@ -835,7 +1062,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 throw new UserError("Stop Autopilot before deleting this workflow.", 409);
             }
             if (state.runs.some((run) => (run.item === item.id
-                || (run.item === "__new__" && !run.before.includes(item.id)))
+                || (newItem(run.item) && !run.before.includes(item.id)))
                 && !["Completed", "Failed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
@@ -872,7 +1099,9 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         });
         return { message: "Opened the output folder." };
     }
-    return { snapshot, refresh, save, saveValue, run, startAutopilot, stopAutopilot, reportAutopilotStep,
+    return { snapshot, refresh, save, saveValue, createPending, removePending, run,
+        startAutopilot, stopAutopilot, reportAutopilotStep,
         report, reportSlug, artifact, reveal, deleteWorkflow,
+        setupStart: setup.start, setupConfirm: setup.confirm, setupStatus: setup.status,
         close() { if (closed) return; closed = true; subscriptions.forEach((unsubscribe) => unsubscribe?.()); } };
 }

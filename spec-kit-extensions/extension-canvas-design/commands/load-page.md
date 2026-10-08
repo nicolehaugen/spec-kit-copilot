@@ -32,6 +32,9 @@ Each registration declares its Canvas Design kind (`designer.setting-definition`
 `generated.phase-control-adapter`,
 `generated.field-placement`,
 `generated.added-page-definition`, `generated.added-page-renderer`,
+`generated.dialog-definition`, `generated.dialog-adapter`,
+`generated.phase-dialog-binding`, `generated.button-control-definition`,
+`generated.button-adapter`, `generated.button-placement`,
 `shared.control-definition`, `designer.control-adapter`, `generated.control-adapter`,
 `generated.value-definition`, or `generated.computed-value-provider`) and strategy
 (`replace`). A `designer.setting-definition` can also
@@ -56,8 +59,12 @@ is not automatically presented and is not secret from its declared consumers.
 Computed-value providers are packaged, never evaluated by Designer.
 The required `generated-workflow` page declares `workflow.phases` first; the
 `generated-phase-control` definition places itself in that slot and references
-its adapter. Each field placement JSON `id` equals its registered template
-name. Presets may replace the Workflow page to add slots or add
+its registered adapter by name and may set `viewLabels` for selected
+non-Constitution phase IDs
+(for example, `"plan": "View Plan"`); the generated host passes those labels
+to the selected adapter without changing its view action. Each field placement
+JSON `id` equals its registered template name. Presets may replace the Workflow
+page to add slots or add
 pages with declared slots. `generated.field-placement` targets a declared slot
 and references a Designer setting field or a generated value ID; its `order`
 orders fields in that slot. Object values require an explicit `control` in their placement, naming a
@@ -67,11 +74,40 @@ typed source; image placements use `stock.image` when no control is declared.
 Designer setting placements cannot override their field's control. Image asset
 bindings retain their separate slots; a field placement cannot occupy one.
 
+Named `generated.dialog-definition` JSON references a registered
+`generated.dialog-adapter` module (`mount`, `contractVersion` exports). It
+contains only bounded heading, paragraph, warning, list, HTTPS link, and
+`pending-packages`/`phase` dynamic slot blocks, plus `buttons.cancel` and
+`buttons.confirm` labels.
+The setup dialog must expose the complete current package inventory through
+`pending-packages`; its adapter returns `confirmed` or `cancelled` (including
+close, Escape and backdrop). An optional `generated.phase-dialog-binding`
+names exactly one selected `speckit.<phase>` and registered dialog; without
+one, phases run directly.
+
+The `generated-setup-button-control` references its registered
+`generated.button-adapter`; the setup placement uses `project.setup-button`. The dialog
+adapter exports `dialogId = "stock.dialog"`, `contractVersion = 1`, and
+`mount({ root, definition, context, onDecision })`; the setup button adapter exports
+`controlId = "project.setup-button"`, `contractVersion = 1`, and
+`mount({ root, definition, onSetup })`. Both return an object with `dispose`.
+The base
+`generated-setup-button` placement targets the setup-only `setup.actions`
+slot and always invokes `project.setup`, even when a preset replaces its
+label, presentation or dialog. Other named `generated.button-placement`
+templates can target `workflow.actions` with `dialog.result` and the `dialog.trigger`
+control only: its separate adapter mounts with `onTrigger`, opening a registered
+dialog and reporting confirmation locally without dispatching a phase or CLI
+command. The stock Workflow page declares `workflow.actions` alongside
+`workflow.phases`, so the optional button does not replace the page or its
+phase adapter. Every executable module must be self-contained and registered;
+unregistered files are not loaded.
+
 ## Canvas Design templates
 
 - `designer-essentials-description` — `designer.setting-definition`, `replace`
 - `designer-essentials-workflow-heading` — `designer.setting-definition`, `replace`
-- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
+- `designer-essentials-show-setup` — `designer.setting-definition`, `replace`
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
 - `designer-appearance-light-accent` — `designer.setting-definition`, `replace`
@@ -87,6 +123,11 @@ bindings retain their separate slots; a field placement cannot occupy one.
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
 - `generated-phase-control` — `generated.phase-control-definition`, `replace`
 - `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
+- `generated-setup-dialog` — `generated.dialog-definition`, `replace`
+- `generated-dialog-adapter` — `generated.dialog-adapter`, `replace`
+- `generated-setup-button-control` — `generated.button-control-definition`, `replace`
+- `generated-setup-button-adapter` — `generated.button-adapter`, `replace`
+- `generated-setup-button` — `generated.button-placement`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`
 - `designer-control-adapter-image` — `designer.control-adapter`, `replace`
 - `generated-control-adapter-image` — `generated.control-adapter`, `replace`

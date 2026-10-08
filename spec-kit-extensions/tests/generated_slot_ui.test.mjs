@@ -116,12 +116,13 @@ function harness({ placements, fields = [], pageSlots = [], adapter = null }) {
             notice.textContent = text;
             if (error) notice.setAttribute("role", "alert");
         },
-        renderCollection() {}, renderValues() {}, renderPhase() {},
+        renderCollection() {}, renderValues() {}, renderPhase() {}, renderSetup() {},
         constitution: () => null, workflowPhases: () => [],
         saveInputs() {},
     };
     const program = [
-        section("const $ = (id)", "function currentTheme()"),
+        "const $ = (id) => document.getElementById(id);",
+        section("let phaseControl;", "function currentTheme()"),
         section("function editValue(element)", "async function api("),
         section("async function refresh(reconcile", "async function selectPhase("),
     ].join("\n")

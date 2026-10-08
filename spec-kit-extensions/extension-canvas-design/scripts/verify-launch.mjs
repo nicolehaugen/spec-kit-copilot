@@ -12,12 +12,16 @@ const KINDS = new Set(["designer.setting-definition",
     "generated.phase-control-adapter",
     "generated.field-placement",
     "generated.added-page-definition", "generated.added-page-renderer",
+    "generated.dialog-definition", "generated.dialog-adapter",
+    "generated.phase-dialog-binding", "generated.button-control-definition",
+    "generated.button-adapter", "generated.button-placement",
     "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
     "generated.value-definition", "generated.computed-value-provider"]);
 const HEADINGS = new Set(["Pages", "Additional Designer pages",
     "Canvas Design templates", "Additional Canvas Design templates"]);
 const EXECUTABLE = new Set(["generated.phase-control-adapter", "generated.added-page-renderer",
-    "designer.control-adapter", "generated.control-adapter", "generated.computed-value-provider"]);
+    "designer.control-adapter", "generated.control-adapter", "generated.computed-value-provider",
+    "generated.dialog-adapter", "generated.button-adapter"]);
 
 export function isInside(root, target) {
     const part = relative(root, target);

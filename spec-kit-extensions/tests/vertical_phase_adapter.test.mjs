@@ -6,6 +6,7 @@ const phases = [
     { id: "specify", label: "Specify", output: "specs/demo/spec.md" },
     { id: "plan", label: "Plan <script>", output: "specs/demo/plan.md" },
 ];
+const definition = { id: "workflow-phases", viewLabels: {} };
 const initial = {
     workflow: "demo", phases, current: 0, status: { status: "Not run" },
     draft: "Initial <input>", output: phases[0].output,
@@ -38,7 +39,7 @@ test("vertical phase adapter owns full navigation and card and dispatches the co
     const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
         "startManagedRun", "stopManagedRun", "reveal", "error"]
         .map((name) => [name, (...args) => calls.push([name, ...args])]));
-    const control = mount({ root, state: initial, actions });
+    const control = mount({ root, definition, state: initial, actions });
     assert.match(root.innerHTML, /vertical-phase-list/);
     assert.match(root.innerHTML, /Autopilot/);
     assert.match(root.innerHTML, /Start Step 0/);
@@ -84,19 +85,19 @@ test("vertical phase adapter owns full navigation and card and dispatches the co
     assert.match(root.innerHTML, /No declared output/);
     assert.match(root.innerHTML, /No artifact is available for this phase yet/);
     control.update({ ...initial, sending: true, status: { status: "Running" }, runLabel: "Sending..." });
-    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    assert.match(root.innerHTML, /data-action="start" data-index="0"[^>]*>Start Step 0/);
     click([], { action: "start", index: "0" });
     assert.deepEqual(calls.at(-1), ["runAt", 0]);
     control.update({ ...initial, status: { status: "Request sent" },
         statuses: { specify: { status: "Request sent" } }, runLabel: "Request sent..." });
     assert.match(root.innerHTML, /Request sent/);
     assert.match(root.innerHTML, /data-status="Request sent">request sent/);
-    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    assert.match(root.innerHTML, /data-action="start" data-index="0"[^>]*>Start Step 0/);
     click([], { action: "start", index: "0" });
     assert.deepEqual(calls.at(-1), ["runAt", 0]);
     control.update({ ...initial, status: { status: "Running" },
         statuses: { specify: { status: "Running" } }, runLabel: "Running..." });
-    assert.match(root.innerHTML, /data-action="start" data-index="0">Start Step 0/);
+    assert.match(root.innerHTML, /data-action="start" data-index="0"[^>]*>Start Step 0/);
     click([], { action: "start", index: "0" });
     assert.deepEqual(calls.at(-1), ["runAt", 0]);
     control.update({ ...initial, status: { status: "Completed" }, runLabel: null });
@@ -111,7 +112,7 @@ test("vertical phase adapter handles empty workflows without host phase markup",
     const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
         "startManagedRun", "stopManagedRun", "reveal", "error"]
         .map((name) => [name, () => {}]));
-    mount({ root, state: {
+    mount({ root, definition, state: {
         phases: [], current: -1, workflow: "__new__", status: null, draft: "",
         output: null, outputLinks: [], sending: false, runLabel: null,
     }, actions });
@@ -124,7 +125,7 @@ test("the adapter confirms only Autopilot transitions, never pending manual retr
     const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
         "startManagedRun", "stopManagedRun", "reveal", "error"]
         .map((name) => [name, (...args) => { calls.push([name, ...args]); }]));
-    const control = mount({ root, state: { ...initial, status: { status: "Request sent" } }, actions });
+    const control = mount({ root, definition, state: { ...initial, status: { status: "Request sent" } }, actions });
     const click = (action, index) => listeners.get("click")({
         target: { closest: () => ({
             disabled: false, dataset: { action, ...(index === undefined ? {} : { index: String(index) }) },
@@ -146,7 +147,7 @@ test("the adapter confirms only Autopilot transitions, never pending manual retr
     assert.deepEqual(calls.slice(1), [["stopManagedRun"], ["runAt", 1]]);
     assert.match(confirmations[0], /Stop it before starting this step manually/);
 
-    control.update({ ...initial, autopilot: { status: "Blocked", current: 1 } });
+    control.update({ ...initial, autopilot: { item: "demo", status: "Blocked", current: 1 } });
     root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return false; };
     click("autopilot");
     assert.equal(calls.at(-1)[0], "runAt");
@@ -155,4 +156,17 @@ test("the adapter confirms only Autopilot transitions, never pending manual retr
     assert.deepEqual(calls.at(-1), ["startManagedRun"]);
     assert.match(confirmations.at(-1), /Check chat and artifacts before resuming/);
     control.dispose();
+});
+
+test("vertical control keeps the other workflow's Stop action without borrowing its phase progress", () => {
+    const { root } = rootFixture();
+    const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
+        "startManagedRun", "stopManagedRun", "reveal", "error"].map((name) => [name, () => {}]));
+    mount({ root, definition, state: { ...initial, statuses: {}, autopilot: {
+        item: "specs/alpha", status: "Running", current: 0, message: "Running: step 1 of 2",
+    } }, actions });
+    assert.match(root.innerHTML, /data-action="stop">Stop/);
+    assert.match(root.innerHTML, /Autopilot for specs\/alpha: Running: step 1 of 2/);
+    assert.match(root.innerHTML, /data-status="Not run">pending/);
+    assert.doesNotMatch(root.innerHTML, /data-status="Running">running/);
 });
