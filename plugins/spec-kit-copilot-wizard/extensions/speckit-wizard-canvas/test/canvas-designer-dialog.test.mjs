@@ -175,7 +175,7 @@ test("required canvas design extension is force-checked, locked, and always incl
             && input.dataset.designerIndex === "1");
         assert.equal(requiredInput.checked, true);
         assert.equal(requiredInput.disabled, true);
-        assert.match(root.innerHTML, /data-designer-kind="extensions" data-designer-index="0" checked disabled title="Provides the default layout and behavior for Canvas Designer\. Select presets and extensions to override these defaults\."/);
+        assert.match(root.innerHTML, /data-designer-kind="extensions" data-designer-index="0" data-designer-id="extension-canvas-design" checked disabled title="Provides the default layout and behavior for Canvas Designer\. Select presets and extensions to override these defaults\."/);
         assert.match(root.innerHTML, /designer-required-badge/);
         assert.deepEqual(currentCanvasDesignerSelections().extensions,
             [{ id: REQUIRED_DESIGNER_EXTENSION_ID, source: "copilot", approved: true }]);

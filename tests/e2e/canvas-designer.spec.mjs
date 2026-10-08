@@ -27,6 +27,30 @@ test.beforeEach(async ({ page }) => {
     await page.getByRole("button", { name: "Generate canvas" }).click();
 });
 
+test("renders only eligible catalog IDs in each Designer tab", async ({ page }) => {
+    const response = await page.request.get("/api/state?token=e2e-token");
+    expect(response.ok()).toBe(true);
+    const { catalog } = await response.json();
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
+
+    for (const [kind, tab] of [
+        ["presets", "Presets"], ["extensions", "Extensions"], ["bundles", "Bundles"],
+    ]) {
+        expect(catalog[kind].some((item) => !item.tags?.includes("canvas-design"))).toBe(true);
+        const expected = catalog[kind]
+            .filter((item) => item?.id && Array.isArray(item.tags)
+                && item.tags.includes("canvas-design")
+                && (["community", "copilot"].includes(item.source)
+                    || (kind === "bundles" && item.source === "default")))
+            .map((item) => item.id).sort();
+        await dialog.getByRole("tab", { name: tab }).click();
+        const rendered = await dialog.getByRole("tabpanel", { name: tab })
+            .locator("input[data-designer-id]")
+            .evaluateAll((elements) => elements.map((element) => element.dataset.designerId));
+        expect(rendered.sort()).toEqual(expected);
+    }
+});
+
 test("opens a design-only dialog with an available launch", async ({ page }) => {
     const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
     await expect(dialog).toBeVisible();
