@@ -21,14 +21,15 @@ Designer; unreproducible packages fail launch rather than being omitted. Local
 development selections may override a hosted package only if the frozen runtime
 identity, version and priority remain reproducible. The child reloads skills
 once after installation. The composed
-`speckit-extension-canvas-design-load-page` skill resolves every effective
-template with `specify preset resolve` before opening Designer. It opens the
+`speckit-extension-canvas-design-load-page` skill checks every explicitly
+declared template against one `specify artifact list --json` inventory before opening Designer. It opens the
 official provider once with the complete typed inventory of page names,
 paths, asset kinds and replacement strategies.
-Preset and project overrides are honored. Failed CLI resolution, incomplete
-page lists, unsafe paths and invalid handoffs fail opening. A resolved page
-whose file is missing or invalid instead appears as a marked tab with its
-template name, path and reason so the user can troubleshoot with the agent.
+Preset and project overrides are honored. The provider obtains a fresh inventory
+at open and checks submitted names and paths against the active layers. Failed CLI resolution, incomplete
+page lists, unsafe paths and invalid handoffs fail opening. A resolved page whose winning file is missing or unreadable prevents opening;
+invalid JSON in a readable page appears as a marked tab with its template
+name, path and reason so the user can troubleshoot with the agent.
 If the installed Canvas Design page schema itself is missing or unusable,
 Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
