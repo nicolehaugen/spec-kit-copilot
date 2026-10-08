@@ -289,11 +289,13 @@ function renderPage(pageId, invalidFieldId) {
             mount.textContent = `Could not load ${field.label}: missing Designer adapter`;
             continue;
         }
+        const isRetained = () => mount.isConnected
+            || pageViews.get(pageId)?.some((node) => node.contains(mount));
         const mountAdapter = (module) => {
                 if (model.revision !== renderRevision) return;
                 const expected = model.controls.find((item) => item.id === control)?.value;
                 adapterContract.validateAdapterModule(module, control, expected, image, object);
-                if (!mount.isConnected) return;
+                if (!isRetained()) return;
                 const handle = module.mount({ root: mount, field, value: draft[field.id],
                     ...(image ? { context: { setBusy(busy) {
                             if (busy) activeUploads.add(field.id);
@@ -301,7 +303,7 @@ function renderPage(pageId, invalidFieldId) {
                             updateSave();
                         } } } : {}),
                     onChange(value) {
-                        if (!mount.isConnected) return;
+                            if (model.revision !== renderRevision || !isRetained()) return;
                         adapterContract.validateAdapterChange(value, rules, field.id);
                         draft[field.id] = value;
                         fieldError.hidden = true;

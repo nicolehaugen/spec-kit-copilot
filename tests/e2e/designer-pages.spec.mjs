@@ -462,6 +462,48 @@ test("Main page Logo upload explains rejection beside the picker and clears on r
     }
 });
 
+test("an image adapter finishing after a tab switch mounts into the retained page", async ({ page }) => {
+    const state = await model();
+    const { field } = JSON.parse(await readFile(new URL("header-logo.json", settingsRoot), "utf8"));
+    state.pages[0].fields.push(field);
+    state.constraints[field.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+    state.values[field.id] = "";
+    state.controls = [JSON.parse(await readFile(
+        new URL("shared-controls/stock-image/control.json", extensionRoot), "utf8"))];
+    state.adapters = { "stock.image": "designer-control-adapter-image" };
+    const shell = await startPreparedShell(state);
+    let releaseImport;
+    let importArrived;
+    const importHeld = new Promise((resolve) => { importArrived = resolve; });
+    await page.route("**/adapters/designer-control-adapter-image.mjs?*", async (route) => {
+        importArrived();
+        await new Promise((release) => { releaseImport = release; });
+        await route.continue();
+    });
+    try {
+        await page.goto(shell.url, { waitUntil: "domcontentloaded" });
+        await importHeld;
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("retained-image");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Retained image");
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        const imported = page.waitForResponse((response) =>
+            response.url().includes("/adapters/designer-control-adapter-image.mjs")
+                && response.status() === 200);
+        releaseImport();
+        await imported;
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await expect(page.getByRole("group", { name: field.label })
+            .locator('input[type="file"]')).toBeVisible();
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+    } finally {
+        releaseImport?.();
+        await shell.close();
+    }
+});
+
 test("pending or failed image selection blocks actions until completion or cancel", async ({ page }) => {
     await page.addInitScript(() => {
         const read = Blob.prototype.arrayBuffer;
