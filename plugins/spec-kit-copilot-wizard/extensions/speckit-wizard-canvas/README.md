@@ -57,11 +57,34 @@ From this extension directory, run `npm ci`; also run `npm ci` in the sibling
 `npx playwright install chromium` and `npm run test:e2e` here.
 The browser tests live in the repository's
 `tests/e2e/` directory and start a local Wizard server with fixed
-catalog data; no `specify` installation or live catalog is required.
-`.github/workflows/wizard-e2e.yml` runs them on PRs targeting `main` only
-when the Wizard plugin changes. The check is advisory until branch protection
+catalog data. The contract journey in `contracts.spec.mjs` injects raw
+`specify … list --json` responses through the real inventory reader, captures
+the launch prompt, and opens the resulting handoff in a Designer shell;
+it needs no live agent or Specify installation.
+`wizard-journeys.spec.mjs` uses isolated temporary checkouts and controlled
+test-only preset/extension packages for catalog, refresh, phase, and output
+journeys; it does not depend on live catalog inventory. The local test server
+defaults to port 4177; set `SPECKIT_E2E_PORT` to use another port (and pass
+Playwright `--output` when running multiple suites concurrently).
+The [user-flow test plan](../../../../docs/testing/wizard-designer-test-plan.md)
+and [implementation audit](../../../../docs/testing/wizard-designer-implementation-plan.md)
+record coverage and existing-test decisions.
+`.github/workflows/wizard-e2e.yml` runs them on PRs targeting `main` when
+the Wizard/Designer plugin, Canvas Design extension, presets, or E2E tests change.
+The check is advisory until branch protection
 is configured separately; its always-present gate can later be made required
 without blocking unrelated PRs on a skipped workflow.
+
+### Data contracts
+
+`contracts/agent-pipeline.mjs`, `agent-artifacts.mjs`, and `agent-phase.mjs`
+define the agent's inferred pipeline, artifact evidence, and phase action
+inputs. `contracts/wizard-state.mjs` normalizes persisted state, including
+older records; `contracts/specify-inventory.mjs` normalizes raw CLI responses.
+Action handlers, state persistence, prompt dispatch, and subprocess execution
+remain at their existing boundaries. Designer handoff validation lives in the
+sibling provider's `contracts/wizard-handoff.mjs`; the Wizard builds that same
+versioned shape without importing the separately packaged provider at runtime.
 
 ## Quickstart
 

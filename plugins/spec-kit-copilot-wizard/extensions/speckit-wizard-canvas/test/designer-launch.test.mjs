@@ -34,6 +34,8 @@ const LOCAL_CANVAS_DESIGN_EXT_PATH = fileURLToPath(
 const releasedBase = releaseCatalog.extensions["extension-canvas-design"];
 const localBaseVersion = load(await readFile(
     join(LOCAL_CANVAS_DESIGN_EXT_PATH, "extension.yml"), "utf8")).extension.version;
+const localPresetVersion = load(await readFile(
+    join(LOCAL_PRESET_PATH, "preset.yml"), "utf8")).preset.version;
 const hostedBase = { id: releasedBase.id, source: "copilot", tags: releasedBase.tags,
     version: releasedBase.version, downloadUrl: releasedBase.download_url };
 
@@ -349,9 +351,12 @@ test("hosted Canvas Design handoff verifies the installed package", async (t) =>
 });
 
 test("a newer hosted Canvas Design uses its catalog version without a Wizard pin", async () => {
+    const versionParts = releasedBase.version.match(/^(\d+)\.(\d+)\.(\d+)$/);
+    assert.ok(versionParts, "published catalog version must be semver");
+    const nextVersion = `${versionParts[1]}.${versionParts[2]}.${Number(versionParts[3]) + 1}`;
     const hosted = { ...catalog, extensions: [{
         id: "extension-canvas-design", source: "copilot", tags: ["canvas-design"],
-        version: "0.1.20",
+        version: nextVersion,
         downloadUrl: "https://example.org/extension-canvas-design.zip",
     }] };
     const selection = { ...empty, extensions: [{
@@ -361,8 +366,9 @@ test("a newer hosted Canvas Design uses its catalog version without a Wizard pin
     const response = await noLocal.post(request(selection));
     assert.equal(response.statusCode, 202);
     assert.equal(JSON.parse(noLocal.sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\n/)[1])
-        .canvasDesign.version, "0.1.20");
-    assert.match(noLocal.sent[0].prompt, /warns that the installed version differs from approved 0\.1\.20/);
+        .canvasDesign.version, nextVersion);
+    assert.ok(noLocal.sent[0].prompt.includes(
+        `warns that the installed version differs from approved ${nextVersion}`));
 
     const withLocal = fixture({ getState: async () => ({ ...snapshot, catalog: hosted }) });
     assert.equal((await withLocal.post({ ...request(selection), localSelections: {
@@ -417,7 +423,7 @@ test("different-version local overrides supersede installed runtime packages", a
             path: LOCAL_CANVAS_DESIGN_EXT_PATH }],
         bundles: [],
     });
-    assert.equal(handoff.localSelections.presets[0].version, "1.0.0");
+    assert.equal(handoff.localSelections.presets[0].version, localPresetVersion);
     assert.equal(handoff.localSelections.extensions[0].version, localBaseVersion);
     assert.match(sent[0].prompt, /Do not replay the old hosted or installed copy in the child/);
     assert.match(sent[0].prompt, /expect that ID to have a local source and the version actually installed/);
@@ -1028,7 +1034,7 @@ test("validateLocalDesignerSelections validates real manifests and stays undefin
     });
     assert.deepEqual(result, {
         presets: [{ id: "copilot-sub-agents", source: "local", approved: true,
-            path: LOCAL_PRESET_PATH, version: "1.0.0" }],
+            path: LOCAL_PRESET_PATH, version: localPresetVersion }],
         extensions: [{ id: "extension-canvas-design", source: "local", approved: true,
             path: LOCAL_CANVAS_DESIGN_EXT_PATH, version: localBaseVersion }],
     });
@@ -1401,7 +1407,7 @@ test("handleDesignerLaunch inlines validated localSelections into the handoff en
     const json = sent[0].prompt.match(/\nHANDOFF_JSON:\n([^\n]+)\nEND_HANDOFF_JSON\n/)[1];
     const handoff = JSON.parse(json);
     assert.deepEqual(handoff.localSelections, { presets: [{ id: "copilot-sub-agents",
-        source: "local", approved: true, path: LOCAL_PRESET_PATH, version: "1.0.0" }] });
+        source: "local", approved: true, path: LOCAL_PRESET_PATH, version: localPresetVersion }] });
     assert.equal(handoff.sourceFingerprint, fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
         localSelections: handoff.localSelections, canvasDesign: handoff.canvasDesign,

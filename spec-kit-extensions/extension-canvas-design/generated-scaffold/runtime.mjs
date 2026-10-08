@@ -8,8 +8,9 @@ import { createContext, runInContext } from "node:vm";
 import { UserError, confined, readBounded, readBoundedBytes, directories, atomicJson, safePath, slugPattern,
     deleteConfinedDirectory } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
-import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
+import { phaseResponse } from "./phase-response.mjs";
 import { createSetup } from "./setup.mjs";
+import { freshState, validateWorkflowState, pendingId, newItem } from "./contracts/workflow-state.mjs";
 
 const PROVIDER_REFRESH_LIMIT_MS = 3000;
 const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refresh to retry.";
@@ -70,10 +71,6 @@ async function evaluateProvider(module, hash, workflow, deadline) {
     });
 }
 
-const pendingId = (id) => /^__new__:[1-9]\d*$/.test(id);
-const newItem = (id) => id === "__new__" || pendingId(id);
-const fresh = () => ({ version: 1, revision: 0, selected: "__new__", phase: null, slug: "",
-    name: "", names: {}, drafts: {}, runs: [], values: {}, pendingWorkflows: [], workflowSerial: 0 });
 export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
@@ -88,58 +85,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     let state;
     try {
         state = JSON.parse(await readBounded(workspace, statePath, 2 * 1024 * 1024));
-        if (state.version !== 1 || !Number.isSafeInteger(state.revision) || !Array.isArray(state.runs)
-            || typeof state.drafts !== "object" || !state.drafts || Array.isArray(state.drafts)
-            || typeof state.selected !== "string" || typeof state.slug !== "string"
-            || (state.approvedUrlSources !== undefined
-                && (!Array.isArray(state.approvedUrlSources) || state.approvedUrlSources.length > 80
-                    || state.approvedUrlSources.some((receipt) =>
-                        typeof receipt !== "string" || receipt.length > 8192)))
-            || (state.name !== undefined && (typeof state.name !== "string" || state.name.length > 120))
-            || (state.names !== undefined && (!state.names || typeof state.names !== "object"
-                || Array.isArray(state.names) || Object.values(state.names).some((name) =>
-                    typeof name !== "string" || name.length > 120)))
-            || (state.workflowSerial !== undefined && (!Number.isSafeInteger(state.workflowSerial)
-                || state.workflowSerial < 0))
-            || (state.pendingWorkflows !== undefined && (!Array.isArray(state.pendingWorkflows)
-                || state.pendingWorkflows.length > 100
-                || state.pendingWorkflows.some((entry) => !entry || !pendingId(entry.id)
-                    || typeof entry.name !== "string" || entry.name.length > 120
-                    || typeof entry.slug !== "string" || entry.slug.length > 100)
-                || new Set(state.pendingWorkflows.map((entry) => entry.id)).size !== state.pendingWorkflows.length))
-            || state.runs.some((run) => !run || typeof run.runId !== "string" || typeof run.item !== "string"
-                || !phases.some((phase) => phase.id === run.phase) || typeof run.sessionId !== "string"
-                || typeof run.instanceId !== "string" || typeof run.args !== "string" || !Array.isArray(run.before)
-                || (run.name !== undefined && (typeof run.name !== "string" || run.name.length > 120
-                    || /[\x00-\x1f\x7f]/.test(run.name)))
-                || !["Request sent", "Running", "Unconfirmed", "Completed", "Failed"].includes(run.status)
-                || (run.artifact !== null && typeof run.artifact !== "string")
-                || (run.artifacts !== undefined && (!Array.isArray(run.artifacts)
-                    || run.artifacts.length > 100 || run.artifacts.some((path) => typeof path !== "string")))
-                || (run.response !== undefined && run.response !== null
-                    && (typeof run.response !== "string" || Buffer.byteLength(run.response) > RESPONSE_LIMIT))
-                || (run.responseError !== undefined && run.responseError !== null && typeof run.responseError !== "string")
-                || (run.messageId !== null && typeof run.messageId !== "string"))
-            || Object.values(state.drafts).some((draft) => typeof draft !== "string" || draft.length > 32000)
-            || (state.values !== undefined && (!state.values || typeof state.values !== "object"
-                || Array.isArray(state.values) || Object.entries(state.values).some(([id, value]) => {
-                    const field = valueFields.find((entry) => entry.id === id && entry.presentation === "stock.editable");
-                    if (!field) return true;
-                    try { validateValue(field.schema, value, id); return false; } catch { return true; }
-                })))
-            || (state.autopilot !== undefined && (!state.autopilot
-                || typeof state.autopilot.id !== "string" || typeof state.autopilot.item !== "string"
-                || typeof state.autopilot.instanceId !== "string" || typeof state.autopilot.sessionId !== "string"
-                || !Number.isInteger(state.autopilot.current) || state.autopilot.current < 0
-                || state.autopilot.current > phases.filter((step) => !step.project).length
-                || !["Request sent", "Running", "Finishing", "Completed", "Blocked", "Paused"].includes(state.autopilot.status)
-                || (state.autopilot.messageId !== null && typeof state.autopilot.messageId !== "string")
-                || !["interactive", "plan", "autopilot", "shell"].includes(state.autopilot.previousMode)))) {
-            throw new UserError("Saved canvas state is invalid. Restore its state.json before continuing.");
-        }
+        validateWorkflowState(state, phases, valueFields);
     } catch (error) {
         if (error.code !== "ENOENT") throw error;
-        state = fresh();
+        state = freshState();
     }
     let writes = Promise.resolve();
     let dispatching = false;

@@ -2,8 +2,8 @@
 // shared runSkillsReload core used by both /api/skills/reload and the
 // extension's canvas action.
 
-import { commandId, effectiveSource, normalizeInferredEvidence, readEvidenceCache, writeEvidenceCache,
-    validateCandidates, validatePrimaryIndex } from "../artifact-evidence.mjs";
+import { commandId, effectiveSource, readEvidenceCache, writeEvidenceCache } from "../artifact-evidence.mjs";
+import { normalizeAgentArtifactEntry, validateAgentArtifactEvidence } from "../contracts/agent-artifacts.mjs";
 import { failOutputInference } from "../canvas-runtime/output-inference.mjs";
 import { finishRefreshPart } from "../canvas-runtime/refresh-status.mjs";
 
@@ -130,10 +130,6 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     const cleaned = {};
     for (const [key, entry] of Object.entries(incoming)) {
         if (typeof key !== "string" || !/^commands\/(?:speckit\.)?[\w.-]{1,100}$/.test(key)) continue;
-        const writesTo = typeof entry?.writesTo === "string" ? entry.writesTo.trim() : "";
-        const description = typeof entry?.description === "string" ? entry.description.trim() : "";
-        const argsHint = typeof entry?.argsHint === "string" ? entry.argsHint.trim() : "";
-        const argsWhenEmpty = typeof entry?.argsWhenEmpty === "string" ? entry.argsWhenEmpty.trim() : "";
         let outputEvidence;
         if (entry?.outputEvidence !== undefined) {
             try {
@@ -141,33 +137,19 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
                 if (!current || entry.outputEvidence?.fingerprint !== current.fingerprint) {
                     return rejectOutput(key, 409, `Artifact evidence fingerprint mismatch for ${key}`);
                 }
-                const candidates = validateCandidates(entry.outputEvidence.candidates, { inference: true });
-                if (!candidates.length) return rejectOutput(key, 400, "Inference must report a result");
-                const primaryIndex = validatePrimaryIndex(entry.outputEvidence.primaryIndex, candidates);
-                if (primaryIndex === undefined) return rejectOutput(key, 400, "Inference must select a primary file or null");
-                if (candidates.some(({ kind }) => kind === "none")
-                    && candidates.some(({ kind }) => kind === "file" || kind === "folder")) {
-                    return rejectOutput(key, 400, "No-file evidence cannot include file outputs");
-                }
                 // The installed skill is authoritative, not the composition's artifact stack.
                 // Contributors are advisory only when explicitly supported by the skill.
-                outputEvidence = { fingerprint: current.fingerprint,
-                    ...normalizeInferredEvidence(candidates, primaryIndex) };
+                outputEvidence = validateAgentArtifactEvidence(entry.outputEvidence, current.fingerprint);
             } catch (error) {
+                if (["Inference must report a result", "Inference must select a primary file or null",
+                    "No-file evidence cannot include file outputs"].includes(error.message)) {
+                    return rejectOutput(key, 400, error.message);
+                }
                 return rejectOutput(key, 400, `Invalid artifact evidence: ${error.message}`);
             }
         }
-        if (!writesTo && !description && !argsHint && !argsWhenEmpty && !outputEvidence) continue;
-        cleaned[key] = {
-            ...(outputEvidence ? { outputEvidence } : {}),
-            ...(writesTo ? { writesTo } : {}),
-            ...(description ? { description } : {}),
-            ...(argsHint ? { argsHint } : {}),
-            ...(argsWhenEmpty ? { argsWhenEmpty } : {}),
-            source: typeof entry?.source === "string" ? entry.source : "llm",
-            ...(typeof entry?.skillPath === "string" ? { skillPath: entry.skillPath } : {}),
-            ...(typeof entry?.skillHash === "string" ? { skillHash: entry.skillHash } : {}),
-        };
+        const normalized = normalizeAgentArtifactEntry(entry, outputEvidence);
+        if (normalized) cleaned[key] = normalized;
     }
     if (!Object.keys(cleaned).length) {
         if (inst.outputInference?.status === "updating") failOutputInference(inst);

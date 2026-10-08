@@ -7,6 +7,9 @@ import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
 import { validControlValue } from "./control-contract.mjs";
 import { validateRuntimeSetup } from "./setup.mjs";
+import { readFieldPlacement as checkFieldPlacement, readPlacementControl as checkPlacementControl,
+    readWorkflowPage as checkWorkflowPage, readImageAsset as checkImageAsset,
+    readImageControl as checkImageControl, readTextControl as checkTextControl } from "./contracts/packaged-contributions.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
@@ -17,8 +20,6 @@ const packageRoot = realpathSync(new URL(".", import.meta.url));
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const WORKFLOW_REGIONS = ["collection", "constitution", "details", "values", "controls",
     "pages", "message", "pipeline"];
-const imageValueContract = { type: "image", maxBytes: 32768,
-    mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -367,65 +368,15 @@ export function readConfig() {
 }
 
 function readFieldPlacement(placement) {
-    const bytes = readPackagedFile(new URL(`./pages/${placement.id}.json`, import.meta.url));
-    const { $schema, ...definition } = JSON.parse(bytes);
-    if (createHash("sha256").update(bytes).digest("hex") !== placement.hash
-        || !isDeepStrictEqual(definition, { schemaVersion: 1,
-            id: placement.id, page: placement.page, slot: placement.slot,
-            field: placement.field, order: placement.order,
-            ...(definition.control === undefined ? {} : { control: placement.control }) })) {
-        throw new Error(`Packaged field placement ${placement.id} differs from its frozen contract`);
-    }
+    return checkFieldPlacement(placement, readPackagedFile);
 }
 
 function readPlacementControl(item) {
-    const bytes = readPackagedFile(new URL(`./controls/${item.adapter}.mjs`, import.meta.url));
-    const definition = readPackagedFile(new URL(`./controls/${item.definition}.json`, import.meta.url));
-    const { $schema, ...document } = JSON.parse(definition);
-    if (createHash("sha256").update(bytes).digest("hex") !== item.adapterHash
-        || createHash("sha256").update(definition).digest("hex") !== item.definitionHash
-        || document.id !== item.control || document.adapters?.generated !== item.adapter
-        || !isDeepStrictEqual(document.value, item.schema)) {
-        throw new Error(`Packaged placement control ${item.control} differs from its frozen contract`);
-    }
-    return bytes;
+    return checkPlacementControl(item, readPackagedFile);
 }
 
 function readWorkflowPage(page) {
-    const definition = readPackagedFile(new URL("./pages/workflow.json", import.meta.url));
-    if (createHash("sha256").update(definition).digest("hex") !== page.definitionHash) {
-        throw new Error("Packaged Workflow page definition does not match its frozen hash");
-    }
-    const parsed = JSON.parse(definition);
-    if (parsed.schemaVersion !== 1 || parsed.id !== "workflow"
-        || Object.keys(parsed).filter((key) => key !== "$schema").sort().join() !== "id,order,schemaVersion,slots,title"
-        || parsed.title !== page.title || parsed.order !== page.order
-        || JSON.stringify(parsed.slots) !== JSON.stringify(page.slots)) {
-        throw new Error("Packaged Workflow page definition differs from its frozen contract");
-    }
-    const control = readPackagedFile(new URL("./pages/phase-control.json", import.meta.url));
-    if (createHash("sha256").update(control).digest("hex") !== page.controlHash) {
-        throw new Error("Packaged phase control definition does not match its frozen hash");
-    }
-    const registration = JSON.parse(control);
-    if (registration.schemaVersion !== 1 || registration.id !== "workflow-phases"
-        || registration.adapter !== page.adapter
-        || Object.keys(registration).filter((key) => key !== "$schema")
-            .some((key) => !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
-        || (registration.managedRun !== undefined && typeof registration.managedRun !== "boolean")
-        || page.managedRun !== (registration.managedRun === true)
-        || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
-        || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases"
-        || !isDeepStrictEqual(registration.placement, page.placement)
-        || !isDeepStrictEqual(registration.viewLabels ?? {}, page.viewLabels)) {
-        throw new Error("Packaged phase control definition differs from its frozen contract");
-    }
-    const bytes = readPackagedFile(new URL(`./pages/${page.adapter}.mjs`, import.meta.url));
-    if (!bytes.length || bytes.length > 32 * 1024
-        || createHash("sha256").update(bytes).digest("hex") !== page.hash) {
-        throw new Error("Packaged phase control adapter does not match its frozen hash");
-    }
-    return bytes;
+    return checkWorkflowPage(page, readPackagedFile);
 }
 function readPackagedFile(url) {
     const parent = dirname(fileURLToPath(url));
@@ -565,44 +516,14 @@ function readDialogContracts(config) {
 }
 
 function readImageAsset(asset) {
-    const bytes = readPackagedFile(new URL(`./assets/${asset.file}`, import.meta.url));
-    if (!bytes.length || bytes.length > 32 * 1024
-        || createHash("sha256").update(bytes).digest("hex") !== asset.hash) {
-        throw new Error("Packaged image does not match its frozen hash");
-    }
-    return bytes;
+    return checkImageAsset(asset, readPackagedFile);
 }
 
 function readImageControl(control) {
-    const bytes = readPackagedFile(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
-    if (!bytes.length || bytes.length > 32 * 1024
-        || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
-        throw new Error("Packaged stock.image adapter does not match its frozen hash");
-    }
-    const definition = readPackagedFile(new URL(`./controls/${control.definition}.json`, import.meta.url));
-    const parsed = JSON.parse(definition);
-    if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
-        || parsed.id !== "stock.image" || parsed.adapters?.generated !== control.adapter
-        || JSON.stringify(Object.entries(parsed.value ?? {}).sort())
-            !== JSON.stringify(Object.entries(imageValueContract).sort())) {
-        throw new Error("Packaged stock.image definition does not match its frozen contract");
-    }
-    return bytes;
+    return checkImageControl(control, readPackagedFile);
 }
 function readTextControl(control) {
-    const bytes = readPackagedFile(new URL(`./controls/${control.adapter}.mjs`, import.meta.url));
-    if (!bytes.length || bytes.length > 32 * 1024
-        || createHash("sha256").update(bytes).digest("hex") !== control.hash) {
-        throw new Error("Packaged stock.text adapter does not match its frozen hash");
-    }
-    const definition = readPackagedFile(new URL(`./controls/${control.definition}.json`, import.meta.url));
-    const parsed = JSON.parse(definition);
-    if (createHash("sha256").update(definition).digest("hex") !== control.definitionHash
-        || parsed.id !== "stock.text" || parsed.adapters?.generated !== control.adapter
-        || JSON.stringify(parsed.value) !== JSON.stringify({ type: "string" })) {
-        throw new Error("Packaged stock.text definition does not match its frozen contract");
-    }
-    return bytes;
+    return checkTextControl(control, readPackagedFile);
 }
 const APPEARANCE_PROPERTIES = {
     accent: "--accent-color",
@@ -778,6 +699,11 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 const body = url.pathname === "/" ? html : url.pathname === "/ui/app.js"
                     ? script : url.pathname === "/ui/markdown.mjs" ? markdown : pageAssets;
                 response.writeHead(200, { "Content-Type": `${url.pathname === "/" ? "text/html" : "text/javascript"}; charset=utf-8` }).end(body);
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/contracts/host-adapter.mjs") {
+                response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
+                    .end(readFileSync(new URL("./contracts/host-adapter.mjs", import.meta.url)));
                 return;
             }
             const imageAsset = [config.brandAsset, config.mainPageAsset,

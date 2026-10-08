@@ -3685,6 +3685,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
         "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
+    await cp(join(source, "contracts"), join(extension, "contracts"), { recursive: true });
     await copyFile(join(extension, "server.mjs"), join(extension, "shell.mjs"));
     await writeFile(join(extension, "server.mjs"), `
         import { startShell as actualStartShell } from "./shell.mjs";
@@ -3703,7 +3704,8 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             join(shared, file));
     }
     await mkdir(join(extension, "ui"));
-    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js", "styles.css"]) {
+    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js",
+        "control-adapter-contract.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
     const { project, entries } = await projectFixture(t, workspace);

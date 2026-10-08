@@ -6,10 +6,12 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import { isDeepStrictEqual } from "node:util";
 import { Script } from "node:vm";
 import { fingerprint } from "./handoff.mjs";
-import { validControlContract } from "./control-contract.mjs";
+import { validControlContract } from "./contracts/control-adapter.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
+import { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
+import { RULES, resolvedField, checkSchema } from "./contracts/design-contributions.mjs";
 
-export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
+export { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
 const REQUIRED_PAGES = ["designer-essentials", "designer-artifacts",
     "designer-appearance"];
 const FIXED_PAGE_CONTROLS = {
@@ -31,37 +33,9 @@ function schemaMetadata(document, name) {
 }
 // The generated shell uses "workflow" for its built-in page navigation.
 const RESERVED_GENERATED_PAGE_ID = "workflow";
-export const isWindowsDeviceName = (name) =>
-    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
-const OPTIONAL_COLOR = { type: "string", maxLength: 7,
-    pattern: "^(?:#?[0-9A-Fa-f]{6})?$" };
-const RULES = {
-    "canvas.id": { type: "string", minLength: 1, maxLength: 100,
-        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$",
-        required: true },
-    "canvas.displayName": { type: "string", minLength: 1, maxLength: 120, required: true },
-    "canvas.description": { type: "string", maxLength: 240 },
-    "canvas.workflowListName": { type: "string", maxLength: 80 },
-    "canvas.accentLight": OPTIONAL_COLOR,
-    "canvas.backgroundLight": OPTIONAL_COLOR,
-    "canvas.surfaceLight": OPTIONAL_COLOR,
-    "canvas.secondaryLight": OPTIONAL_COLOR,
-    "canvas.textLight": OPTIONAL_COLOR,
-    "canvas.accentDark": OPTIONAL_COLOR,
-    "canvas.backgroundDark": OPTIONAL_COLOR,
-    "canvas.surfaceDark": OPTIONAL_COLOR,
-    "canvas.secondaryDark": OPTIONAL_COLOR,
-    "canvas.textDark": OPTIONAL_COLOR,
-    "workflowSlug.userProvided": { type: "boolean" },
-};
-const RESERVED_CANVAS_IDS = ["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"];
-function resolvedField(field, rule) {
-    return { ...field, validation: { ...rule,
-        ...(field.id === "canvas.id" ? { forbiddenValues: RESERVED_CANVAS_IDS } : {}) } };
-}
 
 function inside(root, path) {
     const rel = relative(root, path);
@@ -124,37 +98,6 @@ export async function readFrozenAsset(item, root) {
         throw new Error(`${item.name}: generated asset changed since Designer opened; reopen Designer`);
     }
     return result.bytes;
-}
-
-function checkSchema(value, schema, location) {
-    if (Object.hasOwn(schema, "const") && value !== schema.const) {
-        throw new Error(`${location}: unsupported schema version`);
-    }
-    if (schema.enum && !schema.enum.includes(value)) throw new Error(`${location}: unsupported value`);
-    const type = schema.type;
-    const valid = type === undefined || (type === "array" ? Array.isArray(value)
-        : type === "object" ? value !== null && typeof value === "object" && !Array.isArray(value)
-        : type === "integer" ? Number.isInteger(value) : typeof value === type);
-    if (!valid) throw new Error(`${location}: expected ${type}`);
-    if (type === "object") {
-        for (const key of schema.required ?? []) {
-            if (!Object.hasOwn(value, key)) throw new Error(`${location}: missing ${key}`);
-        }
-        for (const [key, entry] of Object.entries(value)) {
-            if (!Object.hasOwn(schema.properties, key)) throw new Error(`${location}: unsupported property ${key}`);
-            checkSchema(entry, schema.properties[key], `${location}.${key}`);
-        }
-    } else if (type === "array") {
-        if (value.length > schema.maxItems) throw new Error(`${location}: too many items`);
-        value.forEach((item, i) => checkSchema(item, schema.items, `${location}[${i}]`));
-    } else if (type === "string") {
-        if (value.length < (schema.minLength ?? 0) || value.length > (schema.maxLength ?? FILE_LIMIT)
-            || (schema.pattern && !new RegExp(schema.pattern).test(value))) {
-            throw new Error(`${location}: invalid text length or identifier`);
-        }
-    } else if (type === "integer" && (value < schema.minimum || value > schema.maximum)) {
-        throw new Error(`${location}: out of range`);
-    }
 }
 
 function buildModel(entries, schema) {

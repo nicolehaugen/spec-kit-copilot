@@ -26,6 +26,7 @@ FILES = {
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
+    "scripts/contracts/generation-request.mjs",
     "scripts/verify-launch.mjs",
     "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
@@ -65,6 +66,8 @@ FILES = {
     *(f"generated-scaffold/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
         "phase-response.mjs",
+        "contracts/agent-actions.mjs", "contracts/host-adapter.mjs",
+        "contracts/packaged-contributions.mjs", "contracts/workflow-state.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
         "ui/page-assets.mjs",
     )),

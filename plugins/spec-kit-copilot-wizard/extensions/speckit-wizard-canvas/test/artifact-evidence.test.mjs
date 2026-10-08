@@ -165,6 +165,29 @@ test("a failed command source read marks output collection and refresh incomplet
     });
 });
 
+test("an older evidence scan cannot demote a refresh after its output was accepted", async () => {
+    await fixture(async ({ root, write }) => {
+        const snap = { pipeline: [{ id: "plan" }], commands: [], composition: { artifacts: [] },
+            phases: {}, warnings: [], specsDir: null };
+        const pending = await collectArtifactEvidence(root, snap);
+        const request = pending.requests.find(({ commandId }) => commandId === "speckit.plan");
+        assert.ok(request);
+        const inst = { workspacePath: root, refreshStatus: { status: "up-to-date", id: "refresh" },
+            broadcast() {} };
+        await write(".speckit-wizard/artifact-targets.json", JSON.stringify({ entries: {
+            "commands/speckit.plan": { outputEvidence: { fingerprint: request.fingerprint,
+                primaryIndex: 0, candidates: [{ kind: "file", path: "specs/<slug>/plan.md",
+                    source: "inference", effect: "creates", evidence: "Plan writes a Markdown file" }] } },
+        } }));
+        const oldSnapshot = { ...snap, phases: {}, warnings: [] };
+        await attachOutputEvidence(inst, {}, oldSnapshot, pending);
+        assert.equal(oldSnapshot.refreshStatus, "up-to-date");
+        await write(".speckit-wizard/artifact-targets.json", JSON.stringify({ entries: {} }));
+        await attachOutputEvidence(inst, {}, { ...snap, phases: {}, warnings: [] }, pending);
+        assert.equal(inst.refreshStatus.status, "ready");
+    });
+});
+
 test("inferred outputs with the same named root and filename retain distinct root paths", async () => {
     await fixture(async ({ root, write }) => {
         const fingerprint = (await effectiveSource(root, "plan")).fingerprint;

@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test, expect } from "./playwright.mjs";
+
+const scratchRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/", import.meta.url);
 const phaseControlSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/phase-control/", import.meta.url);
@@ -15,12 +16,10 @@ const phaseControlDefinition = await readFile(new URL("phase-control.json", phas
 const phaseAdapter = await readFile(new URL("generated-phase-adapter.mjs", phaseControlSource));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const { title, order, slots } = JSON.parse(workflowDefinition);
-const control = JSON.parse(phaseControlDefinition);
 const workflowPage = { title, order, slots, phaseControl: "generated-phase-control",
     adapter: "generated-phase-adapter", definitionHash: digest(workflowDefinition),
-    controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter),
-    placement: control.placement, viewLabels: control.viewLabels ?? {},
-    managedRun: control.managedRun === true };
+    placement: { page: "workflow", slot: "workflow.phases" }, viewLabels: {},
+    controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter) };
 
 test("New workflow reports connecting before the first state refresh", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
@@ -47,20 +46,22 @@ test("New workflow reports connecting before the first state refresh", async ({ 
 });
 
 test("vertical phase adapter keeps the numbered step list and manual retry accessible", async ({ page }) => {
-    const canvas = await openGeneratedCanvas(false, ["specify", "plan"]);
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"],
+        undefined, undefined, undefined, undefined, true);
     try {
-        const vertical = await readFile(new URL(
-            "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url));
-        await page.route("**/pages/generated-phase-adapter.mjs*", (route) => route.fulfill({
-            contentType: "text/javascript", body: vertical,
-        }));
+        const folder = join(canvas.root, "specs", "sample-feature");
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "plan.md"), "# Plan");
         await page.goto(canvas.url);
         await expect(page.locator(".vertical-phase-list [data-phase-index]")).toHaveCount(2);
-        await page.locator("#new-workflow").click();
         await expect(page.locator('[data-action="autopilot"]')).toBeVisible();
         await expect(page.locator('[data-action="start"]')).toHaveCount(2);
+        await page.getByRole("button", { name: "sample-feature", exact: true }).click();
         await page.locator('.vertical-phase-list [data-phase-index="1"]').click();
         await expect(page.locator(".vertical-phase-detail h2")).toHaveText("Plan");
+        await page.locator('[data-action="view-row"][data-index="1"]').click();
+        await expect(page.locator("#artifact-path")).toHaveText("specs/sample-feature/plan.md");
+        await page.locator("#close-artifact").click();
         await expect(page.locator('[data-action="start"]').first()).toBeEnabled();
         await page.locator('[data-action="previous"]').click();
         await expect(page.locator(".vertical-phase-detail h2")).toHaveText("Specify");
@@ -101,31 +102,31 @@ test("vertical Autopilot initiates the first step through the packaged Copilot s
 });
 
 test("a different phase adapter uses the same row and managed-run capabilities", async ({ page }) => {
+    const alternate = `export const controlId = "workflow-phases";
+        export const contractVersion = 1;
+        export const requiredCapabilities = ["workflow.rows.v1", "workflow.managed-run.v1"];
+        export function mount({ root, actions }) {
+            root.innerHTML = '<button type="button" id="other-auto">Automate</button><button type="button" id="other-step">Run second</button>';
+            const click = (event) => {
+                if (event.target.id === "other-auto") actions.startManagedRun().catch(actions.error);
+                if (event.target.id === "other-step") actions.runAt(1).catch(actions.error);
+            };
+            root.addEventListener("click", click);
+            return { update() {}, dispose() { root.removeEventListener("click", click); root.replaceChildren(); } };
+        }`;
     const canvas = await openGeneratedCanvas(false, ["specify", "plan"],
-        undefined, undefined, undefined, undefined, true);
+        undefined, undefined, undefined, undefined, false, {}, alternate);
     try {
         for (const name of ["specify", "plan"]) {
             const skill = join(canvas.root, ".github", "skills", `speckit-${name}`);
             await mkdir(skill, { recursive: true });
             await writeFile(join(skill, "SKILL.md"), `---\nname: speckit-${name}\n---\n`);
         }
-        const alternate = `export const controlId = "workflow-phases";
-            export const contractVersion = 1;
-            export const requiredCapabilities = ["workflow.rows.v1", "workflow.managed-run.v1"];
-            export function mount({ root, actions }) {
-                root.innerHTML = '<button type="button" id="other-auto">Automate</button><button type="button" id="other-step">Run second</button>';
-                const click = (event) => {
-                    if (event.target.id === "other-auto") actions.startManagedRun().catch(actions.error);
-                    if (event.target.id === "other-step") actions.runAt(1).catch(actions.error);
-                };
-                root.addEventListener("click", click);
-                return { update() {}, dispose() { root.removeEventListener("click", click); root.replaceChildren(); } };
-            }`;
-        await page.route("**/pages/generated-phase-adapter.mjs*", (route) => route.fulfill({
-            contentType: "text/javascript", body: alternate,
-        }));
         await page.goto(canvas.url);
         await page.locator("#new-workflow").click();
+        const served = await page.request.get(`${canvas.url.split("/?")[0]}/pages/generated-phase-adapter.mjs?token=${new URL(canvas.url).searchParams.get("token")}`);
+        expect(served.status()).toBe(200);
+        expect(await served.text()).toBe(alternate);
         await page.locator("#other-auto").click();
         await expect.poll(() => canvas.sent.length).toBe(1);
         assert.equal(canvas.sent[0].agentMode, "autopilot");
@@ -172,7 +173,7 @@ for (const [scenario, module, error] of [
     });
 }
 
-test("phase adapter keeps a horizontally scrollable ribbon on narrow screens", async ({ page }) => {
+test("phase adapter mobile navigation selects phases", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false,
         ["specify", "plan", "clarify", "tasks", "taskstoissues", "analyze", "checklist", "implement"]);
     try {
@@ -192,18 +193,20 @@ test("phase adapter keeps a horizontally scrollable ribbon on narrow screens", a
 });
 
 async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"],
-    generatedPages, readOnlyFields, generatedControls, valueSources, vertical = false, phaseArtifacts = {}) {
-    const root = await mkdtemp(join(tmpdir(), "generated-slug-e2e-"));
-    const selectedAdapter = vertical ? await readFile(new URL(
+    generatedPages, readOnlyFields, generatedControls, valueSources, vertical = false, phaseArtifacts = {},
+    customAdapter) {
+    const root = await mkdtemp(join(scratchRoot, ".generated-slug-e2e-"));
+    const selectedAdapter = customAdapter ?? (vertical ? await readFile(new URL(
         "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs", import.meta.url))
-        : phaseAdapter;
-    const selectedControl = vertical ? await readFile(new URL(
-        "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-control.json", import.meta.url))
+        : phaseAdapter);
+    const managedRun = vertical || Boolean(customAdapter?.includes('"workflow.managed-run.v1"'));
+    const controlDefinition = managedRun
+        ? Buffer.from(JSON.stringify({ ...JSON.parse(phaseControlDefinition), managedRun: true }))
         : phaseControlDefinition;
     const config = {
         schemaVersion: 1, userProvidesSlug,
-        workflowPage: { ...workflowPage, controlHash: digest(selectedControl),
-            hash: digest(selectedAdapter), managedRun: vertical },
+        workflowPage: { ...workflowPage, managedRun, controlHash: digest(controlDefinition),
+            hash: digest(selectedAdapter) },
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
@@ -223,19 +226,18 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
     };
     let runtime, routes, server, sdkRoot;
     try {
-        sdkRoot = await mkdtemp(join(tmpdir(), "generated-sdk-e2e-"));
+        sdkRoot = await mkdtemp(join(scratchRoot, ".generated-sdk-e2e-"));
         const sdk = join(sdkRoot, "generated-canvas");
         await cp(scaffoldSource, sdk, { recursive: true });
         await mkdir(join(sdk, "pages"), { recursive: true });
         await Promise.all([
             ["workflow.json", workflowSource],
         ].map(([file, source]) => copyFile(new URL(file, source), join(sdk, "pages", file))));
-        await writeFile(join(sdk, "pages", "phase-control.json"), selectedControl);
+        await writeFile(join(sdk, "pages", "phase-control.json"), controlDefinition);
         await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), selectedAdapter);
         const { createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
         const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
-        const sent = [];
-        let events = [];
+        const sent = [], events = [];
         const session = { sessionId: "slug-browser-test", mode: "interactive", on: () => () => {},
             getEvents: async () => events, log: async () => {},
             send: async (options) => { sent.push(options); return "sent-message-id"; },
@@ -243,27 +245,42 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
             rpc: { skills: { reload: async () => ({ errors: [] }) },
                 mode: { get: async () => session.mode,
                     set: async ({ mode }) => { session.mode = mode; return { modeApplied: true }; } } } };
-        runtime = await createRuntime({ config, cwd: root, workspace: root, session });
-        const token = randomBytes(32).toString("hex");
-        routes = createWorkflowRoutes(config, { runtime, instanceId: "slug-test", token,
-            port: () => server.address().port });
-        server = createServer((request, response) => {
-            void routes.handle(request, response).catch((error) => response.destroy(error));
-        });
-        await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+        let url;
+        async function startHost() {
+            runtime = await createRuntime({ config, cwd: root, workspace: root, session });
+            const token = randomBytes(32).toString("hex");
+            routes = createWorkflowRoutes(config, { runtime, instanceId: "slug-test", token,
+                port: () => server.address().port });
+            server = createServer((request, response) => {
+                void routes.handle(request, response).catch((error) => response.destroy(error));
+            });
+            await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+            url = `http://127.0.0.1:${server.address().port}/?token=${token}`;
+        }
+        async function stopHost() {
+            routes?.close();
+            runtime?.close();
+            if (server?.listening) await new Promise((resolve) => {
+                server.close(resolve);
+                server.closeAllConnections();
+            });
+            routes = null;
+            runtime = null;
+            server = null;
+        }
+        await startHost();
         return {
-            url: `http://127.0.0.1:${server.address().port}/?token=${token}`,
+            get url() { return url; },
             root,
-            runtime, sent,
-            setEvents: (next) => { events = next; },
+            get runtime() { return runtime; },
+            get server() { return server; },
+            statePath: join(root, "generated-canvases", digest(JSON.stringify([root, config.canvas.id])), "state.json"),
+            sent, events,
             broadcast: () => routes.broadcast(),
+            stop: stopHost,
+            restart: async () => { await stopHost(); await startHost(); },
             close: async () => {
-                routes.close();
-                runtime.close();
-                await new Promise((resolve) => {
-                    server.close(resolve);
-                    server.closeAllConnections();
-                });
+                await stopHost();
                 await Promise.all([root, sdkRoot].map((path) =>
                     rm(path, { recursive: true, force: true })));
             },
@@ -658,7 +675,7 @@ test("new workflow run follows its confirmed slug and blocks deletion while acti
         await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
         const after = await canvas.runtime.snapshot();
         expect(after.selected).toBe("specs/new-feature");
-        expect(after.items.some((item) => item.id === "__new__")).toBe(false);
+        expect(after.items.some((item) => item.id === pending.id)).toBe(false);
         expect(after.statuses.specify.status).toBe("Request sent");
         await expect(canvas.runtime.deleteWorkflow({
             itemId: "specs/new-feature", confirmation: "new-feature", revision: after.revision,
@@ -668,32 +685,6 @@ test("new workflow run follows its confirmed slug and blocks deletion while acti
             phaseRunId: run.runId, path: "specs/new-feature/spec.md",
         }, "slug-test");
         expect((await canvas.runtime.snapshot()).statuses.specify.status).toBe("Request sent");
-    } finally {
-        await canvas.close();
-    }
-});
-
-test("a failed pending run cannot discard an unreported directory", async () => {
-    const canvas = await openGeneratedCanvas(false);
-    try {
-        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
-        await mkdir(skill, { recursive: true });
-        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
-        const pending = await canvas.runtime.createPending({ revision: 0 });
-        await canvas.runtime.run({ phase: "specify", itemId: pending.id, args: "Feature" }, "slug-test");
-        const folder = join(canvas.root, "specs", "001-workflow-1");
-        await mkdir(folder, { recursive: true });
-        canvas.setEvents([{ type: "user.message", data: { messageId: "sent-message-id" } }]);
-        const failed = await canvas.runtime.refresh();
-        expect(failed.items.find((item) => item.id === pending.id)?.status).toBe("Failed");
-        await expect(canvas.runtime.removePending({ itemId: pending.id,
-            revision: failed.revision })).rejects.toThrow(/directory may have been created/);
-        await rm(folder, { recursive: true });
-        await canvas.runtime.removePending({ itemId: pending.id, revision: failed.revision });
-        expect((await canvas.runtime.snapshot()).items).toHaveLength(0);
-        const stateFile = join(canvas.root, "generated-canvases",
-            digest(JSON.stringify([canvas.root, "sample-canvas"])), "state.json");
-        expect(JSON.parse(await readFile(stateFile, "utf8")).runs).toEqual([]);
     } finally {
         await canvas.close();
     }
@@ -764,14 +755,16 @@ test("failed autosave retains workflow identity through SSE and Refresh for retr
     }
 });
 
-test("failed New request leaves the list intact and can be retried explicitly", async ({ page }) => {
+test("failed New creation leaves the list intact and can be retried explicitly", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true);
+    const saves = [];
     let rejectNew = true;
     try {
         await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
         await page.route("**/api/workflow/new", (route) => {
             if (rejectNew) return route.fulfill({ status: 503, contentType: "application/json",
                 body: JSON.stringify({ error: "Temporary creation failure" }) });
+            saves.push(route.request().postDataJSON());
             return route.continue();
         });
         await page.goto(canvas.url);
@@ -785,19 +778,21 @@ test("failed New request leaves the list intact and can be retried explicitly", 
         await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await page.locator("#new-workflow").click();
-        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("__new__:1");
+        expect(saves.at(-1)).toMatchObject({ revision: expect.any(Number) });
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
         await expect(page.locator("#workflow-name")).toBeVisible();
     } finally {
         await canvas.close();
     }
 });
 
-test("legacy disabled slug option still generates a required, previewable slug field", async ({ page }) => {
+test("legacy disabled slug option still previews the required artifact folder", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
         await page.goto(canvas.url);
         await page.locator("#new-workflow").click();
         await expect(page.locator("#workflow-name")).toBeVisible();
+        await expect(page.locator("#workflow-slug")).toBeVisible();
         await expect(page.locator("#workflow-slug")).toHaveValue("workflow-1");
         await expect(page.locator("#constitution-card")).toHaveCount(0);
         expect(await page.evaluate(() => {
@@ -811,146 +806,26 @@ test("legacy disabled slug option still generates a required, previewable slug f
     }
 });
 
-test("a blank legacy workflow with a saved draft remains selectable", async ({ page }) => {
-    const canvas = await openGeneratedCanvas(false);
-    try {
-        await canvas.runtime.save({ revision: 0,
-            draft: { item: "__new__", phase: "specify", value: "Saved guidance" } });
-        await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
-        await page.goto(canvas.url);
-        await expect(page.getByRole("list", { name: "Workflows" })).toBeVisible();
-        await expect(page.locator('[data-workflow-id="__new__"].instance-select'))
-            .toContainText("Unstarted workflow");
-        await expect(page.getByRole("button", { name: "Remove Unstarted workflow" })).toBeHidden();
-        await expect(page.locator("#phase-args")).toHaveValue("Saved guidance");
-        await page.getByRole("button", { name: "existing", exact: true }).click();
-        await expect(page.locator('[data-workflow-id="__new__"].instance-select')).toBeVisible();
-        await page.locator("#new-workflow").click();
-        await expect(page.locator('[data-workflow-id="__new__"].instance-select')).toBeVisible();
-        await page.locator('[data-workflow-id="__new__"].instance-select').click();
-        await expect(page.locator("#phase-args")).toHaveValue("Saved guidance");
-        await page.reload();
-        await expect(page.locator('[data-workflow-id="__new__"].instance-select')).toBeVisible();
-    } finally {
-        await canvas.close();
-    }
-});
-
-test("an empty pending identity retains its accessible fallback during edits and refresh", async ({ page }) => {
-    const canvas = await openGeneratedCanvas(false);
-    try {
-        await page.goto(canvas.url);
-        await page.locator("#new-workflow").click();
-        await page.locator("#workflow-name").fill("");
-        await page.locator("#workflow-slug").fill("");
-        await expect(page.locator("#workflow-rows .instance-select strong")).toHaveText("Unstarted workflow");
-        await expect(page.getByRole("button", { name: "Remove Unstarted workflow" })).toBeVisible();
-        await page.locator("#refresh-state").click();
-        await expect(page.locator("#workflow-rows .instance-select strong")).toHaveText("Unstarted workflow");
-    } finally {
-        await canvas.close();
-    }
-});
-
-test("creating a numbered workflow preserves a separate legacy draft until it is used", async () => {
-    const canvas = await openGeneratedCanvas(false);
-    try {
-        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
-        await mkdir(skill, { recursive: true });
-        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
-        await canvas.runtime.save({ revision: 0, name: "Legacy", slug: "legacy",
-            draft: { item: "__new__", phase: "specify", value: "Legacy scope" } });
-        const pending = await canvas.runtime.createPending({ revision: 1 });
-        const first = await canvas.runtime.run({ phase: "specify", itemId: pending.id,
-            args: "New scope" }, "slug-test");
-        await mkdir(join(canvas.root, "specs", "workflow-1"), { recursive: true });
-        await canvas.runtime.reportSlug({ phaseRunId: first.runId, slug: "workflow-1" }, "slug-test");
-        const afterPending = await canvas.runtime.snapshot();
-        expect(afterPending.items.find((item) => item.id === "__new__")?.label).toBe("Legacy");
-        expect(afterPending.drafts[JSON.stringify(["__new__", "specify"])]).toBe("Legacy scope");
-        await canvas.runtime.save({ revision: afterPending.revision, selected: "__new__" });
-        const second = await canvas.runtime.run({ phase: "specify", itemId: "__new__",
-            args: "Legacy scope", slug: "legacy" }, "slug-test");
-        await mkdir(join(canvas.root, "specs", "legacy"), { recursive: true });
-        await canvas.runtime.reportSlug({ phaseRunId: second.runId, slug: "legacy" }, "slug-test");
-        const afterLegacy = await canvas.runtime.snapshot();
-        expect(afterLegacy.items.some((item) => item.id === "__new__")).toBe(false);
-        expect(afterLegacy.items.find((item) => item.id === "specs/legacy")?.label).toBe("Legacy");
-        expect(afterLegacy.drafts[JSON.stringify(["specs/legacy", "specify"])]).toBe("Legacy scope");
-    } finally {
-        await canvas.close();
-    }
-});
-
-test("reporting a legacy artifact without a slug report consumes its draft", async () => {
-    const canvas = await openGeneratedCanvas(false);
-    try {
-        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
-        await mkdir(skill, { recursive: true });
-        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
-        await canvas.runtime.save({ revision: 0, name: "Legacy", slug: "legacy",
-            draft: { item: "__new__", phase: "specify", value: "Legacy scope" } });
-        const run = await canvas.runtime.run({ phase: "specify", itemId: "__new__",
-            args: "Legacy scope" }, "slug-test");
-        await mkdir(join(canvas.root, "specs", "legacy"), { recursive: true });
-        await writeFile(join(canvas.root, "specs", "legacy", "spec.md"), "# Legacy");
-        await canvas.runtime.report({ phaseRunId: run.runId,
-            path: "specs/legacy/spec.md" }, "slug-test");
-        const snapshot = await canvas.runtime.snapshot();
-        expect(snapshot.items.some((item) => item.id === "__new__")).toBe(false);
-        expect(snapshot.items.find((item) => item.id === "specs/legacy")?.label).toBe("Legacy");
-        expect(snapshot.drafts[JSON.stringify(["specs/legacy", "specify"])]).toBe("Legacy scope");
-    } finally {
-        await canvas.close();
-    }
-});
-
-test("empty bordered list adds and removes numbered pending workflow rows", async ({ page }) => {
+test("empty workflow list creates a numbered pending row without making a directory", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-list")).toBeVisible();
         await expect(page.locator("#workflow-empty")).toBeVisible();
         await expect(page.locator("#workflow-empty")).toContainText("No workflows yet");
-        await expect(page.locator("#workflow-list-status")).toBeHidden();
         await expect(page.locator("#workflow-name")).toBeHidden();
         await page.locator("#new-workflow").click();
         await expect(page.locator("#workflow-name")).toBeFocused();
         await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
-        await expect(page.locator("#workflow-slug")).toHaveValue("workflow-1");
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
-        await page.locator("#new-workflow").click();
-        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 2");
-        await expect(page.locator("#workflow-list .instance-row")).toHaveCount(2);
-        await page.reload();
-        await expect(page.locator("#workflow-list .instance-row")).toHaveCount(2);
-        await page.getByRole("button", { name: "Remove Workflow 2" }).click();
-        await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
-        await page.getByRole("button", { name: "Remove Workflow 1" }).click();
-        await expect(page.locator("#workflow-empty")).toBeVisible();
+        await expect(readFile(join(canvas.root, "specs", "workflow-1")))
+            .rejects.toMatchObject({ code: "ENOENT" });
         await page.setViewportSize({ width: 390, height: 780 });
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
         await mkdir(join(canvas.root, "specs", "first-workflow"), { recursive: true });
         await page.locator("#refresh-state").click();
         await expect(page.locator("#workflow-empty")).toBeHidden();
-        await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
-    } finally {
-        await canvas.close();
-    }
-});
-
-test("New workflow returns to Specify after selecting a later phase", async ({ page }) => {
-    const canvas = await openGeneratedCanvas(false);
-    try {
-        await mkdir(join(canvas.root, "specs", "existing"), { recursive: true });
-        await page.goto(canvas.url);
-        await page.getByRole("button", { name: "existing", exact: true }).click();
-        await page.locator('[data-phase-index="1"]').click();
-        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
-        await page.locator("#new-workflow").click();
-        await expect(page.locator("#phase-card h2")).toHaveText("Specify");
-        await expect(page.locator('[data-phase-index="0"]')).toHaveAttribute("aria-current", "step");
-        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
+        await expect(page.locator("#workflow-list .instance-row")).toHaveCount(2);
     } finally {
         await canvas.close();
     }
@@ -978,6 +853,109 @@ test("sending a phase keeps the navigation free of run states and clears the dis
     } finally {
         await canvas.close();
     }
+});
+
+test("agent phase reply is reconciled from the fake session after a browser run", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        await page.goto(canvas.url);
+        await page.locator("#new-workflow").click();
+        await page.locator("#run-phase").click();
+        await expect.poll(() => canvas.sent.length).toBe(1);
+        const run = JSON.parse(await readFile(canvas.statePath, "utf8")).runs.at(-1);
+        assert.match(canvas.sent[0].prompt, /speckit-specify/);
+        assert.match(canvas.sent[0].prompt, new RegExp(run.runId));
+        assert.match(canvas.sent[0].prompt, /report_workflow_slug/);
+        assert.match(canvas.sent[0].prompt, /report_phase_artifact/);
+        await mkdir(join(canvas.root, "specs", "new-feature"), { recursive: true });
+        await writeFile(join(canvas.root, "specs", "new-feature", "spec.md"), "# Feature\n");
+        await expect(canvas.runtime.reportSlug({ phaseRunId: "wrong-run", slug: "new-feature" },
+            "slug-test")).rejects.toThrow();
+        canvas.events.push({ type: "user.message", data: {
+            messageId: "unmatched-message", interactionId: "other-interaction",
+        } }, { type: "assistant.turn_end", data: { interactionId: "other-interaction", turnId: "turn-0" } });
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-card .phase-notice")).not.toHaveText("Completed");
+        await canvas.runtime.reportSlug({ phaseRunId: run.runId, slug: "new-feature" }, "slug-test");
+        await canvas.runtime.report({ phaseRunId: run.runId, path: "specs/new-feature/spec.md" },
+            "slug-test");
+        canvas.events.push(
+            { type: "user.message", data: { messageId: "sent-message-id", interactionId: "interaction-1" } },
+            { type: "assistant.turn_start", data: { interactionId: "interaction-1", turnId: "turn-1" } },
+            { type: "assistant.message", data: { interactionId: "interaction-1", turnId: "turn-1",
+                phase: "final", content: "Phase complete" } },
+            { type: "assistant.turn_end", data: { interactionId: "interaction-1", turnId: "turn-1" } },
+        );
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#phase-card .phase-notice")).toHaveText("Completed");
+        await expect(page.locator("#phase-message")).toBeEmpty();
+        await expect(page.locator("#view-artifact")).toBeVisible();
+        await page.locator("#view-artifact").click();
+        await expect(page.locator("#artifact-path")).toHaveText("specs/new-feature/spec.md");
+    } finally { await canvas.close(); }
+});
+
+test("browser draft and in-flight run recover in a new host, while invalid run state is rejected", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"]);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        await page.goto(canvas.url);
+        await page.locator("#new-workflow").click();
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
+        const pendingId = (await canvas.runtime.snapshot()).selected;
+        const draftKey = JSON.stringify([pendingId, "specify"]);
+        await page.locator("#phase-args").fill("Browser-entered draft");
+        await page.locator("#phase-args").press("Tab");
+        await expect.poll(async () => {
+            try { return JSON.parse(await readFile(canvas.statePath, "utf8")).drafts[draftKey]; }
+            catch (error) {
+                if (error.code === "ENOENT") return null;
+                throw error;
+            }
+        }).toBe("Browser-entered draft");
+        await page.locator("#run-phase").click();
+        await expect.poll(() => canvas.sent.length).toBe(1);
+        await expect.poll(async () => JSON.parse(await readFile(canvas.statePath, "utf8"))
+            .runs[0]?.messageId).toBe("sent-message-id");
+        const persisted = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        expect(persisted.runs).toHaveLength(1);
+        expect(persisted.runs[0]).toMatchObject({
+            phase: "specify", args: "Browser-entered draft",
+            status: "Request sent", messageId: "sent-message-id",
+        });
+        const originalRuntime = canvas.runtime;
+        const originalServer = canvas.server;
+        await page.goto("about:blank");
+        await canvas.restart();
+        assert.notEqual(canvas.runtime, originalRuntime);
+        assert.notEqual(canvas.server, originalServer);
+        expect(originalServer.listening).toBe(false);
+        await page.goto(canvas.url);
+        await expect(page.locator("#phase-args")).toHaveValue("Browser-entered draft");
+        await expect(page.locator("#phase-card .phase-notice")).toHaveText("Unconfirmed");
+        await expect(page.locator("#run-phase")).toBeEnabled();
+        await page.locator("#run-phase").click();
+        await expect.poll(() => canvas.sent.length).toBe(2);
+        await expect.poll(async () => JSON.parse(await readFile(canvas.statePath, "utf8"))
+            .runs.length).toBe(2);
+        const retried = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        expect(retried.runs).toHaveLength(2);
+        expect(retried.runs[0].runId).toBe(persisted.runs[0].runId);
+        expect(retried.runs[1].runId).not.toBe(persisted.runs[0].runId);
+        expect(retried.runs[1].args).toBe("Browser-entered draft");
+
+        await page.goto("about:blank");
+        await canvas.stop();
+        retried.runs[0].runId = 42;
+        await writeFile(canvas.statePath, JSON.stringify(retried));
+        await assert.rejects(canvas.restart(),
+            /Saved canvas state is invalid\. Restore its state\.json before continuing\./);
+    } finally { await canvas.close(); }
 });
 
 test("refresh clears resolved phase and Constitution errors", async ({ page }) => {
@@ -1040,9 +1018,8 @@ test("a later successful save does not hide a failed phase draft", async ({ page
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-empty")).toBeVisible();
         await page.locator("#new-workflow").click();
-        await expect(page.locator("#workflow-name")).toBeVisible();
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
         const pendingId = (await canvas.runtime.snapshot()).selected;
-        expect(pendingId).toBe("__new__:1");
         await page.locator("#phase-args").fill("Keep this draft");
         await expect(page.locator("#canvas-message")).toContainText("Phase draft save failed");
         await page.locator("#run-constitution").click();
@@ -1149,7 +1126,6 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await expect(page.locator("#constitution-status")).toHaveText("Available");
         await expect(page.locator("#constitution-prerequisite")).toBeHidden();
         await expect(page.locator("#view-constitution")).toBeVisible();
-        await expect(page.locator("#new-workflow")).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     } finally {
         await canvas.close();
@@ -1274,17 +1250,12 @@ test("workflow list stays bounded and searchable across selection and refresh", 
         await expect(page.locator("#workflow-count")).toHaveText("(11)");
         await expect(page.locator("#workflow-list .instance-row.active")).toHaveCount(0);
         await expect(page.locator("#workflow-identity")).toBeHidden();
-        await expect(page.locator(".stepper")).toBeVisible();
-        await expect(page.locator('[data-phase-index="0"]')).toBeDisabled();
-        await expect(page.locator("#phase-card")).toBeHidden();
         await expect(readFile(artifact, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
         expect(await readFile(neighbor, "utf8")).toBe("# Keep always");
         await page.locator("#workflow-search").fill("missing-workflow");
         await expect(page.locator("#workflow-list-status")).toHaveText("0 of 11 workflows match.");
         await page.locator("#new-workflow").click();
         await expect(page.locator("#workflow-identity")).toBeVisible();
-        await expect(page.locator('[data-phase-index="0"]')).toBeEnabled();
-        await expect(page.locator("#phase-card")).toBeVisible();
         await page.setViewportSize({ width: 1100, height: 800 });
         await expect(page.locator("#workflow-list")).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

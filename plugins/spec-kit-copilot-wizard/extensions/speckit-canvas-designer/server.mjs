@@ -35,6 +35,7 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
     "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
     "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
+    "/ui/control-adapter-contract.js": ["control-adapter-contract.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
 const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.";

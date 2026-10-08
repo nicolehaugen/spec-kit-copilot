@@ -4,6 +4,19 @@ This extension is **under development and not ready for use**. It ships inside
 the `spec-kit-copilot-wizard` plugin. Installing that plugin registers both the
 Wizard and Designer canvases.
 
+The provider's `contracts/` directory names the Wizard handoff and open input
+(`wizard-handoff.mjs`, `host-open.mjs`), saved settings and save request
+(`designer-settings.mjs`), frozen generation writer
+(`generation-request.mjs`), Specify version inventory (`specify-inventory.mjs`),
+control adapter exports (`control-adapter.mjs`), and contribution field/schema
+rules (`design-contributions.mjs`). The existing readers and handlers retain
+filesystem confinement, UI lifecycle, and revision conflicts. The generator is
+independently packaged and validates request integrity with its own
+`scripts/contracts/generation-request.mjs`; it does not import the provider.
+The browser's matching mount, readiness, and draft-change rules live in
+`ui/control-adapter-contract.js`, served with the provider rather than loaded
+from a preset.
+
 The Wizard hands approved customizations to a separate child session. That
 session initializes Spec Kit in Copilot skills mode if needed, installs the
 released `extension-canvas-design` package, approved Designer selections, and

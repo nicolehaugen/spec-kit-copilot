@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import {
+    cpSync,
     mkdirSync,
     mkdtempSync,
+    readFileSync,
     rmSync,
     writeFileSync,
 } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { load } from "js-yaml";
 import { assembleComposition, computeStage2Necessity } from "../composition/assembler.mjs";
 import { applyComposition, normalizeHookArtifactsInComposition } from "../canvas-runtime/composition-apply.mjs";
 import { fsDeps } from "../canvas-runtime/instances.mjs";
@@ -596,14 +600,15 @@ test("resolvePipelineEntry: extension artifact whose active layer isn't extensio
     assert.equal(r.kind, "orphan");
 });
 
-test("client phase running acknowledgement clears after its local duration", async () => {
+test("client phase running acknowledgement clears after its local duration", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     let renders = 0;
     setRunLockDeps({ render: () => { renders += 1; } });
     try {
         markPhaseRunning("speckit.implement", { durationMs: 5 });
         assert.equal(state.phaseRunning.has("speckit.implement"), true);
 
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        t.mock.timers.tick(5);
 
         assert.equal(state.phaseRunning.has("speckit.implement"), false);
         assert.ok(renders >= 2);
@@ -1407,6 +1412,59 @@ function activeLayer(artifact) {
 }
 
 // ---- Cases -----------------------------------------------------------------
+
+test("installed test packages expose nested manifest metadata, layers, and a non-runnable hook", async () => {
+    const root = makeWorkspace();
+    const presetId = "copilot-wizard-layer-test";
+    const extensionId = "extension-wizard-flow-test";
+    const presetSource = fileURLToPath(new URL(
+        `../../../../../spec-kit-presets/${presetId}/`, import.meta.url));
+    const extensionSource = fileURLToPath(new URL(
+        `../../../../../tests/fixtures/specify/${extensionId}/`, import.meta.url));
+    try {
+        const preset = load(readFileSync(join(presetSource, "preset.yml"), "utf8"));
+        const extension = load(readFileSync(join(extensionSource, "extension.yml"), "utf8"));
+        for (const [source, data, dir, id] of [
+            [presetSource, preset, "presets", presetId],
+            [extensionSource, extension, "extensions", extensionId],
+        ]) {
+            for (const entry of [...data.provides.templates ?? [], ...data.provides.commands ?? []]) {
+                assert.ok(readFileSync(join(source, entry.file)).length, `${id}: ${entry.file}`);
+            }
+            cpSync(source, join(root, ".specify", dir, id), { recursive: true });
+        }
+        writeHooksRegistry(root, {
+            after_plan: [{ extension: extensionId, command: "speckit.extension-wizard-flow-test.audit" }],
+        });
+        const comp = await assembleComposition({
+            workspaceRoot: root,
+            presetItems: [presetItem(presetId)],
+            extensionItems: [extensionItem(extensionId)],
+        });
+        assert.equal(comp.presets[0].version, preset.preset.version);
+        assert.equal(comp.extensions[0].version, extension.extension.version);
+        assert.equal(activeLayer(findArtifact(comp, "commands/speckit.plan")).presetId, presetId);
+        assert.equal(activeLayer(findArtifact(comp, "commands/speckit.specify")).strategy, "prepend");
+        assert.equal(findArtifact(comp, "commands/speckit.extension-wizard-flow-test.review").kind, "command");
+        assert.equal(findArtifact(comp, "commands/speckit.extension-wizard-flow-test.audit").kind, "hook");
+        assert.equal(computeStage2Necessity(comp, comp._presetManifests).needed, true);
+        const disabled = await assembleComposition({
+            workspaceRoot: root,
+            presetItems: [presetItem(presetId, { active: false, enabled: false })],
+            extensionItems: [extensionItem(extensionId)],
+        });
+        assert.notEqual(activeLayer(findArtifact(disabled, "commands/speckit.plan")).presetId, presetId);
+        assert.equal(findArtifact(disabled, "commands/speckit.extension-wizard-flow-test.audit").kind, "hook");
+        rmSync(join(root, ".specify", "presets", presetId), { recursive: true });
+        const removed = await assembleComposition({
+            workspaceRoot: root, presetItems: [], extensionItems: [extensionItem(extensionId)],
+        });
+        assert.equal(removed.presets.length, 0);
+        assert.equal(activeLayer(findArtifact(removed, "commands/speckit.plan")).layer, "core");
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
 
 test("core-only workspace: no presets/extensions, synthesized canonical pipeline", async () => {
     const root = makeWorkspace();

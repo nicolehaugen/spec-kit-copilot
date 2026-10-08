@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { readConfig, createWorkflowRoutes } from "./server.mjs";
 import { createRuntime } from "./runtime.mjs";
+import { agentActionSchemas } from "./contracts/agent-actions.mjs";
 
 const servers = new Map();
 const config = readConfig();
@@ -57,26 +58,16 @@ const session = await joinSession({
             description: config.canvas.description,
             actions: [
                 { name: "run_phase", description: "Run an installed phase skill in this session.",
-                    inputSchema: { type: "object", additionalProperties: false, required: ["phase", "args"],
-                        properties: { phase: { type: "string" }, itemId: { type: "string" },
-                            args: { type: "string", maxLength: 32000 },
-                            slug: { type: "string", maxLength: 100 },
-                            name: { type: "string", maxLength: 120 } } },
+                    inputSchema: agentActionSchemas.run_phase,
                     handler: (ctx) => opened(ctx, (value) => value.run(ctx.input, ctx.instanceId)) },
                 { name: "report_workflow_slug", description: "Record the actual workflow directory slug.",
-                    inputSchema: { type: "object", additionalProperties: false, required: ["phaseRunId", "slug"],
-                        properties: { phaseRunId: { type: "string" },
-                            slug: { type: "string", minLength: 1, maxLength: 100 } } },
+                    inputSchema: agentActionSchemas.report_workflow_slug,
                     handler: (ctx) => opened(ctx, (value) => value.reportSlug(ctx.input, ctx.instanceId)) },
                 { name: "report_phase_artifact", description: "Report a phase artifact.",
-                    inputSchema: { type: "object", additionalProperties: false, required: ["phaseRunId", "path"],
-                        properties: { phaseRunId: { type: "string" }, path: { type: "string" } } },
+                    inputSchema: agentActionSchemas.report_phase_artifact,
                     handler: (ctx) => opened(ctx, (value) => value.report(ctx.input, ctx.instanceId)) },
                 { name: "report_autopilot_step", description: "Start or verify one step in a Copilot Autopilot run.",
-                    inputSchema: { type: "object", additionalProperties: false,
-                        required: ["autopilotId", "phase", "action"],
-                        properties: { autopilotId: { type: "string" }, phase: { type: "string" },
-                            action: { type: "string", enum: ["start", "complete"] } } },
+                    inputSchema: agentActionSchemas.report_autopilot_step,
                     handler: (ctx) => opened(ctx, (value) => value.reportAutopilotStep(ctx.input, ctx.instanceId)) },
             ],
             open: (ctx) => withLifecycle(async () => {

@@ -2,17 +2,19 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isDeepStrictEqual, promisify } from "node:util";
+import { promisify } from "node:util";
 import { isWindowsDeviceName, readFrozenAsset } from "./pages.mjs";
 import { initialOutputs, validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
 import { validateConfirmedOutputs } from "./handoff.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
+import { serializeGenerationRequest } from "./contracts/generation-request.mjs";
+import { normalizeObservedVersions } from "./contracts/specify-inventory.mjs";
+import { validateDesignerAdapterExports } from "./contracts/control-adapter.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
-const REQUEST_LIMIT = 4 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
 export function validateEssentials(model, values) {
@@ -61,11 +63,8 @@ async function validateAdapterValues(model, values, project) {
             if (!modules.has(name)) {
                 const bytes = await readFrozenAsset(asset, specify);
                 const module = await import(`data:text/javascript;base64,${bytes.toString("base64")}`);
-                if (module.controlId !== control.id
-                    || !isDeepStrictEqual(module.valueContract, control.value)
-                    || typeof module.validate !== "function") {
-                    throw new Error(`${name}: incompatible Designer adapter exports`);
-                }
+                try { validateDesignerAdapterExports(module, control); }
+                catch (error) { throw new Error(`${name}: ${error.message}`, { cause: error }); }
                 modules.set(name, module);
             }
             let valid;
@@ -92,31 +91,7 @@ export async function readCurrentInstalledVersions(project, frozen, run = execFi
             const { stdout } = await run(process.platform === "win32" ? "specify.exe" : "specify",
                 [command, "list", "--json"],
                 await specifySpawnOptions(project, { timeout: 10000, maxBuffer: 128 * 1024 }));
-            let entries;
-            try { entries = JSON.parse(stdout); }
-            catch { throw new Error(`Invalid ${kind} JSON from Specify`); }
-            if (!Array.isArray(entries)) {
-                throw new Error(`Invalid ${kind} inventory from Specify`);
-            }
-            entries = entries.filter((entry) =>
-                relevantIds.has(kind === "bundles" ? entry?.bundle_id : entry?.id));
-            if (entries.length > 40) {
-                throw new Error(`Invalid ${kind} inventory from Specify`);
-            }
-            const seen = new Set();
-            inventory[kind] = entries.map((entry) => {
-                const id = kind === "bundles" ? entry?.bundle_id : entry?.id;
-                if (typeof id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(id)
-                    || typeof entry.version !== "string"
-                    || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(entry.version)
-                    || (kind !== "bundles" && !Number.isSafeInteger(entry.priority))
-                    || seen.has(id)) {
-                    throw new Error(`Invalid ${kind} package identity or version from Specify`);
-                }
-                seen.add(id);
-                return { id, version: entry.version,
-                    ...(kind === "bundles" ? {} : { priority: entry.priority }) };
-            });
+            inventory[kind] = normalizeObservedVersions(stdout, kind, relevantIds);
         } catch (error) {
             inventory[kind] = [];
             warnings.push(`Could not read ${kind} inventory from Specify: ${error.message}.`);
@@ -443,12 +418,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         ...(valueSources.length ? { valueSources } : {}),
         ...(controlAssets.size ? { controlAssets: [...controlAssets.values()] } : {}),
     };
-    const payload = JSON.stringify(request);
-    request.integrity = createHash("sha256").update(payload).digest("hex");
-    const serialized = JSON.stringify(request);
-    if (Buffer.byteLength(serialized) > REQUEST_LIMIT) {
-        throw new Error("Frozen generation request exceeds 4 MiB");
-    }
+    const serialized = serializeGenerationRequest(request);
     const folder = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
         "generations", requestId);
     await mkdir(folder, { recursive: true });

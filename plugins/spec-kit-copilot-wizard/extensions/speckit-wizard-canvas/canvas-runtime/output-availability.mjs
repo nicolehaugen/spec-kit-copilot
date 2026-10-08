@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { artifactPath } from "../artifact-evidence.mjs";
+import { artifactPath, commandId, readEvidenceCache } from "../artifact-evidence.mjs";
 import { displayOutputPath, primaryCandidate, resolveOutputPath } from "../pipeline/output-evidence.mjs";
 import { securePathWithin } from "../project-scanner/fs-helpers.mjs";
 import { fsDeps } from "./instances.mjs";
@@ -95,7 +95,13 @@ export async function attachOutputEvidence(inst, scan, snap, outputs) {
     snap.warnings.push(...outputs.warnings);
     if (outputs.incomplete) failRefresh(inst);
     if (outputs.requests.length && inst.refreshStatus?.status === "up-to-date") {
-        inst.refreshStatus.status = "ready";
+        // A scan started before evidence was accepted may finish afterward.
+        // Recheck the cache before letting that older snapshot demote a completed refresh.
+        const current = await readEvidenceCache(inst.workspacePath);
+        const missing = outputs.requests.some(({ commandId: id, fingerprint }) =>
+            !Object.entries(current.entries).some(([key, entry]) =>
+                commandId(key) === commandId(id) && entry?.outputEvidence?.fingerprint === fingerprint));
+        if (missing) inst.refreshStatus.status = "ready";
     }
     snap.refreshStatus = inst.refreshStatus?.status ?? "ready";
     snap.refreshId = inst.refreshStatus?.id ?? null;
