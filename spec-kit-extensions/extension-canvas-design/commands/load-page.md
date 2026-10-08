@@ -55,6 +55,10 @@ registered names, not by a separate kind. A preset may replace this command
 with fewer or no pages; Designer still opens and shows the resolved pages or
 an empty state. Missing generated-canvas dependencies prevent Generate, not
 Designer launch. Missing explicitly declared names still stop resolution.
+An omitted page slot, field control, host adapter, generated field placement
+dependency, or generated-page renderer is reported in Designer while healthy
+pages remain editable. Conflicting registrations and invalid or unsafe assets
+still stop loading.
 A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions, host-specific adapters, value definitions,

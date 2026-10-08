@@ -245,10 +245,6 @@ function validateContribution(document, name, slots, fieldOrigins) {
         || typeof document.slot !== "string") {
         throw new Error(`${name}: invalid Canvas Design contribution`);
     }
-    const slot = slots.get(document.slot)?.slot;
-    if (!slot) {
-        throw new Error(`${name}: unknown Designer slot ${document.slot}`);
-    }
     const field = document.field;
     if (!field || typeof field !== "object" || Array.isArray(field)
         || Object.keys(field).some((key) =>
@@ -313,6 +309,9 @@ function validateContribution(document, name, slots, fieldOrigins) {
                     || typeof binding.section.title !== "string"
                     || !binding.section.title.trim() || binding.section.title.length > 120)))) {
         throw new Error(`${name}: incompatible generated binding`);
+    }
+    if (!slots.get(document.slot)?.slot) {
+        throw new Error(`${name}: unknown Designer slot ${document.slot}`);
     }
     if (fieldOrigins.has(field.id)) {
         throw new Error(`${name}: duplicate field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
@@ -788,7 +787,14 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
         if (item.kind === "designer.setting-definition") {
-            validateContribution(document, item.name, slots, fieldOrigins);
+            try {
+                validateContribution(document, item.name, slots, fieldOrigins);
+            } catch (error) {
+                if (error?.constructor !== Error
+                    || !error.message.startsWith(`${item.name}: unknown Designer slot `)) throw error;
+                compositionErrors.push(`${item.name} (from ${item.sourceId}): ${error.message}`);
+                continue;
+            }
             if (ids.has(document.id)) throw new Error(`${item.name}: duplicate contribution item ${document.id}`);
             ids.add(document.id);
         } else if (item.kind === "generated.value-definition") {
@@ -913,7 +919,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     for (const entry of loaded.filter((item) => item.kind === "generated.added-page-definition")) {
         const renderer = loaded.find((item) => item.name === entry.document.renderer);
         if (!renderer || renderer.kind !== "generated.added-page-renderer") {
-            throw new Error(`${entry.name}: missing generated renderer ${entry.document.renderer}`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` missing generated renderer ${entry.document.renderer}`);
         }
     }
     for (const entry of loaded.filter((item) => item.kind === "generated.added-page-renderer")) {
@@ -1058,6 +1065,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     const placed = new Set();
     const placementIds = new Set();
     const placementControls = new Map();
+    const invalidPlacements = new Set();
     for (const entry of fieldPlacements) {
         const { page: pageId, slot, field: fieldId, control: controlId } = entry.document;
         if (placementIds.has(entry.document.id)) {
@@ -1066,20 +1074,27 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         placementIds.add(entry.document.id);
         const page = pageId === "workflow" ? workflowPages[0]
             : addedPages.find((candidate) => candidate.document.id === pageId);
-        if ((pageId === "workflow" && slot === "workflow.actions")
-            || !page?.document.slots?.some((candidate) => candidate.id === slot)) {
-            throw new Error(`${entry.name}: unknown generated page slot ${pageId}.${slot}`);
+        if (pageId === "workflow" && slot === "workflow.actions") {
+            throw new Error(`${entry.name}: generated field slot is reserved for actions`);
         }
         const key = `${pageId}:${slot}:${fieldId}`;
         if (placed.has(key)) throw new Error(`${entry.name}: duplicate generated field placement ${key}`);
         placed.add(key);
+        if (!page?.document.slots?.some((candidate) => candidate.id === slot)) {
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` unknown generated page slot ${pageId}.${slot}`);
+            invalidPlacements.add(entry.name);
+            continue;
+        }
         const setting = loaded.find((candidate) =>
             candidate.kind === "designer.setting-definition" && candidate.document.field.id === fieldId);
         const baseField = pageEntries.filter((candidate) => !candidate.error)
             .flatMap((candidate) => candidate.fields ?? []).find((candidate) => candidate.id === fieldId);
         const value = sources.find((candidate) => candidate.document.id === fieldId);
         if (!setting && !baseField && !value) {
-            throw new Error(`${entry.name}: missing generated field ${fieldId}`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}): missing generated field ${fieldId}`);
+            invalidPlacements.add(entry.name);
+            continue;
         }
         if (value?.document.presentation === "processing-only") {
             throw new Error(`${entry.name}: processing-only value cannot be placed`);
@@ -1099,7 +1114,10 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             || type === "object" && !field
                 && !isDeepStrictEqual(shared.document.value.properties, value.document.schema.properties)
             || requiredControl !== "stock.checkbox" && !shared.document.adapters.generated) {
-            throw new Error(`${entry.name}: missing or incompatible shared generated control`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` missing or incompatible shared generated control ${requiredControl}`);
+            invalidPlacements.add(entry.name);
+            continue;
         }
         placementControls.set(entry.name, requiredControl);
     }
@@ -1178,7 +1196,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 : "generated.control-adapter";
             const adapter = loaded.find((item) => item.name === name);
             if (!adapter || adapter.kind !== kind) {
-                throw new Error(`${control.name}: missing ${host} adapter ${name}`);
+                compositionErrors.push(`${control.name} (from ${control.sourceId}):`
+                    + ` missing ${host} adapter ${name}`);
+                continue;
             }
             const owner = adapterOwners.get(adapter.name);
             if (owner) {
@@ -1201,24 +1221,28 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             throw new Error(`${entry.name}: unreferenced control adapter`);
         }
     }
+    const invalidContributions = new Set();
     for (const entry of loaded.filter((item) => item.kind === "designer.setting-definition")) {
         const { field, requires } = entry.document;
         const control = controls.find((item) => item.document.id === field.control);
         if (!control || control.document.id !== field.control
             || control.document.value.type !== field.type
             || (requires && control.name !== requires[0])) {
-            throw new Error(`${entry.name}: missing or incompatible shared control definition`);
+            compositionErrors.push(`${entry.name} (from ${entry.sourceId}):`
+                + ` missing or incompatible shared control definition ${field.control}`);
+            invalidContributions.add(entry.name);
         }
     }
     for (const page of pageEntries.filter((entry) => !entry.error)) {
         for (const field of page.fields ?? []) {
             if (!controls.some((control) => control.document.id === field.control
                 && control.document.value.type === (field.type ?? "string"))) {
-                throw new Error(`${page.page}: missing shared control definition for ${field.id}`);
+                compositionErrors.push(`${page.page}: missing shared control definition for ${field.id}`);
             }
         }
     }
-    const ordered = loaded.filter((entry) => entry.kind === "designer.setting-definition");
+    const ordered = loaded.filter((entry) => entry.kind === "designer.setting-definition"
+        && !invalidContributions.has(entry.name));
     const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     ordered.sort((a, b) => a.document.order - b.document.order
         || compare(a.sourceId.split(":").at(-1), b.sourceId.split(":").at(-1))
@@ -1233,7 +1257,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         sections.set(section.id, section.title);
     }
-    return { loaded, ordered, controls, placementControls, compositionErrors };
+    return { loaded, ordered, controls, placementControls, invalidPlacements, compositionErrors };
 }
 
 async function context(project) {
@@ -1334,7 +1358,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
-    const { loaded, ordered, controls, placementControls, compositionErrors } = await loadTemplates(
+    const { loaded, ordered, controls, placementControls, invalidPlacements, compositionErrors } = await loadTemplates(
         templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
@@ -1363,7 +1387,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
     model.buttonPlacements = loaded.filter((entry) => entry.kind === "generated.button-placement")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }))
         .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-    model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement")
+    model.fieldPlacements = loaded.filter((entry) => entry.kind === "generated.field-placement"
+        && !invalidPlacements.has(entry.name))
         .map(({ name, sourceId, document }) =>
             ({ name, sourceId, ...document, control: placementControls.get(name) }))
         .sort((a, b) => a.order - b.order || a.sourceId.localeCompare(b.sourceId)

@@ -895,15 +895,18 @@ export function mount() {}`);
         /invalid phase control definition/);
     await writeFile(controlFile, originalControl);
     await writeFile(adapterFile, originalAdapter);
-    await assert.rejects(loadPages(handoff, project, entries,
+    const missingControls = await loadPages(handoff, project, entries,
         scalar.filter((item) => item.kind === "generated.workflow-page-definition"
             || item.kind === "generated.workflow-page-adapter"
             || item.kind === "generated.phase-control-definition"
-            || item.kind === "generated.phase-control-adapter"), verify),
-        /missing shared control definition for canvas.id/);
-    await assert.rejects(loadPages(handoff, project, entries,
+            || item.kind === "generated.phase-control-adapter"), verify);
+    assert.match(missingControls.compositionErrors.join(" "), /missing shared control definition for canvas.id/);
+    assert.deepEqual(missingControls.pages.map((page) => page.page), entries.map((entry) => entry.name));
+    const missingGeneratedAdapter = await loadPages(handoff, project, entries,
         [...fields, ...scalar.filter((item) => item.name !== "generated-control-adapter-text")],
-        verify), /missing generated adapter generated-control-adapter-text/);
+        verify);
+    assert.match(missingGeneratedAdapter.compositionErrors.join(" "),
+        /missing generated adapter generated-control-adapter-text/);
     const original = await readFile(fields[0].path, "utf8");
     const changed = JSON.parse(original);
     changed.requires = ["shared-controls-text"];
@@ -912,8 +915,10 @@ export function mount() {}`);
         .contributions[0].requires[0], "shared-controls-text");
     changed.requires = ["shared-controls-checkbox"];
     await writeFile(fields[0].path, JSON.stringify(changed));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
-        /missing or incompatible shared control definition/);
+    const incompatibleControl = await loadResolvedDesignerPages(handoff, project, entries, fields);
+    assert.match(incompatibleControl.compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.text/);
+    assert.ok(!incompatibleControl.contributions.some((item) => item.name === fields[0].name));
     await writeFile(fields[0].path, original);
     await writeFile(fields[0].path, JSON.stringify({ ...JSON.parse(original),
         generatedBinding: { presentation: "text", slot: "workflow.heading" } }));
@@ -995,6 +1000,29 @@ test("preset field placements resolve into Workflow and added-page slots", async
     assert.deepEqual(model.fieldPlacements.map(({ page: id, field }) => [id, field]),
         [["billing-view", "canvas.description"], ["workflow", "canvas.description"],
             ["workflow", "risk.first"], ["workflow", "risk.second"]]);
+    const billingPlacement = templates.find((item) => item.name === "billing-description");
+    const billingDocument = JSON.parse(await readFile(billingPlacement.path, "utf8"));
+    for (const [change, expected] of [
+        [{ page: "missing-page" }, /unknown generated page slot missing-page.workflow.actions/],
+        [{ slot: "missing.slot" }, /unknown generated page slot billing-view.missing.slot/],
+        [{ field: "missing.field" }, /missing generated field missing.field/],
+    ]) {
+        await writeFile(billingPlacement.path, JSON.stringify({ ...billingDocument, ...change }));
+        const partial = await loadResolvedDesignerPages(handoff, project, entries, templates, registration);
+        assert.match(partial.compositionErrors.join(" "), expected);
+        assert.equal(partial.fieldPlacements.length, 3);
+        assert.ok(generationBlockers(partial).length);
+        await assert.rejects(freezeGeneration({ model: partial, values: partial.values,
+            handoff, project, workspace }), /Cannot generate|incomplete|missing|blocked/i);
+    }
+    await writeFile(billingPlacement.path, JSON.stringify(billingDocument));
+    const withoutControl = await loadResolvedDesignerPages(handoff, project, entries,
+        templates.filter((item) => !item.name.startsWith("canvas-control-risk-matrix")), registration);
+    assert.match(withoutControl.compositionErrors.join(" "),
+        /missing or incompatible shared generated control risk-matrix/);
+    assert.deepEqual(withoutControl.fieldPlacements.map(({ field }) => field),
+        ["canvas.description", "canvas.description"]);
+    assert.ok(generationBlockers(withoutControl).length);
     const values = { ...model.values, "canvas.id": "placed-canvas",
         "canvas.displayName": "Placed Canvas", "canvas.description": "One shared value" };
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
@@ -1139,21 +1167,27 @@ test("stock image requires one compatible control definition and paired self-con
         .fields.find((field) => field.id === "canvas.logo").control, "stock.image");
     assert.deepEqual(model.constraints["canvas.logo"].mimeTypes,
         ["image/png", "image/jpeg", "image/gif", "image/webp"]);
-    await assert.rejects(load(fields), /missing or incompatible shared control definition/);
+    const missingImageControl = await load(fields);
+    assert.match(missingImageControl.compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.image/);
+    assert.ok(!missingImageControl.values["canvas.logo"]);
     for (const kind of ["designer.control-adapter", "generated.control-adapter"]) {
-        await assert.rejects(load(templates.filter((item) => item.kind !== kind)),
+        const missingAdapter = await load(templates.filter((item) => item.kind !== kind));
+        assert.match(missingAdapter.compositionErrors.join(" "),
             new RegExp(`missing ${kind.split(".")[0]} adapter`));
     }
     const originalField = await readFile(fieldPath, "utf8");
     await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
         requires: ["canvas-stock-image"] }));
-    await assert.rejects(load(), /invalid Canvas Design contribution|missing or incompatible shared control definition/);
+    assert.match((await load()).compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.image/);
     await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
         requires: ["shared-controls-image"] }));
     assert.equal((await load()).contributions[0].requires[0], "shared-controls-image");
     await writeFile(fieldPath, JSON.stringify({ ...JSON.parse(originalField),
         requires: ["shared-controls-text"] }));
-    await assert.rejects(load(), /missing or incompatible shared control definition/);
+    assert.match((await load()).compositionErrors.join(" "),
+        /missing or incompatible shared control definition stock.image/);
     await writeFile(fieldPath, originalField);
     const control = adapters[0];
     const originalControl = await readFile(control.path, "utf8");
@@ -2704,8 +2738,10 @@ test("registered contributions validate slots, sources, references and determini
             });
             if (slot === "billing.options") {
                 const model = await loadResolvedDesignerPages(handoff, project, [...entries, pageEntry], templates);
-                await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, templates),
-                    /unknown Designer slot billing.options/);
+                const missingSlot = await loadResolvedDesignerPages(handoff, project, entries, templates);
+                assert.match(missingSlot.compositionErrors.join(" "),
+                    /canvas-contributions-billing \(from copilot-billing-canvas-test\):.*unknown Designer slot billing.options/);
+                assert.ok(!missingSlot.values["billing.costCode"]);
                 assert.equal(model.pages.length, 5);
                 await rm(join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
                     "settings.json"));
@@ -2779,11 +2815,19 @@ test("registered contributions validate slots, sources, references and determini
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
         /canvas-contribution-beta: duplicate field canvas.id also defined by designer-essentials/);
     await writeFile(beta.path, JSON.stringify({ ...beta.document, slot: "unknown.slot" }));
+    const missingSlot = await loadResolvedDesignerPages(handoff, project, entries, paths);
+    assert.match(missingSlot.compositionErrors.join(" "),
+        /canvas-contribution-beta \(from zzz\):.*unknown Designer slot unknown.slot/);
+    assert.deepEqual(missingSlot.contributions.map((item) => item.name), ["canvas-contribution-alpha"]);
+    await writeFile(beta.path, JSON.stringify({ ...beta.document, slot: "unknown.slot",
+        field: { ...beta.document.field, label: "" } }));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
-        /canvas-contribution-beta: unknown Designer slot unknown.slot/);
+        /incompatible field or control definition/);
     await writeFile(beta.path, JSON.stringify({ ...beta.document, requires: ["missing-template"] }));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, paths),
-        /missing or incompatible shared control definition/);
+    const missingControl = await loadResolvedDesignerPages(handoff, project, entries, paths);
+    assert.match(missingControl.compositionErrors.join(" "),
+        /canvas-contribution-beta \(from zzz\): missing or incompatible shared control definition stock.text/);
+    assert.deepEqual(missingControl.contributions.map((item) => item.name), ["canvas-contribution-alpha"]);
     await writeFile(beta.path, JSON.stringify(beta.document));
     const replacement = join(directory, "project-replacement.json");
     await writeFile(replacement, JSON.stringify({ ...beta.document,
@@ -2991,8 +3035,11 @@ test("generated-only page validates typed assets, freezes winners and packages w
                 active: true, ...source, strategy: "replace",
             }] })), /replace-only Specify template/);
     }
+    const missingRenderer = await load(pages.slice(0, 1));
+    assert.match(missingRenderer.compositionErrors.join(" "),
+        /canvas-generated-overview \(from copilot-generated-page-test\): missing generated renderer/);
+    assert.ok(generationBlockers(missingRenderer).length);
     for (const candidate of [
-        [pages.slice(0, 1), /missing generated renderer/],
         [pages.slice(1), /renderer must belong to exactly one page/],
         [[{ ...pages[0], kind: "designer.setting-definition" }, pages[1]], /Canvas Design contribution/],
         [[{ ...pages[0], path: rendererPath }, pages[1]], /must be a \.json/],
@@ -3012,7 +3059,7 @@ test("generated-only page validates typed assets, freezes winners and packages w
     ]) await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, pages,
         () => invalid), /replace-only Specify template/);
     await writeFile(definitionPath, JSON.stringify({ ...definition, renderer: "missing-renderer" }));
-    await assert.rejects(load(pages), /missing generated renderer/);
+    await assert.rejects(load(pages), /generated renderer must belong to exactly one page/);
     await writeFile(definitionPath, JSON.stringify({ ...definition, extra: true }));
     await assert.rejects(load(pages), /invalid generated page definition/);
     await writeFile(definitionPath, JSON.stringify({ ...definition, id: "workflow" }));
@@ -3747,9 +3794,13 @@ test("paired control validates both adapters, typed values and portable generate
         { modelRevision: model.revision, revision: 1, values });
     const reopened = await loadDesignerSettings(workspace, handoff, await load());
     assert.deepEqual(saved.values["risk.rating"], reopened.values["risk.rating"]);
+    for (const kind of ["designer.control-adapter", "generated.control-adapter"]) {
+        const missingAdapter = await load(templates.filter((item) => item.kind !== kind));
+        assert.match(missingAdapter.compositionErrors.join(" "),
+            new RegExp(`missing ${kind.split(".")[0]} adapter`));
+        assert.ok(generationBlockers(missingAdapter).length);
+    }
     for (const [assets, message] of [
-        [templates.filter((item) => item.kind !== "designer.control-adapter"), /missing designer adapter/],
-        [templates.filter((item) => item.kind !== "generated.control-adapter"), /missing generated adapter/],
         [templates.map((item) => item.kind === "shared.control-definition"
             ? { ...item, kind: "designer.setting-definition" } : item), /Canvas Design contribution/],
         [templates.map((item) => item.kind === "generated.control-adapter"
@@ -3768,7 +3819,7 @@ test("paired control validates both adapters, typed values and portable generate
         /replace-only Specify template/);
     const definition = templates[0];
     for (const requires of [
-        null, [], [templates[2].name],
+        null, [],
         [templates[2].name, definition.name], [definition.name, definition.name],
     ]) {
         const invalid = { ...contributionDocument };
@@ -3776,6 +3827,11 @@ test("paired control validates both adapters, typed values and portable generate
         await writeFile(templates[1].path, JSON.stringify(invalid));
         await assert.rejects(load(), /requires must name exactly one control definition template|missing or incompatible shared control definition/);
     }
+    await writeFile(templates[1].path, JSON.stringify({
+        ...contributionDocument, requires: [templates[2].name],
+    }));
+    assert.match((await load()).compositionErrors.join(" "),
+        /missing or incompatible shared control definition risk-matrix/);
     await writeFile(templates[1].path, contributionSource);
     const original = await readFile(definition.path, "utf8");
     await writeFile(definition.path, original.replace('"type": "object"', '"type": "string"'));
