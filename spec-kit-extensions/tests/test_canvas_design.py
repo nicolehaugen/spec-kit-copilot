@@ -54,7 +54,7 @@ FILES = {
         "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
         "phase-artifact-complete",
     )),
-    *(f"generated-host/badges/handlers/{name}.mjs" for name in (
+    *(f"generated-host/badges/adapters/{name}.mjs" for name in (
         "content", "artifact-state", "run", "phase-artifact-complete",
     )),
     "shared-controls/stock-image/control.json",
@@ -156,10 +156,10 @@ class CanvasDesignPackageTests(unittest.TestCase):
                for name in ("value-match", "artifact-current", "checklist-progress",
                             "markdown-file-count", "checklist-complete", "work-complete",
                             "phase-run-complete", "phase-artifact-complete", "artifact-stale")]
-            + [(f"badge-rule-{name}", f"generated-host/badges/handlers/{name}.mjs")
+            + [(f"badge-rule-{name}-adapter", f"generated-host/badges/adapters/{name}.mjs")
                for name in ("content", "artifact-state", "run")]
-            + [("badge-rule-phase-artifact-complete-handler",
-                "generated-host/badges/handlers/phase-artifact-complete.mjs")]
+            + [("badge-rule-phase-artifact-complete-adapter",
+                "generated-host/badges/adapters/phase-artifact-complete.mjs")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [

@@ -301,17 +301,14 @@ async function badgeTemplates(project) {
     templates.push({ name: "badges-settings", path: settingsPath,
         sourceId: "extension:extension-canvas-design",
         kind: "designer.badges-settings-definition", strategy: "replace" });
-    const ruleFilenames = new Set(await readdir(join(source, "generated-host", "badges", "rules"))
-        .then((files) => files.map((file) => file.replace(/\.json$/, ""))));
     for (const [folder, prefix, kind] of [
         ["rules", "badge-rule", "generated.badge-rule-definition"],
-        ["handlers", "badge-rule", "generated.badge-rule-handler"],
+        ["adapters", "badge-rule", "generated.badge-rule-adapter"],
     ]) {
         const directory = join(source, "generated-host", "badges", folder);
         for (const filename of await readdir(directory)) {
             const stem = filename.replace(/\.(?:json|mjs)$/, "");
-            const name = `${prefix}-${stem}${folder === "handlers" && ruleFilenames.has(stem)
-                ? "-handler" : ""}`;
+            const name = `${prefix}-${stem}${folder === "adapters" ? "-adapter" : ""}`;
             const path = join(project, ".specify", "extensions", "extension-canvas-design",
                 "generated-host", "badges", folder, filename);
             await mkdir(dirname(path), { recursive: true });
@@ -328,7 +325,7 @@ const badgeRegistration = () => ({ kind: "template", stack: [
         strategy: "replace" },
 ] });
 
-test("registered badge definitions resolve types, rules, handlers, and declared placeholders", async (t) => {
+test("registered badge definitions resolve types, rules, adapters, and declared placeholders", async (t) => {
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
     const templates = await badgeTemplates(project);
@@ -346,7 +343,7 @@ test("registered badge definitions resolve types, rules, handlers, and declared 
     const rule = templates.find((item) => item.name === "badge-rule-value-match");
     const original = await readFile(rule.path, "utf8");
     await writeFile(rule.path, JSON.stringify({ ...JSON.parse(original), module: "not-registered" }));
-    await assert.rejects(load(), /missing registered badge handler/);
+    await assert.rejects(load(), /missing registered badge adapter/);
     await writeFile(rule.path, original);
     const type = templates.find((item) => item.name === "badges-settings");
     const typeOriginal = await readFile(type.path, "utf8");
@@ -356,7 +353,7 @@ test("registered badge definitions resolve types, rules, handlers, and declared 
     await writeFile(type.path, JSON.stringify(settings));
     await assert.rejects(load(), /undeclared placeholder/);
     await writeFile(type.path, typeOriginal);
-    const handler = templates.find((item) => item.name === "badge-rule-run");
+    const handler = templates.find((item) => item.name === "badge-rule-run-adapter");
     await writeFile(handler.path, `import "node:fs";\nexport const contractVersion = 1;\nexport function evaluate() {}`);
     await assert.rejects(load(), /must be self-contained/);
 });
@@ -374,7 +371,7 @@ test("preset badge definitions add, replace, and disable registered catalog entr
         inventory.push(entry);
         return entry;
     };
-    await add("badge-rule-preset-extra", "generated.badge-rule-handler",
+    await add("badge-rule-preset-extra", "generated.badge-rule-adapter",
         "export const contractVersion = 1;\nexport async function evaluate() { return { match: true }; }\n",
         ".mjs");
     const addedRule = await add("badge-rule-preset-extra-definition",
@@ -442,7 +439,7 @@ test("preset badge definitions add, replace, and disable registered catalog entr
     await writeFile(replacedRule, JSON.stringify({
         ...JSON.parse(await readFile(replacedRule, "utf8")), module: "not-registered",
     }));
-    await assert.rejects(load(), /missing registered badge handler/);
+    await assert.rejects(load(), /missing registered badge adapter/);
     await writeFile(replacedRule, JSON.stringify({
         ...JSON.parse(await readFile(replacedRule, "utf8")),
         module: "badge-rule-preset-extra",
@@ -490,6 +487,11 @@ test("Designer badge save and reopen freezes registered assets into generated co
     assert.deepEqual(reopened.badges, badges);
     const prepared = await freezeGeneration({ model: reopened, values: reopened.values,
         badges: reopened.badges, outputs: reopened.outputs, handoff, project, workspace });
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.badges.adapters.map(({ name, kind }) => [name, kind]),
+        [["badge-rule-content-adapter", "generated.badge-rule-adapter"]]);
+    assert.equal(Object.hasOwn(request.badges, "handlers"), false);
     const { materialize } = await import(new URL(
         "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
@@ -497,7 +499,10 @@ test("Designer badge save and reopen freezes registered assets into generated co
     assert.deepEqual(config.badges.instances, badges);
     assert.equal(config.badges.types[0].id, "checklist-progress");
     assert.equal(config.badges.rules[0].id, "checklist-progress");
-    assert.equal(config.badges.rules[0].module, "badge-rule-content");
+    assert.equal(config.badges.rules[0].module, "badge-rule-content-adapter");
+    assert.deepEqual(Object.keys(config.badges).sort(), ["instances", "rules", "types"]);
+    assert.deepEqual(await readFile(join(project, prepared.target, "badges",
+        "badge-rule-content-adapter.mjs")), Buffer.from(request.badges.adapters[0].content, "base64"));
 });
 
 async function stockTemplates(project) {
@@ -4168,7 +4173,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             "generated.workflow-page-adapter",
             "generated.phase-control-definition", "generated.phase-control-adapter",
             "designer.badges-settings-definition", "generated.badge-rule-definition",
-            "generated.badge-rule-handler",
+            "generated.badge-rule-adapter",
             "generated.field-placement",
             "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",

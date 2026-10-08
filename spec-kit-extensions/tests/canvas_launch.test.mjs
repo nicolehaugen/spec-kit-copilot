@@ -103,9 +103,9 @@ test("composed verification resolves every name, rejects warnings and native scr
             "phase-artifact-complete"].map((id) =>
             [`badge-rule-${id}`, join(installed, "generated-host", "badges", "rules", `${id}.json`)])),
         ...Object.fromEntries(["content", "artifact-state", "run"].map((id) =>
-            [`badge-rule-${id}`, join(installed, "generated-host", "badges", "handlers", `${id}.mjs`)])),
-        "badge-rule-phase-artifact-complete-handler": join(installed, "generated-host",
-            "badges", "handlers", "phase-artifact-complete.mjs"),
+            [`badge-rule-${id}-adapter`, join(installed, "generated-host", "badges", "adapters", `${id}.mjs`)])),
+        "badge-rule-phase-artifact-complete-adapter": join(installed, "generated-host",
+            "badges", "adapters", "phase-artifact-complete.mjs"),
         "shared-controls-image": join(installed, "shared-controls", "stock-image", "control.json"),
         "designer-control-adapter-image": join(installed, "shared-controls", "stock-image", "designer.mjs"),
         "generated-control-adapter-image": join(installed, "shared-controls", "stock-image", "generated.mjs"),

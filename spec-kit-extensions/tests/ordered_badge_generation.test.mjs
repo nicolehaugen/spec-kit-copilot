@@ -17,7 +17,7 @@ const rule = {
     description: "Ordered metadata evidence", placementPhaseInput: "target",
     inputs: [{ id: "target", type: "artifact", scope: "metadata" },
         { id: "prerequisites", type: "ordered-artifacts", scope: "metadata", before: "target" }],
-    textPlaceholders: [], module: "badge-rule-phase-artifact-complete-handler",
+    textPlaceholders: [], module: "badge-rule-phase-artifact-complete-adapter",
 };
 const type = { id: "phase-artifact-complete", title: "Phase artifact complete",
     description: "Ordered output freshness", rule: rule.id,
@@ -37,7 +37,7 @@ const inventory = (badge = instance, definition = rule) => ({
     types: [{ name: "badges-settings", sourceId: "test-preset", schemaVersion: 1, ...type }],
     rules: [{ name: "phase-artifact-definition", sourceId: "test-preset", ...definition,
         assets: [asset("phase-artifact-definition", "generated.badge-rule-definition", definition)] }],
-    handlers: [asset(definition.module, "generated.badge-rule-handler",
+    adapters: [asset(definition.module, "generated.badge-rule-adapter",
         "export const contractVersion = 1; export function evaluate() {}")],
 });
 const declared = (entry) => Boolean(entry && workflow.phaseArtifacts[entry.phase]

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { evaluate as checklist } from
-    "../extension-canvas-design/generated-host/badges/handlers/content.mjs";
+    "../extension-canvas-design/generated-host/badges/adapters/content.mjs";
 import { evaluate as valueMatch } from
-    "../extension-canvas-design/generated-host/badges/handlers/content.mjs";
+    "../extension-canvas-design/generated-host/badges/adapters/content.mjs";
 
 const generated = await mkdtemp(join(process.cwd(), ".generated-badge-package-"));
 after(() => rm(generated, { recursive: true, force: true }));
@@ -15,22 +15,35 @@ await cp(new URL("../extension-canvas-design/generated-scaffold/", import.meta.u
     generated, { recursive: true });
 await mkdir(join(generated, "badges"), { recursive: true });
 for (const name of ["content", "artifact-state", "run"]) {
-    await cp(new URL(`../extension-canvas-design/generated-host/badges/handlers/${name}.mjs`,
-        import.meta.url), join(generated, "badges", `badge-rule-${name}.mjs`));
+    await cp(new URL(`../extension-canvas-design/generated-host/badges/adapters/${name}.mjs`,
+        import.meta.url), join(generated, "badges", `badge-rule-${name}-adapter.mjs`));
 }
-await cp(new URL("../extension-canvas-design/generated-host/badges/handlers/phase-artifact-complete.mjs",
-    import.meta.url), join(generated, "badges", "badge-rule-phase-artifact-complete-handler.mjs"));
+await cp(new URL("../extension-canvas-design/generated-host/badges/adapters/phase-artifact-complete.mjs",
+    import.meta.url), join(generated, "badges", "badge-rule-phase-artifact-complete-adapter.mjs"));
 const { evaluateBadges, validateBadges, verifyBadgeModules } =
     await import(pathToFileURL(join(generated, "badge-runtime.mjs")).href);
 const { createRuntime } = await import(pathToFileURL(join(generated, "runtime.mjs")).href);
 const { countMarkdownDirectory } = await import(pathToFileURL(join(generated, "files.mjs")).href);
+const { readBoundedWithMetadata } = await import(pathToFileURL(join(generated, "files.mjs")).href);
 
-const moduleFile = new URL("../extension-canvas-design/generated-host/badges/handlers/content.mjs",
+test("badge text and freshness metadata come from the same validated artifact", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".badge-artifact-version-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    await writeFile(join(cwd, "artifact.md"), "old");
+    const replacement = join(cwd, "replacement.md");
+    await writeFile(replacement, "new");
+    await utimes(replacement, new Date("2024-01-01"), new Date("2024-01-01"));
+    await rename(replacement, join(cwd, "artifact.md"));
+    const evidence = await readBoundedWithMetadata(cwd, "artifact.md", 128 * 1024);
+    assert.deepEqual(evidence, { text: "new", mtimeMs: (await stat(join(cwd, "artifact.md"))).mtimeMs });
+});
+
+const moduleFile = new URL("../extension-canvas-design/generated-host/badges/adapters/content.mjs",
     import.meta.url);
 const hash = createHash("sha256").update(await readFile(moduleFile)).digest("hex");
 const rule = { id: "checklist-progress", label: "Progress", description: "Progress",
     inputs: [{ id: "artifact", type: "artifact" }], textPlaceholders: ["completed", "total", "percent"],
-    module: "badge-rule-content", hash };
+    module: "badge-rule-content-adapter", hash };
 const type = { id: "progress", title: "Progress", description: "Progress",
     rule: rule.id, defaultText: "{completed}/{total} complete", defaultColor: "blue", enabled: true };
 const instance = { id: "work", type: type.id, inputs: { artifact: {
@@ -60,15 +73,15 @@ const completeInstance = { ...instance, id: "completed", type: completeType.id,
     text: "Checklist complete" };
 const completeBadges = { instances: [completeInstance], types: [completeType],
     rules: [completeRule] };
-const phaseArtifactHandler = new URL(
-    "../extension-canvas-design/generated-host/badges/handlers/phase-artifact-complete.mjs",
+const phaseArtifactAdapter = new URL(
+    "../extension-canvas-design/generated-host/badges/adapters/phase-artifact-complete.mjs",
     import.meta.url);
 const phaseArtifactRule = { id: "phase-artifact-complete", label: "Phase artifact complete",
     description: "Ordered phase outputs", placementPhaseInput: "target",
     inputs: [{ id: "target", type: "artifact", scope: "metadata" },
         { id: "prerequisites", type: "ordered-artifacts", scope: "metadata", before: "target" }],
-    textPlaceholders: [], module: "badge-rule-phase-artifact-complete-handler",
-    hash: createHash("sha256").update(await readFile(phaseArtifactHandler)).digest("hex") };
+    textPlaceholders: [], module: "badge-rule-phase-artifact-complete-adapter",
+    hash: createHash("sha256").update(await readFile(phaseArtifactAdapter)).digest("hex") };
 const phaseArtifactType = { ...type, id: "phase-artifact-complete",
     title: "Phase artifact complete", rule: phaseArtifactRule.id,
     defaultText: "Phase complete" };
@@ -409,9 +422,9 @@ test("artifact staleness uses metadata and does not require rule-specific host l
     t.after(() => rm(cwd, { recursive: true, force: true }));
     await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
     await writeFile(join(cwd, "specs", "alpha", "tasks.md"), "Work");
-    const module = "badge-rule-artifact-state";
+    const module = "badge-rule-artifact-state-adapter";
     const hash = createHash("sha256").update(await readFile(new URL(
-        "../extension-canvas-design/generated-host/badges/handlers/artifact-state.mjs",
+        "../extension-canvas-design/generated-host/badges/adapters/artifact-state.mjs",
         import.meta.url))).digest("hex");
     const config = { instances: [{ ...instance, id: "stale", type: "stale",
         text: "Stale", color: "amber" }],
@@ -436,9 +449,9 @@ test("artifact staleness uses metadata and does not require rule-specific host l
 test("badge config rejects undeclared outputs and normalizes completed run statuses", async (t) => {
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-run-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
-    const module = "badge-rule-run";
+    const module = "badge-rule-run-adapter";
     const hash = createHash("sha256").update(await readFile(new URL(
-        "../extension-canvas-design/generated-host/badges/handlers/run.mjs",
+        "../extension-canvas-design/generated-host/badges/adapters/run.mjs",
         import.meta.url))).digest("hex");
     const config = { instances: [{ id: "done", type: "done", inputs: { phase: "tasks" },
         text: "Done", color: "green", showIn: ["workflow-summary", "phase-card"], phase: "tasks" }],

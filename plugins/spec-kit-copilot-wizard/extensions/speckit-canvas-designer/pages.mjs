@@ -754,7 +754,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 "generated.phase-control-definition",
                 "generated.phase-control-adapter",
                 "designer.badges-settings-definition", "generated.badge-rule-definition",
-                "generated.badge-rule-handler",
+                "generated.badge-rule-adapter",
                 "generated.field-placement",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                 "generated.value-definition", "generated.computed-value-provider",
@@ -769,7 +769,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             "generated.workflow-page-adapter",
             "designer.control-adapter", "generated.control-adapter",
             "generated.computed-value-provider", "generated.dialog-adapter",
-            "generated.button-adapter", "generated.badge-rule-handler"].includes(item.kind);
+            "generated.button-adapter", "generated.badge-rule-adapter"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
@@ -854,7 +854,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                             ? "computed value provider" : "control adapter"} must be self-contained; module imports are not packaged`);
                 }
                 const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
-                    : item.kind === "generated.badge-rule-handler" ? "evaluate"
+                    : item.kind === "generated.badge-rule-adapter" ? "evaluate"
                     : item.kind === "generated.phase-control-adapter" ? "mount"
                     : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
                 const check = spawnSync("node", ["--check", "--input-type=module"],
@@ -887,9 +887,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                     && !exports.some((entry) => entry.n === "validate")) {
                     throw new Error(`${item.name}: Designer adapter is missing validate export`);
                 }
-                if (item.kind === "generated.badge-rule-handler"
+                if (item.kind === "generated.badge-rule-adapter"
                     && !exports.some((entry) => entry.n === "contractVersion")) {
-                    throw new Error(`${item.name}: badge handler is missing contractVersion export`);
+                    throw new Error(`${item.name}: badge adapter is missing contractVersion export`);
                 }
                 if (item.kind === "generated.computed-value-provider") {
                     const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:(?:async\s+)?function|const)\s+provideValue\b/g)];
@@ -938,8 +938,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     const badgeTypes = (badgeSettings[0]?.document.types ?? []).map((document) =>
         ({ ...badgeSettings[0], document }));
     const badgeRules = loaded.filter((item) => item.kind === "generated.badge-rule-definition");
-    const badgeHandlers = loaded.filter((item) => item.kind === "generated.badge-rule-handler");
-    if (badgeTypes.length > 30 || badgeRules.length > 30 || badgeHandlers.length > 30) {
+    const badgeAdapters = loaded.filter((item) => item.kind === "generated.badge-rule-adapter");
+    if (badgeTypes.length > 30 || badgeRules.length > 30 || badgeAdapters.length > 30) {
         throw new Error("Designer badge definitions exceed their size limit");
     }
     for (const [group, label] of [[badgeTypes, "type"], [badgeRules, "rule"]]) {
@@ -955,13 +955,13 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         validateBadgeText(entry.document.defaultText, rule.document.textPlaceholders, entry.name);
     }
     for (const entry of badgeRules) {
-        if (!badgeHandlers.some((item) => item.name === entry.document.module)) {
-            throw new Error(`${entry.name}: missing registered badge handler ${entry.document.module}`);
+        if (!badgeAdapters.some((item) => item.name === entry.document.module)) {
+            throw new Error(`${entry.name}: missing registered badge adapter ${entry.document.module}`);
         }
     }
-    for (const entry of badgeHandlers) {
+    for (const entry of badgeAdapters) {
         if (!badgeRules.some((item) => item.document.module === entry.name)) {
-            throw new Error(`${entry.name}: unreferenced badge handler`);
+            throw new Error(`${entry.name}: unreferenced badge adapter`);
         }
     }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");

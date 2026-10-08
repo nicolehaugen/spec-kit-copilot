@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
-import { confined, countMarkdownDirectory, readBounded, readRegularFileMetadata,
+import { confined, countMarkdownDirectory, readBoundedWithMetadata, readRegularFileMetadata,
     safePath } from "./files.mjs";
 
 const moduleId = /^[a-z][a-z0-9-]{0,79}$/;
@@ -282,9 +282,8 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
                         return { state: "ok", ...await readRegularFileMetadata(cwd, path) };
                     }
                     const target = await confined(cwd, path);
-                    const info = await lstat(target);
-                    const text = await readBounded(cwd, path, 128 * 1024);
-                    return { state: "ok", path: target, text, mtimeMs: info.mtimeMs };
+                    const { text, mtimeMs } = await readBoundedWithMetadata(cwd, path, 128 * 1024);
+                    return { state: "ok", path: target, text, mtimeMs };
                 } catch (error) {
                     if (error.code === "ENOENT" || error.status === 404) return { state: "missing" };
                     log(`Badge artifact ${step.id} could not be read: ${error.message}`);

@@ -38,7 +38,7 @@ export async function confined(root, path, { createDirectories = false } = {}) {
     return target;
 }
 
-export async function readBoundedBytes(root, path, cap = 512 * 1024) {
+async function readBoundedFile(root, path, cap) {
     const target = await confined(root, path);
     const handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
@@ -57,13 +57,22 @@ export async function readBoundedBytes(root, path, cap = 512 * 1024) {
             || before.size !== after.size || before.size !== size) {
             throw new UserError("Artifact changed while reading. Refresh to try again.", 409);
         }
-        return buffer.subarray(0, size);
+        return { bytes: buffer.subarray(0, size), mtimeMs: before.mtimeMs };
     } finally { await handle.close(); }
+}
+
+export async function readBoundedBytes(root, path, cap = 512 * 1024) {
+    return (await readBoundedFile(root, path, cap)).bytes;
 }
 
 export async function readBounded(root, path, cap = 512 * 1024) {
     return new TextDecoder("utf-8", { fatal: true })
         .decode(await readBoundedBytes(root, path, cap));
+}
+
+export async function readBoundedWithMetadata(root, path, cap = 512 * 1024) {
+    const { bytes, mtimeMs } = await readBoundedFile(root, path, cap);
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), mtimeMs };
 }
 
 export async function readRegularFileMetadata(root, path) {

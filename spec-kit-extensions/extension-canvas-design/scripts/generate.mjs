@@ -109,11 +109,11 @@ export function frozenBadges(badges, workflow) {
     if (badges === undefined) return null;
     const name = /^[a-z][a-z0-9-]{0,79}$/;
     const sha = /^[a-f0-9]{64}$/;
-    const { instances, settings, types, rules, handlers } = badges ?? {};
+    const { instances, settings, types, rules, adapters } = badges ?? {};
     if (!Array.isArray(instances) || !instances.length || instances.length > 100
         || !Array.isArray(types) || !types.length || types.length > 100
         || !Array.isArray(rules) || !rules.length || rules.length > 100
-        || !Array.isArray(handlers) || !handlers.length || handlers.length > 100) {
+        || !Array.isArray(adapters) || !adapters.length || adapters.length > 100) {
         throw new Error("Invalid frozen badges inventory");
     }
     const validateAsset = (asset, kind) => {
@@ -147,9 +147,9 @@ export function frozenBadges(badges, workflow) {
     };
     const typeMap = new Map(types.map((item) => [item.id, item]));
     const ruleMap = new Map(rules.map((item) => [item.id, item]));
-    const handlerMap = new Map(handlers.map((item) => [item.name, item]));
-    if ([typeMap, ruleMap, handlerMap].some((map, index) =>
-        map.size !== [types, rules, handlers][index].length)) {
+    const adapterMap = new Map(adapters.map((item) => [item.name, item]));
+    if ([typeMap, ruleMap, adapterMap].some((map, index) =>
+        map.size !== [types, rules, adapters][index].length)) {
         throw new Error("Duplicate frozen badge definition or evaluator");
     }
     const bytes = validateAsset(settings, "designer.badges-settings-definition");
@@ -181,7 +181,7 @@ export function frozenBadges(badges, workflow) {
         const { parsed } = definition(rule, "generated.badge-rule-definition",
             ["schemaVersion", "id", "label", "description", "inputs", "textPlaceholders", "module",
                 ...(rule.placementPhaseInput === undefined ? [] : ["placementPhaseInput"])]);
-        if (parsed.schemaVersion !== 1 || !name.test(parsed.module) || !handlerMap.has(parsed.module)
+        if (parsed.schemaVersion !== 1 || !name.test(parsed.module) || !adapterMap.has(parsed.module)
             || !Array.isArray(parsed.inputs) || parsed.inputs.length > 10
             || new Set(parsed.inputs.map((input) => input.id)).size !== parsed.inputs.length
             || (parsed.placementPhaseInput !== undefined
@@ -206,7 +206,7 @@ export function frozenBadges(badges, workflow) {
             || parsed.textPlaceholders.some((placeholder) => !name.test(placeholder))) {
             throw new Error(`Invalid frozen badge rule: ${rule.id}`);
         }
-        return { ...parsed, hash: handlerMap.get(parsed.module).hash };
+        return { ...parsed, hash: adapterMap.get(parsed.module).hash };
     });
     const textPlaceholdersValid = (text, placeholders) => typeof text === "string"
         && text.trim() && text.length <= 120
@@ -219,10 +219,10 @@ export function frozenBadges(badges, workflow) {
             throw new Error(`Badge ${type.id} uses an undeclared text placeholder`);
         }
     }
-    for (const handler of handlers) {
-        validateAsset(handler, "generated.badge-rule-handler");
-        if (!resolvedRules.some((rule) => rule.module === handler.name)) {
-            throw new Error(`Unused frozen badge evaluator: ${handler.name}`);
+    for (const adapter of adapters) {
+        validateAsset(adapter, "generated.badge-rule-adapter");
+        if (!resolvedRules.some((rule) => rule.module === adapter.name)) {
+            throw new Error(`Unused frozen badge evaluator: ${adapter.name}`);
         }
     }
     const phaseOutputs = workflow.phaseArtifacts ?? {};
@@ -329,7 +329,7 @@ export function frozenBadges(badges, workflow) {
         checked.push(instance);
     }
     return { instances, types: resolvedTypes, rules: resolvedRules,
-        handlers: handlers.map(({ name: module, hash }) => ({ module, hash })) };
+        adapters: adapters.map(({ name: module, hash }) => ({ module, hash })) };
 }
 
 function frozenImage(item, values, constraints) {
@@ -1386,7 +1386,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (config.showSetup && !request.runtimeSetup) {
         throw new Error("Show setup requires a verified runtime setup recipe");
     }
-    const badgeFiles = (request.badges?.handlers ?? []).map((asset) => ({
+    const badgeFiles = (request.badges?.adapters ?? []).map((asset) => ({
         filename: `${asset.name}.mjs`, bytes: Buffer.from(asset.content, "base64"),
     }));
     const pageFiles = (request.generatedPages ?? []).flatMap((page) => [

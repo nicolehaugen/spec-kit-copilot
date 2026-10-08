@@ -188,7 +188,7 @@ composition, dialogs, and contributed slots; the host retains privileged
 operations, persistence, validation, and safe project access. A replacement
 declares which badge destinations it supports, and unsupported configured
 placements fail validation before generation. The separate badge capability
-evaluates frozen handlers against declared evidence, computes per-workflow
+evaluates frozen adapters against declared evidence, computes per-workflow
 matches and matching-workflow summary counts, and passes presentation-ready
 results to the page. The page does not read files or decide badge outcomes.
 The opt-in Phase artifact complete rule reads metadata for one target output

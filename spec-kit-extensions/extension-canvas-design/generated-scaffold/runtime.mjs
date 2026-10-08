@@ -292,7 +292,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     async function outputPath(step, item, view = state, entries, directory = false) {
         const run = runFor(step, item, view);
-        if (!step.configuredArtifacts && run?.artifact) { authorizeReport(step, run.artifact, run.item); return run.artifact; }
+        if (!step.configuredArtifacts && run?.artifact) {
+            authorizeReport(step, run.artifact, run.item);
+            return directory ? posix.dirname(run.artifact) : run.artifact;
+        }
         if (!step.output) return null;
         let path = step.output;
         if (path.includes("<slug>")) {

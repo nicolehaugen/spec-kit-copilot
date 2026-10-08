@@ -29,7 +29,7 @@ The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.badges-settings-definition`,
-`generated.badge-rule-definition`, `generated.badge-rule-handler`, `designer.setting-definition`,
+`generated.badge-rule-definition`, `generated.badge-rule-adapter`, `designer.setting-definition`,
 `generated.workflow-page-definition`, `generated.workflow-page-adapter`,
 `generated.phase-control-definition`,
 `generated.phase-control-adapter`,
@@ -158,10 +158,10 @@ unregistered files are not loaded.
 - `badge-rule-phase-run-complete` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-phase-artifact-complete` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-artifact-stale` — `generated.badge-rule-definition`, `replace`
-- `badge-rule-content` — `generated.badge-rule-handler`, `replace`
-- `badge-rule-artifact-state` — `generated.badge-rule-handler`, `replace`
-- `badge-rule-run` — `generated.badge-rule-handler`, `replace`
-- `badge-rule-phase-artifact-complete-handler` — `generated.badge-rule-handler`, `replace`
+- `badge-rule-content-adapter` — `generated.badge-rule-adapter`, `replace`
+- `badge-rule-artifact-state-adapter` — `generated.badge-rule-adapter`, `replace`
+- `badge-rule-run-adapter` — `generated.badge-rule-adapter`, `replace`
+- `badge-rule-phase-artifact-complete-adapter` — `generated.badge-rule-adapter`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`
 - `designer-control-adapter-image` — `designer.control-adapter`, `replace`
 - `generated-control-adapter-image` — `generated.control-adapter`, `replace`

@@ -305,13 +305,13 @@ Specify template: replace the whole file to add or remove types, rename their
 IDs, change picker titles and descriptions, or change default text, color, and
 enabled state. Its definitions also supply the selected types in generated
 canvases; a type must refer to a registered rule. Rules and their self-contained
-JavaScript handlers remain independently replaceable templates under
+JavaScript adapters remain independently replaceable templates under
 `generated-host/badges/`; rule metadata declares typed evidence inputs and
 supported text placeholders. Saved badge instances refer to type IDs, so renaming
 one requires updating existing instances before Generate. Generate
-freezes only selected definitions and handlers into the app so runtime never
+freezes only selected definitions and adapters into the app so runtime never
 needs the design-time preset. Generated apps use bounded reads of declared
-outputs and recorded runs; rule handlers decide whether evidence matches and
+outputs and recorded runs; rule adapters decide whether evidence matches and
 produce badge values and optional nonnegative `summaryCount`. Directory-scoped
 artifact evidence counts regular Markdown siblings of the selected output,
 without assuming a folder or phase name. Freshness compares artifact modification
@@ -552,7 +552,7 @@ not the JSON document. No kind is inferred from a filename.
 | `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
 | `designer.badges-settings-definition` | Complete replaceable badge type list and default appearance, shared by Designer and generated canvases | [badges settings](schemas/designer.badges-settings-definition.schema.json) |
 | `generated.badge-rule-definition` | Evidence inputs, badge text placeholders, and evaluator reference | [badge rule](schemas/generated.badge-rule-definition.schema.json) |
-| `generated.badge-rule-handler` | Self-contained `.mjs` evaluator | Module contract below |
+| `generated.badge-rule-adapter` | Self-contained `.mjs` evaluator | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
 | `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |

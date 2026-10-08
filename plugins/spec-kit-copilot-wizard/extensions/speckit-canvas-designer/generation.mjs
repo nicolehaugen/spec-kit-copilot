@@ -498,10 +498,10 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             }
             checked.push(instance);
         }
-        const handlers = [...new Set(rules.map((rule) => rule.module))];
-        const handlerAssets = await Promise.all(handlers.map(async (name) => {
+        const adapters = [...new Set(rules.map((rule) => rule.module))];
+        const adapterAssets = await Promise.all(adapters.map(async (name) => {
             const entry = model.templates?.find((item) =>
-                item.kind === "generated.badge-rule-handler" && item.name === name);
+                item.kind === "generated.badge-rule-adapter" && item.name === name);
             if (!entry) throw new Error(`Missing badge evaluator ${name}`);
             return asset(entry);
         }));
@@ -532,7 +532,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
                 if (!entry) throw new Error(`Missing badge rule definition ${rule.id}`);
                 return { ...rule, assets: [await asset(entry)] };
             })),
-            handlers: handlerAssets,
+            adapters: adapterAssets,
         };
     }
     const designerFields = new Map();

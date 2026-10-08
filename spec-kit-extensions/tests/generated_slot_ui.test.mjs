@@ -13,6 +13,8 @@ const runtimeSource = await readFile(new URL("../extension-canvas-design/generat
     import.meta.url), "utf8");
 const themeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/workflow-theme.css",
     import.meta.url), "utf8");
+const runtimeCss = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/runtime.css",
+    import.meta.url), "utf8");
 
 test("generated host supplies badge slots to the initial phase adapter mount", () => {
     const initial = section("const initialState = {", "if (workflowRoot.dataset.pageModule)");
@@ -50,6 +52,76 @@ function section(start, end) {
     assert.ok(first >= 0 && last > first, `Missing UI section ${start}`);
     return source.slice(first, last);
 }
+
+test("a timed-out Run clears the in-flight guard without automatically resubmitting", async () => {
+    let attempts = 0;
+    const messages = [];
+    const actions = runInNewContext(`let sending = false;
+        ${section("async function api(", "async function retryRevision(")}
+        ${section("async function send(", "async function refreshArtifact(")}
+        ({ send, pending: () => Boolean(sending) })`, {
+        token: "test", model: { constitutionReady: true, userProvidesSlug: false,
+            selected: "specs/demo", statuses: {} },
+        selectedPending: () => false, renderStatus() {}, flush: async () => {},
+        refresh: async () => {}, message: (text) => messages.push(text),
+        AbortSignal: { timeout() {
+            const controller = new AbortController();
+            setTimeout(() => controller.abort(), 5);
+            return controller.signal;
+        } },
+        fetch: (_path, options) => {
+            if (++attempts === 2) return Promise.resolve({ ok: true, json: async () => ({}) });
+            return new Promise((_, reject) => options.signal.addEventListener("abort",
+                () => reject(new Error("aborted")), { once: true }));
+        },
+    });
+    await actions.send({ id: "specify", project: false }, "");
+    assert.equal(actions.pending(), false);
+    assert.match(messages.at(-1), /timed out.*check chat before trying again/i);
+    assert.equal(attempts, 1);
+    await actions.send({ id: "specify", project: false }, "");
+    assert.equal(attempts, 2);
+    assert.equal(actions.pending(), false);
+});
+
+test("named badge colors meet small-text contrast in light, dark and automatic dark themes", () => {
+    const theme = (selector) => {
+        const start = themeSource.indexOf(selector);
+        assert.ok(start >= 0);
+        const block = themeSource.slice(start, themeSource.indexOf("}", start));
+        return (name) => {
+            const value = block.match(new RegExp(`--${name}: (#[0-9a-f]{6});`));
+            assert.ok(value, `${name} is defined in ${selector}`);
+            return value[1];
+        };
+    };
+    const luminance = (hex) => [0, 2, 4].map((offset) =>
+        parseInt(hex.slice(offset + 1, offset + 3), 16) / 255)
+        .map((channel) => channel <= 0.04045 ? channel / 12.92
+            : ((channel + 0.055) / 1.055) ** 2.4)
+        .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const badge = /\.canvas-badge\[data-color="([^"]+)"\]\s*\{\s*color:\s*color-mix\(in srgb, var\(--text-color-default\) (\d+)%, (var\(--([a-z-]+)\)|#[0-9a-f]{6})\);/g;
+    const matches = [...runtimeCss.matchAll(badge)];
+    assert.deepEqual(matches.map((match) => match[1]),
+        ["green", "amber", "red", "blue", "purple", "pink", "orange"]);
+    for (const selector of [":root {", '[data-theme="dark"] {', ":root:not([data-theme]) {"]) {
+        const color = theme(selector);
+        const text = color("text-color-default");
+        const background = luminance(color("background-color-secondary"));
+        for (const [, name, percentage, hue, variable] of matches) {
+            const base = variable ? color(variable) : hue;
+            const proportion = Number(percentage) / 100;
+            const mixed = `#${[1, 3, 5].map((offset) =>
+                Math.round(parseInt(text.slice(offset, offset + 2), 16) * proportion
+                    + parseInt(base.slice(offset, offset + 2), 16) * (1 - proportion))
+                    .toString(16).padStart(2, "0")).join("")}`;
+            const foreground = luminance(mixed);
+            const contrast = (Math.max(foreground, background) + 0.05)
+                / (Math.min(foreground, background) + 0.05);
+            assert.ok(contrast >= 4.5, `${name} in ${selector} has ${contrast.toFixed(2)}:1 contrast`);
+        }
+    }
+});
 
 test("a stale revision refreshes internally and retries a workflow action once", async () => {
     const calls = [];
@@ -177,7 +249,7 @@ test("rerunning a phase or Constitution requires overwrite confirmation, but fir
         selectedPending: () => false, slugError: () => null,
         message: () => {}, renderStatus: () => {}, flush: async () => {},
         api: async () => { submissions++; }, refresh: async () => {},
-        $: () => null,
+        $: () => null, AbortSignal: { timeout: () => new AbortController().signal },
     };
     const send = runInNewContext(`${section("async function send(", "async function refreshArtifact(")}
         send`, context);

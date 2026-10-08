@@ -95,13 +95,13 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .canvas-badge { display: inline-block; border-radius: 999px; padding: .12rem .5rem;
     border: 1px solid var(--border-color-default); font-size: .75rem; font-weight: 600;
     background: var(--background-color-secondary); color: var(--text-color-default); }
-.canvas-badge[data-color="green"] { color: var(--success-color, #1a7f37); }
-.canvas-badge[data-color="amber"] { color: var(--warning-color, #9a6700); }
-.canvas-badge[data-color="red"] { color: var(--danger-color, #cf222e); }
-.canvas-badge[data-color="blue"] { color: var(--accent-color, #0969da); }
-.canvas-badge[data-color="purple"] { color: #8250df; }
-.canvas-badge[data-color="pink"] { color: #bf3989; }
-.canvas-badge[data-color="orange"] { color: #bc4c00; }
+.canvas-badge[data-color="green"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--success-color)); }
+.canvas-badge[data-color="amber"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--warn-color)); }
+.canvas-badge[data-color="red"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--danger-color)); }
+.canvas-badge[data-color="blue"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--accent-color)); }
+.canvas-badge[data-color="purple"] { color: color-mix(in srgb, var(--text-color-default) 45%, #8250df); }
+.canvas-badge[data-color="pink"] { color: color-mix(in srgb, var(--text-color-default) 45%, #bf3989); }
+.canvas-badge[data-color="orange"] { color: color-mix(in srgb, var(--text-color-default) 45%, #bc4c00); }
 .app-header { flex-wrap: wrap; }
 .header-status { flex-wrap: wrap; justify-content: flex-end; }
 .header-status .conn { white-space: nowrap; }

@@ -114,7 +114,7 @@ provides:
       file: generated-host/setup-button-control/setup.json
       description: Replaceable setup-only button placement.
 
-    # Badges: one replaceable type list, with independently replaceable rules and handlers.
+    # Badges: one replaceable type list, with independently replaceable rules and adapters.
     - name: badges-settings
       file: designer-host/badges-settings/badge-types.json
     - name: badge-rule-value-match
@@ -135,14 +135,14 @@ provides:
       file: generated-host/badges/rules/phase-artifact-complete.json
     - name: badge-rule-artifact-stale
       file: generated-host/badges/rules/artifact-stale.json
-    - name: badge-rule-content
-      file: generated-host/badges/handlers/content.mjs
-    - name: badge-rule-artifact-state
-      file: generated-host/badges/handlers/artifact-state.mjs
-    - name: badge-rule-run
-      file: generated-host/badges/handlers/run.mjs
-    - name: badge-rule-phase-artifact-complete-handler
-      file: generated-host/badges/handlers/phase-artifact-complete.mjs
+    - name: badge-rule-content-adapter
+      file: generated-host/badges/adapters/content.mjs
+    - name: badge-rule-artifact-state-adapter
+      file: generated-host/badges/adapters/artifact-state.mjs
+    - name: badge-rule-run-adapter
+      file: generated-host/badges/adapters/run.mjs
+    - name: badge-rule-phase-artifact-complete-adapter
+      file: generated-host/badges/adapters/phase-artifact-complete.mjs
 
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image

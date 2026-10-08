@@ -83,7 +83,7 @@ const session = await joinSession({
                             "generated.phase-control-definition",
                             "generated.phase-control-adapter",
                             "designer.badges-settings-definition", "generated.badge-rule-definition",
-                            "generated.badge-rule-handler",
+                            "generated.badge-rule-adapter",
                             "generated.field-placement",
                             "generated.added-page-definition", "generated.added-page-renderer",
                             "shared.control-definition", "designer.control-adapter", "generated.control-adapter",

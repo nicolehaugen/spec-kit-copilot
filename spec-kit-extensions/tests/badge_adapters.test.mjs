@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluate as content } from "../extension-canvas-design/generated-host/badges/handlers/content.mjs";
-import { evaluate as artifactState } from "../extension-canvas-design/generated-host/badges/handlers/artifact-state.mjs";
-import { evaluate as run } from "../extension-canvas-design/generated-host/badges/handlers/run.mjs";
+import { evaluate as content } from "../extension-canvas-design/generated-host/badges/adapters/content.mjs";
+import { evaluate as artifactState } from "../extension-canvas-design/generated-host/badges/adapters/artifact-state.mjs";
+import { evaluate as run } from "../extension-canvas-design/generated-host/badges/adapters/run.mjs";
 import { evaluate as phaseArtifactComplete } from
-    "../extension-canvas-design/generated-host/badges/handlers/phase-artifact-complete.mjs";
+    "../extension-canvas-design/generated-host/badges/adapters/phase-artifact-complete.mjs";
 
 test("value match searches literal text anywhere in one output without regard to case", async () => {
     const inputs = { artifact: { phase: "decide", output: "decision.md" },

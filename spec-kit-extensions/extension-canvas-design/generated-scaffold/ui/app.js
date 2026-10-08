@@ -637,10 +637,11 @@ function saveFieldValue(id, value) {
     saving.catch(() => {});
     return saving.then(() => refresh());
 }
-async function api(path, input) {
+async function api(path, input, options = {}) {
     const response = await fetch(path, {
         headers: { "x-canvas-token": token, ...(input === undefined ? {} : { "Content-Type": "application/json" }) },
         ...(input === undefined ? {} : { method: "POST", body: JSON.stringify(input) }),
+        ...options,
     });
     const result = await response.json();
     if (!response.ok) {
@@ -1122,12 +1123,15 @@ async function send(step, value, target = "phase-action-error") {
     sending = { phase: step.id, item: step.project ? "project" : model.selected };
     renderStatus();
     let accepted = false;
+    let runSignal;
     try {
         await flush();
+        runSignal = AbortSignal.timeout(30_000);
         await api("/api/run", { phase: step.id, args: value,
             ...(!step.project ? { itemId: model.selected,
                 ...(selectedPending() && model.name?.trim() ? { name: model.name.trim() } : {}),
-                ...(selectedPending() && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) });
+                ...(selectedPending() && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) },
+        { signal: runSignal });
         accepted = true;
         if (step.project) {
             $("constitution-dialog")?.close();
@@ -1136,7 +1140,9 @@ async function send(step, value, target = "phase-action-error") {
         message("", target);
         await refresh();
     } catch (error) {
-        message(accepted ? `Request sent, but status could not be refreshed. Check chat before rerunning. ${error.message}` : error.message,
+        message(accepted ? `Request sent, but status could not be refreshed. Check chat before rerunning. ${error.message}`
+            : runSignal?.aborted ? "Run request timed out. It may have been sent; check chat before trying again."
+                : error.message,
             accepted && step.project ? "workflow-action-error" : target, true);
     }
     finally {

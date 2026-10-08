@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
 import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
 import { createRuntime, existingOutputFolder } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
 import { phaseContract } from "../extension-canvas-design/generated-scaffold/contract.mjs";
@@ -18,6 +19,8 @@ import { isWindowsDeviceName as designerDeviceName } from "../../plugins/spec-ki
 import { isWindowsDeviceName as runtimeDeviceName } from "../extension-canvas-design/generated-scaffold/files.mjs";
 
 const entryTemplate = await readFile(new URL("../extension-canvas-design/generated-scaffold/extension.mjs",
+    import.meta.url), "utf8");
+const runtimeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/runtime.mjs",
     import.meta.url), "utf8");
 const model = {
     revision: "test-revision",
@@ -182,6 +185,25 @@ test("missing output links browse the nearest existing confined directory", asyn
     await symlink(join(root, "specs"), join(root, "linked"), "junction");
     await assert.rejects(existingOutputFolder(root, "linked/missing"), /link or leaves/);
 });
+
+test("Browse resolves the parent of a run-reported artifact", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "canvas-reported-folder-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await mkdir(join(root, "specs", "demo"), { recursive: true });
+    await writeFile(join(root, "specs", "demo", "spec.md"), "# Spec");
+    const start = runtimeSource.indexOf("    async function outputPath(");
+    const end = runtimeSource.indexOf("    async function artifact(", start);
+    assert.ok(start >= 0 && end > start);
+    const outputPath = runInNewContext(`${runtimeSource.slice(start, end)}\noutputPath`, {
+        state: {}, runFor: () => ({ item: "specs/demo", artifact: "specs/demo/spec.md" }),
+        authorizeReport() {}, posix,
+    });
+    const step = { configuredArtifacts: false, output: "specs/<slug>/spec.md" };
+    assert.equal(await outputPath(step, "specs/demo"), "specs/demo/spec.md");
+    const directory = await outputPath(step, "specs/demo", undefined, undefined, true);
+    assert.equal(directory, "specs/demo");
+    assert.equal(await existingOutputFolder(root, directory), join(root, "specs", "demo"));
+});
 const handoff = { handoffId: "handoff-1", sourceFingerprint: "",
     selections: { presets: [], extensions: [], bundles: [] },
     workflow: { selectedPhases: ["constitution", "specify", "plan"],
@@ -233,7 +255,7 @@ test("selected badge definitions and evaluator are packaged without preset files
     const root = new URL("../extension-canvas-design/generated-host/badges/", import.meta.url);
     for (const [name, kind, path] of [
         ["badge-rule-value-match", "generated.badge-rule-definition", "rules/value-match.json"],
-        ["badge-rule-content", "generated.badge-rule-handler", "handlers/content.mjs"],
+        ["badge-rule-content-adapter", "generated.badge-rule-adapter", "adapters/content.mjs"],
     ]) {
         const bytes = await readFile(new URL(path, root));
         const destination = join(project, ".specify", "templates", `${name}.${path.endsWith(".mjs") ? "mjs" : "json"}`);
@@ -360,9 +382,9 @@ test("selected badge definitions and evaluator are packaged without preset files
     assert.match(stockMarkup(config), /data-badge-slot="workflow.list"/);
     assert.match(stockMarkup(config), /data-badge-slot="workflow.summary"/);
     assert.match(html, /data-badge-slots="[^"]*phase.card[^"]*phase.output/);
-    assert.equal(config.badges.rules[0].module, "badge-rule-content");
-    assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content.mjs")),
-        await readFile(new URL("handlers/content.mjs", root)));
+    assert.equal(config.badges.rules[0].module, "badge-rule-content-adapter");
+    assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content-adapter.mjs")),
+        await readFile(new URL("adapters/content.mjs", root)));
     selected.badgeTypes[0].title = "Not in badges settings";
     const mismatchedValues = { ...values, "canvas.id": "mismatched-badge" };
     const inconsistent = await freezeGeneration({ project, workspace, model: selected,
@@ -414,8 +436,8 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
             "designer-host/badges-settings/badge-types.json"],
         ["badge-rule-checklist-complete", "generated.badge-rule-definition",
             "generated-host/badges/rules/checklist-complete.json"],
-        ["badge-rule-content", "generated.badge-rule-handler",
-            "generated-host/badges/handlers/content.mjs"],
+        ["badge-rule-content-adapter", "generated.badge-rule-adapter",
+            "generated-host/badges/adapters/content.mjs"],
     ]) {
         const bytes = await readFile(new URL(path, root));
         const destination = join(project, ".specify", "templates",
@@ -446,8 +468,8 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
     const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.badges.instances[0].inputs, instance.inputs);
     assert.deepEqual(config.badges.rules[0].inputs, definition.inputs);
-    assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content.mjs")),
-        await readFile(new URL("generated-host/badges/handlers/content.mjs", root)));
+    assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content-adapter.mjs")),
+        await readFile(new URL("generated-host/badges/adapters/content.mjs", root)));
     const invalid = { ...instance, inputs: { artifact: instance.inputs.prerequisite,
         prerequisite: instance.inputs.artifact } };
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
@@ -475,8 +497,8 @@ test("directory-scoped rule freezes with its output anchor and evaluator", async
             "designer-host/badges-settings/badge-types.json"],
         ["badge-rule-markdown-file-count", "generated.badge-rule-definition",
             "generated-host/badges/rules/markdown-file-count.json"],
-        ["badge-rule-content", "generated.badge-rule-handler",
-            "generated-host/badges/handlers/content.mjs"],
+        ["badge-rule-content-adapter", "generated.badge-rule-adapter",
+            "generated-host/badges/adapters/content.mjs"],
     ]) {
         const bytes = await readFile(new URL(path, root));
         const destination = join(project, ".specify", "templates",
