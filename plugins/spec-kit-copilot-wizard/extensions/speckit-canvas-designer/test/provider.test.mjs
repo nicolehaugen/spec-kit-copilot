@@ -686,7 +686,7 @@ test("Generate freezes winning dialog and button assets with their registrations
             }));
         }
         templates.push({ name, path, kind, sourceId: root === source
-            ? "extension:extension-canvas-design" : "preset:copilot-dialog-buttons-test",
+            ? "extension:extension-canvas-design" : "copilot-dialog-buttons-test",
         strategy: "replace" });
     }
     const sourceFor = (_root, name) => {
