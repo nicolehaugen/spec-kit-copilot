@@ -260,7 +260,8 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
                         const status = ["completed", "complete", "success"].includes(
                             String(run.status).toLowerCase()) ? "completed" : String(run.status).toLowerCase();
                         evidence.runs[phaseId] = {
-                            status, ...(run.completedAt ? { completedAt: run.completedAt } : {}),
+                            status, ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+                            ...(run.completedAt ? { completedAt: run.completedAt } : {}),
                         };
                     } else evidence.runs[phaseId] = null;
                 }

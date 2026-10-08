@@ -646,6 +646,7 @@ async function api(path, input) {
     if (!response.ok) {
         const error = new Error(result.error ?? `Request failed (${response.status}).`);
         error.status = response.status;
+        error.code = result.code;
         throw error;
     }
     return result;
@@ -654,12 +655,14 @@ async function retryRevision(path, input) {
     try {
         return await api(path, { ...input, revision: model.revision });
     } catch (error) {
-        if (error.status !== 409) throw error;
+        if (error.status !== 409 || error.code !== "STALE_REVISION") throw error;
         await refresh();
         try {
             return await api(path, { ...input, revision: model.revision });
         } catch (retryError) {
-            if (retryError.status === 409) throw new Error("Canvas state is still changing. Try this action again.");
+            if (retryError.status === 409 && retryError.code === "STALE_REVISION") {
+                throw new Error("Canvas state is still changing. Try this action again.");
+            }
             throw retryError;
         }
     }

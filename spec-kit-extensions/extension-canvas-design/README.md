@@ -314,7 +314,9 @@ needs the design-time preset. Generated apps use bounded reads of declared
 outputs and recorded runs; rule handlers decide whether evidence matches and
 produce badge values and optional nonnegative `summaryCount`. Directory-scoped
 artifact evidence counts regular Markdown siblings of the selected output,
-without assuming a folder or phase name. Counts and freshness are best-effort; unreadable evidence
+without assuming a folder or phase name. Freshness compares artifact modification
+time to the latest run's start (or completion for older records without a start).
+Counts and freshness are best-effort; unreadable evidence
 produces a diagnostic rather than an invented exact result. A replacement
 phase adapter must declare badge support before phase-card placement is used.
 The generated Workflow page advertises its supported badge destinations
@@ -742,7 +744,9 @@ after failure until retry or explicit cancellation; it owns decoding, upload
 progress, and errors.
 
 Save can retain unfinished work. The browser checks `isReady()` before Save or
-Generate, but always allows switching tabs so a broken control cannot trap the user.
+Generate across visited tabs, but always allows switching tabs so a broken
+control cannot trap the user. Returning to a tab retains its control state so
+an unfinished upload can be retried or cancelled.
 The server invokes the approved adapter's
 validator on the values it will freeze before creating a canvas. Keeping these
 responsibilities behind a small, documented contract lets the Designer evolve

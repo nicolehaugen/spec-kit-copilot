@@ -794,6 +794,29 @@ test("Designer tabs remain navigable when a field adapter is not ready", async (
     assert.equal(selected, "designer-essentials");
 });
 
+test("Designer readiness checks controls on previously visited tabs", async () => {
+    const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
+    const start = source.indexOf("function checkReady()");
+    const end = source.indexOf("function updateSave()", start);
+    assert.ok(start >= 0 && end > start);
+    const failures = [];
+    const handle = { isReady: () => false };
+    const model = { pages: [
+        { page: "designer-essentials", fields: [{ id: "canvas.logo", label: "Logo" }] },
+        { page: "designer-appearance", fields: [] },
+    ] };
+    const ready = runInNewContext(`${source.slice(start, end)}\ncheckReady`, {
+        model, currentPage: "designer-appearance",
+        pageViews: new Map([["designer-essentials", []]]),
+        mounted: new Map([["canvas.logo", handle]]),
+        showFieldError: (message) => failures.push(message),
+    });
+    assert.equal(ready(), false);
+    assert.match(failures[0], /Logo \(canvas.logo\) is still processing/);
+    handle.isReady = () => true;
+    assert.equal(ready(), true);
+});
+
 function stockImageRegistration(_root, name) {
     const stock = name.startsWith("shared-controls-image")
         || ["designer-control-adapter-image", "generated-control-adapter-image"].includes(name);

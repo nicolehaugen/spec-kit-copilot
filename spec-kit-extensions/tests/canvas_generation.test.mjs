@@ -318,6 +318,35 @@ test("selected badge definitions and evaluator are packaged without preset files
     assert.equal(config.badges.types[0].title, "Customized value match");
     assert.equal(config.badges.types[0].description,
         "A replacement description from badges-settings.");
+    const cardBadge = [{ ...badges[0], targets: [{ phase: "plan", output: null }] }];
+    selected.workflowPage.badgeDestinations = ["workflow.list", "workflow.summary", "phase.card"];
+    const cardOnlyRequest = await freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "card-only-badge" }, handoff, outputs, badges: cardBadge });
+    const cardPath = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", cardOnlyRequest.requestId, "request.json");
+    const cardRequest = JSON.parse(await readFile(cardPath, "utf8"));
+    const cardDefinition = JSON.parse(Buffer.from(
+        cardRequest.workflowPage.assets[0].content, "base64"));
+    cardDefinition.badgeDestinations = selected.workflowPage.badgeDestinations;
+    const cardBytes = Buffer.from(JSON.stringify(cardDefinition));
+    cardRequest.workflowPage.assets[0].content = cardBytes.toString("base64");
+    cardRequest.workflowPage.assets[0].hash = createHash("sha256").update(cardBytes).digest("hex");
+    const { integrity: _cardHash, ...cardPayload } = cardRequest;
+    cardRequest.integrity = createHash("sha256").update(JSON.stringify(cardPayload)).digest("hex");
+    await writeFile(cardPath, JSON.stringify(cardRequest));
+    await materialize(project, workspace, handoff.handoffId, cardOnlyRequest.requestId);
+    const { readConfig: readCardConfig } = await import(
+        pathToFileURL(join(project, cardOnlyRequest.target, "server.mjs")).href);
+    assert.deepEqual(readCardConfig().workflowPage.badgeDestinations,
+        ["workflow.list", "workflow.summary", "phase.card"]);
+    selected.workflowPage.badgeDestinations = ["workflow.list", "workflow.summary", "phase.output"];
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "invalid-card-badge" },
+        handoff, outputs, badges: cardBadge }), /unsupported by the Workflow page adapter/);
+    selected.workflowPage.badgeDestinations = ["workflow.list", "workflow.summary", "phase.card"];
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "invalid-output-badge" },
+        handoff, outputs, badges }), /unsupported by the Workflow page adapter/);
     selected.workflowPage.badgeDestinations = ["workflow.list"];
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges }), /unsupported by the Workflow page adapter/);

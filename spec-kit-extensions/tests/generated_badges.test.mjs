@@ -425,6 +425,12 @@ test("artifact staleness uses metadata and does not require rule-specific host l
     assert.equal((await evaluate(new Date(Date.now() + 30_000).toISOString()))
         .items["specs/alpha"][0].text, "Stale");
     assert.deepEqual((await evaluate(new Date(0).toISOString())).items["specs/alpha"], []);
+    const currentRun = await evaluateBadges(config, { cwd, workflows: ["specs/alpha"],
+        phases, outputPath: async () => "specs/alpha/tasks.md",
+        runFor: () => ({ status: "Completed",
+            startedAt: new Date(0).toISOString(),
+            completedAt: new Date(Date.now() + 30_000).toISOString() }) });
+    assert.deepEqual(currentRun.items["specs/alpha"], []);
 });
 
 test("badge config rejects undeclared outputs and normalizes completed run statuses", async (t) => {

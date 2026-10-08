@@ -824,7 +824,8 @@ function configuration(request) {
         "phase-output": "phase.output" };
     if (badgeConfig?.instances.some((badge) => badge.showIn.some((placement) =>
         !destinations.includes(badgeLocations[placement]))
-        || badge.targets?.length && !destinations.includes("phase.output")
+        || badge.targets?.some((target) => !destinations.includes(
+            target.output === null ? "phase.card" : "phase.output"))
         || badge.showIn.includes("workflow-list")
             && !workflowLayout.slots.some((slot) => slot.id === "workflow.list")
         || badge.showIn.includes("workflow-summary")

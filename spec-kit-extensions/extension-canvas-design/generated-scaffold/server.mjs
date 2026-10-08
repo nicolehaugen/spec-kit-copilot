@@ -21,6 +21,15 @@ const WORKFLOW_REGIONS = ["collection", "constitution", "details", "values", "co
 const imageValueContract = { type: "image", maxBytes: 32768,
     mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
 
+export function errorPayload(error) {
+    return {
+        error: error instanceof UserError ? error.message
+            : "Could not complete this action. Check the file and state permissions, then refresh.",
+        ...(error instanceof UserError && error.status === 409 && error.code === "STALE_REVISION"
+            ? { code: error.code } : {}),
+    };
+}
+
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
@@ -391,7 +400,8 @@ export function readConfig() {
         "phase-card": "phase.card", "phase-output": "phase.output" };
     if (config.badges?.instances.some((badge) => badge.showIn.some((placement) =>
         !destinations.includes(locations[placement]))
-        || badge.targets?.length && !destinations.includes("phase.output")
+        || badge.targets?.some((target) => !destinations.includes(
+            target.output === null ? "phase.card" : "phase.output"))
         || badge.showIn.includes("workflow-list")
             && !config.workflowPage.slots.some((slot) => slot.id === "workflow.list")
         || badge.showIn.includes("workflow-summary")
@@ -964,9 +974,7 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
             return json(response, ["/api/run", "/api/autopilot/start"].includes(url.pathname) ? 202 : 200, result);
         } catch (error) {
             if (!(error instanceof UserError)) await log("Generated canvas request failed. Check the local runtime and state permissions.");
-            json(response, error instanceof UserError ? error.status : 500, {
-                error: error instanceof UserError ? error.message : "Could not complete this action. Check the file and state permissions, then refresh.",
-            });
+            json(response, error instanceof UserError ? error.status : 500, errorPayload(error));
         }
     };
     return {

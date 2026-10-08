@@ -395,8 +395,9 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             "workflow-summary": "workflow.summary", "phase-card": "phase.card",
             "phase-output": "phase.output" };
         if (instances.some((badge) => badge.showIn?.some((placement) =>
-            !destinations.has(locations[placement])) || badge.targets?.length
-                && !destinations.has("phase.output"))) {
+            !destinations.has(locations[placement]))
+            || badge.targets?.some((target) => !destinations.has(
+                target.output === null ? "phase.card" : "phase.output")))) {
             throw new Error("Selected badge placement is unsupported by the Workflow page adapter");
         }
         if (instances.some((badge) => badge.showIn?.includes("workflow-list"))
@@ -404,9 +405,11 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             || instances.some((badge) => badge.showIn?.includes("workflow-summary"))
                 && !workflowSlots.has("workflow.summary")
             || instances.some((badge) => badge.showIn?.includes("phase-card")
-                || badge.targets?.length)
-                && (!phaseControl.slots?.some((slot) => slot.id === "phase.card")
-                    || !phaseControl.slots?.some((slot) => slot.id === "phase.output"))) {
+                || badge.targets?.some((target) => target.output === null))
+                && !phaseControl.slots?.some((slot) => slot.id === "phase.card")
+            || instances.some((badge) => badge.showIn?.includes("phase-output")
+                || badge.targets?.some((target) => target.output !== null))
+                && !phaseControl.slots?.some((slot) => slot.id === "phase.output")) {
             throw new Error("Selected badge placement has no declared Workflow or phase control slot");
         }
         const types = [...new Set(instances.map((instance) => instance.type))].map((id) => {

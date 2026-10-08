@@ -91,6 +91,15 @@ test("artifact freshness and phase completion use generic evidence", async () =>
         { match: true });
     assert.deepEqual(await artifactState({ ruleId: "artifact-current", inputs, evidence }),
         { match: false });
+    evidence.getRun = async () => ({ status: "completed",
+        startedAt: new Date(50).toISOString(), completedAt: new Date(200).toISOString() });
+    assert.deepEqual(await artifactState({ ruleId: "artifact-current", inputs, evidence }),
+        { match: true });
+    assert.deepEqual(await artifactState({ ruleId: "artifact-stale", inputs, evidence }),
+        { match: false });
+    evidence.readArtifact = async () => ({ state: "ok", mtimeMs: 40 });
+    assert.deepEqual(await artifactState({ ruleId: "artifact-stale", inputs, evidence }),
+        { match: true });
     assert.deepEqual(await run({ ruleId: "phase-run-complete", inputs, evidence }),
         { match: true, summaryCount: 1 });
 });

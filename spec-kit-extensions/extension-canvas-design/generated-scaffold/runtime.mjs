@@ -12,6 +12,12 @@ import { phaseResponse, RESPONSE_LIMIT } from "./phase-response.mjs";
 import { createSetup } from "./setup.mjs";
 import { evaluateBadges, verifyBadgeModules } from "./badge-runtime.mjs";
 
+function staleRevision(message) {
+    const error = new UserError(message, 409);
+    error.code = "STALE_REVISION";
+    return error;
+}
+
 export async function existingOutputFolder(root, path) {
     let candidate = path === "." ? "." : safePath(path);
     while (candidate !== ".") {
@@ -457,7 +463,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (!field) throw new UserError("This value is not editable.");
         const value = validateValue(field.schema, input.value, field.id);
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before saving.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before saving.");
             (next.values ??= {})[field.id] = value;
         }, true);
         return { revision: state.revision };
@@ -486,7 +492,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             || (pendingId(input.draft.item) && !pendingFor(input.draft.item)))) throw new UserError("Invalid phase draft.");
         if (input.draft) phaseFor(input.draft.phase);
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before saving.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before saving.");
             for (const key of ["selected", "phase"]) if (input[key] !== undefined) next[key] = input[key];
             for (const key of ["slug", "name"]) {
                 if (input[key] === undefined) continue;
@@ -504,7 +510,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const existing = await items();
         let id;
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before creating a workflow.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before creating a workflow.");
             const drafts = next.pendingWorkflows ??= [];
             if (drafts.length >= 100) throw new UserError("Too many unstarted workflows. Remove one before adding another.");
             let number = next.workflowSerial ?? 0;
@@ -530,7 +536,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
         const existing = await items();
         await update((next) => {
-            if (input.revision !== next.revision) throw new UserError("Canvas state changed in another panel. Refresh before removing this workflow.", 409);
+            if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before removing this workflow.");
             const index = (next.pendingWorkflows ?? []).findIndex((entry) => entry.id === input.itemId);
             if (index < 0) throw new UserError("This unstarted workflow no longer exists.");
             if (next.runs.some((run) => run.item === input.itemId && run.status !== "Failed")) {
@@ -1098,7 +1104,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         let removed = false;
         try {
             await writes;
-            if (input.revision !== state.revision) throw new UserError("Canvas state changed. Refresh before deleting.", 409);
+            if (input.revision !== state.revision) throw staleRevision("Canvas state changed. Refresh before deleting.");
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
             if (state.autopilot?.item === item.id

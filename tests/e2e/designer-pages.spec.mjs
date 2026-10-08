@@ -448,8 +448,13 @@ test("pending or failed image selection blocks actions until completion or cance
         await page.evaluate(() => window.releaseUpload());
         await expect(page.locator('[id="setting-field-canvas.logo-error"]'))
             .toContainText("Image bytes do not match");
+        await page.getByRole("tab", { name: "Outputs" }).click();
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#page-error")).toContainText("Header logo (canvas.logo) is still processing or needs attention");
+        await expect(page.getByRole("tab", { name: "Essentials" }))
+            .toHaveAttribute("aria-selected", "true");
+        await expect(page.locator('[id="setting-field-canvas.logo-error"]'))
+            .toContainText("Image bytes do not match");
         await page.getByRole("button", { name: "Cancel upload" }).click();
         await page.getByRole("tab", { name: "Outputs" }).click();
         await expect(page.getByRole("tab", { name: "Outputs" })).toHaveAttribute("aria-selected", "true");

@@ -10,7 +10,8 @@ export async function evaluate({ ruleId, inputs, evidence }) {
     }
     if (file.state === "missing") return { match: false };
     const run = await evidence.getRun(inputs.artifact.phase);
-    if (!run?.completedAt) return { match: ruleId === "artifact-current" };
-    const current = file.mtimeMs >= new Date(run.completedAt).getTime();
+    const since = run?.startedAt ?? run?.completedAt;
+    if (!since) return { match: ruleId === "artifact-current" };
+    const current = file.mtimeMs >= new Date(since).getTime();
     return { match: ruleId === "artifact-current" ? current : !current };
 }

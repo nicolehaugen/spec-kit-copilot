@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
+import { UserError } from "../extension-canvas-design/generated-scaffold/files.mjs";
+import { errorPayload } from "../extension-canvas-design/generated-scaffold/server.mjs";
 
 const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
     import.meta.url), "utf8").then((text) => text.replaceAll("\r\n", "\n"));
 const serverSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/server.mjs",
+    import.meta.url), "utf8");
+const runtimeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/runtime.mjs",
     import.meta.url), "utf8");
 const themeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/workflow-theme.css",
     import.meta.url), "utf8");
@@ -54,7 +58,8 @@ test("a stale revision refreshes internally and retries a workflow action once",
         model,
         api: async (path, input) => {
             calls.push({ path, input });
-            if (calls.length === 1) throw Object.assign(new Error("Stale revision"), { status: 409 });
+            if (calls.length === 1) throw Object.assign(new Error("Stale revision"),
+                { status: 409, code: "STALE_REVISION" });
             return { revision: 5 };
         },
         refresh: async () => { model.revision = 4; },
@@ -73,7 +78,7 @@ test("a persistent revision conflict asks for another attempt, not a manual refr
         model,
         api: async () => {
             attempts++;
-            throw Object.assign(new Error("Stale revision"), { status: 409 });
+            throw Object.assign(new Error("Stale revision"), { status: 409, code: "STALE_REVISION" });
         },
         refresh: async () => { model.revision++; refreshes++; },
     };
@@ -83,6 +88,66 @@ test("a persistent revision conflict asks for another attempt, not a manual refr
         /Canvas state is still changing. Try this action again./);
     assert.equal(attempts, 2);
     assert.equal(refreshes, 1);
+});
+
+test("non-revision conflicts keep their error without refreshing or replaying the action", async () => {
+    for (const detail of ["A workflow operation is in progress.", "Workflow or confirmation does not match."]) {
+        const conflict = Object.assign(new Error(detail), { status: 409 });
+        let attempts = 0, refreshes = 0;
+        const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+            retryRevision`, {
+            model: { revision: 3 },
+            api: async () => { attempts++; throw conflict; },
+            refresh: async () => { refreshes++; },
+        });
+        await assert.rejects(retry("/api/workflow/delete", { itemId: "demo", confirmation: "demo" }),
+            (error) => error === conflict);
+        assert.equal(attempts, 1);
+        assert.equal(refreshes, 0);
+    }
+});
+
+test("a different conflict after a stale revision retry preserves its original error", async () => {
+    const conflict = Object.assign(new Error("This workflow has an unfinished phase."), { status: 409 });
+    let attempts = 0, refreshes = 0;
+    const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+        retryRevision`, {
+        model: { revision: 3 },
+        api: async () => {
+            if (++attempts === 1) throw Object.assign(new Error("Stale revision"),
+                { status: 409, code: "STALE_REVISION" });
+            throw conflict;
+        },
+        refresh: async () => { refreshes++; },
+    });
+    await assert.rejects(retry("/api/workflow/delete", { itemId: "demo", confirmation: "demo" }),
+        (error) => error === conflict);
+    assert.equal(attempts, 2);
+    assert.equal(refreshes, 1);
+});
+
+test("server exposes only revision conflicts as coded and UI retains that code", async () => {
+    const staleRevision = runInNewContext(runtimeSource.slice(runtimeSource.indexOf("function staleRevision("),
+        runtimeSource.indexOf("export async function existingOutputFolder("))
+        + "staleRevision", { UserError });
+    const stale = staleRevision("Canvas state changed.");
+    assert.equal(stale.status, 409);
+    assert.deepEqual(errorPayload(stale), { error: "Canvas state changed.", code: "STALE_REVISION" });
+    const busy = new UserError("A workflow operation is in progress.", 409);
+    assert.deepEqual(errorPayload(busy), { error: "A workflow operation is in progress." });
+    let responseError = stale;
+    const api = runInNewContext(`${section("async function api(", "async function retryRevision(")}
+        api`, {
+        token: "test",
+        fetch: async () => ({ ok: false, status: 409, json: async () => errorPayload(responseError) }),
+    });
+    await assert.rejects(api("/api/state", { revision: 1 }),
+        (error) => error.status === 409 && error.code === "STALE_REVISION"
+            && error.message === "Canvas state changed.");
+    responseError = busy;
+    await assert.rejects(api("/api/workflow/delete", { revision: 1 }),
+        (error) => error.status === 409 && error.code === undefined
+            && error.message === busy.message);
 });
 
 test("all pending run buttons share the Running label, including Constitution", () => {

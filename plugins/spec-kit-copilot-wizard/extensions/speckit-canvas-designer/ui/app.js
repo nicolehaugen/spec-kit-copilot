@@ -13,6 +13,7 @@ const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
 const mounted = new Map();
+const pageViews = new Map();
 
 function outputPathsReady() {
     return Object.values(draftOutputs ?? {}).every((entry) =>
@@ -123,17 +124,19 @@ function showFieldError(message) {
 }
 
 function checkReady() {
-    const page = model.pages.find((entry) => entry.page === currentPage);
-    for (const field of page?.fields ?? []) {
-        const handle = mounted.get(field.id);
-        try {
-            if (typeof handle?.isReady !== "function" || handle.isReady() !== true) {
-                showFieldError(`${field.label} (${field.id}) is still processing or needs attention.`);
+    for (const page of model.pages) {
+        if (page.page !== currentPage && !pageViews.has(page.page)) continue;
+        for (const field of page.fields ?? []) {
+            const handle = mounted.get(field.id);
+            try {
+                if (typeof handle?.isReady !== "function" || handle.isReady() !== true) {
+                    showFieldError(`${field.label} (${field.id}) is still processing or needs attention.`);
+                    return false;
+                }
+            } catch (error) {
+                showFieldError(`${field.label} (${field.id}) readiness failed: ${error.message}`);
                 return false;
             }
-        } catch (error) {
-            showFieldError(`${field.label} (${field.id}) readiness failed: ${error.message}`);
-            return false;
         }
     }
     return true;
@@ -186,14 +189,31 @@ saveButton.addEventListener("click", async () => {
 function renderPage(pageId, invalidFieldId) {
     const page = model.pages.find((entry) => entry.page === pageId);
     if (!page) throw new Error("Unknown Designer page");
+    const renderRevision = model.revision;
+    if (currentPage && root.childNodes.length
+        && model.pages.find((entry) => entry.page === currentPage)?.fields?.length) {
+        pageViews.set(currentPage, [...root.childNodes]);
+    }
     currentPage = pageId;
-    mounted.clear();
     for (const tab of tabs.children) {
         const active = tab.dataset.page === pageId;
         tab.setAttribute("aria-selected", String(active));
         tab.tabIndex = active ? 0 : -1;
     }
     root.setAttribute("aria-labelledby", `page-tab-${pageId}`);
+    if (pageViews.has(pageId)) {
+        root.replaceChildren(...pageViews.get(pageId));
+        if (invalidFieldId) {
+            const mount = [...root.querySelectorAll("[data-field-id]")]
+                .find((item) => item.dataset.fieldId === invalidFieldId);
+            if (mount) {
+                mount.nextElementSibling.hidden = false;
+                mount.parentElement.focus();
+            }
+        }
+        root.setAttribute("aria-busy", "false");
+        return true;
+    }
     if (page.error) {
         const { name, path, reason } = page.error;
         const details = element("div", undefined, "page-diagnostic");
@@ -269,6 +289,7 @@ function renderPage(pageId, invalidFieldId) {
             continue;
         }
         const mountAdapter = ({ mount: render, validate, controlId, valueContract }) => {
+                if (model.revision !== renderRevision) return;
                 if (typeof render !== "function") throw new Error("Missing mount export");
                 if (typeof validate !== "function") throw new Error("Missing validate export");
                 const expected = model.controls.find((item) => item.id === control)?.value;
@@ -282,7 +303,6 @@ function renderPage(pageId, invalidFieldId) {
                             : Object.keys(valueContract).sort().join() !== "type")) {
                     throw new Error("Incompatible control ID or value contract");
                 }
-                if (!mount.isConnected) return;
                 const handle = render({ root: mount, field, value: draft[field.id],
                     ...(image ? { context: { setBusy(busy) {
                             if (busy) activeUploads.add(field.id);
@@ -311,7 +331,7 @@ function renderPage(pageId, invalidFieldId) {
                 mounted.set(field.id, handle);
         };
         const showAdapterError = (error) => {
-            if (!mount.isConnected) return;
+            if (model.revision !== renderRevision) return;
             mount.replaceChildren();
             mount.setAttribute("role", "alert");
             mount.textContent = `Could not load ${field.label}: ${error.message}`;
@@ -360,6 +380,9 @@ function applyState(next) {
     const changed = !model || next.revision !== model.revision;
     if (changed) {
         model = next;
+        pageViews.clear();
+        mounted.clear();
+        root.replaceChildren();
         document.getElementById("preview-banner").hidden = !model.preview;
         document.getElementById("save-help").hidden = !!model.preview;
         generate.hidden = !!model.preview;
