@@ -59,9 +59,6 @@ export function declarations(command) {
         }
         if (!existing) result.set(name, { name, kind, strategy: "replace" });
     }
-    if (![...result.values()].some((entry) => entry.kind === "designer.tab-definition")) {
-        throw new Error("Generated load-page skill is missing Designer pages.");
-    }
     return [...result.values()];
 }
 

@@ -66,7 +66,7 @@ const session = await joinSession({
             properties: {
                 preview: { type: "boolean" },
                 handoffId: handoffIdSchema,
-                pages: { type: "array", minItems: 3, maxItems: 100, items: {
+                pages: { type: "array", maxItems: 100, items: {
                     type: "object", additionalProperties: false, required: ["name", "path", "kind", "strategy"],
                     properties: { name: { type: "string", pattern: PAGE_NAME },
                         path: { type: "string", minLength: 1, maxLength: 4096 },

@@ -19,7 +19,7 @@ import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAs
 import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
-import { freezeGeneration, validateEssentials } from "../generation.mjs";
+import { freezeGeneration, generationBlockers, validateEssentials } from "../generation.mjs";
 import { decodeImage } from "../image.mjs";
 import { renderStockPage } from "../../../../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 
@@ -841,8 +841,8 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     const changedControl = JSON.parse(originalControl);
     changedControl.adapter = "missing-adapter";
     await writeFile(controlFile, JSON.stringify(changedControl));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
-        /missing or unreferenced phase control adapter/);
+    const incompatible = await loadResolvedDesignerPages(handoff, project, entries, fields);
+    assert.match(incompatible.compositionErrors.join(" "), /missing or unreferenced phase control adapter missing-adapter/);
     changedControl.adapter = "generated-phase-adapter";
     changedControl.id = "wrong-id";
     await writeFile(controlFile, JSON.stringify(changedControl));
@@ -1314,19 +1314,19 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     await assert.rejects(freezeGeneration({ model: incomplete,
         values: { ...incomplete.values, ...minimum },
         handoff, project, workspace }),
-    /Cannot generate while designer-artifacts is invalid/);
+    /Cannot generate: designer-artifacts:/);
     await writeFile(entries[1].path, "{invalid");
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
     assert.ok(invalid.pages[1].error);
     await assert.rejects(freezeGeneration({ model: invalid, values: minimum,
-        handoff, project, workspace }), /Cannot generate while designer-artifacts is invalid/);
+        handoff, project, workspace }), /Cannot generate: designer-artifacts:/);
     const replaced = JSON.parse(await readFile(entries[0].path, "utf8"));
     replaced.fields = [{ id: "canvas.id", label: "ID" }];
     await writeFile(entries[0].path, JSON.stringify(replaced));
     const missingIdentity = await loadResolvedDesignerPages(handoff, project, entries);
     await assert.rejects(freezeGeneration({ model: missingIdentity,
         values: { ...missingIdentity.values, "canvas.id": "other" },
-        handoff, project, workspace }), /Essentials must load with Canvas ID and Title/);
+        handoff, project, workspace }), /Essentials must contain Canvas ID and Title/);
 });
 
 test("Appearance palette colors persist and style both runtime themes without replacing defaults", async (t) => {
@@ -2491,6 +2491,8 @@ test("sample-only preview renders badges without a handoff and rejects writes", 
 test("reads the complete effective page set from the child checkout without a snapshot", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
     await assertPageCommand(project);
@@ -2504,8 +2506,32 @@ test("reads the complete effective page set from the child checkout without a sn
     assert.equal(model.pages[0].title, "Custom Essentials");
     assert.equal(model.pages[0].provenance.path, override);
     assert.equal((await loadResolvedDesignerPages(handoff, project, effective)).revision, model.revision);
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries.slice(1)),
-        /all three Canvas Design pages/);
+    const partial = await loadResolvedDesignerPages(handoff, project, entries.slice(1));
+    assert.deepEqual(partial.pages.map((page) => page.page),
+        entries.slice(1).map((entry) => entry.name));
+    assert.match(generationBlockers(partial)[0], /Essentials must contain Canvas ID and Title/);
+    const withoutBadges = await loadResolvedDesignerPages(handoff, project,
+        entries.filter((entry) => entry.name !== "designer-badges"));
+    assert.deepEqual(generationBlockers(withoutBadges), []);
+    const ready = await freezeGeneration({ model: withoutBadges, handoff, project, workspace,
+        values: { ...withoutBadges.values, "canvas.id": "without-badges",
+            "canvas.displayName": "Without badges" } });
+    assert.ok(ready.requestId);
+    const empty = await loadPages(handoff, project, [], []);
+    assert.deepEqual(empty.pages, []);
+    assert.match(empty.compositionErrors.join(" "), /Workflow page is not registered/);
+    const workflow = scalarFixtures.get(project).find((item) => item.name === "generated-workflow");
+    const originalWorkflow = await readFile(workflow.path);
+    try {
+        await writeFile(workflow.path, "{invalid json");
+        const malformed = await loadResolvedDesignerPages(handoff, project, entries);
+        assert.deepEqual(malformed.pages.map((page) => page.page), entries.map((entry) => entry.name));
+        assert.match(malformed.compositionErrors.join(" "),
+            /generated-workflow \(from extension:extension-canvas-design\): Invalid Designer JSON/);
+        assert.match(generationBlockers(malformed).join(" "), /generated-workflow/);
+    } finally {
+        await writeFile(workflow.path, originalWorkflow);
+    }
     await assert.rejects(loadResolvedDesignerPages(handoff, project, [...entries, entries[0]]),
         /duplicate Designer page name/);
     const missing = await loadResolvedDesignerPages(handoff, project,
@@ -2794,8 +2820,9 @@ test("registered contributions validate slots, sources, references and determini
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
         [...paths, moduleEntry], registration), /invalid generated renderer/);
     await writeFile(modulePath, Buffer.from([0xff]));
-    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
-        [...paths, moduleEntry], registration), /Invalid Designer UTF-8/);
+    const invalidModule = await loadResolvedDesignerPages(handoff, project, entries,
+        [...paths, moduleEntry], registration);
+    assert.match(invalidModule.compositionErrors.join(" "), /canvas-control-new \(from aaa\): Invalid Designer UTF-8/);
     await writeFile(modulePath, "export function renderPage({ root }) { root.textContent = 'ok'; }\n");
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries,
         [...paths, { ...moduleEntry, path: join(directory, "missing.mjs") }],
@@ -3986,7 +4013,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     assert.equal(model.pages[1].title, "Outputs");
 });
 
-test("canvas opens only after validating complete pages and rebuilds on reopening", async (t) => {
+test("canvas opens with a partial inventory and rebuilds on reopening", async (t) => {
     if (spawnSync("specify", ["--version"], { encoding: "utf8" }).error?.code === "ENOENT") {
         t.skip("Specify CLI is required for resolved-template integration");
         return;
@@ -4052,7 +4079,7 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
     assert.deepEqual(canvas.inputSchema.required, undefined);
     assert.equal(canvas.inputSchema.properties.preview.type, "boolean");
     assert.deepEqual(canvas.inputSchema.properties.handoffId.type, "string");
-    assert.equal(canvas.inputSchema.properties.pages.minItems, 3);
+    assert.equal(canvas.inputSchema.properties.pages.minItems, undefined);
     assert.equal(canvas.inputSchema.properties.pages.maxItems, 100);
     assert.equal(canvas.inputSchema.properties.pages.items.properties.kind.const,
         "designer.tab-definition");
@@ -4098,9 +4125,14 @@ test("canvas opens only after validating complete pages and rebuilds on reopenin
             handoffId: ID, pages: entries, templates: [],
         } }), (error) => error.code === "designer_handoff_invalid");
         await saveHandoff(workspace);
-        await assert.rejects(canvas.open({ instanceId: "same", input: {
+        const partial = await canvas.open({ instanceId: "partial", input: {
             handoffId: ID, pages: entries.slice(1), templates: [],
-        } }), /all three Canvas Design pages/);
+        } });
+        const partialState = new URL(partial.url);
+        partialState.pathname = "/api/state";
+        assert.match((await (await fetch(partialState)).json()).generationBlockers.join(" "),
+            /Essentials must contain Canvas ID and Title/);
+        await canvas.onClose({ instanceId: "partial" });
         await assert.rejects(canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [...entries, entries[0]], templates: [],
         } }), /duplicate Designer page name/);

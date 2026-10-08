@@ -10,7 +10,7 @@ import { validControlContract } from "./control-contract.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 
 export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
-const REQUIRED_PAGES = ["designer-essentials", "designer-artifacts",
+const DEFAULT_PAGES = ["designer-essentials", "designer-artifacts",
     "designer-badges", "designer-appearance"];
 const FIXED_PAGE_CONTROLS = {
     "designer-essentials": "designer.identity",
@@ -163,8 +163,8 @@ function buildModel(entries, schema) {
     const fieldOrigins = new Map();
     for (const [index, entry] of entries.entries()) {
         const { name, path, document, hash, error } = entry;
-        const fallbackOrder = REQUIRED_PAGES.includes(name)
-            ? (REQUIRED_PAGES.indexOf(name) + 1) * 10 : 100001 + index;
+        const fallbackOrder = DEFAULT_PAGES.includes(name)
+            ? (DEFAULT_PAGES.indexOf(name) + 1) * 10 : 100001 + index;
         const fail = (reason) => {
             pages.push({ page: name, title: name, order: fallbackOrder,
                 error: { name, path, reason: reason.slice(0, ERROR_LIMIT) } });
@@ -715,7 +715,22 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     }
     const names = new Set(pageNames);
     const loaded = [];
+    const compositionErrors = [];
     const slots = new Map();
+    const verifyRegistration = async (item) => {
+        const info = await registration(dirname(specify), item.name);
+        const layers = info?.stack;
+        const winner = layers?.find((layer) => layer.active);
+        const sourceLayer = item.sourceId === "project" ? "project"
+            : item.sourceId.startsWith("extension:") ? "extension" : "preset";
+        const sourceId = sourceLayer === "project" ? "_"
+            : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
+        if (info?.kind !== "template" || !Array.isArray(layers) || !layers.length
+            || layers.some((layer) => layer.strategy !== "replace")
+            || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
+            throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
+        }
+    };
     for (const page of pageEntries.filter((entry) => !entry.error)) {
         for (const slot of page.slots ?? []) {
             if (slots.has(slot.id)) {
@@ -760,8 +775,16 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
         }
-        const { document, hash, size: bytes } = await boundedJson(
-            path, specify, FILE_LIMIT, open, !executable);
+        let content;
+        try {
+            content = await boundedJson(path, specify, FILE_LIMIT, open, !executable);
+        } catch (error) {
+            if (!(error instanceof PageContentError)) throw error;
+            if (item.kind !== "designer.setting-definition") await verifyRegistration(item);
+            compositionErrors.push(`${item.name} (from ${item.sourceId}): ${error.message.slice(0, ERROR_LIMIT)}`);
+            continue;
+        }
+        const { document, hash, size: bytes } = content;
         size += bytes;
         if (size > remainingBytes) throw new Error("Designer template inventory exceeds its size limit");
         if (item.kind === "designer.setting-definition") {
@@ -772,18 +795,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             validateValueSource(document, item.name, fieldOrigins);
         }
         if (item.kind !== "designer.setting-definition") {
-            const info = await registration(dirname(specify), item.name);
-            const layers = info?.stack;
-            const winner = layers?.find((layer) => layer.active);
-            const sourceLayer = item.sourceId === "project" ? "project"
-                : item.sourceId.startsWith("extension:") ? "extension" : "preset";
-            const sourceId = sourceLayer === "project" ? "_"
-                : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
-            if (info.kind !== "template" || !Array.isArray(layers) || !layers.length
-                || layers.some((layer) => layer.strategy !== "replace")
-                || !winner || winner.sourceId !== sourceId || winner.layer !== sourceLayer) {
-                throw new Error(`${item.name}: generated asset registration must be a replace-only Specify template from ${item.sourceId}`);
-            }
+            await verifyRegistration(item);
             if (item.kind === "generated.added-page-definition") {
                 validateGeneratedPage(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: generated page definition exceeds 32 KiB`);
@@ -946,24 +958,31 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
     }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
-    if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
+    if (!workflowPages.length) compositionErrors.push("Generated Workflow page is not registered");
+    else if (workflowPages.length !== 1) throw new Error("Exactly one generated Workflow page definition is required");
     const workflowAdapters = loaded.filter((item) => item.kind === "generated.workflow-page-adapter");
-    if (workflowPages[0].document.adapter
+    if (workflowPages[0]?.document.adapter
         ? workflowAdapters.length !== 1 || workflowAdapters[0].name !== workflowPages[0].document.adapter
         : workflowAdapters.length !== 0) {
-        throw new Error("Workflow page requires exactly its registered presentation adapter");
+        compositionErrors.push(`${workflowPages[0]?.name ?? "Workflow page"}`
+            + `${workflowPages[0] ? ` (from ${workflowPages[0].sourceId})` : ""}:`
+            + " missing or unreferenced presentation adapter"
+            + `${workflowPages[0]?.document.adapter ? ` ${workflowPages[0].document.adapter}` : ""}`);
     }
     const phaseControls = loaded.filter((item) => item.kind === "generated.phase-control-definition");
-    if (phaseControls.length !== 1 || phaseControls[0].name !== "generated-phase-control") {
-        throw new Error(`${workflowPages[0].name}: missing or unreferenced phase control definition`);
+    if (!phaseControls.length) compositionErrors.push("Generated phase control is not registered");
+    else if (phaseControls.length !== 1 || phaseControls[0].name !== "generated-phase-control") {
+        throw new Error("Missing or unreferenced phase control definition");
     }
     const phaseAdapters = loaded.filter((item) => item.kind === "generated.phase-control-adapter");
-    if (!phaseAdapters.some((entry) => entry.name === phaseControls[0].document.adapter)) {
-        throw new Error(`${phaseControls[0].name}: missing or unreferenced phase control adapter`);
+    if (phaseControls[0] && !phaseAdapters.some((entry) => entry.name === phaseControls[0].document.adapter)) {
+        compositionErrors.push(`${phaseControls[0].name} (from ${phaseControls[0].sourceId}):`
+            + ` missing or unreferenced phase control adapter ${phaseControls[0].document.adapter}`);
     }
-    if (workflowPages[0].document.adapter === phaseControls[0].document.adapter
+    if (workflowPages[0]?.document.adapter && phaseControls[0]
+        && workflowPages[0].document.adapter === phaseControls[0].document.adapter
         || loaded.some((entry) => entry.kind === "generated.added-page-definition"
-            && entry.document.renderer === workflowPages[0].document.adapter)) {
+            && entry.document.renderer === workflowPages[0]?.document.adapter)) {
         throw new Error("Workflow page adapter collides with another generated page module");
     }
     const dialogs = loaded.filter((entry) => entry.kind === "generated.dialog-definition");
@@ -1014,7 +1033,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     const occupiedButtons = new Set();
     for (const button of buttons) {
         const { page, slot, order, dialog } = button.document;
-        if (page === "workflow" && !workflowPages[0].document.slots.some((entry) => entry.id === slot)) {
+        if (page === "workflow" && !workflowPages[0]?.document.slots.some((entry) => entry.id === slot)) {
             throw new Error(`${button.name}: missing Workflow action slot ${slot}`);
         }
         const resolvedDialog = dialogs.find((entry) => entry.name === dialog);
@@ -1214,7 +1233,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         sections.set(section.id, section.title);
     }
-    return { loaded, ordered, controls, placementControls };
+    return { loaded, ordered, controls, placementControls, compositionErrors };
 }
 
 async function context(project) {
@@ -1261,8 +1280,8 @@ export async function assertPageCommand(project) {
 export async function loadResolvedDesignerPages(handoff, project, input, templates = [],
     registration = executableRegistration) {
     const { checkout, schema } = await context(project);
-    if (!Array.isArray(input) || !input.length || input.length > 100) {
-        throw new Error("Designer requires between 1 and 100 resolved page paths");
+    if (!Array.isArray(input) || input.length > 100) {
+        throw new Error("Designer requires at most 100 resolved page paths");
     }
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
@@ -1283,9 +1302,6 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         }
         return { name: item.name, path };
     });
-    if (REQUIRED_PAGES.some((name) => !names.has(name))) {
-        throw new Error("Designer load must include all three Canvas Design pages");
-    }
     const entries = [];
     let size = 0;
     for (const { name, path } of paths) {
@@ -1318,15 +1334,17 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
-    const { loaded, ordered, controls, placementControls } = await loadTemplates(
+    const { loaded, ordered, controls, placementControls, compositionErrors } = await loadTemplates(
         templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, registration);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
     model.generatedPages = loaded.filter((entry) => entry.kind === "generated.added-page-definition")
         .map(({ name, document }) => ({ name, ...document }));
     const workflowPage = loaded.find((entry) => entry.kind === "generated.workflow-page-definition");
-    model.workflowPage = { name: workflowPage.name, ...workflowPage.document,
-        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-definition").document.managedRun === true };
+    model.workflowPage = workflowPage ? { name: workflowPage.name, ...workflowPage.document,
+        managedRun: loaded.find((entry) => entry.kind === "generated.phase-control-definition")?.document.managedRun === true }
+        : null;
+    model.compositionErrors = compositionErrors;
     model.dialogDefinitions = loaded.filter((entry) => entry.kind === "generated.dialog-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
     model.phaseDialogBindings = loaded.filter((entry) => entry.kind === "generated.phase-dialog-binding")

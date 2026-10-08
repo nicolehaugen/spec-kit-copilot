@@ -37,6 +37,7 @@ test("generated skill declarations include appended pages and templates anywhere
     const appended = `${base}\n## Additional Canvas Design templates\n- \`sample-renderer\` — \`generated.added-page-renderer\`, \`replace\`\n`
         + "## Additional Designer pages\n- `sample-page`\n";
     const names = declarations(appended).map((entry) => entry.name);
+    assert.deepEqual(declarations("## Pages\n\nNo pages selected.\n"), []);
     assert.ok(names.includes("designer-essentials"));
     assert.ok(names.includes("designer-essentials-description"));
     assert.ok(names.includes("generated-phase-control"));
@@ -161,4 +162,6 @@ test("composed verification resolves every name, rejects warnings and native scr
     const intentionalReplacement = await verifyComposition(project, run);
     assert.equal(intentionalReplacement.pages.length, 5);
     assert.equal(intentionalReplacement.templates.length, 1);
+    await writeFile(skill, "## Pages\n\nNo pages selected.\n");
+    assert.deepEqual(await verifyComposition(project, run), { pages: [], templates: [] });
 });

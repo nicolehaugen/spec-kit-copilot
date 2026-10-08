@@ -181,7 +181,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .badge-section .settings-field-error { overflow-wrap: anywhere; }
 .settings-note { color: var(--text-color-muted); font-size: 13px; max-width: 68ch; }
 .availability-note { margin-top: 2rem; }
-#page-error, #generation-error { color: var(--danger-color); border: 1px solid currentColor;
+#page-error, #generation-error, #composition-error { color: var(--danger-color); border: 1px solid currentColor;
     border-radius: var(--radius-sm); padding: .75rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
 #action-message { color: var(--success-color); margin-bottom: 1rem; }
 .page-diagnostic { border: 1px solid var(--danger-color); border-radius: var(--radius-sm);

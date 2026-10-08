@@ -11,6 +11,7 @@ import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wi
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
+import { verifyComposition } from "../../spec-kit-extensions/extension-canvas-design/scripts/verify-launch.mjs";
 
 const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/tabs/", import.meta.url);
 const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/", import.meta.url);
@@ -18,6 +19,7 @@ const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design
 const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
 const riskRoot = new URL("../../spec-kit-presets/copilot-risk-matrix-test/", import.meta.url);
+const minimalRoot = new URL("../../spec-kit-presets/copilot-minimal-essentials-test/", import.meta.url);
 
 function supportsSpecifyVersion(output) {
     const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
@@ -69,6 +71,12 @@ async function model(revision = "first") {
     }
     return {
         pages, revision,
+        workflowPage: { name: "generated-workflow", adapter: "generated-workflow-page-adapter" },
+        templates: [
+            { name: "generated-workflow", kind: "generated.workflow-page-definition" },
+            { name: "generated-phase-control", kind: "generated.phase-control-definition" },
+            { name: "generated-phase-adapter", kind: "generated.phase-control-adapter" },
+        ],
         constraints: {
             "canvas.id": { type: "string", minLength: 1, maxLength: 100,
                 pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$", required: true },
@@ -155,6 +163,105 @@ async function openDesigner(page) {
     await page.goto(shell.url);
     return shell;
 }
+
+test("empty and partial preset inventories keep Designer open with inline generation errors", async ({ page }) => {
+    const empty = await model();
+    empty.pages = [];
+    empty.compositionErrors = ["Generated Workflow page is not registered"];
+    const emptyShell = await startPreparedShell(empty);
+    let partialShell;
+    try {
+        await page.goto(emptyShell.url);
+        await expect(page.getByRole("heading", { name: "No Designer pages registered" })).toBeVisible();
+        await expect(page.getByRole("tab")).toHaveCount(0);
+        await expect(page.locator("#composition-error")).toContainText("Generated Workflow page is not registered");
+        await expect(page.locator("#save-settings")).toBeDisabled();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        const saveUrl = new URL(`/api/save?token=${new URL(emptyShell.url).searchParams.get("token")}`,
+            emptyShell.url);
+        const refusedSave = await fetch(saveUrl, { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: "{}" });
+        expect(refusedSave.status).toBe(422);
+        expect((await refusedSave.json()).error).toContain("no pages are registered");
+
+        const partial = await model();
+        partial.pages = partial.pages.filter((entry) => entry.page !== "designer-badges");
+        partial.compositionErrors = ["generated-workflow (from extension:extension-canvas-design):"
+            + " missing or unreferenced presentation adapter generated-workflow-page-adapter"];
+        partialShell = await startPreparedShell(partial);
+        await page.goto(partialShell.url);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.locator("#composition-error")).toContainText("generated-workflow-page-adapter");
+        await expect(page.locator("#generation-error")).toContainText("generated-workflow-page-adapter");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Partial designer");
+        await expect(page.locator("#save-settings")).toBeEnabled();
+        await page.locator("#save-settings").click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+    } finally {
+        await partialShell?.close();
+        await emptyShell.close();
+    }
+});
+
+test("unchanged minimal Essentials preset composes and opens a savable partial Designer", async ({ page }) => {
+    test.setTimeout(150_000);
+    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
+    if (available.error?.code === "ENOENT") {
+        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
+        return;
+    }
+    expect(available.status, available.stderr).toBe(0);
+    expect(supportsSpecifyVersion(available.stdout), available.stdout).toBe(true);
+    const workspace = await mkdtemp(join(tmpdir(), "minimal-designer-e2e-"));
+    const project = join(workspace, "project");
+    const workflow = { selectedPhases: [] };
+    const selections = { presets: [], extensions: [], bundles: [] };
+    const handoff = { schemaVersion: 1, handoffId: "minimal-test", workflow, selections,
+        sourceFingerprint: fingerprint({ workflow, selections }) };
+    let shell;
+    try {
+        await mkdir(project);
+        const run = (...args) => {
+            const result = spawnSync("specify", args, { cwd: project, encoding: "utf8",
+                timeout: 120000, env: { ...process.env, COLUMNS: "500" } });
+            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
+            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
+        };
+        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
+            "--integration", "copilot", "--integration-options=--skills",
+            "--script", process.platform === "win32" ? "ps" : "sh");
+        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        run("preset", "add", "--dev", fileURLToPath(minimalRoot));
+        const inventory = await verifyComposition(project);
+        expect(inventory.pages.map((entry) => entry.name)).toEqual(
+            ["designer-essentials", "designer-artifacts", "designer-appearance"]);
+        expect(inventory.templates.map((entry) => entry.name)).not.toContain("generated-workflow-page-adapter");
+        const folder = handoffDirectory(workspace, handoff.handoffId);
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
+        const resolved = await loadResolvedDesignerPages(handoff, project, inventory.pages, inventory.templates);
+        expect(resolved.compositionErrors.join(" ")).toContain("generated-workflow-page-adapter");
+        shell = await startShell(handoff, await loadDesignerSettings(workspace, handoff, resolved),
+            { project, workspace, session: { send: async () => { throw new Error("Generation was dispatched"); } } });
+        await page.goto(shell.url);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.locator("#composition-error")).toContainText("generated-workflow-page-adapter");
+        await expect(page.locator("#composition-error")).toContainText("extension:extension-canvas-design");
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("minimal-canvas");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Minimal Canvas");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+        const endpoint = new URL(`/api/generate?token=${new URL(shell.url).searchParams.get("token")}`, shell.url);
+        const response = await fetch(endpoint, { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: "{}" });
+        expect(response.status).toBe(422);
+        expect((await response.json()).error).toContain("generated-workflow-page-adapter");
+    } finally {
+        await shell?.close();
+        await rm(workspace, { recursive: true, force: true });
+    }
+});
 
 test("Outputs page keeps pipeline artifacts fixed and restores the viewer default after removing an addition", async ({ page }) => {
     const state = await model();

@@ -7,7 +7,7 @@ import { validateBadges } from "./badges.mjs";
 import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
     loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
-import { freezeGeneration, readCurrentInstalledVersions } from "./generation.mjs";
+import { freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -81,12 +81,13 @@ export async function startShell(handoff = null, model = null, { project, worksp
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? GENERATE_UNAVAILABLE : null;
     const state = () => ({ ...model, badges: model?.badges ?? [],
+        generationBlockers: model ? generationBlockers(model) : [],
         phases: handoff?.workflow.selectedPhases ?? model?.phases ?? [],
         pipelineOutputs: handoff ? initialOutputs(handoff) : model?.pipelineOutputs ?? {},
         handoffId: handoff?.handoffId,
         preview,
         generationAvailable: !!handoff?.workflow?.installed && !!session?.send
-            && !!project && skillAvailable,
+            && !!project && skillAvailable && generationBlockers(model).length === 0,
         generationError });
     let generating = false;
     let queued = false;
@@ -125,6 +126,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 return;
             }
             try {
+                if (!model.pages.length) throw new Error("Invalid Designer save: no pages are registered");
                 const chunks = [];
                 let size = 0;
                 for await (const chunk of req) {
@@ -175,6 +177,8 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 if (!req.headers["content-type"]?.startsWith("application/json")) {
                     throw new Error("Expected JSON Designer settings");
                 }
+                const blockers = generationBlockers(model);
+                if (blockers.length) throw new Error(`Cannot generate: ${blockers.join("; ")}`);
                 const chunks = [];
                 let size = 0;
                 for await (const chunk of req) {

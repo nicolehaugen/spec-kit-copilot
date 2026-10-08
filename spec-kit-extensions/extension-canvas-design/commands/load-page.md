@@ -50,8 +50,11 @@ Designer/generated adapters must be resolved alongside any image field.
 Generate packages the frozen image and winning generated adapter into the
 generated app; it never loads Specify at runtime.
 All Designer tabs have kind `designer.tab-definition` and strategy `replace`
-(implicit for the extension's three required tabs). The required tabs are
-identified by their registered names, not by a separate kind.
+(implicit for the extension's default tabs). Tabs are identified by their
+registered names, not by a separate kind. A preset may replace this command
+with fewer or no pages; Designer still opens and shows the resolved pages or
+an empty state. Missing generated-canvas dependencies prevent Generate, not
+Designer launch. Missing explicitly declared names still stop resolution.
 A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions, host-specific adapters, value definitions,
@@ -171,8 +174,8 @@ After installation and one successful skill reload, run
 <child-checkout>` once from the child project root. It reads this **generated**
 composed skill, checks all declarations and performs the read-only resolution,
 replace-only stack and script-collision checks in steps 1-3. Use its complete
-`pages` and `templates` JSON for step 4; stop on a nonzero exit or missing
-registration. Do not repeat those CLI checks or open twice. Older compatible
+`pages` and `templates` JSON for step 4; stop on a nonzero exit or an
+unresolved declared name. Do not repeat those CLI checks or open twice. Older compatible
 hosted packages without this verifier must perform steps 1-3 manually.
 
 1. Read this entire composed command first. Collect the defaults and every name
@@ -225,8 +228,9 @@ hosted packages without this verifier must perform steps 1-3 manually.
    additional pages, and registered templates in this single call. The provider
    validates the handoff and complete inventory before returning a URL. A
    resolved page with invalid or missing file contents appears as an error tab
-   with its path and reason; other pages remain available. Invalid or missing
-   non-page contributions stop the open with an actionable error. Generated
+   with its path and reason; other pages remain available. Malformed, safely
+   readable non-page files show a named composition error; invalid registrations
+   and unsupported dependencies stop the open with an actionable error. Generated
    pages require a matching registered renderer and do not create Designer tabs. Do not
    substitute another provider or open if resolution failed.
    Confirm the `open_canvas` result matches the requested canvas ID, plugin

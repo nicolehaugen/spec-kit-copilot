@@ -25,15 +25,19 @@ function updateGenerate() {
     const failed = model?.pages.find((page) => page.error);
     const missingIdentity = model && !failed && (!setup || setup.enabled === false
         || !required.every((field) => setup.fields?.some((item) => item.id === field)));
-    generationError.textContent = model?.preview ? "" : failed
+    generationError.textContent = model?.preview ? "" : model?.generationError
+        ? model.generationError
+        : failed
         ? `Cannot generate: ${failed.page} could not load. ${failed.error.reason}`
+        : model?.generationBlockers?.length
+            ? `Cannot generate: ${model.generationBlockers.join("; ")}`
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
         || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
-        || missingIdentity;
+        || missingIdentity || !!model?.generationBlockers?.length;
 }
 
 function confirmProviders(providers) {
@@ -141,7 +145,7 @@ function updateSave() {
         && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs)
         && JSON.stringify(draftBadges) === JSON.stringify(model.badges);
     saveButton.disabled = model?.preview || saving || activeUploads.size > 0 || !model
-        || noChanges || !outputPathsReady();
+        || !model.pages.length || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
@@ -352,9 +356,7 @@ tabs.addEventListener("keydown", (event) => {
 });
 
 function applyState(next) {
-    if (!Array.isArray(next.pages) || !next.pages.length) {
-        throw new Error("Designer returned no settings pages");
-    }
+    if (!Array.isArray(next.pages)) throw new Error("Designer returned invalid settings pages");
     const changed = !model || next.revision !== model.revision;
     if (changed) {
         model = next;
@@ -366,6 +368,9 @@ function applyState(next) {
             (model.phases ?? []).map((id) => [id, { outputs: [], view: null }])));
         draftBadges = structuredClone(model.badges ?? []);
         tabs.replaceChildren();
+        const compositionError = document.getElementById("composition-error");
+        compositionError.textContent = (model.compositionErrors ?? []).join("; ");
+        compositionError.hidden = !compositionError.textContent;
         for (const page of model.pages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,
                 `tab${page.error ? " tab-error" : ""}`);
@@ -379,7 +384,13 @@ function applyState(next) {
         const selected = model.pages.find((page) => page.page === currentPage)
             ?? model.pages.find((page) => page.page === "designer-essentials")
             ?? model.pages[0];
-        renderPage(selected.page);
+        if (selected) renderPage(selected.page);
+        else {
+            currentPage = null;
+            root.setAttribute("aria-busy", "false");
+            root.replaceChildren(element("h1", "No Designer pages registered"),
+                element("p", "This preset composition contains no settings pages."));
+        }
         updateSave();
         updateGenerate();
     }
@@ -406,8 +417,10 @@ try {
         }));
     applyState(initial);
     const failures = initial.pages.filter((page) => page.error).length;
-    status.className = failures || initial.preview ? "conn conn-connecting" : "conn conn-live";
+    status.className = failures || initial.compositionErrors?.length || !initial.pages.length || initial.preview
+        ? "conn conn-connecting" : "conn conn-live";
     status.textContent = failures ? `Pages need attention (${failures})`
+        : initial.compositionErrors?.length || !initial.pages.length ? "Design needs attention"
         : initial.preview ? "Preview only" : "Ready";
 } catch (error) {
     root.setAttribute("aria-busy", "false");

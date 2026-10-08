@@ -63,9 +63,11 @@ The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 Its required Canvas ID and Title are rendered by the fixed identity control,
 while optional text contributions use the registered `stock.text` adapter.
 The Outputs tab uses a separate fixed phase-artifacts control. The Designer
-checks these core declarations before displaying either page; presets can
-still contribute to the `essentials.options` slot. Identity length, requiredness,
-and identifier rules are checked at Generate;
+validates each supplied page without requiring every default tab to open;
+presets can still contribute to the `essentials.options` slot. An empty or
+partial composition opens with inline diagnostics, but Generate requires
+valid identity fields and the selected generated Workflow assets. Identity
+length, requiredness, and identifier rules are checked at Generate;
 the generator independently guards the generated extension path. Description and
 Workflow header use the packaged stock-text adapter for their visible
 generated presentation. Authors may set `"required": true` on a text field

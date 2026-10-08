@@ -87,7 +87,7 @@ async function setup(t, selected = [logo, logo, logo]) {
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     const requestPath = join(handoffFolder, "generations", prepared.requestId, "request.json");
     const sdk = join(project, ".github", "extensions", "image-canvas");
-    return { project, workspace, prepared, sdk, requestPath, templates, model, values };
+    return { project, workspace, prepared, sdk, requestPath, templates: model.templates, model, values };
 }
 
 async function rewrite(requestPath, edit) {

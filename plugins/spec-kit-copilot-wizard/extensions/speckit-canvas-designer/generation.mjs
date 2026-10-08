@@ -16,6 +16,28 @@ const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const REQUEST_LIMIT = 4 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
+export function generationBlockers(model) {
+    const pages = model.pages ?? [];
+    const essentials = pages.find((page) => page.page === "designer-essentials");
+    const blockers = [...(model.compositionErrors ?? [])];
+    if (!essentials || essentials.error || essentials.enabled === false
+        || !required.every((id) => essentials.fields?.some((field) => field.id === id))) {
+        blockers.unshift("Essentials must contain Canvas ID and Title");
+    }
+    if (!model.workflowPage || !model.templates?.some((entry) =>
+        entry.kind === "generated.workflow-page-definition")) {
+        blockers.push("Generated Workflow page definition is required");
+    }
+    if (!model.templates?.some((entry) => entry.name === "generated-phase-control"
+        && entry.kind === "generated.phase-control-definition")
+        || !model.templates?.some((entry) => entry.kind === "generated.phase-control-adapter")) {
+        blockers.push("Generated phase control and adapter are required");
+    }
+    const invalid = pages.find((page) => page.error);
+    if (invalid) blockers.push(`${invalid.page}: ${invalid.error.reason}`);
+    return blockers;
+}
+
 export function validateEssentials(model, values) {
     const setup = model.pages.find((page) => page.page === "designer-essentials");
     if (!setup || setup.error || !Array.isArray(setup.fields)
@@ -181,6 +203,8 @@ export function validBadgeEvidence(instance, rule, phaseIds, declared) {
 export async function freezeGeneration({ model, values, outputs = model.outputs, badges = model.badges,
     handoff, project, workspace,
     runtimeInventory, inventoryWarning }) {
+    const blockers = generationBlockers(model);
+    if (blockers.length) throw new Error(`Cannot generate: ${blockers.join("; ")}`);
     const essentials = validateEssentials(model, values);
     if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases,
         initialOutputs(handoff));
