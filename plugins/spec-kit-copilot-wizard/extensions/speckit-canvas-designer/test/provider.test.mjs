@@ -1406,8 +1406,15 @@ test("stock contributions retain the optional slug setting and minimal replaced 
     assert.deepEqual(full.pages[0].fields.map(({ id, label }) => [id, label]), [
         ["canvas.id", "Canvas ID"], ["canvas.displayName", "Title"],
         ["canvas.description", "Description"], ["canvas.workflowListName", "Workflow header"],
-        ["workflowSlug.userProvided", "Allow custom slug"],
+        ["workflowSlug.userProvided", "Allow custom artifact directory slug"],
     ]);
+    const essentials = new Map(full.pages[0].fields.map(({ id, description }) => [id, description]));
+    assert.ok([...essentials.values()].every((description) => typeof description === "string"
+        && description.trim()), "Every Essentials field has help text from its JSON definition");
+    assert.match(essentials.get("canvas.id"), /Windows device names like con and com1/);
+    assert.match(essentials.get("canvas.displayName"), /1–120 characters/);
+    assert.match(essentials.get("canvas.description"), /240 characters/);
+    assert.match(essentials.get("canvas.workflowListName"), /80 characters/);
     assert.equal(full.values["workflowSlug.userProvided"], false);
     const values = { ...full.values, "canvas.id": "stock-canvas",
         "canvas.displayName": "Stock Canvas", "canvas.description": "Stock description",

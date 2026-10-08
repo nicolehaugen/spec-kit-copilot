@@ -32,6 +32,7 @@ test("stock Workflow page mounts its phase control, updates collection and dispo
             removeEventListener() { this.listener = null; },
             querySelector() { return { hidden: false }; },
             querySelectorAll() { return []; },
+            closest() { return { hidden: false }; },
             replaceChildren(...children) { this.children = children; },
         });
         return elements.get(id);
@@ -61,6 +62,21 @@ test("stock Workflow page mounts its phase control, updates collection and dispo
     assert.equal(element("workflow-count").textContent, "(0)");
     assert.equal(element("workflow-empty").textContent, "No workflow phases are configured.");
     assert.equal(updates, 1);
+    const project = { id: "constitution", project: true };
+    const model = { showSetup: false, items: [], selected: "__new__",
+        phases: [project], badges: {}, constitutionReady: true,
+        valueFields: [], valueErrors: {} };
+    page.update({ model: { ...model, statuses: { constitution: {
+        artifactAvailability: "available", status: "Completed" } } },
+    pendingLabel: () => null, phaseState: {}, inputPending: false });
+    assert.equal(element("constitution-status").textContent, "");
+    assert.equal(element("constitution-status").hidden, true);
+    assert.equal(element("view-constitution").hidden, false);
+    page.update({ model: { ...model, statuses: { constitution: {
+        artifactAvailability: "error", status: "Failed" } } },
+    pendingLabel: () => null, phaseState: {}, inputPending: false });
+    assert.equal(element("constitution-status").textContent, "Unavailable");
+    assert.equal(element("constitution-status").hidden, false);
     page.dispose();
     assert.equal(disposed, true);
     assert.equal(element("workflow-search").listener, null);
@@ -105,6 +121,7 @@ test("workflow identity survives rebuilding a selected row after evidence change
             return null;
         }
         querySelectorAll() { return []; }
+        closest() { return { hidden: false }; }
         setAttribute() {}
         removeAttribute() {}
         addEventListener() {}

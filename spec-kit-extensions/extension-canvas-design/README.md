@@ -36,7 +36,7 @@ the generic `create-canvas` browser/server protocol.
 | `designer-essentials` | Essentials | Required Canvas ID and Title |
 | `designer-essentials-description` | Essentials slot | Optional Description |
 | `designer-essentials-workflow-heading` | Essentials slot | Optional Workflow header |
-| `designer-essentials-custom-slug` | Essentials slot | Default-off Allow custom slug option |
+| `designer-essentials-custom-slug` | Essentials slot | Default-off Allow custom artifact directory slug option |
 | `designer-essentials-header-logo` | Appearance slot | Optional small header logo (existing template name retained) |
 | `designer-essentials-main-page-logo` | Appearance slot | Optional larger main-page logo (existing template name retained) |
 | `designer-appearance-light-accent` | Appearance slot | Optional light-mode accent hex |
@@ -81,7 +81,7 @@ generated presentation. Authors may set `"required": true` on a text field
 in a page or a field contribution to reject empty or whitespace-only values.
 The shared Designer adapter shows the field's syntax guidance; Generate verifies
 the constraint independently. Omitted `required` preserves optional text.
-Allow custom slug is a stock-checkbox Designer setting with no generated visual
+Allow custom artifact directory slug is a stock-checkbox Designer setting with no generated visual
 adapter; its frozen boolean controls the generated workflow shell. When enabled,
 a user may enter an optional Artifact directory slug to preview the target;
 otherwise Specify chooses the actual directory, including any numeric prefix.
