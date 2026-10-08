@@ -402,7 +402,8 @@ test("phase dispatch is gated on readiness even when showSetup is false; legacy 
     const runtime = await createRuntime({ config, cwd, workspace: cwd, session: {
         ...h.session, sessionId: "test", log: async () => {}, on: () => () => {} } });
     try {
-        await assert.rejects(runtime.run({ phase: "specify", args: "" }, "panel"), /setup is not ready/);
+        await assert.rejects(runtime.run({ phase: "specify", args: "Feature", slug: "feature" }, "panel"),
+            /setup is not ready/);
         await assert.rejects(runtime.startAutopilot({ itemId: "__new__" }, "panel"),
             /setup is not ready/);
         assert.equal(h.sent.length, 0);
@@ -415,7 +416,8 @@ test("phase dispatch is gated on readiness even when showSetup is false; legacy 
         cwd, workspace: cwd, session: { ...h.session, sessionId: "test", log: async () => {},
             on: () => () => {}, rpc: { skills: { reload: async () => ({ errors: [] }) } } } });
     try {
-        await assert.rejects(oldRuntime.run({ phase: "specify", args: "" }, "panel"), /Installed skill/);
+        await assert.rejects(oldRuntime.run({ phase: "specify", args: "Feature", slug: "feature" }, "panel"),
+            /Installed skill/);
     } finally { oldRuntime.close(); }
 });
 

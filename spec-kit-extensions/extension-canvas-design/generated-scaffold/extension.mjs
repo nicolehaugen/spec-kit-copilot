@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { readConfig, createWorkflowRoutes } from "./server.mjs";
@@ -7,6 +7,7 @@ import { agentActionSchemas } from "./contracts/agent-actions.mjs";
 
 const servers = new Map();
 const config = readConfig();
+const childReportTool = `canvas_${createHash("sha256").update(config.canvas.id).digest("hex").slice(0, 24)}_report_child_run`;
 let runtime;
 let initializing;
 let lifecycle = Promise.resolve();
@@ -23,6 +24,7 @@ async function getRuntime() {
         const cwd = metadata.workingDirectory ?? metadata.workspace?.cwd ?? metadata.workspace?.git_root;
         if (!cwd || !session.workspacePath) throw new Error("Canvas checkout or session state unavailable");
         return createRuntime({ config, cwd, workspace: session.workspacePath, session,
+            reportToolName: childReportTool,
             notify: () => { for (const entry of servers.values()) entry.routes.broadcast(); } });
     })();
     try { runtime = await initializing; return runtime; }
@@ -51,6 +53,14 @@ function opened(ctx, action) {
 }
 
 const session = await joinSession({
+    tools: [
+        {
+            name: childReportTool,
+            description: "Record a nested workflow result, including when its parent canvas panel is closed.",
+            parameters: agentActionSchemas.report_child_run,
+            handler: async (input) => JSON.stringify(await (await getRuntime()).reportChild(input)),
+        },
+    ],
     canvases: [
         createCanvas({
             id: config.canvas.id,
@@ -69,6 +79,9 @@ const session = await joinSession({
                 { name: "report_autopilot_step", description: "Start or verify one step in a Copilot Autopilot run.",
                     inputSchema: agentActionSchemas.report_autopilot_step,
                     handler: (ctx) => opened(ctx, (value) => value.reportAutopilotStep(ctx.input, ctx.instanceId)) },
+                { name: "report_child_run", description: "Verify and record a nested workflow session's phase outcome.",
+                    inputSchema: agentActionSchemas.report_child_run,
+                    handler: (ctx) => opened(ctx, (value) => value.reportChild(ctx.input, ctx.instanceId)) },
             ],
             open: (ctx) => withLifecycle(async () => {
                 let entry = servers.get(ctx.instanceId);

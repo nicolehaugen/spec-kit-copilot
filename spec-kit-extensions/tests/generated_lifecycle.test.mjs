@@ -72,8 +72,9 @@ test("closing the last started panel while another opens retains the shared runt
     }));
     await writeFile(join(sdk, "extension.mjs"), `
         export const createCanvas = (options) => options;
-        export async function joinSession({ canvases }) {
+        export async function joinSession({ canvases, tools }) {
             globalThis.__lifecycleCanvas = canvases[0];
+            globalThis.__lifecycleTools = tools;
             return { sessionId: "lifecycle", workspacePath: ${JSON.stringify(root)},
                 rpc: { metadata: { snapshot: async () => ({ workingDirectory: ${JSON.stringify(root)} }) } },
                 on: () => () => {}, getEvents: async () => [], log: async () => {} };
@@ -81,7 +82,12 @@ test("closing the last started panel while another opens retains the shared runt
     `);
     await import(pathToFileURL(join(target, "extension.mjs")).href);
     const canvas = globalThis.__lifecycleCanvas;
+    const tools = globalThis.__lifecycleTools;
     delete globalThis.__lifecycleCanvas;
+    delete globalThis.__lifecycleTools;
+    assert.equal(tools[0].name,
+        `canvas_${createHash("sha256").update("lifecycle").digest("hex").slice(0, 24)}_report_child_run`);
+    assert.deepEqual(tools[0].parameters.required, ["runId", "token", "status"]);
     const first = await canvas.open({ instanceId: "first" });
     try {
         const opening = canvas.open({ instanceId: "second" });
@@ -93,11 +99,20 @@ test("closing the last started panel while another opens retains the shared runt
             await assert.rejects(async () => action.handler({ instanceId: "second",
                 input: { phaseRunId: "missing", path: "specs/missing/spec.md" } }),
             /Unknown or stale phase reporting request/);
+            const childAction = canvas.actions.find((entry) => entry.name === "report_child_run");
+            assert.deepEqual(childAction.inputSchema.required, ["runId", "token", "status"]);
+            assert.deepEqual(childAction.inputSchema.properties.status.enum,
+                ["start", "complete", "fail"]);
+            assert.equal(childAction.inputSchema.additionalProperties, false);
         } finally {
             await canvas.onClose({ instanceId: "second" });
         }
     } finally {
         await canvas.onClose({ instanceId: "first" });
     }
+    await assert.rejects(tools[0].handler({
+        runId: "00000000-0000-0000-0000-000000000000",
+        token: "x".repeat(64), status: "complete",
+    }), /Unknown|inactive|stale/i);
     assert.match(first.url, /^http:/);
 });

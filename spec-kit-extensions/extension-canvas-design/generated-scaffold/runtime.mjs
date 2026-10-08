@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
-import { posix } from "node:path";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { constants } from "node:fs";
+import { lstat, open, readdir, realpath, rename, unlink } from "node:fs/promises";
+import { posix, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
@@ -11,6 +12,7 @@ import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseResponse } from "./phase-response.mjs";
 import { createSetup } from "./setup.mjs";
 import { freshState, validateWorkflowState, pendingId, newItem } from "./contracts/workflow-state.mjs";
+import { createChild, inspectChild, sendChild } from "./contracts/child-session.mjs";
 import { evaluateBadges, verifyBadgeModules } from "./badge-runtime.mjs";
 
 function staleRevision(message) {
@@ -103,7 +105,7 @@ async function evaluateProvider(module, hash, workflow, deadline) {
     });
 }
 
-export async function createRuntime({ config, cwd, workspace, session, notify = () => {} }) {
+export async function createRuntime({ config, cwd, workspace, session, notify = () => {}, reportToolName }) {
     if (config.badges?.instances?.length) await verifyBadgeModules(config.badges);
     const phases = phaseContract(config);
     const valueFields = valueContract(config);
@@ -156,7 +158,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         writes = pending.catch(() => {});
         return pending;
     };
-    if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)) {
+    if (state.autopilot && !state.autopilot.managed
+        && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)) {
         await update((next) => {
             next.autopilot.status = "Blocked";
             next.autopilot.error = "Autopilot was interrupted. Check chat and outputs before resuming.";
@@ -202,6 +205,29 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
         ? [config.phaseOutputs?.[step.id]?.outputPath].filter(Boolean) : step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
+    const childFor = (item, view = state) => view.children?.find((child) => child.item === item);
+    const rootFor = (step, item, view = state) => step.project
+        && runFor(step, item, view)?.status === "Completed" ? cwd
+        : runFor(step, item, view)?.childPath ?? childFor(item, view)?.path ?? cwd;
+    async function verifiedChild(child) {
+        const observed = await inspectChild({ session, id: child.id,
+            projectId: child.projectId, parentPath: cwd });
+        if (observed.path !== child.path
+            || resolve(await realpath(child.path)).toLowerCase() !== resolve(child.path).toLowerCase()) {
+            throw new UserError("Workflow child checkout changed; artifact access was refused.", 409);
+        }
+        return observed.path;
+    }
+    async function verifiedRoot(step, item, view = state) {
+        const path = rootFor(step, item, view);
+        if (path === cwd) return cwd;
+        const run = runFor(step, item, view);
+        const owner = run?.childId
+            ? view.children?.find((child) => child.id === run.childId)
+            : childFor(item, view);
+        if (!owner || owner.path !== path) throw new UserError("Workflow child ownership is invalid.", 409);
+        return verifiedChild(owner);
+    }
     async function items(view = state) {
         const found = [];
         for (const root of roots) {
@@ -209,6 +235,16 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             for (const slug of await directories(cwd, root)) {
                 const id = `${root}/${slug}`;
                 found.push({ id, slug, label: view.names?.[id] || slug });
+            }
+        }
+        for (const child of view.children ?? []) {
+            if (child.item === "project" || child.item.startsWith("project:")
+                || newItem(child.item) || found.some((entry) => entry.id === child.item)) continue;
+            const slug = child.item.split("/").at(-1);
+            const root = child.item.slice(0, -(slug.length + 1));
+            if (!roots.includes(root)) continue;
+            if ((await directories(await verifiedChild(child), root)).includes(slug)) {
+                found.push({ id: child.item, slug, label: view.names?.[child.item] || slug });
             }
         }
         return found;
@@ -262,12 +298,13 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (path.endsWith("<name>.md")) {
             const parent = posix.dirname(path);
             try {
-                const entries = await readdir(await confined(cwd, parent), { withFileTypes: true });
+                const root = await verifiedRoot(step, item, view);
+                const entries = await readdir(await confined(root, parent), { withFileTypes: true });
                 const candidates = [];
                 for (const entry of entries) {
                     if (!entry.isFile() || !/^[a-z0-9][a-z0-9._-]*\.md$/i.test(entry.name)) continue;
                     const path = `${parent}/${entry.name}`;
-                    candidates.push({ path, mtime: (await lstat(await confined(cwd, path))).mtimeMs });
+                    candidates.push({ path, mtime: (await lstat(await confined(root, path))).mtimeMs });
                 }
                 candidates.sort((left, right) => right.mtime - left.mtime || left.path.localeCompare(right.path));
                 if (!candidates.length) throw new UserError("No artifact is available yet. Run the phase, then refresh.", 404);
@@ -289,7 +326,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             ? "No artifact is available yet. Run the phase or select an existing workflow to view its artifact."
             : "No artifact is available for this phase yet. Run the phase, then refresh to check again.", 404);
         try {
-            const content = await readBounded(cwd, path);
+            const content = await readBounded(await verifiedRoot(step, input.itemId), path);
             return { path, content, message: content.trim() ? null : "Artifact is empty or still being written. Refresh to try again." };
         } catch (error) {
             if (error.code === "ENOENT") throw new UserError("Could not load the artifact. It may not have been created yet. Run the phase or check its output path.", 404);
@@ -345,7 +382,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             try {
                 output = await outputPath(step, item, view, entries);
                 if (output) {
-                    const info = await lstat(await confined(cwd, output));
+                    const info = await lstat(await confined(await verifiedRoot(step, item, view), output));
                     if (!info.isFile()) throw new UserError("The artifact path is not a regular file.");
                     artifactAvailability = "available";
                 }
@@ -357,37 +394,75 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                     await diagnostic(`Generated canvas artifact availability failed: ${artifactError}`);
                 }
             }
-            const status = run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
+            const status = run && !run.managed && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
                 ? "Unconfirmed" : run?.status ?? "Not run";
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
-        const automation = view.autopilot
-            ? { ...view.autopilot, message: view.autopilot.error
-                ?? `${view.autopilot.status}: step ${Math.min(view.autopilot.current + 1, workflowSteps.length)} of ${workflowSteps.length}` }
+        const selectedAutomation = view.autopilots?.findLast((entry) => entry.item === item)
+            ?? (!view.autopilots?.length && !view.autopilot?.managed ? view.autopilot : null);
+        const automation = selectedAutomation
+            ? { ...selectedAutomation, message: selectedAutomation.error
+                ?? `${selectedAutomation.status}: step ${Math.min(selectedAutomation.current + 1, workflowSteps.length)} of ${workflowSteps.length}` }
             : null;
-        if (automation && ["Request sent", "Running", "Finishing"].includes(automation.status)
+        if (automation && !automation.managed && ["Request sent", "Running", "Finishing"].includes(automation.status)
             && (automation.sessionId !== session.sessionId || !liveRuns.has(automation.id))) {
             automation.status = "Blocked";
             automation.message = "Autopilot outcome is unconfirmed. Check chat before resuming.";
         }
-        const badges = config.badges?.instances?.length ? await evaluateBadges(config.badges, {
-            cwd, workflows: entries.map(({ id }) => id), phases,
-            outputPath: async ({ phase, output }, workflow, options = {}) => {
-                const step = phaseFor(phase);
-                return outputPath(output === undefined ? step : {
-                    ...step, output, configuredArtifacts: true,
-                }, step.project ? "project" : workflow, view, entries, options.directory === true);
-            },
-            runFor: (step, workflow) => runFor(step, workflow, view),
-            log: (message) => { void diagnostic(message); },
-        }) : undefined;
+        let badges;
+        if (config.badges?.instances?.length) {
+            const projectPhase = phases.find((phase) => phase.project)?.id;
+            const projectInput = (value) => value && typeof value === "object"
+                && (value.phase === projectPhase || Object.values(value).some(projectInput));
+            const childBadgesUnsupported = projectPhase
+                && (view.children ?? []).some((child) => !child.item.startsWith("project:"))
+                && config.badges.instances.some((instance) => projectInput(instance.inputs));
+            if (childBadgesUnsupported) {
+                badges = { items: {}, selected: [], summary: [],
+                    diagnostics: ["Badges using parent-scoped evidence cannot be verified in isolated workflow children."] };
+            } else {
+                const started = performance.now();
+                badges = { items: {}, selected: [], summary: [], diagnostics: [] };
+                for (const entry of entries.length ? entries : [{ id: null }]) {
+                    const owner = entry.id && childFor(entry.id, view);
+                    const badgeRoot = owner ? await verifiedChild(owner) : cwd;
+                    const evaluated = await evaluateBadges(config.badges, {
+                        cwd: badgeRoot, workflows: entry.id ? [entry.id] : [], phases,
+                        budgetMs: Math.max(0, 4000 - (performance.now() - started)),
+                        outputPath: async ({ phase, output }, workflow, options = {}) => {
+                            const step = phaseFor(phase);
+                            return outputPath(output === undefined ? step : {
+                                ...step, output, configuredArtifacts: true,
+                            }, step.project ? "project" : workflow, view, entries, options.directory === true);
+                        },
+                        runFor: (step, workflow) => runFor(step, workflow, view),
+                        log: (message) => { void diagnostic(message); },
+                    });
+                    Object.assign(badges.items, evaluated.items);
+                    for (const result of evaluated.summary) {
+                        const aggregate = badges.summary.find((item) => item.id === result.id);
+                        if (aggregate) aggregate.count += result.count;
+                        else badges.summary.push({ ...result });
+                    }
+                    badges.diagnostics.push(...evaluated.diagnostics);
+                }
+                for (const result of badges.summary) {
+                    const instance = config.badges.instances.find((entry) => entry.id === result.id);
+                    const template = instance?.summaryText;
+                    const title = config.badges.types.find((type) => type.id === instance?.type)?.title;
+                    result.text = template
+                        ? template.replace(/\{workflows\}/g, String(result.count)).slice(0, 160)
+                        : `${title} (${result.count})`;
+                }
+            }
+        }
         if (badges) badges.selected = badges.items[item] ?? [];
         const project = phases.find((phase) => phase.project);
         const pending = (view.pendingWorkflows ?? []).map(({ id, name, slug }) => {
             const run = view.runs.findLast((entry) => entry.item === id);
             return { id, slug, label: name.trim() || slug || "Unstarted workflow", pending: true,
-                status: run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
+                status: run && !run.managed && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
                     ? "Unconfirmed" : run?.status ?? "Not started" };
         });
         const legacyDraft = (view.name || view.slug
@@ -538,14 +613,382 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             throw new UserError("Packaged phase control changed; restore the generated canvas files.");
         }
     }
+    async function parentProject() {
+        const execute = session.rpc?.tools?.execute;
+        if (typeof execute !== "function") throw new UserError("App-native child sessions are unavailable; nothing was sent.");
+        const response = await execute.call(session.rpc.tools, {
+            name: "get_session", arguments: { project_session_id: session.sessionId },
+        });
+        let details;
+        try { details = JSON.parse(response?.textResultForLlm); } catch {
+            throw new UserError("Could not verify the parent project session; nothing was sent.");
+        }
+        if (response?.resultType !== "success" || typeof details?.project_id !== "string"
+            || !details.project_id || typeof details.path !== "string"
+            || resolve(details.path).toLowerCase() !== resolve(cwd).toLowerCase()) {
+            throw new UserError("The parent project or checkout does not match this canvas; nothing was sent.");
+        }
+        return { projectId: details.project_id, branch: details.branch };
+    }
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    async function digestAt(root, path) {
+        try { return digest(await readBoundedBytes(root, path)); }
+        catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    }
+    async function collectTree(source, optional = false) {
+        let origin;
+        try { origin = await confined(cwd, source); }
+        catch (error) { if (optional && error.code === "ENOENT") return []; throw error; }
+        const root = await realpath(cwd);
+        let count = 0, total = 0;
+        const files = [];
+        async function visit(path, depth) {
+            if (depth > 16 || ++count > 2000) throw new UserError("Project setup exceeds child provisioning limits.");
+            const sourcePath = await confined(root, path);
+            const info = await lstat(sourcePath);
+            if (info.isDirectory()) {
+                for (const entry of await readdir(sourcePath, { withFileTypes: true })) {
+                    if (entry.isSymbolicLink()) throw new UserError("Project setup contains a link; child provisioning stopped.");
+                    await visit(`${path}/${entry.name}`, depth + 1);
+                }
+            } else if (info.isFile()) {
+                total += info.size;
+                if (total > 32 * 1024 * 1024) throw new UserError("Project setup exceeds child provisioning limits.");
+                const bytes = await readBoundedBytes(root, path, 512 * 1024);
+                files.push({ path, bytes, hash: digest(bytes) });
+            } else throw new UserError("Project setup contains unsupported files.");
+        }
+        if (!(await lstat(origin)).isDirectory() && !(await lstat(origin)).isFile()) {
+            throw new UserError("Project setup contains unsupported files.");
+        }
+        await visit(source, 0);
+        return files;
+    }
+    async function applyFiles(destination, files, pins) {
+        const manifest = Object.fromEntries(files.map(({ path, hash }) => [path, hash]));
+        if (pins && JSON.stringify(Object.entries(pins).sort()) !== JSON.stringify(Object.entries(manifest).sort())) {
+            throw new UserError("Parent setup changed since this child was created. Review it before another run.", 409);
+        }
+        for (const { path, hash } of files) {
+            const present = await digestAt(destination, path);
+            if (present !== null && present !== hash) {
+                throw new UserError(`Child file ${path} differs from the pinned setup; refusing to overwrite it.`, 409);
+            }
+            if (pins && present === null) {
+                throw new UserError(`Pinned child file ${path} is missing; refusing an incomplete setup.`, 409);
+            }
+        }
+        for (const { path, bytes, hash } of files) {
+            if (await digestAt(destination, path) !== null) continue;
+            await confined(destination, posix.dirname(path), { createDirectories: true });
+            const target = resolve(destination, ...path.split("/"));
+            const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+            try { await handle.writeFile(bytes); }
+            finally { await handle.close(); }
+            if (await digestAt(destination, path) !== hash) {
+                throw new UserError(`Child file ${path} changed during setup.`, 409);
+            }
+        }
+        for (const { path, hash } of files) {
+            if (await digestAt(destination, path) !== hash) {
+                throw new UserError(`Child file ${path} changed during setup.`, 409);
+            }
+        }
+        return manifest;
+    }
+    async function checkedAtomicFile(root, path, bytes, expected) {
+        const parent = posix.dirname(path);
+        await confined(root, parent, { createDirectories: true });
+        const target = resolve(root, ...path.split("/"));
+        const temporary = `${target}.${randomUUID()}.pending`;
+        const lockPath = `${target}.publish.lock`;
+        let handle, lock;
+        try {
+            try { lock = await open(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600); }
+            catch (error) {
+                if (error.code === "EEXIST") throw new UserError("Constitution publication is already in progress.", 409);
+                throw error;
+            }
+            if (await digestAt(root, path) !== expected) {
+                throw new UserError("Constitution changed since this run began; the parent was not modified.", 409);
+            }
+            await confined(root, parent);
+            handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+            await handle.writeFile(bytes);
+            await handle.sync();
+            await handle.close();
+            handle = null;
+            if (await digestAt(root, path) !== expected) {
+                throw new UserError("Constitution changed during publication; the parent was not modified.", 409);
+            }
+            await confined(root, parent);
+            await rename(temporary, target);
+        } finally {
+            if (handle) await handle.close();
+            await unlink(temporary).catch((error) => { if (error.code !== "ENOENT") throw error; });
+            if (lock) {
+                await lock.close();
+                await unlink(lockPath);
+            }
+        }
+    }
+    async function provision(child, steps, existing, recovering = false) {
+        let initialized;
+        try { initialized = (await lstat(await confined(cwd, ".specify"))).isDirectory(); }
+        catch (error) { if (error.code !== "ENOENT") throw error; }
+        if (!initialized) throw new UserError("Project Spec Kit setup is missing; nothing was sent.");
+        await confined(child.path, ".specify", { createDirectories: true });
+        const files = [];
+        for (const step of phases) {
+            files.push(...await collectTree(`.github/skills/${step.skill}`));
+        }
+        for (const folder of [".specify/scripts", ".specify/templates", ".specify/extensions",
+            ".specify/presets", ".specify/init-options.json"]) files.push(...await collectTree(folder, true));
+        if (existing && !existing.setupPins) {
+            throw new UserError("This child has no pinned setup; inspect it before retrying.", 409);
+        }
+        const pins = await applyFiles(child.path, files, existing?.setupPins);
+        for (const { path, hash } of files) {
+            if (await digestAt(cwd, path) !== hash) {
+                throw new UserError(`Parent setup file ${path} changed during child provisioning.`, 409);
+            }
+        }
+        for (const step of steps) {
+            const text = await readBounded(child.path, `.github/skills/${step.skill}/SKILL.md`, 64 * 1024);
+            if (text.match(/^name:\s*["']?([a-z0-9-]+)["']?\s*$/m)?.[1] !== step.skill) {
+                throw new UserError(`Child skill ${step.skill} is not ready; nothing was sent.`);
+            }
+        }
+        const constitution = ".specify/memory/constitution.md";
+        const canonical = await digestAt(cwd, constitution);
+        const pinned = existing?.constitutionDigest ?? null;
+        const childDigest = await digestAt(child.path, constitution);
+        if (existing && childDigest !== pinned && childDigest !== canonical) {
+            throw new UserError("Child constitution was changed; refusing to overwrite it.", 409);
+        }
+        if (canonical !== null && childDigest !== canonical) {
+            if (existing && !recovering && state.runs.some((run) => run.childId === child.id
+                && ["Request sent", "Running", "Unconfirmed"].includes(run.status))) {
+                throw new UserError("Cannot synchronize the constitution while the child run is active.", 409);
+            }
+            await checkedAtomicFile(child.path, constitution,
+                await readBoundedBytes(cwd, constitution), childDigest);
+        } else if (canonical === null && !steps.some((step) => step.project)) {
+            throw new UserError("Project constitution is unavailable; nothing was sent.", 409);
+        } else if (canonical === null && childDigest !== null) {
+            throw new UserError("Child constitution differs from the missing parent constitution.", 409);
+        }
+        return { setupPins: pins, constitutionDigest: canonical };
+    }
+    async function artifactBaseline(childPath) {
+        const hashes = {};
+        let seen = 0;
+        for (const root of [...new Set([...roots, ".specify/memory"])]) {
+            async function walk(path, depth) {
+                if (depth > 16 || ++seen > 2500) throw new UserError("Child artifacts exceed baseline limits.");
+                let directory;
+                try { directory = await confined(childPath, path); }
+                catch (error) { if (error.code === "ENOENT") return; throw error; }
+                for (const entry of await readdir(directory, { withFileTypes: true })) {
+                    const next = `${path}/${entry.name}`;
+                    safePath(next);
+                    if (entry.isSymbolicLink()) throw new UserError("Child artifact directory contains a link.", 409);
+                    if (entry.isDirectory()) await walk(next, depth + 1);
+                    else if (entry.isFile() && next.endsWith(".md")) {
+                        hashes[next] = await digestAt(childPath, next);
+                    }
+                }
+            }
+            await walk(root, 0);
+        }
+        return hashes;
+    }
+    async function staleChildIsIdle(conflicts, existing) {
+        if (!existing || conflicts.some((run) => !Number.isFinite(Date.parse(run.startedAt))
+            || Date.now() - Date.parse(run.startedAt) < 5 * 60 * 1000)) return false;
+        const inspected = await verifiedChild(existing);
+        const response = await session.rpc.tools.execute({
+            name: "get_session", arguments: { project_session_id: existing.id },
+        });
+        let metadata;
+        try { metadata = JSON.parse(response?.textResultForLlm); }
+        catch { return false; }
+        if (response?.resultType !== "success"
+            || metadata?.project_id !== existing.projectId || metadata?.path !== inspected) return false;
+        const direct = metadata?.activity_status ?? metadata?.activity?.status ?? metadata?.status;
+        if (direct === "idle") return true;
+        if (direct === "busy") return false;
+        let snapshot;
+        try {
+            snapshot = await session.rpc.tools.execute({
+                name: "get_sessions_status", arguments: {},
+            });
+        } catch { return false; }
+        let details;
+        try {
+            if (snapshot?.resultType !== "success" || snapshot.textResultForLlm.length > 512 * 1024) return false;
+            details = JSON.parse(snapshot.textResultForLlm);
+        } catch { return false; }
+        const sessions = Array.isArray(details) ? details : details?.sessions;
+        const item = Array.isArray(sessions) ? sessions.find((entry) =>
+            [existing.id, metadata.id, metadata.active_session_id].includes(entry?.id)) : null;
+        return (item?.activity_status ?? item?.activity?.status ?? item?.status) === "idle";
+    }
+    function childInstructions(runs, item, instanceId, name, slug) {
+        const steps = runs.map((run) => ({
+            phase: run.phase, skill: phaseFor(run.phase).skill, runId: run.runId,
+            token: run.token, args: run.args, output: phaseFor(run.phase).output,
+        }));
+        const tool = reportToolName ?? `canvas_${createHash("sha256").update(config.canvas.id).digest("hex").slice(0, 24)}_report_child_run`;
+        return `Run this Canvas Design workflow ONLY in this child worktree. Never edit the parent checkout,
+run init/install, switch branches, or merge. First reload this child session's skills with
+/skills reload; verify each requested skill is available and stop/report failure if reload fails.
+Use the installed phase skills in configured order.
+The parent canvas will not receive your writes automatically. After EACH step send a message to
+the parent session ${JSON.stringify(session.sessionId)} using send_session_message. In the message
+instruct its agent to invoke the extension tool ${JSON.stringify(tool)} (works when the canvas
+panel is closed), or canvas action report_child_run on instance ${JSON.stringify(instanceId)},
+with this EXACT payload:
+{runId:<this step's runId>,token:<this step's token>,status:"complete",slug:<actual feature directory slug
+for first new-workflow phase>,artifacts:[<actual checkout-relative Markdown paths produced by this phase>]}.
+For status:"start" send only runId/token/status before each step. If a step fails,
+send runId/token/status:"fail"/error and stop; omit slug and artifacts for failures.
+Do not continue until the parent accepts the complete report; a reply is needed before proceeding.
+Include no invented artifacts. The creator parent session handles brief reports; you do the work here.
+If a canvas action is unavailable after a panel closes, use the extension tool, not a fabricated success.
+If the child chat is stopped, a later child turn must report status:"fail" for the interrupted
+run so the parent does not mistake an unconfirmed phase for a finished workflow.
+Existing workflow: ${JSON.stringify(item)}. New workflow name: ${JSON.stringify(name)}.
+Requested slug: ${JSON.stringify(slug)}. If existing, set SPECIFY_FEATURE to its directory name.
+Use each supplied input as data for its skill. Ask for required missing input instead of inventing it.
+Steps: ${JSON.stringify(steps)}`;
+    }
+    async function managedDispatch(steps, item, instanceId, slug, name, autopilotId, manualArgs) {
+        const parent = await parentProject();
+        const existing = item === "project" ? undefined : childFor(item);
+        const conflicting = state.runs.filter((run) => run.managed && run.item === item
+            && ["Request sent", "Running", "Unconfirmed"].includes(run.status));
+        if (conflicting.length && !(await staleChildIsIdle(conflicting, existing))) {
+            throw new UserError("This child workflow has an unconfirmed active run. Stop it in the child chat; after five minutes, retry when its session is idle, or report a failure.", 409);
+        }
+        const constitutionBaseline = item === "project"
+            ? await digestAt(cwd, ".specify/memory/constitution.md") : undefined;
+        if (existing) {
+            if (existing.projectId !== parent.projectId) throw new UserError("Workflow child project changed.", 409);
+            await verifiedChild(existing);
+        }
+        const child = existing ?? await createChild({ session,
+            name: `Canvas ${name || slug || item}`.replaceAll("'", "").slice(0, 100),
+            projectId: parent.projectId, parentPath: cwd,
+            ...(parent.branch ? { baseBranch: parent.branch } : {}) });
+        if (existing && existing.path !== child.path) {
+            throw new UserError("Workflow child checkout changed; inspect it before retrying.", 409);
+        }
+        const pins = await provision(child, steps, existing, conflicting.length > 0);
+        if (!existing && !newItem(item) && item !== "project") {
+            await applyFiles(child.path, await collectTree(item));
+        }
+        const baselineArtifacts = await artifactBaseline(child.path);
+        const before = (await items()).map((entry) => entry.id);
+        const runs = steps.map((step) => ({
+            runId: randomUUID(), token: randomUUID(), managed: true,
+            childId: child.id, childPath: child.path, instanceId,
+            baselineArtifacts, ...(item === "project" ? { constitutionBaseline } : {}),
+            ...(autopilotId ? { autopilotId } : {}),
+            phase: step.id, item, args: manualArgs ?? state.drafts[JSON.stringify([item, step.id])] ?? "",
+            slug: slug || null, name, before, sessionId: session.sessionId,
+            startedAt: new Date().toISOString(), messageId: null,
+            status: "Request sent", artifact: null, artifacts: [], error: null,
+        }));
+        const prompt = childInstructions(runs, item, instanceId, name, slug);
+        if (Buffer.byteLength(prompt) > 128 * 1024) throw new UserError("Workflow inputs are too large.");
+        await update((next) => {
+            if (conflicting.length) {
+                for (const active of next.autopilots ?? []) {
+                    if (active.item !== item || !["Request sent", "Running"].includes(active.status)) continue;
+                    active.status = "Blocked";
+                    active.error = "Previous child run timed out while idle; inspect its chat.";
+                    if (next.autopilot?.id === active.id) Object.assign(next.autopilot, active);
+                }
+                for (const prior of next.runs.filter((run) => conflicting.some((entry) => entry.runId === run.runId))) {
+                    prior.status = "Failed";
+                    prior.error = "Child was verified idle after the report timeout. Its unreported outcome was not accepted.";
+                }
+                for (const pending of next.runs.filter((run) => run.item === item
+                    && run.autopilotId && run.status === "Request sent")) {
+                    pending.status = "Failed";
+                    pending.error = "Previous Autopilot ended without a verified report.";
+                }
+            }
+            (next.children ??= []).push(...(existing ? [] : [{ item: item === "project" ? `project:${runs[0].runId}` : item,
+                id: child.id,
+                projectId: child.projectId, path: child.path, branch: child.branch,
+                ...pins }]));
+            if (existing) Object.assign(next.children.find((entry) => entry.id === child.id), pins);
+            next.runs.push(...runs);
+            if (manualArgs !== undefined) next.drafts[JSON.stringify([item, steps[0].id])] = manualArgs;
+            if (autopilotId) next.autopilot = { id: autopilotId, managed: true,
+                instanceId, sessionId: session.sessionId, item, current: 0,
+                status: "Request sent", messageId: null, error: null, previousMode: "autopilot" };
+            if (autopilotId) (next.autopilots ??= []).push({ ...next.autopilot });
+        });
+        try {
+            await sendChild({ session, id: child.id, message: prompt,
+                mode: autopilotId ? "autopilot" : "interactive" });
+            return { ok: true, ...(autopilotId ? { autopilotId } : { runId: runs[0].runId }) };
+        } catch (error) {
+            await update((next) => {
+                for (const record of next.runs.filter((run) => runs.some((entry) => entry.runId === run.runId))) {
+                    record.status = "Unconfirmed";
+                    record.error = "Child dispatch outcome is unknown. Inspect the child chat before retrying.";
+                }
+                if (autopilotId) {
+                    const failed = next.autopilots.find((entry) => entry.id === autopilotId);
+                    failed.status = "Blocked";
+                    failed.error = "Child dispatch outcome is unknown. Inspect the child chat.";
+                    if (next.autopilot?.id === autopilotId) Object.assign(next.autopilot, failed);
+                }
+            });
+            throw new UserError(`Child dispatch is unconfirmed: ${error.message}`, 500);
+        }
+    }
     async function startAutopilot(input, instanceId) {
+        if (!input || Object.keys(input).sort().join() !== "itemId" || typeof input.itemId !== "string") {
+            throw new UserError("Select a workflow for Autopilot.");
+        }
+        if (deleting || dispatching || autopilotDispatching) throw new UserError("A workflow operation is in progress.", 409);
+        autopilotDispatching = true;
+        try {
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project and retry.", 409);
+        }
+        await enabledAutopilot();
+        if (!workflowSteps.length) throw new UserError("No workflow steps are configured.");
+        if (config.phaseDialogs?.some((binding) => workflowSteps.some((step) => step.command === binding.phase))) {
+            throw new UserError("Autopilot cannot run phases that require confirmation. Run them manually.", 409);
+        }
+        const selected = input.itemId;
+        if (!newItem(selected) && !(await items()).some((entry) => entry.id === selected)
+            || pendingId(selected) && !pendingFor(selected)) throw new UserError("The selected workflow no longer exists.");
+        if (newItem(selected) && !workflowSteps[0].first) throw new UserError("Select an existing workflow.");
+        await requireConstitution();
+        const draft = pendingFor(selected);
+        const slug = newItem(selected) ? draft?.slug ?? state.slug : null;
+        if (newItem(selected) && !validSlug(slug)) throw new UserError("Enter a valid artifact folder name.");
+        for (const step of workflowSteps) await skill(step);
+        return await managedDispatch(workflowSteps, selected, instanceId, slug,
+            draft?.name ?? state.name ?? "", randomUUID());
+        } finally { autopilotDispatching = false; }
+    }
+    async function legacyStartAutopilot(input, instanceId) {
         if (!input || Object.keys(input).some((key) => !["itemId"].includes(key))
             || typeof input.itemId !== "string") throw new UserError("Select a workflow for Autopilot.");
         if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
             throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry Autopilot.", 409);
         }
         if (dispatching || autopilotDispatching || deleting) throw new UserError("A workflow request is being sent. Retry after it finishes.", 409);
-        if (state.autopilot && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
+        if (state.autopilot && !state.autopilot.managed
+            && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
             && liveRuns.has(state.autopilot.id)) throw new UserError("Autopilot is already running. Stop it before retrying.", 409);
         autopilotDispatching = true;
         let id, sent = false, previousMode, modeChanged = false;
@@ -684,6 +1127,9 @@ Steps:\n${instructions}` });
     async function stopAutopilot(input) {
         if (!input || Object.keys(input).length) throw new UserError("Invalid stop request.");
         const automation = state.autopilot;
+        if (automation?.managed) {
+            throw new UserError("Stop this run in its child session Copilot chat; the parent canvas cannot abort a child.", 409);
+        }
         if (!automation || automation.sessionId !== session.sessionId
             || !["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)) {
             throw new UserError("No active Autopilot run is available to stop.");
@@ -789,6 +1235,227 @@ Steps:\n${instructions}` });
         return { accepted: true, nextPhase: workflowSteps[state.autopilot.current]?.id ?? null };
     }
     async function run(input, instanceId) {
+        if (deleting || dispatching || autopilotDispatching) throw new UserError("A workflow operation is in progress.", 409);
+        dispatching = true;
+        try {
+        if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
+            throw new UserError("Project setup is not ready. Select Set up project and retry.", 409);
+        }
+        if (!input || Object.keys(input).some((key) => !["phase", "itemId", "args", "slug", "name"].includes(key))) {
+            throw new UserError("Invalid phase request.");
+        }
+        const step = phaseFor(input.phase);
+        if (typeof input.args !== "string" || input.args.length > 32000) throw new UserError("Invalid phase input.");
+        if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120
+            || /[\x00-\x1f\x7f]/.test(input.name))) {
+            throw new UserError("Workflow name must be text of at most 120 characters.");
+        }
+        if (input.slug !== undefined && input.slug !== "" && !validSlug(input.slug)) {
+            throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
+        }
+        const item = step.project ? "project" : input.itemId ?? "__new__";
+        if (step.project && (input.itemId || input.slug || input.name)) {
+            throw new UserError("Constitution applies to the project; omit workflow details.");
+        }
+        if (step.project && !(await hasConstitution()) && !input.args.trim()) {
+            throw new UserError("Enter project principles before creating the constitution.");
+        }
+        if (!step.project) await requireConstitution();
+        const entries = await items();
+        if (!step.project && (pendingId(item) && !pendingFor(item)
+            || !newItem(item) && !entries.some((entry) => entry.id === item))) {
+            throw new UserError("Select an existing workflow or choose New.");
+        }
+        if (!step.project && newItem(item) && !step.first && phases.some((phase) => phase.first)) {
+            throw new UserError("Run Specify to create the workflow first.");
+        }
+        if (input.name !== undefined && !newItem(item)) throw new UserError("Only a new workflow can be named.");
+        if (step.project && state.runs.some((run) => !stepForProject(run)
+            && !["Completed", "Failed"].includes(run.status))) {
+            throw new UserError("Wait for active workflows before changing the constitution.", 409);
+        }
+        const pending = pendingFor(item);
+        const slug = newItem(item) ? (input.slug === undefined ? pending?.slug ?? state.slug : input.slug) : null;
+        const name = newItem(item) ? (input.name ?? pending?.name ?? state.name ?? "").trim() : "";
+        if (newItem(item) && !validSlug(slug)) {
+            throw new UserError("Enter an artifact folder name (slug) using lowercase letters, numbers, and single hyphens, not a reserved filename.");
+        }
+        await skill(step);
+        return await managedDispatch([step], item, instanceId, slug, name, undefined, input.args);
+        } finally { dispatching = false; }
+    }
+    function stepForProject(run) { return phaseFor(run.phase).project; }
+    async function reportChild(input, instanceId) {
+        if (!input || typeof input !== "object" || Array.isArray(input)
+            || Object.keys(input).some((key) => !["runId", "token", "status", "slug", "artifacts", "error"].includes(key))
+            || typeof input.runId !== "string" || typeof input.token !== "string"
+            || !["start", "complete", "fail"].includes(input.status)
+            || (input.slug !== undefined && typeof input.slug !== "string")
+            || (input.error !== undefined && (typeof input.error !== "string" || input.error.length > 2000))
+            || (input.artifacts !== undefined && (!Array.isArray(input.artifacts)
+                || input.artifacts.length > 100 || input.artifacts.some((path) => typeof path !== "string")))) {
+            throw new UserError("Invalid child run report.");
+        }
+        const record = state.runs.find((entry) => entry.runId === input.runId);
+        const tokenBytes = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(input.token)
+            ? Buffer.from(input.token.replaceAll("-", ""), "hex") : null;
+        const expectedBytes = typeof record?.token === "string"
+            && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(record.token)
+            ? Buffer.from(record.token.replaceAll("-", ""), "hex") : null;
+        if (!record?.managed || !tokenBytes || !expectedBytes
+            || !timingSafeEqual(tokenBytes, expectedBytes)
+            || (instanceId !== undefined && record.instanceId !== instanceId)
+            || record.sessionId !== session.sessionId) throw new UserError("Unknown child run report.", 403);
+        const owned = state.children?.find((entry) => entry.id === record.childId);
+        if (!owned || owned.id !== record.childId || owned.path !== record.childPath) {
+            throw new UserError("Child ownership could not be verified.", 403);
+        }
+        const childPath = await verifiedChild(owned);
+        const automation = record.autopilotId
+            ? state.autopilots?.find((entry) => entry.id === record.autopilotId) ?? null : null;
+        if (record.autopilotId && (!automation
+            || !["Request sent", "Running"].includes(automation.status)
+                && !(input.status === "fail" && automation.status === "Blocked"))) {
+            throw new UserError("This Autopilot child run is no longer active.", 409);
+        }
+        if (automation?.managed && automation.current !==
+            workflowSteps.findIndex((step) => step.id === record.phase)) {
+            throw new UserError("Child phases must report in configured order.", 409);
+        }
+        if (input.status === "start") {
+            if (input.slug !== undefined || input.artifacts !== undefined || input.error !== undefined
+                || record.status !== "Request sent") throw new UserError("This child step cannot be started again.");
+            await update((next) => {
+                const run = next.runs.find((entry) => entry.runId === record.runId);
+                if (run.status !== "Request sent") throw new UserError("This child step was already started.");
+                run.status = "Running";
+                if (automation) {
+                    next.autopilots.find((entry) => entry.id === automation.id).status = "Running";
+                    if (next.autopilot?.id === automation.id) next.autopilot.status = "Running";
+                }
+            });
+            return { accepted: true };
+        }
+        if (input.status === "fail") {
+            if (!input.error?.trim() || input.slug !== undefined || input.artifacts !== undefined
+                || !["Request sent", "Running", "Unconfirmed"].includes(record.status)) {
+                throw new UserError("Invalid child failure report.");
+            }
+            await update((next) => {
+                const run = next.runs.find((entry) => entry.runId === record.runId);
+                if (!["Request sent", "Running", "Unconfirmed"].includes(run.status)) throw new UserError("Child step already ended.");
+                run.status = "Failed";
+                run.error = input.error;
+                if (automation) {
+                    const active = next.autopilots.find((entry) => entry.id === automation.id);
+                    active.status = "Blocked";
+                    active.error = input.error;
+                    if (next.autopilot?.id === automation.id) Object.assign(next.autopilot, active);
+                    for (const later of next.runs.filter((entry) => entry.autopilotId === automation.id
+                        && entry.status === "Request sent")) {
+                        later.status = "Failed";
+                        later.error = "An earlier step failed; this step was not started.";
+                    }
+                }
+            });
+            return { accepted: true };
+        }
+        if (input.error !== undefined || !Array.isArray(input.artifacts)
+            || record.status !== "Running") throw new UserError("Start the child step before reporting completion.");
+        const step = phaseFor(record.phase);
+        let item = record.item;
+        if (newItem(item)) {
+            if (!validSlug(input.slug)) throw new UserError("Report the actual created workflow slug.");
+            if (record.before.some((entry) => entry.split("/").at(-1) === input.slug)
+                || (state.children ?? []).some((entry) => entry.item !== record.item
+                    && entry.item.split("/").at(-1) === input.slug)) {
+                throw new UserError("That workflow already belongs to another run.");
+            }
+            const matches = [];
+            for (const root of roots) {
+                if ((await directories(childPath, root)).includes(input.slug)) matches.push(`${root}/${input.slug}`);
+            }
+            if (matches.length !== 1) throw new UserError("The reported workflow directory is missing or ambiguous.");
+            item = matches[0];
+        } else if (input.slug !== undefined) throw new UserError("Only a new workflow can report its slug.");
+        const unique = [...new Set(input.artifacts)];
+        if (unique.length !== input.artifacts.length) throw new UserError("Duplicate artifact report.");
+        const verifiedHashes = new Map();
+        for (const path of unique) {
+            authorizeReport(step, path, item);
+            const actual = await digestAt(childPath, path);
+            if (actual === null) throw new UserError("Reported artifact is not available.", 404);
+            if (actual === record.baselineArtifacts?.[path]) {
+                throw new UserError("Reported artifact is unchanged from this phase's launch; it was not produced by this run.", 409);
+            }
+            verifiedHashes.set(path, actual);
+        }
+        if (step.output) {
+            const expected = step.output.replace("<slug>", item.split("/").at(-1));
+            if (!unique.some((path) => expected.endsWith("<name>.md")
+                ? posix.dirname(path) === posix.dirname(expected) : path === expected)) {
+                throw new UserError(`Required artifact for ${step.label} was not reported.`);
+            }
+        }
+        if (step.project) {
+            if (state.runs.some((run) => !stepForProject(run)
+                && !["Completed", "Failed"].includes(run.status))) {
+                throw new UserError("Wait for active workflows before publishing a new constitution.", 409);
+            }
+            const target = step.output;
+            const bytes = await readBoundedBytes(childPath, target);
+            if (digest(bytes) !== verifiedHashes.get(target)) {
+                throw new UserError("Child constitution changed during verification; the parent was not modified.", 409);
+            }
+            await checkedAtomicFile(cwd, target, bytes, record.constitutionBaseline);
+        }
+        await update((next) => {
+            const run = next.runs.find((entry) => entry.runId === record.runId);
+            if (run.status !== "Running") throw new UserError("Child step already completed.");
+            run.item = item;
+            run.slug = input.slug ?? run.slug;
+            run.artifact = unique[0] ?? null;
+            run.artifacts = unique;
+            run.status = "Completed";
+            run.completedAt = new Date().toISOString();
+            if (item !== record.item) {
+                const owner = next.children.find((entry) => entry.item === record.item);
+                owner.item = item;
+                for (const sibling of next.runs.filter((entry) => entry.childId === record.childId)) sibling.item = item;
+                for (const phase of phases) {
+                    const from = JSON.stringify([record.item, phase.id]);
+                    if (Object.hasOwn(next.drafts, from)) {
+                        next.drafts[JSON.stringify([item, phase.id])] = next.drafts[from];
+                        delete next.drafts[from];
+                    }
+                }
+                next.pendingWorkflows = (next.pendingWorkflows ?? []).filter((entry) => entry.id !== record.item);
+                if (record.name) (next.names ??= {})[item] = record.name;
+                if (record.item === "__new__") { next.slug = ""; next.name = ""; }
+                if (next.selected === record.item) { next.selected = item; next.revision++; }
+            }
+            if (automation) {
+                const active = next.autopilots.find((entry) => entry.id === automation.id);
+                active.item = item;
+                active.current++;
+                active.status = active.current === workflowSteps.length ? "Completed" : "Running";
+                if (next.autopilot?.id === automation.id) Object.assign(next.autopilot, active);
+            }
+        });
+        const nextPhase = automation ? workflowSteps[state.autopilots.find(
+            (entry) => entry.id === automation.id).current]?.id ?? null : null;
+        try {
+            await sendChild({ session, id: record.childId,
+                message: `Canvas accepted run ${record.runId}. ${nextPhase
+                    ? `Continue with phase ${nextPhase} in this SAME child checkout.`
+                    : "The requested run is complete. Do not merge this child automatically."}` });
+        } catch (error) {
+            await diagnostic(`Child completion saved but acknowledgement failed: ${error.message}`);
+            return { accepted: true, nextPhase, warning: "Child acknowledgement failed; tell the child to continue manually." };
+        }
+        return { accepted: true, nextPhase };
+    }
+    async function legacyRun(input, instanceId) {
         if ((config.runtimeSetup !== undefined || config.showSetup) && !(await setup.status({ fresh: true })).ready) {
             throw new UserError("Project setup is not ready. Select Set up project, review any pending installs, and retry this phase.", 409);
         }
@@ -979,7 +1646,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         let finishedAutomation;
         await update((next) => {
             for (const run of next.runs) {
-                if (run.autopilotId) continue;
+                if (run.autopilotId || run.managed) continue;
                 if (run.sessionId !== session.sessionId || !run.messageId || ["Completed", "Failed"].includes(run.status)) continue;
                 const response = phaseResponse(events, run.messageId);
                 if (!response || response.success === undefined) {
@@ -994,7 +1661,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 run.error = response.error ?? null;
             }
             const automation = next.autopilot;
-            if (automation?.sessionId === session.sessionId && automation.messageId
+            if (automation?.sessionId === session.sessionId && !automation.managed && automation.messageId
                 && ["Request sent", "Running", "Finishing"].includes(automation.status)) {
                 const result = phaseResponse(events, automation.messageId);
                 if (result?.success !== undefined) {
@@ -1041,7 +1708,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         }));
     }
     async function refresh() {
-        if (state.runs.some((entry) => entry.sessionId === session.sessionId && entry.messageId && !["Completed", "Failed"].includes(entry.status))) {
+        if (state.runs.some((entry) => !entry.managed && entry.sessionId === session.sessionId
+            && entry.messageId && !["Completed", "Failed"].includes(entry.status))) {
             reconcile = reconcile.then(capture);
             try { await reconcile; } catch (error) { reconcile = Promise.resolve(); throw error; }
         }
@@ -1069,6 +1737,9 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 && !["Completed", "Failed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
+            if (childFor(item.id)) {
+                throw new UserError("This workflow is in an isolated child checkout. Manage its worktree in the child session; the parent cannot delete it.", 409);
+            }
             await deleteConfinedDirectory(cwd, item.id);
             removed = true;
             await update((next) => {
@@ -1093,7 +1764,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             : { ...step, output: input.output, configuredArtifacts: true };
         const path = await outputPath(selected, input.itemId, state, undefined, true);
         if (!path) throw new UserError("No output folder is available. Select a workflow or run the phase first.");
-        const folder = await existingOutputFolder(cwd, path);
+        const folder = await existingOutputFolder(await verifiedRoot(step, input.itemId), path);
         const [command, args] = process.platform === "win32" ? ["explorer.exe", [folder]]
             : process.platform === "darwin" ? ["open", [folder]] : ["xdg-open", [folder]];
         await new Promise((resolve, reject) => {
@@ -1105,7 +1776,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     }
 
         return { snapshot, refresh, save, saveValue, createPending, removePending, run,
-        startAutopilot, stopAutopilot, reportAutopilotStep,
+        startAutopilot, stopAutopilot, reportAutopilotStep, reportChild,
         report, reportSlug, artifact, reveal, deleteWorkflow,
         setupStart: setup.start, setupConfirm: setup.confirm, setupStatus: setup.status,
         close() { if (closed) return; closed = true; subscriptions.forEach((unsubscribe) => unsubscribe?.()); } };

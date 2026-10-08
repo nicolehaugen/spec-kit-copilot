@@ -13,23 +13,18 @@ After its versioned release is published, register the repository's preset
 catalog with `--install-allowed` and use
 `specify preset add copilot-vertical-phase-control`.
 
-Each step can be started manually. Autopilot asks the attached Copilot session
-to run the installed skills in order; the host validates reported outputs
-before accepting the next step. Stop or a failed/missing output leaves the
-workflow pending for an explicit retry. Like the stock control, a manual retry
-while a prior turn is pending may duplicate work; check chat first. Project
-Constitution remains a separate, project-scoped action; the default generated app retains its
-horizontal control when this preset is not selected.
-After a generated app restart, an unfinished Autopilot run is persisted as
-blocked. Check chat and outputs before retrying: the next request starts at
-the first unverified step, never replays a verified step, and restores the
-session mode from before the original run when it finishes. If every step
-was already verified, there is no step to retry; check chat for the outcome.
-An active Autopilot workflow cannot be deleted until it stops or finishes.
-Its Stop action remains visible when a different workflow is selected; phase
-progress on that workflow is not attributed to the active run. You can change
-the selection to reach Stop, but must stop a blocked run before starting
-Autopilot on another workflow if Copilot is still in Autopilot mode.
+Each step can be started manually. Autopilot runs the installed skills in order
+in the workflow's own nested session and worktree; the host validates reported
+outputs before accepting the next step. Other workflows can run in their own
+children concurrently. Stop a running child from that session's Copilot chat,
+not from the parent canvas. A failed or missing output blocks that workflow
+for an explicit retry; the same child/worktree is reused for its later phases.
+Project Constitution runs separately and cannot change during active workflow
+runs. The default generated app retains its horizontal control when this
+preset is not selected.
+After a generated app restart, inspect the child chat and artifacts before
+retrying an unfinished run; verified steps are not replayed. An active
+Autopilot workflow cannot be deleted until it finishes or is resolved.
 The managed-run capability is declared in the preset's phase-control JSON and
 frozen into generated configuration. The server verifies both packaged hashes
 without executing the browser module.

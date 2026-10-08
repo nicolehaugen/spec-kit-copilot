@@ -5,12 +5,45 @@ import { RESPONSE_LIMIT } from "./agent-actions.mjs";
 export const pendingId = (id) => /^__new__:[1-9]\d*$/.test(id);
 export const newItem = (id) => id === "__new__" || pendingId(id);
 export const freshState = () => ({ version: 1, revision: 0, selected: "__new__", phase: null, slug: "",
-    name: "", names: {}, drafts: {}, runs: [], values: {}, pendingWorkflows: [], workflowSerial: 0 });
+    name: "", names: {}, drafts: {}, runs: [], children: [], autopilots: [],
+    values: {}, pendingWorkflows: [], workflowSerial: 0 });
 
 export function validateWorkflowState(state, phases, valueFields) {
+    const invalidManagedRun = (run) => {
+        if (run.managed === undefined) return false;
+        if (run.managed !== true || typeof run.childId !== "string"
+            || typeof run.childPath !== "string" || typeof run.token !== "string"
+            || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(run.token)
+            || run.constitutionBaseline !== undefined && run.constitutionBaseline !== null
+                && !/^[a-f0-9]{64}$/.test(run.constitutionBaseline)) return true;
+        const artifacts = run.baselineArtifacts;
+        return artifacts !== undefined && (!artifacts || typeof artifacts !== "object"
+            || Array.isArray(artifacts) || Object.entries(artifacts).some(([path, hash]) =>
+                !path || !/^[a-f0-9]{64}$/.test(hash)));
+    };
     if (!state || state.version !== 1 || !Number.isSafeInteger(state.revision) || !Array.isArray(state.runs)
         || typeof state.drafts !== "object" || !state.drafts || Array.isArray(state.drafts)
         || typeof state.selected !== "string" || typeof state.slug !== "string"
+        || (state.children !== undefined && (!Array.isArray(state.children) || state.children.length > 100
+            || state.children.some((child) => !child || typeof child.item !== "string"
+                || typeof child.id !== "string" || typeof child.projectId !== "string"
+                || typeof child.path !== "string" || !child.path
+                || (child.constitutionDigest !== undefined && child.constitutionDigest !== null
+                    && !/^[a-f0-9]{64}$/.test(child.constitutionDigest))
+                || (child.setupPins !== undefined && (!child.setupPins
+                    || typeof child.setupPins !== "object" || Array.isArray(child.setupPins)
+                    || Object.entries(child.setupPins).some(([path, hash]) => !path
+                        || !/^[a-f0-9]{64}$/.test(hash)))
+                || (child.branch !== null && child.branch !== undefined && typeof child.branch !== "string"))
+            || new Set(state.children.map((child) => child.item)).size !== state.children.length))
+        || (state.autopilots !== undefined && (!Array.isArray(state.autopilots)
+            || state.autopilots.length > 100
+            || state.autopilots.some((entry) => !entry?.managed
+                || typeof entry.id !== "string" || typeof entry.item !== "string"
+                || !Number.isInteger(entry.current) || entry.current < 0
+                || entry.current > phases.filter((phase) => !phase.project).length
+                || !["Request sent", "Running", "Completed", "Blocked", "Paused"].includes(entry.status))
+            || new Set(state.autopilots.map((entry) => entry.id)).size !== state.autopilots.length))
         || (state.approvedUrlSources !== undefined
             && (!Array.isArray(state.approvedUrlSources) || state.approvedUrlSources.length > 80
                 || state.approvedUrlSources.some((receipt) =>
@@ -40,6 +73,7 @@ export function validateWorkflowState(state, phases, valueFields) {
                 && (typeof run.response !== "string" || Buffer.byteLength(run.response) > RESPONSE_LIMIT))
             || (run.responseError !== undefined && run.responseError !== null && typeof run.responseError !== "string")
             || (run.messageId !== null && typeof run.messageId !== "string"))
+        || state.runs.some(invalidManagedRun)
         || Object.values(state.drafts).some((draft) => typeof draft !== "string" || draft.length > 32000)
         || (state.values !== undefined && (!state.values || typeof state.values !== "object"
             || Array.isArray(state.values) || Object.entries(state.values).some(([id, value]) => {
@@ -54,7 +88,8 @@ export function validateWorkflowState(state, phases, valueFields) {
             || state.autopilot.current > phases.filter((step) => !step.project).length
             || !["Request sent", "Running", "Finishing", "Completed", "Blocked", "Paused"].includes(state.autopilot.status)
             || (state.autopilot.messageId !== null && typeof state.autopilot.messageId !== "string")
-            || !["interactive", "plan", "autopilot", "shell"].includes(state.autopilot.previousMode)))) {
+            || !["interactive", "plan", "autopilot", "shell"].includes(state.autopilot.previousMode)
+            || (state.autopilot.managed !== undefined && state.autopilot.managed !== true))))) {
         throw new UserError("Saved canvas state is invalid. Restore its state.json before continuing.");
     }
     return state;
