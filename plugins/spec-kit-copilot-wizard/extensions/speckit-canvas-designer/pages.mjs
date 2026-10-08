@@ -655,7 +655,11 @@ async function verifyWinner(inventory, checkout, root, item, executable = false)
             parent = dirname(parent);
         }
     }
-    if (await realpath(expected) !== expected || await realpath(root) !== root) {
+    const target = await realpath(expected);
+    if (!inside(root, target)) {
+        throw new Error(`${item.name}: Designer file escapes its allowed directory: ${expected}`);
+    }
+    if (target !== expected || await realpath(root) !== root) {
         throw new Error(`${item.name}: submitted path does not match the active Specify template`);
     }
 }
