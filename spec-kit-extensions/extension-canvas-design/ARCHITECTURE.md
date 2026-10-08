@@ -519,15 +519,12 @@ and every name in all Additional Designer pages, Additional Canvas Design
 templates sections (including executable .mjs assets). Deduplicate each named
 registration; reject conflicting kinds or IDs among distinct surviving names.
 
-From the Designer child project root, run the following for EACH collected
-template name:
-
-    specify preset resolve <name>
-
-Inspect both output and exit status. Match the exact `<name>:` output prefix to
-obtain its complete resolved path; do not construct a path from the name, scan
-.specify, or substitute a base-extension file. Stop on not found, ambiguity,
-composition warnings, or command errors—even if a missing result has exit code 0.
+From the Designer child project root, run `specify artifact list --json` once.
+Match each exact `template:<name>` to its sole active, replace-only stack layer
+and use that layer's `sourcePath` relative to the checkout. Do not scan .specify,
+reconstruct precedence, or substitute a base-extension file. Stop on missing
+or ambiguous metadata, unreadable winning files, warnings, or command errors.
+Reject a `script:<name>` inventory entry for any executable template asset.
 
 Validate the final resolved files against their declared kinds, sizes, locations,
 schemas, referenced IDs, required host adapters, and normal executable content
@@ -542,7 +539,7 @@ Only after the entire set resolves and validates, open the official Designer
 Canvas ONCE with the complete resolved page and contribution inventory.
 ```
 
-This extends a **working current pattern**: the existing base command already calls `specify preset resolve` for each named Designer page. It does **not yet** collect the proposed additional template section. The Designer Canvas open input also currently accepts resolved **page paths only**; it must evolve to accept the complete resolved contribution inventory. Native `type: script` artifacts cannot be resolved through this CLI command; support for script-kind adapters or `wrap` must wait for a Specify-owned CLI resolve/materialize interface, not a Canvas Design resolver. `specify artifact info template:<name> --json` may help diagnose a surprising winner, but is not a prerequisite to using the resolved file.
+**Current startup (after this design):** the generated composed load-page skill names pages and other Canvas Design templates. Its installed verifier calls `specify artifact list --json` once, maps each declared `template:<name>` to the unique active replace-only layer's `sourcePath`, rejects native `script:<name>` collisions for executable assets, and passes the typed result to Designer. The provider fetches a fresh inventory at open to verify the submitted paths and sources. The composed load-page **command** may itself use appended layers; replace-only is a requirement for the named template assets, not command composition. Native script-kind adapters and `wrap` still await a Specify-owned CLI resolve/materialize interface.
 
 Evolve the composed `load-page` command and Designer Canvas open-input contract **together** so the Designer child passes that resolved inventory. This is a new design, not a compatibility contract with older installed Designer providers or mixed old/new command and provider versions; no optional legacy input or version-negotiation layer is required. The **Wizard Canvas code and behavior, including its Wizard-to-Designer handoff payload, remain unchanged**. Resolve the additional design contributions after that handoff in the Designer child, without requiring new Wizard-side fields or changing the existing workflow-package installation path.
 
