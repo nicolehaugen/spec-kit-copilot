@@ -848,6 +848,8 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
     };
     const pageViews = new Map();
     let badgeMounts = 0;
+    let badgeUpdates = 0;
+    const draftOutputs = { specify: { outputs: ["spec.md"] } };
     const renderPage = runInNewContext(`${source.slice(start, end)}\nrenderPage`, {
         model: { revision: "same", phases: [], outputs: {}, pages: [
             { page: "designer-badges", fields: [], fixedControl: "designer.badges" },
@@ -856,18 +858,28 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
         root, pageViews, currentPage: null,
         tabs: { children: [{ dataset: { page: "designer-badges" }, setAttribute() {} },
             { dataset: { page: "designer-outputs" }, setAttribute() {} }] },
-        mountBadges: () => { badgeMounts++; root.replaceChildren({ draft: "" }); },
+        mountBadges: () => {
+            badgeMounts++;
+            root.replaceChildren({ draft: "", choices: ["spec.md"] });
+            return { updateOutputs(outputs) {
+                badgeUpdates++;
+                root.childNodes[0].choices = [...outputs.specify.outputs];
+            } };
+        },
         mountOutputs: () => root.replaceChildren({ output: true }),
-        draftBadges: [], draftOutputs: {}, updateSave() {},
+        draftBadges: [], draftOutputs, updateSave() {},
     });
     renderPage("designer-badges");
     const editor = root.childNodes[0];
     editor.draft = "still editing";
     renderPage("designer-outputs");
+    draftOutputs.specify.outputs.push("new.md");
     renderPage("designer-badges");
     assert.equal(root.childNodes[0], editor);
     assert.equal(root.childNodes[0].draft, "still editing");
+    assert.deepEqual(root.childNodes[0].choices, ["spec.md", "new.md"]);
     assert.equal(badgeMounts, 1);
+    assert.equal(badgeUpdates, 1);
     assert.ok(pageViews.has("designer-outputs"));
 });
 

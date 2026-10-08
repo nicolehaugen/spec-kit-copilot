@@ -173,6 +173,7 @@ function updatePreview(preview, badge) {
 
 export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRules,
     draftBadges, onChange }) {
+    let outputsSnapshot = JSON.stringify(outputs);
     const types = badgeTypes.filter((type) => type.enabled);
     for (const [first, second] of [
         ["artifact-current", "artifact-stale"],
@@ -895,4 +896,13 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         root.append(editor);
     };
     redraw();
+    return {
+        updateOutputs(next) {
+            const snapshot = JSON.stringify(next);
+            if (snapshot === outputsSnapshot) return;
+            outputs = next;
+            outputsSnapshot = snapshot;
+            redraw();
+        },
+    };
 }

@@ -40,9 +40,9 @@ function setup({ phases = ["specify", "plan"], outputs = {
     globalThis.document = { createElement: (tag) => new Node(tag) };
     const root = new Node("div");
     let changes = 0;
-    mountBadges({ root, page: { title: "Badges", description: "Add result badges" },
+    const view = mountBadges({ root, page: { title: "Badges", description: "Add result badges" },
         phases, outputs, badgeTypes, badgeRules, draftBadges, onChange() { changes++; } });
-    return { root, draftBadges, changes: () => changes,
+    return { root, view, draftBadges, changes: () => changes,
         cleanup: () => { globalThis.document = previous; } };
 }
 
@@ -74,6 +74,34 @@ function placementText(root, name) {
 }
 
 function submit(editor) { editor.events.submit({ preventDefault() {} }); }
+
+test("refreshing confirmed outputs updates cached choices without losing the badge editor", () => {
+    const outputs = { specify: { outputs: ["spec.md"], view: "spec.md" } };
+    const { root, view, draftBadges, cleanup } = setup({ phases: ["specify"], outputs });
+    try {
+        const editor = choose(root);
+        view.updateOutputs(outputs);
+        assert.equal(root.querySelector(".badge-editor"), editor);
+        const text = placementText(root, "Workflow list text");
+        text.value = "Still editing {count}";
+        text.events.input();
+        outputs.specify.outputs.push("new.md");
+        view.updateOutputs(outputs);
+        assert.equal(placementText(root, "Workflow list text").value, "Still editing {count}");
+        assert.ok(check(root, "badge-artifact-set", "new.md"));
+        outputs.specify.outputs.splice(0, 1);
+        view.updateOutputs(outputs);
+        assert.ok(descendants(root).some((node) => node.textContent.includes(
+            "Some selected evidence outputs are no longer confirmed")));
+        const added = check(root, "badge-artifact-set", "new.md");
+        added.checked = true;
+        added.events.change();
+        submit(root.querySelector(".badge-editor"));
+        assert.equal(draftBadges[0].text, "Still editing {count}");
+        assert.deepEqual(draftBadges[0].inputs.artifacts,
+            [{ phase: "specify", outputs: ["new.md"] }]);
+    } finally { cleanup(); }
+});
 
 const checklistType = { id: "checklist-complete", rule: "checklist-complete",
     title: "Checklist complete", defaultText: "Checklist complete",
@@ -665,6 +693,27 @@ test("editing removes only unavailable output placements", () => {
         submit(editor);
         assert.deepEqual(draftBadges[0].targets,
             [{ phase: "specify", output: "spec.md" }]);
+    } finally { cleanup(); }
+});
+
+test("refreshing a cached editor flags newly unavailable saved placements", () => {
+    const outputs = { specify: { outputs: ["spec.md"], view: "spec.md" } };
+    const saved = { id: "old", type: "count",
+        inputs: { artifacts: [{ phase: "specify", outputs: ["spec.md"] }] },
+        text: "Needs review", color: "blue", showIn: ["workflow-list"],
+        phase: null, targets: [{ phase: "specify", output: "spec.md" }] };
+    const { root, view, draftBadges, cleanup } = setup({
+        phases: ["specify"], outputs, draftBadges: [saved],
+    });
+    try {
+        root.querySelector(".badge-edit").events.click();
+        assert.ok(!descendants(root.querySelector(".badge-legacy-placement"))
+            .some((node) => node.textContent.includes("Some saved placements are unavailable")));
+        outputs.specify.outputs.splice(0, 1);
+        view.updateOutputs(outputs);
+        assert.ok(descendants(root.querySelector(".badge-legacy-placement"))
+            .some((node) => node.textContent.includes("Some saved placements are unavailable")));
+        assert.deepEqual(draftBadges, [saved]);
     } finally { cleanup(); }
 });
 

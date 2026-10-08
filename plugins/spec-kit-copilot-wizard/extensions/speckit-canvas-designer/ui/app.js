@@ -6,6 +6,7 @@ const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
 let model, currentPage, draft, draftOutputs, draftBadges, saving = false;
+let badgeView;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
@@ -202,6 +203,7 @@ function renderPage(pageId, invalidFieldId) {
     root.setAttribute("aria-labelledby", `page-tab-${pageId}`);
     if (pageViews.has(pageId)) {
         root.replaceChildren(...pageViews.get(pageId));
+        if (page.fixedControl === "designer.badges") badgeView.updateOutputs(draftOutputs);
         if (invalidFieldId) {
             const mount = [...root.querySelectorAll("[data-field-id]")]
                 .find((item) => item.dataset.fieldId === invalidFieldId);
@@ -231,7 +233,7 @@ function renderPage(pageId, invalidFieldId) {
         return true;
     }
     if (page.fixedControl === "designer.badges") {
-        mountBadges({ root, page, phases: model.phases, outputs: draftOutputs,
+        badgeView = mountBadges({ root, page, phases: model.phases, outputs: draftOutputs,
             badgeTypes: model.badgeTypes ?? [], badgeRules: model.badgeRules ?? [],
             draftBadges, onChange: updateSave });
         root.setAttribute("aria-busy", "false");
@@ -381,6 +383,7 @@ function applyState(next) {
         model = next;
         pageViews.clear();
         mounted.clear();
+        badgeView = undefined;
         root.replaceChildren();
         document.getElementById("preview-banner").hidden = !model.preview;
         document.getElementById("save-help").hidden = !!model.preview;
