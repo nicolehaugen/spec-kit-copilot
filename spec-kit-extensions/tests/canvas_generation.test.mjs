@@ -1659,7 +1659,8 @@ test("optional artifact folder slug previews only when enabled and binds the act
         assert.doesNotMatch(html, /id="phase-card"|id="phase-args"|phase-template-/);
         assert.match(collection, /id="workflow-name-label">Workflow name<\/span>/);
         assert.ok(collection.indexOf('id="workflow-name"') < collection.indexOf('id="workflow-slug"'));
-        assert.match(collection, /id="workflow-slug-label">Artifact directory slug <span class="muted">Optional<\/span>/);
+        assert.match(collection, /id="workflow-slug-label">Artifact directory slug<\/span>/);
+        assert.doesNotMatch(collection, /id="workflow-slug-label"[^<]*Optional/);
         assert.doesNotMatch(collection, /id="workflow-slug"[^>]+required/);
         assert.match(collection, /id="workflow-slug-help">Leave blank to let Spec Kit choose/);
         assert.match(collection, /id="workflow-name-help">Shown in the workflow list\./);

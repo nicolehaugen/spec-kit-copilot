@@ -48,7 +48,7 @@ export function renderStockPage(root, definition) {
                 <input class="phase-input-control" id="workflow-name" type="text" maxlength="120"
                     placeholder="Workflow 1" aria-describedby="workflow-name-help">
                 <span class="muted" id="workflow-name-help">Shown in the workflow list.</span></label>
-            <label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact directory slug <span class="muted">Optional</span></span>
+            <label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact directory slug</span>
                 <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100"
                     pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="workflow-1"
                     aria-describedby="workflow-slug-help workflow-slug-error">
