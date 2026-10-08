@@ -702,8 +702,9 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 return;
             }
             if (request.method === "GET" && url.pathname === "/contracts/host-adapter.mjs") {
+                const module = readPackagedFile(new URL("./contracts/host-adapter.mjs", import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
-                    .end(readFileSync(new URL("./contracts/host-adapter.mjs", import.meta.url)));
+                    .end(module);
                 return;
             }
             const imageAsset = [config.brandAsset, config.mainPageAsset,

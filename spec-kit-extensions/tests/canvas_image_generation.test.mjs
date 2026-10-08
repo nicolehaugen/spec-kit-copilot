@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { cp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -286,6 +286,78 @@ test("generated canvas rejects packaged asset directories redirected outside its
             assert.throws(() => readConfig(), /Packaged asset directory escapes/);
         });
     }
+});
+
+test("generated host adapter route rejects linked and oversized packaged files after startup", async (t) => {
+    const { project, workspace, prepared, sdk } = await setup(t);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const { readConfig, createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    const routes = createWorkflowRoutes(readConfig(), { token: "secret", runtime: null });
+    const server = createServer(routes.handle);
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => {
+        routes.close();
+        server.closeAllConnections();
+        return new Promise((resolve) => server.close(resolve));
+    });
+    const url = `http://127.0.0.1:${server.address().port}/contracts/host-adapter.mjs?token=secret`;
+    assert.equal((await fetch(url)).status, 200);
+    const contracts = join(sdk, "contracts");
+    const adapter = join(contracts, "host-adapter.mjs");
+    const original = join(sdk, "original-host-adapter.mjs");
+    await t.test("file symlink", async (subtest) => {
+        const outside = join(workspace, "outside-host-adapter.mjs");
+        await writeFile(outside, "private outside package");
+        await rename(adapter, original);
+        try {
+            try {
+                await symlink(outside, adapter, "file");
+            } catch (error) {
+                if (["EPERM", "EACCES", "ENOTSUP"].includes(error.code)) {
+                    subtest.skip("File symlinks are unavailable on this host");
+                    return;
+                }
+                throw error;
+            }
+            const response = await fetch(url);
+            assert.equal(response.status, 500);
+            assert.doesNotMatch(await response.text(), /private outside package/);
+        } finally {
+            await rm(adapter, { force: true });
+            await rename(original, adapter);
+        }
+    });
+    await t.test("parent directory link", async (subtest) => {
+        const originalDirectory = join(sdk, "original-contracts");
+        const outside = join(workspace, "outside-contracts");
+        await mkdir(outside);
+        await writeFile(join(outside, "host-adapter.mjs"), "private outside package");
+        await rename(contracts, originalDirectory);
+        let linked = false;
+        try {
+            try {
+                await symlink(outside, contracts, process.platform === "win32" ? "junction" : "dir");
+                linked = true;
+            } catch (error) {
+                if (["EPERM", "EACCES", "ENOTSUP"].includes(error.code)) {
+                    subtest.skip("Directory symlinks are unavailable on this host");
+                    return;
+                }
+                throw error;
+            }
+            const response = await fetch(url);
+            assert.equal(response.status, 500);
+            assert.doesNotMatch(await response.text(), /private outside package/);
+        } finally {
+            if (linked) {
+                if (process.platform === "win32") await rmdir(contracts);
+                else await unlink(contracts);
+            }
+            await rename(originalDirectory, contracts);
+        }
+    });
+    await writeFile(adapter, Buffer.alloc(32 * 1024 + 1));
+    assert.equal((await fetch(url)).status, 500);
 });
 
 test("missing Logo keeps diamond; frozen image and adapter tampering fail before packaging", async (t) => {
