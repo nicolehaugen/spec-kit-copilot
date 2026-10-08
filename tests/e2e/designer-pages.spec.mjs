@@ -829,6 +829,11 @@ test("Billing preset and built-in palette persist through Generate and render th
         expect(config.appearance).toMatchObject({
             light: { accent: "#123aBc" }, dark: { accent: "#ABC123" },
         });
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-second");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
         const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
             "extensions", "billing-canvas", "server.mjs")).href);
         generatedRoutes = createWorkflowRoutes(config, {
@@ -1119,7 +1124,7 @@ test("Essentials keeps the Workflow header without a slug toggle", async ({ page
         await expect(id).toHaveValue("example-canvas");
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        await expect(page.getByRole("status")).toHaveText("Ready");
+        await expect(page.getByRole("status")).toHaveText("Live");
     } finally {
         await shell.close();
     }
@@ -1190,7 +1195,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
 test("failed optional page shows safe diagnostics while Essentials remains editable", async ({ page }) => {
     const shell = await openWithError(page, "designer-artifacts");
     try {
-        await expect(page.getByRole("status")).toHaveText("Pages need attention (1)");
+        await expect(page.getByRole("status")).toHaveText("Live");
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         await id.fill("my-canvas");
         await page.getByRole("tab", { name: "designer-artifacts (error)" }).click();

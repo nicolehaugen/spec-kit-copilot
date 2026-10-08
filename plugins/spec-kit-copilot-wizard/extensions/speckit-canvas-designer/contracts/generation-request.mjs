@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
 
 export const REQUEST_LIMIT = 4 * 1024 * 1024;
+export const GENERATION_PENDING = "Generation is already queued for this Designer panel";
+export const GENERATION_EXISTS = "Canvas already exists; choose and save a different Canvas ID.";
+
+export function generationAvailability(pending, exists) {
+    if (typeof pending !== "boolean" || typeof exists !== "boolean") {
+        throw new Error("Invalid Designer generation availability");
+    }
+    return { available: !pending && !exists,
+        error: pending ? GENERATION_PENDING : exists ? GENERATION_EXISTS : null };
+}
 
 export function validateGenerateSubmission(input, model) {
     const expectedKeys = ["modelRevision", "settingsRevision", "values",

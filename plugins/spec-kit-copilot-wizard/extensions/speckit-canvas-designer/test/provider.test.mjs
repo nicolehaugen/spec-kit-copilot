@@ -19,11 +19,19 @@ import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
 import { freezeGeneration, generationBlockers, validateEssentials } from "../generation.mjs";
+import { generationAvailability, GENERATION_EXISTS, GENERATION_PENDING } from "../contracts/generation-request.mjs";
 import { decodeImage } from "../image.mjs";
 import { renderStockPage } from "../../../../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 
 const ID = "designer_1";
 const scalarFixtures = new Map();
+test("generation availability contract rejects incompatible flags and prioritizes queued work", () => {
+    assert.deepEqual(generationAvailability(false, false), { available: true, error: null });
+    assert.deepEqual(generationAvailability(true, false), { available: false, error: GENERATION_PENDING });
+    assert.deepEqual(generationAvailability(false, true), { available: false, error: GENERATION_EXISTS });
+    assert.deepEqual(generationAvailability(true, true), { available: false, error: GENERATION_PENDING });
+    assert.throws(() => generationAvailability(null, false), /Invalid Designer generation availability/);
+});
 function stockMarkup(config) {
     const root = { innerHTML: "" };
     renderStockPage(root, { canvas: config.canvas, mainPageAsset: config.mainPageAsset,
@@ -2579,6 +2587,54 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(frozen.canvas.description, "Newer settings");
     assert.equal(frozen.settingsRevision, 1);
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
+});
+
+test("Generate accepts a different saved Canvas ID only after the first app entry point exists", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const skill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-generate", "SKILL.md");
+    await mkdir(dirname(skill), { recursive: true });
+    await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
+    const prompts = [];
+    const shell = await startShell(handoff, model, { project, workspace,
+        session: { send: async (value) => prompts.push(value.prompt) } });
+    t.after(() => shell.close());
+    const stateUrl = new URL(shell.url);
+    stateUrl.pathname = "/api/state";
+    const generateUrl = new URL(shell.url);
+    generateUrl.pathname = "/api/generate";
+    const first = { ...model.values, "canvas.id": "first-canvas", "canvas.displayName": "First" };
+    const second = { ...first, "canvas.id": "second-canvas", "canvas.displayName": "Second" };
+    const post = (values, revision = 0) => fetch(generateUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelRevision: model.revision, settingsRevision: revision, values }) });
+    assert.equal((await post(first)).status, 202);
+    assert.equal((await post(second)).status, 409);
+    const target = join(project, ".github", "extensions", "first-canvas");
+    await mkdir(target, { recursive: true });
+    assert.equal((await post(second)).status, 409);
+    assert.equal((await (await fetch(stateUrl)).json()).generationAvailable, false);
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    const duplicate = await post(first);
+    assert.equal(duplicate.status, 409);
+    assert.match((await duplicate.json()).error, /already exists/);
+    const saveUrl = new URL(shell.url);
+    saveUrl.pathname = "/api/save";
+    const saved = await fetch(saveUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelRevision: model.revision, revision: 0, values: second }) });
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json()).generationAvailable, true);
+    assert.equal((await post(second, 1)).status, 202);
+    assert.equal(prompts.length, 2);
+    assert.equal((await post(second, 1)).status, 409);
 });
 
 test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {

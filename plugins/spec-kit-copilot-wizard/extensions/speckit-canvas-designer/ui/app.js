@@ -9,7 +9,7 @@ let model, currentPage, draft, draftOutputs, draftBadges, saving = false;
 let badgeView;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
-let queued = false;
+let queuedCanvasId = null;
 const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
@@ -60,7 +60,9 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
+    generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
+        || (queuedCanvasId && (draft?.["canvas.id"] === queuedCanvasId
+            || draft?.["canvas.id"] !== model?.values?.["canvas.id"])) || !outputPathsReady()
         || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity || !!model?.generationBlockers?.length;
@@ -104,7 +106,7 @@ generate.addEventListener("click", async () => {
             messageBox.textContent = `Warning: ${result.warnings.join(" ")}`;
             messageBox.hidden = false;
         }
-        queued = true;
+        queuedCanvasId = values["canvas.id"];
     } catch (error) {
         showFieldError(error.message);
     } finally {
@@ -440,7 +442,15 @@ async function checkConnection() {
         const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`,
             { signal: AbortSignal.timeout(5000) });
         if (!response.ok) throw new Error(`Designer connection check failed (${response.status})`);
+        const latest = await response.json();
+        if (typeof latest?.generationAvailable !== "boolean"
+            || (latest.generationError !== null && typeof latest.generationError !== "string")) {
+            throw new Error("Designer connection check returned invalid generation state");
+        }
         if (model) {
+            model.generationAvailable = latest.generationAvailable;
+            model.generationError = latest.generationError;
+            updateGenerate();
             connectionStatus("live");
             if (connectionError && errorBox.textContent === connectionError) showError("");
             connectionError = "";

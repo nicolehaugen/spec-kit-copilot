@@ -144,7 +144,7 @@ jobs:
           node --test plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/test/designer-launch.test.mjs
 
       - name: Test generated canvas and Designer provider
-        run: node --test spec-kit-extensions/tests/*.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
+        run: node --test spec-kit-extensions/tests/*.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/shell-ui.test.mjs
 
       - name: Create extension ZIP
         env:

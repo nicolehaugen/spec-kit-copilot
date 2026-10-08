@@ -56,7 +56,7 @@ test("Designer health check reports failed and restored connections without repl
     const status = {};
     const errorBox = { textContent: "" };
     const draft = { "canvas.displayName": "Unsaved title" };
-    let response = { ok: true };
+    let response = { ok: true, json: async () => ({ generationAvailable: true, generationError: null }) };
     let polls;
     let reloaded = false;
     const check = runInNewContext(`${source.slice(start, end)}\ncheckConnection`, {
@@ -66,6 +66,7 @@ test("Designer health check reports failed and restored connections without repl
         model: {},
         draft,
         fetch: async () => response,
+        updateGenerate: () => {},
         AbortSignal,
         encodeURIComponent,
         showError: (message) => { errorBox.textContent = message; },
@@ -83,9 +84,45 @@ test("Designer health check reports failed and restored connections without repl
     assert.equal(status.textContent, "Disconnected");
     assert.match(errorBox.textContent, /connection interrupted.*503.*Unsaved edits remain/);
     assert.equal(draft["canvas.displayName"], "Unsaved title");
-    response = { ok: true };
+    response = { ok: true, json: async () => ({ generationAvailable: true, generationError: null }) };
     await check();
     assert.equal(status.textContent, "Live");
     assert.equal(errorBox.textContent, "");
     assert.equal(reloaded, false);
+});
+
+test("Generate remains disabled for the queued ID and enables for a different saved ID", () => {
+    const start = source.indexOf("function outputPathsReady()");
+    const end = source.indexOf("function confirmProviders(", start);
+    assert.ok(start >= 0 && end > start);
+    const generate = { disabled: false };
+    const generationError = { textContent: "", hidden: true };
+    const model = {
+        pages: [{ page: "designer-essentials", fields: [
+            { id: "canvas.id" }, { id: "canvas.displayName" },
+        ] }],
+        values: { "canvas.id": "first-canvas" },
+        handoffId: "handoff-1",
+        generationAvailable: false,
+        generationBlockers: [],
+    };
+    const draft = { "canvas.id": "first-canvas" };
+    const update = runInNewContext(`${source.slice(start, end)}\nupdateGenerate`, {
+        model, draft, draftOutputs: {}, generate, saving: false, generating: false,
+        queuedCanvasId: "first-canvas", activeUploads: new Set(),
+        required: ["canvas.id", "canvas.displayName"],
+        document: { getElementById: () => generationError },
+    });
+    update();
+    assert.equal(generate.disabled, true);
+    draft["canvas.id"] = "second-canvas";
+    update();
+    assert.equal(generate.disabled, true);
+    model.values["canvas.id"] = "second-canvas";
+    model.generationAvailable = true;
+    update();
+    assert.equal(generate.disabled, false);
+    draft["canvas.id"] = "first-canvas";
+    update();
+    assert.equal(generate.disabled, true);
 });

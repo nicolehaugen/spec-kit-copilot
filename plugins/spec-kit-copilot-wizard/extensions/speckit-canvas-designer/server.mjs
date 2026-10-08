@@ -4,11 +4,12 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { validateBadges } from "./contracts/badges.mjs";
-import { validateGenerateSubmission } from "./contracts/generation-request.mjs";
+import { GENERATION_EXISTS, GENERATION_PENDING, generationAvailability,
+    validateGenerateSubmission } from "./contracts/generation-request.mjs";
 import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
     loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
-import { freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
+import { canvasOutputExists, freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -82,17 +83,23 @@ export async function startShell(handoff = null, model = null, { project, worksp
     const skillAvailable = project ? await hasGenerateSkill(project) : false;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? GENERATE_UNAVAILABLE : null;
-    const state = () => ({ ...model, badges: model?.badges ?? [],
-        generationBlockers: model ? generationBlockers(model) : [],
-        phases: handoff?.workflow.selectedPhases ?? model?.phases ?? [],
-        pipelineOutputs: handoff ? initialOutputs(handoff) : model?.pipelineOutputs ?? {},
-        handoffId: handoff?.handoffId,
-        preview,
-        generationAvailable: !!handoff?.workflow?.installed && !!session?.send
-            && !!project && skillAvailable && generationBlockers(model).length === 0,
-        generationError });
+    let queuedCanvasId = null;
+    const state = async () => {
+        const pending = Boolean(queuedCanvasId && !await canvasOutputExists(project, queuedCanvasId, true));
+        const exists = await canvasOutputExists(project, model?.values?.["canvas.id"]);
+        const availability = generationAvailability(pending, exists);
+        return { ...model, badges: model?.badges ?? [],
+            generationBlockers: model ? generationBlockers(model) : [],
+            phases: handoff?.workflow.selectedPhases ?? model?.phases ?? [],
+            pipelineOutputs: handoff ? initialOutputs(handoff) : model?.pipelineOutputs ?? {},
+            handoffId: handoff?.handoffId,
+            preview,
+            generationAvailable: !!handoff?.workflow?.installed && !!session?.send
+                && !!project && skillAvailable && availability.available
+                && generationBlockers(model).length === 0,
+            generationError: availability.error ?? generationError };
+    };
     let generating = false;
-    let queued = false;
     const server = createServer(async (req, res) => {
         let url;
         try {
@@ -146,7 +153,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 }
                 model = await saveDesignerSettings(workspace, handoff, model, request);
                 res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-                res.end(JSON.stringify(state()));
+                res.end(JSON.stringify(await state()));
             } catch (error) {
                 const invalid = error instanceof SyntaxError
                     || /Invalid Designer|Invalid outputs for phase|unexpected or missing fields|Pipeline artifacts cannot be changed|Constitution output is fixed/.test(error.message);
@@ -166,13 +173,18 @@ export async function startShell(handoff = null, model = null, { project, worksp
                     .end(JSON.stringify({ error: "Generation dispatch is unavailable" }));
                 return;
             }
-            if (generating || queued) {
+            if (generating) {
                 res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
-                    .end(JSON.stringify({ error: "Generation is already queued for this Designer panel" }));
+                    .end(JSON.stringify({ error: GENERATION_PENDING }));
                 return;
             }
             generating = true;
             try {
+                if (queuedCanvasId && !await canvasOutputExists(project, queuedCanvasId, true)) {
+                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
+                        .end(JSON.stringify({ error: GENERATION_PENDING }));
+                    return;
+                }
                 if (req.headers.origin && req.headers.origin !== `http://127.0.0.1:${server.address().port}`) {
                     throw new Error("Untrusted generation request origin");
                 }
@@ -193,6 +205,11 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 const current = await loadDesignerSettings(workspace, handoff, model);
                 if (input.settingsRevision !== current.settingsRevision) {
                     throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");
+                }
+                if (await canvasOutputExists(project, input.values["canvas.id"])) {
+                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
+                        .end(JSON.stringify({ error: GENERATION_EXISTS }));
+                    return;
                 }
                 validateBadges(Object.hasOwn(input, "badges") ? input.badges : current.badges,
                     { ...current, phases: handoff.workflow.selectedPhases,
@@ -233,12 +250,13 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 } catch (cause) {
                     throw new Error(`Generation dispatch failed: ${cause.message}`, { cause });
                 }
-                queued = true;
+                queuedCanvasId = input.values["canvas.id"];
                 res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify(result));
             } catch (error) {
                 const status = error.code ? 500 : error.message.startsWith("Generation dispatch failed:") ? 503
-                    : error.message.startsWith("Designer settings changed elsewhere.") ? 409 : 422;
+                    : error.message.startsWith("Designer settings changed elsewhere.")
+                        || error.message.startsWith("Canvas already exists:") ? 409 : 422;
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify({ error: error.message }));
             } finally {
@@ -248,8 +266,14 @@ export async function startShell(handoff = null, model = null, { project, worksp
         }
         if (req.method !== "GET") { res.writeHead(404).end(); return; }
         if ((handoff || preview) && url.pathname === "/api/state") {
-            res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-            res.end(JSON.stringify(state()));
+            try {
+                const current = await state();
+                res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+                res.end(JSON.stringify(current));
+            } catch (error) {
+                res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ error: `Could not check generated canvas: ${error.message}` }));
+            }
         } else if (assets.has(url.pathname)) {
             const { type, content } = assets.get(url.pathname);
             res.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });

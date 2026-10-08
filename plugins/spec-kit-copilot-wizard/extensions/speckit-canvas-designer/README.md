@@ -196,6 +196,12 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
+Once generation is queued, the current panel waits for the generated app's
+`extension.mjs` entry point. To generate another app, choose a different Canvas
+ID and Save; Generate then becomes available again. An existing Canvas ID
+cannot be generated twice. A partial generation without an entry point remains
+queued in that panel; reopening Designer after investigating the failure
+restores the saved settings without claiming the app was generated.
 At Generate, Designer checks the child checkout's Specify inventory for packages
 in the Wizard handoff and freezes their installed versions alongside the original
 Wizard snapshot. Unrelated installed packages do not affect version verification.
