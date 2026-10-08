@@ -4,7 +4,7 @@
 
 The original test suite had strong lower-level contracts and substantial Designer/generated-canvas browser coverage, but little browser coverage of the Wizard's setup, catalog, composition refresh, pipeline, phase run, and output journeys. Some browser tests asserted invented catalog copy/counts, duplicated lower-level checks, or used wall-clock timings. The [flow plan](wizard-designer-test-plan.md) was implemented in stages: first create package-backed deterministic fixtures and harnesses; then add the missing browser journeys; finally consolidate tests only when replacement coverage passes. Keep distinct security, provenance, and data-loss regressions, however rare their inputs. Include the generated canvas.
 
-The plan was approved and locally implemented. The execution record below describes validation before integration with newer `main` changes; revalidation is required after that integration.
+The plan was approved and locally implemented. The validation results below were recorded after integrating newer `main` changes. Verification against the published catalog-selected archive remains a separate release-readiness check.
 
 ## Required testing contract
 

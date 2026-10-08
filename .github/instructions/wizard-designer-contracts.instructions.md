@@ -2,14 +2,29 @@
 applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**/*,spec-kit-extensions/extension-canvas-design/**/*,spec-kit-extensions/tests/**/*,spec-kit-presets/*/generated/**/*,spec-kit-presets/copilot-*-test/**/*,tests/e2e/**/*,tests/fixtures/specify/**/*"
 ---
 
-Do not change a Wizard, Designer, or generated-canvas data contract without
-explicit instruction from the user to make that contract change. This includes
-schemas and validation rules, persisted state and handoff formats, canvas action
-inputs and outputs, HTTP/SSE payloads, artifact and phase reporting shapes, and
-test fixtures that define those interfaces. A request to fix a bug, make tests
-pass, or implement a UI change is not approval to change a contract.
+For new or changed host-adapter APIs, payloads, events, state, capabilities, or
+mount points, define a source-owned contract for shapes, semantics, allowed
+values, validation, and errors. Wire both sides to it and test valid and
+incompatible exchanges. Reviewers must flag missing or mismatched contracts
+and boundary tests, even when no contract file existed before.
 
-If a contract change appears necessary, explain the existing contract, the
-proposed change, and its compatibility and test implications, then ask the user
-for approval before editing it. Until approved, preserve the contract and
-investigate a compatible implementation instead.
+Hosts own shared mounting/navigation, session/workflow operations, saved state
+and artifacts, and checks on declared actions (phase order, paths, value types,
+revisions). Adapters own DOM, rendering, events, and updates, including
+composite controls. Do not add contribution-specific host branches or let
+adapters call workflow endpoints or change private host state; new host
+capabilities must be reusable. Reviewers must flag violations.
+
+New customizable UI normally registers named JSON definition and JavaScript
+adapter/renderer templates for each host where rendered. Reuse shared
+definitions and stock/generic rendering; a composite control needs no template
+per internal element. Document single-host, nonvisual, or fixed-shell
+exceptions. Reviewers must flag missing registrations or unjustified missing
+host-specific pairs.
+
+Do not change Wizard, Designer, or generated-canvas contracts without explicit
+user approval: schemas/validation, persisted state/handoffs, canvas actions,
+HTTP/SSE payloads, artifact/phase reporting, or defining fixtures. Bug fixes,
+passing tests, and UI work do not imply approval. If a change seems necessary,
+explain the old and proposed contracts and compatibility/test impact, then ask
+before editing; otherwise preserve the contract.
