@@ -352,8 +352,7 @@ test("phase status and execution report reach the stepper, then verified output 
     });
 });
 
-test("phase can be rerun after acknowledgement expires while the first agent turn is unanswered", async ({ page }) => {
-    await page.clock.install();
+test("phase can be rerun while the first agent turn is unanswered", async ({ page }) => {
     await withWizardCheckout(page, async ({ prompts, inst }) => {
         await page.getByRole("tab", { name: "Phases" }).click();
         await page.locator("#stepper .step").first().click();
@@ -362,10 +361,9 @@ test("phase can be rerun after acknowledgement expires while the first agent tur
         await page.locator("#phase-card").getByRole("button", { name: "Run phase" }).click();
         const { runId } = await (await submit).json();
         await expect.poll(() => prompts.length).toBe(1);
-        await expect(page.locator("#phase-card").getByRole("button", { name: "Running…" })).toBeDisabled();
+        await expect(page.locator("#phase-card").getByRole("status")).toHaveText("Request sent");
         expect(inst.state.phases?.constitution?.status).not.toBe("done");
 
-        await page.clock.fastForward(15_001);
         const rerun = page.locator("#phase-card").getByRole("button", { name: "Rerun phase" });
         await expect(rerun).toBeEnabled();
         const retry = page.waitForResponse((res) => res.url().includes("/api/phase/submit")
@@ -570,7 +568,8 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         await page.locator("#phase-card").getByRole("button", { name: "Run phase" }).click();
         await expect.poll(() => prompts.length).toBe(2);
         expect(prompts[1]).toContain("speckit-extension-wizard-flow-test-review");
-        await expect(page.locator("#phase-card").getByRole("button", { name: "Running…" })).toBeVisible();
+        await expect(page.locator("#phase-card").getByRole("status")).toHaveText("Request sent");
+        await expect(page.locator("#phase-card").getByRole("button", { name: "Rerun phase" })).toBeEnabled();
         expect(inst.cachedComposition.artifacts.some((artifact) =>
             artifact.id === `commands/${review}` && artifact.kind === "command")).toBe(true);
         expect(inst.cachedComposition.artifacts.some((artifact) =>

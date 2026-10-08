@@ -50,13 +50,14 @@ export function readWorkflowPage(page, readPackagedFile) {
     if (registration.schemaVersion !== 1 || registration.id !== phaseControlInterface.controlId
         || registration.adapter !== page.adapter
         || Object.keys(registration).filter((key) => key !== "$schema")
-            .some((key) => !["adapter", "id", "managedRun", "placement", "schemaVersion", "viewLabels"].includes(key))
+            .some((key) => !["adapter", "id", "managedRun", "placement", "schemaVersion", "slots", "viewLabels"].includes(key))
         || (registration.managedRun !== undefined && typeof registration.managedRun !== "boolean")
         || page.managedRun !== (registration.managedRun === true)
         || !registration.placement || Object.keys(registration.placement).sort().join() !== "page,slot"
         || registration.placement.page !== "workflow" || registration.placement.slot !== "workflow.phases"
         || !isDeepStrictEqual(registration.placement, page.placement)
-        || !isDeepStrictEqual(registration.viewLabels ?? {}, page.viewLabels)) {
+        || !isDeepStrictEqual(registration.viewLabels ?? {}, page.viewLabels)
+        || !isDeepStrictEqual(registration.slots ?? [], page.phaseSlots)) {
         throw new Error("Packaged phase control definition differs from its frozen contract");
     }
     const bytes = readPackagedFile(new URL(`../pages/${page.adapter}.mjs`, import.meta.url));

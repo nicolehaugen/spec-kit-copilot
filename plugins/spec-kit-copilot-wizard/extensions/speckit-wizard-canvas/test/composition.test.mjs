@@ -1080,7 +1080,9 @@ test("renderGraphPhaseCard does not show View artifact from local running acknow
             artifactPath: null,
         });
 
-        assert.match(el.innerHTML, /Running/);
+        assert.match(el.innerHTML, /Request sent/);
+        assert.match(el.innerHTML, /type="submit" class="btn btn-primary"[^>]*>Run phase<\/button>/);
+        assert.doesNotMatch(el.innerHTML, /type="submit"[^>]*disabled/);
         assert.match(el.innerHTML, /specs\/&lt;slug&gt;\/plan\.md/);
         assert.doesNotMatch(el.innerHTML, /data-phase-action="view"/);
     } finally {

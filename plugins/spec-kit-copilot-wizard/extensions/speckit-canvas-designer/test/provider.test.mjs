@@ -4248,7 +4248,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     assert.deepEqual(canvas.inputSchema.required, undefined);
     assert.equal(canvas.inputSchema.properties.preview.type, "boolean");
     assert.deepEqual(canvas.inputSchema.properties.handoffId.type, "string");
-    assert.equal(canvas.inputSchema.properties.pages.minItems, 3);
+    assert.equal(canvas.inputSchema.properties.pages.minItems, undefined);
     assert.equal(canvas.inputSchema.properties.pages.maxItems, 100);
     assert.equal(canvas.inputSchema.properties.pages.items.properties.kind.const,
         "designer.tab-definition");

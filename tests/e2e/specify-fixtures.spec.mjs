@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "./playwright.mjs";
 import { assembleComposition } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/composition/assembler.mjs";
 import { effectiveSource } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/artifact-evidence.mjs";
+import { serveSpecifyPackages } from "./specify-packages.mjs";
 
 const require = createRequire(new URL(
     "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/package.json",
@@ -22,16 +23,28 @@ const extensionPath = fileURLToPath(new URL("../fixtures/specify/extension-wizar
 test("Specify installs both Wizard fixtures and resolves their commands and review skill", async () => {
     test.setTimeout(120_000);
     const root = await mkdtemp(join(tmpdir(), "wizard-specify-install-"));
+    let packages;
     const specify = async (...args) => (await run("specify", args, {
         cwd: root, timeout: 90_000, maxBuffer: 2 * 1024 * 1024,
     })).stdout;
+    const addExtension = (name, url) => new Promise((resolve, reject) => {
+        const child = execFile("specify", ["extension", "add", name, "--from", url],
+            { cwd: root, timeout: 90_000, maxBuffer: 2 * 1024 * 1024 },
+            (error, stdout, stderr) => error
+                ? reject(new Error(`${error.message}\n${stdout}\n${stderr}`, { cause: error }))
+                : resolve(stdout));
+        child.stdin.end("y\n");
+    });
     try {
         const presetManifest = load(await readFile(join(presetPath, "preset.yml"), "utf8")).preset;
         const extensionManifest = load(await readFile(join(extensionPath, "extension.yml"), "utf8")).extension;
+        packages = await serveSpecifyPackages(root, {
+            [presetManifest.id]: presetPath, [extensionManifest.id]: extensionPath,
+        });
         await specify("init", "--here", "--force", "--non-interactive",
             "--ignore-agent-tools", "--integration", "copilot", "--integration-options=--skills");
-        await specify("preset", "add", "--dev", presetPath);
-        await specify("extension", "add", extensionPath, "--dev");
+        await specify("preset", "add", "--from", packages.url(presetManifest.id));
+        await addExtension(extensionManifest.id, packages.url(extensionManifest.id));
 
         const presets = JSON.parse(await specify("preset", "list", "--json"));
         const extensions = JSON.parse(await specify("extension", "list", "--json"));
@@ -62,6 +75,7 @@ test("Specify installs both Wizard fixtures and resolves their commands and revi
         assert.match(skill, /specs\/<slug>\/reviews\/review\.md/);
         assert.ok(await effectiveSource(root, review));
     } finally {
+        await packages?.close();
         await rm(root, { recursive: true, force: true });
     }
 });

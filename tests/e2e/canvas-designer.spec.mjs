@@ -97,6 +97,7 @@ test("confirms community selection and checks only listed design bundle members"
     const presets = dialog.getByRole("tabpanel", { name: "Presets" });
     const preset = presets.getByRole("checkbox", { name: /Design preset/ });
     await expect(preset).toBeChecked();
+    await expect(preset.locator("..")).toHaveAttribute("title", 'Preset with "quoted" settings');
     await expect(presets.getByText("Included by bundle: Design bundle")).toBeVisible();
     await expect(presets.getByRole("checkbox", { name: /Copilot preset/ })).not.toBeChecked();
     await preset.uncheck();

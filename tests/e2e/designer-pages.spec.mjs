@@ -269,6 +269,7 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        await materializeDevSkills(project);
         run("preset", "add", "--dev", fileURLToPath(minimalRoot));
         const inventory = await verifyComposition(project);
         expect(inventory.pages.map((entry) => entry.name)).toEqual(
