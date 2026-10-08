@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,6 +19,18 @@ const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/",
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
 const riskRoot = new URL("../../spec-kit-presets/copilot-risk-matrix-test/", import.meta.url);
 const scratchRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+async function materializeDevSkills(project) {
+    // Preset installation regenerates skills; Specify refuses to overwrite dev-linked skill files.
+    for (const command of ["load-page", "generate"]) {
+        const path = join(project, ".github", "skills",
+            `speckit-extension-canvas-design-${command}`, "SKILL.md");
+        if (!(await lstat(path)).isSymbolicLink()) continue;
+        const content = await readFile(path);
+        await unlink(path);
+        await writeFile(path, content);
+    }
+}
 
 function scalarRegistrations(resolve) {
     return [
@@ -419,6 +431,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        await materializeDevSkills(project);
         run("preset", "add", "--dev", fileURLToPath(presetRoot));
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
@@ -514,6 +527,7 @@ test("Billing preset and built-in palette persist through Generate and render th
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        await materializeDevSkills(project);
         run("preset", "add", "--dev", fileURLToPath(billingRoot));
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
@@ -644,6 +658,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        await materializeDevSkills(project);
         await cp(fileURLToPath(riskRoot), presetCopy, { recursive: true });
         run("preset", "add", "--dev", presetCopy);
         const command = await readFile(join(project, ".github", "skills",
