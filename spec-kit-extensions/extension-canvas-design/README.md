@@ -188,6 +188,22 @@ opens `.specify/memory/constitution.md` and cannot
 be changed in the Designer. Existing header Save persists the viewer selections
 and additional links.
 
+Each workflow runs in one nested Copilot project session with its own worktree:
+manual phases, retries, and managed runs for that workflow use the same child,
+while separate workflows can run concurrently. The parent canvas remains the
+workflow launcher and reads that child's authorized artifacts for its list and
+viewer; workflow files are not automatically merged into the parent's checkout.
+Open the child session's Copilot chat to interrupt its running agent turn.
+Constitution creation or updates run in a separate child and publish only the
+checked constitution file to the parent. Constitution updates wait for active
+workflow runs; concurrent workflows start from the same canonical constitution
+version.
+Nested child reports use a source-owned, nonvisual extension tool so a child
+can report completion even if the parent canvas panel has closed. The host
+checks the run identity, one-run token, phase order, and confined child paths
+before saving any result; adapters never invoke session tools or read child
+files directly. This tool has no visual control or host-specific template pair.
+
 ## Generated app project setup
 
 Essentials includes **Show setup**, off by default. When enabled, an unready
@@ -658,12 +674,12 @@ supported optional capabilities are:
 | Requirement | Additional state and actions |
 | --- | --- |
 | `workflow.rows.v1` | `state.statuses` maps phase IDs to host-verified status, output, artifact availability and error. `actions.runAt(index)` submits the configured phase with its saved draft; `actions.viewAt(index)` opens its authorized artifact. Invalid indexes and unavailable artifacts fail visibly. |
-| `workflow.managed-run.v1` | `state.autopilot` contains the session's persisted run status, target workflow ID, current step and progress message (or `null`). `actions.startManagedRun()` preflights and starts the attached Copilot session's ordered workflow; `actions.stopManagedRun()` cancels it from any open panel. Failures are reported through `actions.error` or the host's canvas message. The runtime verifies the packaged adapter's hash and the capability frozen from its phase-control definition before starting a run. |
+| `workflow.managed-run.v1` | `state.autopilot` contains the child session's persisted run status, target workflow ID, current step and progress message (or `null`). `actions.startManagedRun()` preflights and starts the workflow's child session in configured order. To interrupt a running child, use Stop in that child's Copilot chat; the parent cannot abort another session's agent turn. Failures are reported through `actions.error` or the host's canvas message. The runtime verifies the packaged adapter's hash and the capability frozen from its phase-control definition before starting a run. |
 
 These actions are stable host operations, not preset-specific buttons. The
 vertical adapter owns its entire layout, row selection and confirmation flow;
 it does not call `/api` or the Copilot session directly. The host continues to
-enforce conflicts, step order, artifact/path checks, cancellation, and
+enforce conflicts, step order, artifact/path checks, and
 persistence even if the adapter omits a UI safeguard. Adding another adapter
 that uses these capabilities needs no new host branch. A genuinely new
 privileged operation requires a deliberate, versioned host capability rather

@@ -146,7 +146,7 @@ test("vertical phase adapter renders phase/output badge pairs without cross-phas
     control.dispose();
 });
 
-test("the adapter confirms only Autopilot transitions, never pending manual retries", async () => {
+test("the adapter confirms blocked Autopilot retries and disables steps during an active child run", async () => {
     const { root, listeners, confirmations } = rootFixture();
     const calls = [];
     const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
@@ -163,16 +163,11 @@ test("the adapter confirms only Autopilot transitions, never pending manual retr
     assert.deepEqual(calls, [["runAt", 1]]);
     assert.equal(confirmations.length, 0);
 
-    control.update({ ...initial, autopilot: { status: "Running", current: 0 } });
-    root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return false; };
-    click("start", 1);
-    await new Promise((resolve) => setImmediate(resolve));
+    control.update({ ...initial, autopilot: { item: initial.workflow, status: "Running", current: 0 } });
+    assert.match(root.innerHTML, /disabled title="This workflow is already running in its child session"/);
+    assert.doesNotMatch(root.innerHTML, /data-action="stop"/);
     assert.deepEqual(calls, [["runAt", 1]]);
     root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return true; };
-    click("start", 1);
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(calls.slice(1), [["stopManagedRun"], ["runAt", 1]]);
-    assert.match(confirmations[0], /Stop it before starting this step manually/);
 
     control.update({ ...initial, autopilot: { item: "demo", status: "Blocked", current: 1 } });
     root.ownerDocument.defaultView.confirm = (text) => { confirmations.push(text); return false; };
@@ -185,15 +180,13 @@ test("the adapter confirms only Autopilot transitions, never pending manual retr
     control.dispose();
 });
 
-test("vertical control keeps the other workflow's Stop action without borrowing its phase progress", () => {
+test("vertical control does not inherit another workflow's Autopilot or disable its steps", () => {
     const { root } = rootFixture();
     const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
         "startManagedRun", "stopManagedRun", "reveal", "error"].map((name) => [name, () => {}]));
-    mount({ root, definition, state: { ...initial, statuses: {}, autopilot: {
-        item: "specs/alpha", status: "Running", current: 0, message: "Running: step 1 of 2",
-    } }, actions });
-    assert.match(root.innerHTML, /data-action="stop">Stop/);
-    assert.match(root.innerHTML, /Autopilot for specs\/alpha: Running: step 1 of 2/);
+    mount({ root, definition, state: { ...initial, statuses: {}, autopilot: null }, actions });
+    assert.doesNotMatch(root.innerHTML, /data-action="stop"/);
+    assert.doesNotMatch(root.innerHTML, /already running in its child session/);
     assert.match(root.innerHTML, /data-status="Not run">pending/);
     assert.doesNotMatch(root.innerHTML, /data-status="Running">running/);
 });

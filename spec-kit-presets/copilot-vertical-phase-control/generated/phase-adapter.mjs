@@ -78,8 +78,8 @@ function render(state, definition) {
             <button class="btn btn-primary" type="button" data-action="autopilot"
                 ${state.setupPending || !phases.length || ["Request sent", "Running", "Finishing"].includes(autopilot?.status) ? "disabled" : ""}
                 ${state.setupPending ? 'title="Available after setup"' : ""}>Autopilot</button>
-            ${["Request sent", "Running", "Finishing", "Blocked"].includes(autopilot?.status)
-                ? '<button class="btn btn-secondary" type="button" data-action="stop">Stop</button>' : ""}
+            ${sameWorkflow && ["Request sent", "Running", "Finishing"].includes(autopilot?.status)
+                ? '<span class="muted">To stop this workflow, use Stop in its child session Copilot chat.</span>' : ""}
             <span class="muted" role="status" aria-live="polite">${escapeHtml(target + (autopilot?.message ?? ""))}</span>
         </div>
         <ol class="vertical-phase-list">${phases.map((item, index) => {
@@ -105,7 +105,9 @@ function render(state, definition) {
                     <button class="btn btn-secondary" type="button" data-action="view-row" data-index="${index}"
                         ${ready ? "" : `disabled title="No verified artifact is available yet"`}>${label}</button>
                     <button class="btn btn-primary" type="button" data-action="start" data-index="${index}"
-                        ${state.setupPending ? 'disabled title="Available after setup"' : ""}>Start Step ${index}</button>
+                        ${state.setupPending ? 'disabled title="Available after setup"'
+                            : sameWorkflow && ["Request sent", "Running", "Finishing"].includes(autopilot?.status)
+                                ? 'disabled title="This workflow is already running in its child session"' : ""}>Start Step ${index}</button>
                 </div>
             </li>`;
         }).join("")}</ol>
@@ -168,11 +170,6 @@ export function mount({ root, definition, state, actions }) {
         else if (action === "previous") invoke(() => actions.select(state.current - 1));
         else if (action === "next") invoke(() => actions.select(state.current + 1));
         else if (action === "start") invoke(async () => {
-            if (["Request sent", "Running", "Finishing"].includes(state.autopilot?.status)) {
-                if (!root.ownerDocument.defaultView.confirm(
-                    "Autopilot is running. Stop it before starting this step manually?")) return;
-                await actions.stopManagedRun();
-            }
             const index = Number(button.dataset.index);
             const workflow = state.workflow;
             const phase = state.phases[index];
@@ -193,7 +190,6 @@ export function mount({ root, definition, state, actions }) {
                         : "The previous Autopilot outcome is unconfirmed. Check chat and artifacts before starting another workflow. Continue?")) return;
             return actions.startManagedRun();
         });
-        else if (action === "stop") invoke(() => actions.stopManagedRun());
         else if (action === "reveal") invoke(() => actions.reveal());
     };
     const onInput = (event) => {

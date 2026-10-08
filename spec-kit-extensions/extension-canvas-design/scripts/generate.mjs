@@ -15,6 +15,7 @@ const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "generated-scaffold");
 const featureFiles = ["server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
     "phase-response.mjs", "contracts/agent-actions.mjs", "contracts/workflow-state.mjs",
+    "contracts/child-session.mjs",
     "contracts/host-adapter.mjs", "contracts/packaged-contributions.mjs",
     "badge-runtime.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/page-assets.mjs", "ui/runtime.css", "ui/workflow-theme.css"];

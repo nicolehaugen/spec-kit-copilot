@@ -15,6 +15,14 @@ export const agentActionSchemas = Object.freeze({
         required: ["autopilotId", "phase", "action"],
         properties: { autopilotId: { type: "string" }, phase: { type: "string" },
             action: { type: "string", enum: ["start", "complete"] } } },
+    report_child_run: { type: "object", additionalProperties: false,
+        required: ["runId", "token", "status"],
+        properties: { runId: { type: "string", pattern: "^[0-9a-fA-F-]{36}$" },
+            token: { type: "string", minLength: 32, maxLength: 128 },
+            status: { type: "string", enum: ["start", "complete", "fail"] },
+            slug: { type: "string", maxLength: 100 },
+            artifacts: { type: "array", maxItems: 100, items: { type: "string", maxLength: 2048 } },
+            error: { type: "string", maxLength: 8192 } } },
 });
 
 export function phaseResponse(events, messageId) {
