@@ -113,6 +113,19 @@ test("open boundary reads one fresh inventory and rejects changed winners and sc
         ...layer, active: true });
     await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
         /replace-only Specify template/);
+    inventory.get("template:generated-phase-adapter").stack.pop();
+    const pageLayer = inventory.get("template:designer-essentials").stack[0];
+    pageLayer.layer = "unknown";
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /designer-essentials: invalid active Specify template layer/);
+    pageLayer.layer = "extension";
+    pageLayer.sourceId = 42;
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /designer-essentials: invalid active Specify template layer/);
+    pageLayer.sourceId = "extension-canvas-design";
+    pageLayer.layer = "project";
+    await assert.rejects(loadPages(validHandoff(), project, entries, templates, reader),
+        /designer-essentials: invalid active Specify template layer/);
 });
 
 test("Outputs persist with Designer settings and reject unsafe or stale edits", async (t) => {

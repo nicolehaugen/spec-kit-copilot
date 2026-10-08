@@ -634,6 +634,12 @@ async function verifyWinner(inventory, checkout, root, item, executable = false)
         || typeof winner.sourcePath !== "string" || !winner.sourcePath) {
         throw new Error(`${item.name}: registration must be a replace-only Specify template from ${item.sourceId}`);
     }
+    if (typeof winner.sourceId !== "string"
+        || !(winner.layer === "project" && winner.sourceId === "_"
+            || winner.layer === "extension" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId)
+            || winner.layer === "preset" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId))) {
+        throw new Error(`${item.name}: invalid active Specify template layer`);
+    }
     if (executable && inventory.has(`script:${item.name}`)) {
         throw new Error(`${item.name}: native Specify script registrations are not supported for executable adapters/renderers`);
     }
