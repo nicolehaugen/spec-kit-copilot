@@ -131,6 +131,9 @@ test("Phase artifact complete accepts one declared earlier output per phase in o
 
 test("badge validation checks identity, placeholders, color, placements, and cap", () => {
     const bad = (entry, reason) => assert.throws(() => validateBadges([entry], model), reason);
+    bad({ ...artifact, id: "Badge-1" }, /invalid or duplicate id/);
+    bad({ ...artifact, id: "badge_1" }, /invalid or duplicate id/);
+    bad({ ...artifact, id: "-badge" }, /invalid or duplicate id/);
     bad({ ...artifact, type: "disabled" }, /disabled badge type/);
     bad({ ...artifact, text: "Unknown {other}" }, /unknown text token/);
     bad({ ...artifact, color: "chartreuse" }, /invalid color/);

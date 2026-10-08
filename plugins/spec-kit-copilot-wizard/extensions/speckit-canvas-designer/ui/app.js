@@ -190,8 +190,7 @@ function renderPage(pageId, invalidFieldId) {
     const page = model.pages.find((entry) => entry.page === pageId);
     if (!page) throw new Error("Unknown Designer page");
     const renderRevision = model.revision;
-    if (currentPage && root.childNodes.length
-        && model.pages.find((entry) => entry.page === currentPage)?.fields?.length) {
+    if (currentPage && root.childNodes.length) {
         pageViews.set(currentPage, [...root.childNodes]);
     }
     currentPage = pageId;

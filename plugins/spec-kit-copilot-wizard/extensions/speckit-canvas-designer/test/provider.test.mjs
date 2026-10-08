@@ -799,6 +799,41 @@ test("Designer tabs remain navigable when a field adapter is not ready", async (
     assert.equal(selected, "designer-essentials");
 });
 
+test("switching tabs preserves an unsubmitted badge editor", async () => {
+    const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
+    const start = source.indexOf("function renderPage(");
+    const end = source.indexOf('tabs.addEventListener("click"', start);
+    assert.ok(start >= 0 && end > start);
+    const root = {
+        childNodes: [],
+        replaceChildren(...children) { this.childNodes = children; },
+        setAttribute() {},
+    };
+    const pageViews = new Map();
+    let badgeMounts = 0;
+    const renderPage = runInNewContext(`${source.slice(start, end)}\nrenderPage`, {
+        model: { revision: "same", phases: [], outputs: {}, pages: [
+            { page: "designer-badges", fields: [], fixedControl: "designer.badges" },
+            { page: "designer-outputs", fields: [], fixedControl: "designer.outputs" },
+        ] },
+        root, pageViews, currentPage: null,
+        tabs: { children: [{ dataset: { page: "designer-badges" }, setAttribute() {} },
+            { dataset: { page: "designer-outputs" }, setAttribute() {} }] },
+        mountBadges: () => { badgeMounts++; root.replaceChildren({ draft: "" }); },
+        mountOutputs: () => root.replaceChildren({ output: true }),
+        draftBadges: [], draftOutputs: {}, updateSave() {},
+    });
+    renderPage("designer-badges");
+    const editor = root.childNodes[0];
+    editor.draft = "still editing";
+    renderPage("designer-outputs");
+    renderPage("designer-badges");
+    assert.equal(root.childNodes[0], editor);
+    assert.equal(root.childNodes[0].draft, "still editing");
+    assert.equal(badgeMounts, 1);
+    assert.ok(pageViews.has("designer-outputs"));
+});
+
 test("Designer readiness checks controls on previously visited tabs", async () => {
     const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
     const start = source.indexOf("function checkReady()");

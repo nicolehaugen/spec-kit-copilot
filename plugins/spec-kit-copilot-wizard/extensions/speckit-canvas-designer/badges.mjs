@@ -25,7 +25,7 @@ export function validateBadges(badges, model) {
                 ...(Object.hasOwn(badge, "targets") ? ["targets"] : [])])) {
             fail("unexpected or missing fields");
         }
-        if (typeof badge.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(badge.id)
+        if (typeof badge.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(badge.id)
             || ids.has(badge.id)) fail("invalid or duplicate id");
         ids.add(badge.id);
         const type = types.get(badge.type);
