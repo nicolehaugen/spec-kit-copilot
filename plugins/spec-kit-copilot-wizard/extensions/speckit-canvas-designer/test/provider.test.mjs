@@ -505,6 +505,43 @@ test("Designer badge save and reopen freezes registered assets into generated co
         "badge-rule-content-adapter.mjs")), Buffer.from(request.badges.adapters[0].content, "base64"));
 });
 
+test("Generate refuses saved Constitution badge destinations while permitting its evidence", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.workflow.selectedPhases.unshift("constitution");
+    handoff.workflow.outputEvidence = {
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
+        specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: [], view: null },
+    };
+    handoff.sourceFingerprint = fingerprint({
+        workflow: handoff.workflow, selections: handoff.selections,
+    });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const pages = await loadResolvedDesignerPages(handoff, project, entries,
+        [...await stockTemplates(project), ...await badgeTemplates(project)], badgeRegistration);
+    const model = await loadDesignerSettings(workspace, handoff, pages);
+    const values = { ...model.values, "canvas.id": "constitution-badge",
+        "canvas.displayName": "Constitution badge" };
+    const global = { id: "constitution-evidence", type: "checklist-progress",
+        inputs: { artifact: { phase: "constitution", output: ".specify/memory/constitution.md" } },
+        text: "{completed}/{total} complete", color: "blue",
+        showIn: ["workflow-list"], phase: null };
+    const options = { model, values, outputs: model.outputs, handoff, project, workspace };
+    await assert.doesNotReject(freezeGeneration({ ...options, badges: [global] }));
+    for (const badge of [
+        { ...global, showIn: ["phase-card"], phase: "constitution" },
+        { ...global, targets: [{ phase: "constitution", output: null }] },
+        { ...global, targets: [{ phase: "constitution", output: ".specify/memory/constitution.md" }] },
+    ]) {
+        await assert.rejects(freezeGeneration({ ...options, badges: [badge] }),
+            /invalid or removed output, phase, text, or placement/);
+    }
+});
+
 async function stockTemplates(project) {
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));

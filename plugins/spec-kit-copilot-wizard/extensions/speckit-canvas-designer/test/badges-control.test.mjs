@@ -83,6 +83,43 @@ const checklistRule = { id: "checklist-complete", textPlaceholders: [], inputs: 
     { id: "prerequisite", type: "artifact", label: "Earlier output" },
 ] };
 
+test("Constitution evidence can make a workflow badge but cannot select a phase card", () => {
+    const phase = "speckit.constitution";
+    const { root, draftBadges, cleanup } = setup({
+        phases: [phase, "speckit.specify"],
+        outputs: { [phase]: { outputs: [".specify/memory/constitution.md"] },
+            "speckit.specify": { outputs: ["specs/<slug>/spec.md"] } },
+        badgeTypes: [{ id: "constitution-run", rule: "constitution-run",
+            title: "Constitution run", defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "constitution-run", inputs: [{ id: "phase", type: "phase" }],
+            textPlaceholders: [] }],
+    });
+    try {
+        const editor = choose(root);
+        const evidence = descendants(root.querySelector(".badge-phase-list"))
+            .filter((node) => node.tagName === "input");
+        evidence[0].checked = true;
+        evidence[0].events.change();
+        const card = check(root, "badge-placements", "Phase");
+        card.checked = true;
+        card.events.change();
+        assert.equal(card.checked, false);
+        assert.match(root.querySelector(".settings-field-error").textContent,
+            /only for workflow phases/);
+        evidence[1].checked = true;
+        evidence[1].events.change();
+        card.checked = true;
+        card.events.change();
+        assert.equal(card.checked, true);
+        evidence[0].checked = true;
+        evidence[0].events.change();
+        assert.equal(card.checked, false);
+        submit(editor);
+        assert.equal(draftBadges[0].inputs.phase, phase);
+        assert.deepEqual(draftBadges[0].targets, []);
+    } finally { cleanup(); }
+});
+
 test("Phase artifact editor follows target and one earlier output per checked phase", () => {
     const { root, draftBadges, changes, cleanup } = setup({
         phases: ["specify", "plan", "tasks"],

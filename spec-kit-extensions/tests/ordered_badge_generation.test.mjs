@@ -77,3 +77,23 @@ test("malformed metadata rule references and ordered evidence are rejected", () 
         assert.throws(() => frozenBadges(inventory(badge), workflow), /Invalid configured badge/);
     }
 });
+
+test("generator rejects Constitution placements while keeping global Constitution evidence", () => {
+    const constitution = { phase: "speckit.constitution", output: ".specify/memory/constitution.md" };
+    const phases = { selectedPhases: [constitution.phase, ...workflow.selectedPhases],
+        phaseArtifacts: { ...workflow.phaseArtifacts, [constitution.phase]: {
+            outputs: [constitution.output],
+        } } };
+    const global = { id: "constitution-evidence", type: type.id,
+        inputs: { target: constitution, prerequisites: [] }, text: "Ready", color: "green",
+        showIn: ["workflow-list"], phase: null };
+    assert.equal(frozenBadges(inventory(global), phases).instances[0].inputs.target.phase,
+        constitution.phase);
+    assert.throws(() => frozenBadges(inventory({ ...global, showIn: ["phase-card"],
+        phase: constitution.phase, phaseText: "Ready" }), phases), /Invalid configured badge/);
+    for (const output of [null, constitution.output]) {
+        assert.throws(() => frozenBadges(inventory({ ...global, targets: [{
+            phase: constitution.phase, output,
+        }], phaseText: "Ready" }), phases), /Invalid configured badge/);
+    }
+});

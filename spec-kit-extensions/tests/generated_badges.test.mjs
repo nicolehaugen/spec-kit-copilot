@@ -51,6 +51,24 @@ const instance = { id: "work", type: type.id, inputs: { artifact: {
 } }, text: "{completed}/{total} complete", color: "blue",
     showIn: ["workflow-list", "workflow-summary", "phase-card"], phase: "tasks" };
 const badges = { instances: [instance], types: [type], rules: [rule] };
+
+test("generated runtime rejects Constitution card and output placements", () => {
+    const constitution = { id: "speckit.constitution",
+        outputs: [".specify/memory/constitution.md"] };
+    const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }, constitution];
+    const global = { ...instance, inputs: { artifact: {
+        phase: constitution.id, output: constitution.outputs[0],
+    } }, showIn: ["workflow-list"], phase: null };
+    assert.doesNotThrow(() => validateBadges({ ...badges, instances: [global] }, phases));
+    assert.throws(() => validateBadges({ ...badges, instances: [{
+        ...instance, phase: constitution.id,
+    }] }, phases), /Invalid generated badge instance/);
+    for (const output of [null, constitution.outputs[0]]) {
+        assert.throws(() => validateBadges({ ...badges, instances: [{
+            ...global, targets: [{ phase: constitution.id, output }],
+        }] }, phases), /Invalid generated badge instance/);
+    }
+});
 const fileRule = { ...rule, id: "markdown-file-count",
     inputs: [{ id: "artifact", type: "artifact", scope: "directory" }],
     textPlaceholders: ["count"] };

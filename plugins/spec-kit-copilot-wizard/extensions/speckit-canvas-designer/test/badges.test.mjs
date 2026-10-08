@@ -149,6 +149,24 @@ test("badge validation checks identity, placeholders, color, placements, and cap
         /at most 100/);
 });
 
+test("Constitution evidence may feed workflow badges but has no phase or output destination", () => {
+    const constitution = { phase: "speckit.constitution", output: ".specify/memory/constitution.md" };
+    const withConstitution = { ...model, phases: [constitution.phase, ...model.phases],
+        outputs: { ...model.outputs, [constitution.phase]: {
+            outputs: [constitution.output], view: constitution.output,
+        } } };
+    const global = { ...artifact, inputs: { item: constitution },
+        showIn: ["workflow-list"], phase: null };
+    assert.deepEqual(validateBadges([global], withConstitution), [global]);
+    assert.throws(() => validateBadges([{ ...global, showIn: ["phase-card"],
+        phase: constitution.phase }], withConstitution), /phase-card destination/);
+    for (const output of [null, constitution.output]) {
+        assert.throws(() => validateBadges([{ ...global, targets: [{
+            phase: constitution.phase, output,
+        }] }], withConstitution), /phase\/output placement/);
+    }
+});
+
 test("duplicate badges require matching text, inputs, and overlapping targets", () => {
     const first = { ...artifact, showIn: ["workflow-list"], phase: null,
         targets: [{ phase: "specify", output: null },

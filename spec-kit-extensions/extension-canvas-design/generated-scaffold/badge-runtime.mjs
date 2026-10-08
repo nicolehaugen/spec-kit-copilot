@@ -117,13 +117,16 @@ export function validateBadges(config, phases = []) {
             || instance.showIn.some((place) => !placements.has(place))
             || (instance.targets === undefined
                 ? (instance.showIn.includes("phase-card")
-                    ? !phaseIds.includes(instance.phase) : instance.phase != null)
+                    ? !phaseIds.includes(instance.phase)
+                        || instance.phase.replace(/^speckit\./, "") === "constitution"
+                    : instance.phase != null)
                 : instance.phase != null || instance.showIn.includes("phase-card")
                     || !Array.isArray(instance.targets) || instance.targets.length > 100
                     || new Set(instance.targets.map((target) =>
                         JSON.stringify([target?.phase, target?.output]))).size !== instance.targets.length
                     || instance.targets.some((target) => !target
                         || !phaseIds.includes(target.phase)
+                        || target.phase.replace(/^speckit\./, "") === "constitution"
                         || (target.output !== null
                             && (!rule.inputs.some((input) =>
                                 input.type === "artifact" || input.type === "artifact-set")

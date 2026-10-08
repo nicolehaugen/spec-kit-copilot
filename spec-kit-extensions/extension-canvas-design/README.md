@@ -283,6 +283,8 @@ prerequisite's card. Workflow list and Workflow summary can be checked
 independently, each with its own editable text separate from the phase-card
 text. The summary counts matching **workflows**, including zero; it does not
 count files or phase runs.
+Constitution can provide badge evidence for workflow badges, but its separate
+project card and output are not phase-card or phase-output badge destinations.
 Summary badges use their configured summary text, interpolating `{workflows}`
 with the aggregate count, including zero before any workflows exist. Older
 instances without `summaryText` retain the type title plus count; those without
