@@ -4,6 +4,7 @@ import { copyFile, cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, u
 import { createServer } from "node:http";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { test, expect } from "./playwright.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
@@ -425,7 +426,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
 
             expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
             expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return result.stdout;
+            return stripVTControlCharacters(result.stdout);
         };
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
@@ -521,7 +522,7 @@ test("Billing preset and built-in palette persist through Generate and render th
                 timeout: 120000, env: { ...process.env, COLUMNS: "500" } });
             expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
             expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return result.stdout;
+            return stripVTControlCharacters(result.stdout);
         };
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
@@ -652,7 +653,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             });
             expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
             expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return result.stdout;
+            return stripVTControlCharacters(result.stdout);
         };
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
