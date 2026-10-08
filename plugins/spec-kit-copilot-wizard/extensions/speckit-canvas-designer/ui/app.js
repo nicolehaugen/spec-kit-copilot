@@ -15,6 +15,30 @@ const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
 const mounted = new Map();
 const pageViews = new Map();
+const themeKey = "speckit-designer.theme";
+
+function currentTheme() {
+    const explicit = document.documentElement.getAttribute("data-theme");
+    if (explicit === "dark" || explicit === "light") return explicit;
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", theme);
+    const button = document.getElementById("theme-toggle");
+    button.textContent = theme === "dark" ? "☾" : "☀";
+    button.setAttribute("aria-label", theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+    button.title = button.getAttribute("aria-label");
+}
+
+let storedTheme = null;
+try { storedTheme = localStorage.getItem(themeKey); } catch { /* storage may be unavailable */ }
+applyTheme(storedTheme === "dark" || storedTheme === "light" ? storedTheme : currentTheme());
+document.getElementById("theme-toggle").addEventListener("click", () => {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem(themeKey, next); } catch { /* storage may be unavailable */ }
+});
 
 function outputPathsReady() {
     return Object.values(draftOutputs ?? {}).every((entry) =>
@@ -406,6 +430,30 @@ function applyState(next) {
 }
 
 const status = document.getElementById("conn-status");
+let connectionError = "";
+function connectionStatus(state) {
+    status.className = `conn conn-${state}`;
+    status.textContent = state === "live" ? "Live" : state === "connecting" ? "Connecting" : "Disconnected";
+}
+async function checkConnection() {
+    try {
+        const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`,
+            { signal: AbortSignal.timeout(5000) });
+        if (!response.ok) throw new Error(`Designer connection check failed (${response.status})`);
+        if (model) {
+            connectionStatus("live");
+            if (connectionError && errorBox.textContent === connectionError) showError("");
+            connectionError = "";
+        }
+    } catch (error) {
+        connectionStatus("lost");
+        const next = `Designer connection interrupted: ${error.message}. Unsaved edits remain in this panel.`;
+        if (connectionError !== next && !errorBox.textContent) showError(next);
+        connectionError = next;
+    }
+}
+const connectionTimer = setInterval(() => { void checkConnection(); }, 10000);
+window.addEventListener("pagehide", () => clearInterval(connectionTimer));
 try {
     [{ mountIdentity }, { mountOutputs }, { mountBadges }, adapterContract] = await Promise.all([
         import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
@@ -426,16 +474,10 @@ try {
             }
         }));
     applyState(initial);
-    const failures = initial.pages.filter((page) => page.error).length;
-    status.className = failures || initial.compositionErrors?.length || !initial.pages.length || initial.preview
-        ? "conn conn-connecting" : "conn conn-live";
-    status.textContent = failures ? `Pages need attention (${failures})`
-        : initial.compositionErrors?.length || !initial.pages.length ? "Design needs attention"
-        : initial.preview ? "Preview only" : "Ready";
+    connectionStatus("live");
 } catch (error) {
     root.setAttribute("aria-busy", "false");
     root.replaceChildren(element("h1", "Settings unavailable"));
-    status.className = "conn conn-lost";
-    status.textContent = "Unavailable";
+    connectionStatus("lost");
     showError(error.message);
 }

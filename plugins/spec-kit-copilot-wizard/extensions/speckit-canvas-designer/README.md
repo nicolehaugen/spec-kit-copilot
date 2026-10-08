@@ -128,8 +128,14 @@ reopening the same handoff restores them when its resolved pages are unchanged.
 Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
 blank retains the current color in that mode, while invalid hex blocks Generate
 without preventing an incomplete draft from being saved. The generated canvas
-keeps its existing light/dark toggle; there is no Designer color preview or
-contrast warning.
+keeps its existing light/dark toggle. Designer's fixed header also has a
+keyboard-accessible light/dark toggle, stored in the browser for page refreshes;
+it follows the system contrast preference until explicitly changed. There is
+no Designer color preview or contrast warning. The Designer connection pill
+reports Live when the current provider responds and Disconnected when a
+bounded health check fails; the check does not replace the panel or discard
+unsaved drafts. If the provider URL is dead, closing and reopening the panel
+from Copilot is still necessary.
 Generate freezes the combined artifact links into the app: its phase card links
 to each listed file and View artifact opens the selected default. A phase with no
 inferred artifacts remains empty unless a link is added.
