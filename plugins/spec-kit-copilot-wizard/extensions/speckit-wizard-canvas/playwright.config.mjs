@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const port = 4177;
+const port = Number(process.env.SPECKIT_E2E_PORT || 4177);
 
 export default defineConfig({
     testDir: "../../../../tests/e2e",

@@ -505,8 +505,8 @@ export function renderGraphPhaseCard(el, p) {
     // dispatch acknowledgement so the button flips immediately after submit.
     let actionRow;
     const running = state.phaseRunning.has(p.commandName);
-    const runningLabel = `<span class="btn-spinner" aria-hidden="true"></span> Running…`;
-    const runningDisabled = running ? "disabled" : "";
+    const runningNotice = running
+        ? `<span role="status"><span class="btn-spinner" aria-hidden="true"></span>Request sent</span>` : "";
     // Pipeline nav data — used by the phase-actions row (Back / Continue)
     // and the header Remove icon. Nav walks the current pipeline (hooks
     // live off-strip), so index math is 1-based over `pipelineItems()`.
@@ -528,12 +528,12 @@ export function renderGraphPhaseCard(el, p) {
     let centerActions;
     if (hasSubmitted) {
         centerActions = `
-              ${canViewArtifact ? `<button type="button" class="btn btn-primary" data-phase-action="view" ${disabledAttr}${running ? " disabled" : ""}>View artifact</button>` : ""}
-              <button type="button" class="btn btn-primary" data-phase-action="redo" ${disabledAttr}${runningDisabled}>${running ? runningLabel : "Rerun phase"}</button>`;
+              ${canViewArtifact ? `<button type="button" class="btn btn-primary" data-phase-action="view" ${disabledAttr}>View artifact</button>` : ""}
+              <button type="button" class="btn btn-primary" data-phase-action="redo" ${disabledAttr}>Rerun phase</button>${runningNotice}`;
     } else {
         centerActions = `
-              ${canViewArtifact ? `<button type="button" class="btn btn-primary" data-phase-action="view" ${disabledAttr}${running ? " disabled" : ""}>View artifact</button>` : ""}
-              <button type="submit" class="btn btn-primary" ${disabledAttr}${runningDisabled}>${running ? runningLabel : "Run phase"}</button>`;
+              ${canViewArtifact ? `<button type="button" class="btn btn-primary" data-phase-action="view" ${disabledAttr}>View artifact</button>` : ""}
+              <button type="submit" class="btn btn-primary" ${disabledAttr}>Run phase</button>${runningNotice}`;
     }
     actionRow = `<div class="phase-actions phase-actions-nav">
         <div class="phase-actions-left">${backBtn}</div>

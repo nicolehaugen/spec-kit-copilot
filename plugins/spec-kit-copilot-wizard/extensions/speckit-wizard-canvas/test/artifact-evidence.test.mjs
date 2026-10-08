@@ -165,6 +165,66 @@ test("a failed command source read marks output collection and refresh incomplet
     });
 });
 
+test("an older evidence scan cannot demote a refresh after its output was accepted", async () => {
+    await fixture(async ({ root, write }) => {
+        const snap = { pipeline: [{ id: "plan" }], commands: [], composition: { artifacts: [] },
+            phases: {}, warnings: [], specsDir: null };
+        const pending = await collectArtifactEvidence(root, snap);
+        const request = pending.requests.find(({ commandId }) => commandId === "speckit.plan");
+        assert.ok(request);
+        const inst = { workspacePath: root, refreshStatus: { status: "up-to-date", id: "refresh" },
+            broadcast() {} };
+        await write(".speckit-wizard/artifact-targets.json", JSON.stringify({ entries: {
+            "commands/speckit.plan": { outputEvidence: { fingerprint: request.fingerprint,
+                primaryIndex: 0, candidates: [{ kind: "file", path: "specs/<slug>/plan.md",
+                    source: "inference", effect: "creates", evidence: "Plan writes a Markdown file" }] } },
+        } }));
+        const oldSnapshot = { ...snap, phases: {}, warnings: [] };
+        await attachOutputEvidence(inst, {}, oldSnapshot, pending);
+        assert.equal(oldSnapshot.refreshStatus, "up-to-date");
+        await write(".speckit-wizard/artifact-targets.json", JSON.stringify({ entries: {} }));
+        await attachOutputEvidence(inst, {}, { ...snap, phases: {}, warnings: [] }, pending);
+        assert.equal(inst.refreshStatus.status, "ready");
+    });
+});
+
+test("an older evidence scan cannot demote a newer refresh while rereading the cache", async () => {
+    await fixture(async ({ root }) => {
+        const snap = { pipeline: [{ id: "plan" }], commands: [], composition: { artifacts: [] },
+            phases: {}, warnings: [], specsDir: null };
+        const pending = await collectArtifactEvidence(root, snap);
+        const inst = { workspacePath: root, refreshStatus: { status: "up-to-date", id: "old" },
+            broadcast() {} };
+        let finishRead;
+        const read = new Promise((resolve) => { finishRead = resolve; });
+        const attaching = attachOutputEvidence(inst, {}, snap, pending, () => read);
+        startRefresh(inst);
+        finishRead({ entries: {} });
+        await attaching;
+        assert.equal(snap.refreshStatus, "refreshing");
+        assert.equal(inst.refreshStatus.status, "refreshing");
+        setRefreshWork(inst, { pipeline: false, outputs: true });
+        finishRefreshPart(inst, "outputs");
+        assert.equal(inst.refreshStatus.status, "up-to-date");
+    });
+});
+
+test("a malformed cache reread reports a warning without aborting the snapshot", async () => {
+    await fixture(async ({ root, write }) => {
+        const snap = { pipeline: [{ id: "plan" }], commands: [], composition: { artifacts: [] },
+            phases: {}, warnings: [], specsDir: null };
+        const pending = await collectArtifactEvidence(root, snap);
+        const inst = { workspacePath: root, refreshStatus: { status: "up-to-date", id: "refresh" },
+            broadcast() {} };
+        await write(".speckit-wizard/artifact-targets.json", "{");
+        await attachOutputEvidence(inst, {}, snap, pending);
+        assert.ok(snap.warnings.some((warning) => warning.includes("Unexpected end")
+            || warning.includes("JSON")));
+        assert.equal(snap.refreshStatus, "ready");
+        assert.equal(inst.refreshStatus.status, "ready");
+    });
+});
+
 test("inferred outputs with the same named root and filename retain distinct root paths", async () => {
     await fixture(async ({ root, write }) => {
         const fingerprint = (await effectiveSource(root, "plan")).fingerprint;

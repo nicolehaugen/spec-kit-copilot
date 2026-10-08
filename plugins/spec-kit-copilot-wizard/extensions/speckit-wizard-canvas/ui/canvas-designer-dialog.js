@@ -211,7 +211,7 @@ function renderChoices(snapshot, kind, label) {
             const required = isRequiredDesignerExtension(kind, item);
             const description = choiceDescription(kind, item);
             return `<label class="designer-choice${required ? " designer-choice-required" : ""}"${description ? ` title="${escapeHtml(description)}"` : ""}>
-            <input type="checkbox" data-designer-kind="${kind}" data-designer-index="${index}"${required ? " checked disabled" : ""}${description ? ` title="${escapeHtml(description)}"` : ""}>
+            <input type="checkbox" data-designer-kind="${kind}" data-designer-index="${index}" data-designer-id="${escapeHtml(item.id)}"${required ? " checked disabled" : ""}${description ? ` title="${escapeHtml(description)}"` : ""}>
             <span class="designer-choice-text"><strong>${escapeHtml(item.name ?? item.id)}</strong><small>${escapeHtml(item.id)}${item.version ? ` · v${escapeHtml(item.version)}` : ""}</small><small class="designer-included-by" hidden></small></span>
             <span class="badge source designer-source-tag">${escapeHtml((item.source ?? "default").replace(/^./, (c) => c.toUpperCase()))}</span>
             ${required ? '<span class="badge designer-required-badge">Required</span>' : ""}

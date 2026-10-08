@@ -3,7 +3,8 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
-import { validateBadges } from "./badges.mjs";
+import { validateBadges } from "./contracts/badges.mjs";
+import { validateGenerateSubmission } from "./contracts/generation-request.mjs";
 import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
     loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
@@ -36,6 +37,7 @@ const ASSETS = {
     "/ui/app.js": ["app.js", "text/javascript"],
     "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
     "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
+    "/ui/control-adapter-contract.js": ["control-adapter-contract.js", "text/javascript"],
     "/ui/badges-control.js": ["badges-control.js", "text/javascript"],
     "/ui/badge-duplicates.js": ["badge-duplicates.js", "text/javascript"],
 };
@@ -187,17 +189,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                     chunks.push(chunk);
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-                const expectedKeys = ["modelRevision", "settingsRevision", "values",
-                    ...(Object.hasOwn(input ?? {}, "outputs") ? ["outputs"] : []),
-                    ...(Object.hasOwn(input ?? {}, "badges") ? ["badges"] : []),
-                    ...(model.templates?.some((item) => item.kind === "generated.computed-value-provider")
-                        ? ["approvedProviders"] : [])];
-                if (!input || typeof input !== "object" || Array.isArray(input)
-                    || Object.keys(input).sort().join() !== expectedKeys.sort().join()
-                    || input.modelRevision !== model.revision
-                    || !Number.isSafeInteger(input.settingsRevision) || input.settingsRevision < 0) {
-                    throw new Error("Invalid Designer generation request");
-                }
+                validateGenerateSubmission(input, model);
                 const current = await loadDesignerSettings(workspace, handoff, model);
                 if (input.settingsRevision !== current.settingsRevision) {
                     throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");

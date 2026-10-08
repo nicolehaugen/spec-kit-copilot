@@ -23,7 +23,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           files=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
-          if grep -Eq '^(plugins/spec-kit-copilot-wizard/|tests/e2e/|spec-kit-extensions/extension-canvas-design/|spec-kit-presets/|\.github/workflows/wizard-e2e\.yml$)' <<< "$files"; then
+          if grep -Eq '^(plugins/spec-kit-copilot-wizard/|tests/e2e/|tests/fixtures/specify/|spec-kit-extensions/extension-canvas-design/|spec-kit-presets/|\.github/workflows/wizard-e2e\.yml$)' <<< "$files"; then
             echo "wizard=true" >> "$GITHUB_OUTPUT"
           else
             echo "wizard=false" >> "$GITHUB_OUTPUT"
@@ -48,6 +48,12 @@ jobs:
       - name: Install Designer provider dependencies
         run: npm ci
         working-directory: plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Specify CLI
+        run: |
+          uv tool install specify-cli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/specify" --version
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4

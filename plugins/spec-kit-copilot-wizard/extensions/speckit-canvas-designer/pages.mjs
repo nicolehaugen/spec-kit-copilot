@@ -6,10 +6,14 @@ import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node
 import { isDeepStrictEqual } from "node:util";
 import { Script } from "node:vm";
 import { fingerprint } from "./handoff.mjs";
-import { validControlContract } from "./control-contract.mjs";
+import { validControlContract } from "./contracts/control-adapter.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
+import { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
+import { RULES, resolvedField, checkSchema } from "./contracts/design-contributions.mjs";
+import { validateBadgeText, validateBadgeSettings, validateBadgeRule } from "./contracts/badge-definitions.mjs";
+export { validateBadgeRule } from "./contracts/badge-definitions.mjs";
 
-export const PAGE_NAME = "^[a-z][a-z0-9-]{0,79}$";
+export { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
 const DEFAULT_PAGES = ["designer-essentials", "designer-artifacts",
     "designer-badges", "designer-appearance"];
 const FIXED_PAGE_CONTROLS = {
@@ -32,37 +36,9 @@ function schemaMetadata(document, name) {
 }
 // The generated shell uses "workflow" for its built-in page navigation.
 const RESERVED_GENERATED_PAGE_ID = "workflow";
-export const isWindowsDeviceName = (name) =>
-    /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
-const OPTIONAL_COLOR = { type: "string", maxLength: 7,
-    pattern: "^(?:#?[0-9A-Fa-f]{6})?$" };
-const RULES = {
-    "canvas.id": { type: "string", minLength: 1, maxLength: 100,
-        pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$",
-        required: true },
-    "canvas.displayName": { type: "string", minLength: 1, maxLength: 120, required: true },
-    "canvas.description": { type: "string", maxLength: 240 },
-    "canvas.workflowListName": { type: "string", maxLength: 80 },
-    "canvas.accentLight": OPTIONAL_COLOR,
-    "canvas.backgroundLight": OPTIONAL_COLOR,
-    "canvas.surfaceLight": OPTIONAL_COLOR,
-    "canvas.secondaryLight": OPTIONAL_COLOR,
-    "canvas.textLight": OPTIONAL_COLOR,
-    "canvas.accentDark": OPTIONAL_COLOR,
-    "canvas.backgroundDark": OPTIONAL_COLOR,
-    "canvas.surfaceDark": OPTIONAL_COLOR,
-    "canvas.secondaryDark": OPTIONAL_COLOR,
-    "canvas.textDark": OPTIONAL_COLOR,
-    "workflowSlug.userProvided": { type: "boolean" },
-};
-const RESERVED_CANVAS_IDS = ["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"];
-function resolvedField(field, rule) {
-    return { ...field, validation: { ...rule,
-        ...(field.id === "canvas.id" ? { forbiddenValues: RESERVED_CANVAS_IDS } : {}) } };
-}
 
 function inside(root, path) {
     const rel = relative(root, path);
@@ -125,37 +101,6 @@ export async function readFrozenAsset(item, root) {
         throw new Error(`${item.name}: generated asset changed since Designer opened; reopen Designer`);
     }
     return result.bytes;
-}
-
-function checkSchema(value, schema, location) {
-    if (Object.hasOwn(schema, "const") && value !== schema.const) {
-        throw new Error(`${location}: unsupported schema version`);
-    }
-    if (schema.enum && !schema.enum.includes(value)) throw new Error(`${location}: unsupported value`);
-    const type = schema.type;
-    const valid = type === undefined || (type === "array" ? Array.isArray(value)
-        : type === "object" ? value !== null && typeof value === "object" && !Array.isArray(value)
-        : type === "integer" ? Number.isInteger(value) : typeof value === type);
-    if (!valid) throw new Error(`${location}: expected ${type}`);
-    if (type === "object") {
-        for (const key of schema.required ?? []) {
-            if (!Object.hasOwn(value, key)) throw new Error(`${location}: missing ${key}`);
-        }
-        for (const [key, entry] of Object.entries(value)) {
-            if (!Object.hasOwn(schema.properties, key)) throw new Error(`${location}: unsupported property ${key}`);
-            checkSchema(entry, schema.properties[key], `${location}.${key}`);
-        }
-    } else if (type === "array") {
-        if (value.length > schema.maxItems) throw new Error(`${location}: too many items`);
-        value.forEach((item, i) => checkSchema(item, schema.items, `${location}[${i}]`));
-    } else if (type === "string") {
-        if (value.length < (schema.minLength ?? 0) || value.length > (schema.maxLength ?? FILE_LIMIT)
-            || (schema.pattern && !new RegExp(schema.pattern).test(value))) {
-            throw new Error(`${location}: invalid text length or identifier`);
-        }
-    } else if (type === "integer" && (value < schema.minimum || value > schema.maximum)) {
-        throw new Error(`${location}: out of range`);
-    }
 }
 
 function buildModel(entries, schema) {
@@ -668,84 +613,6 @@ async function verifyWinner(inventory, checkout, root, item, executable = false)
     if (target !== expected || await realpath(root) !== root) {
         throw new Error(`${item.name}: submitted path does not match the active Specify template`);
     }
-}
-
-const BADGE_ID = /^[a-z][a-z0-9-]{0,79}$/;
-const BADGE_COLOR = /^(?:theme|red|green|amber|blue|purple|pink|orange|#[0-9a-fA-F]{6})$/;
-const badgeRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-const badgeKeys = (value, keys) => Object.keys(value)
-    .filter((key) => key !== "$schema").sort().join() === [...keys].sort().join();
-function validateBadgeText(text, placeholders, name) {
-    if (typeof text !== "string" || !text.trim() || text.length > 120
-        || /[\x00-\x1f\x7f<>]/.test(text)
-        || [...text.matchAll(/\{([^{}]+)\}/g)].some(([, placeholder]) =>
-            !placeholders.includes(placeholder))
-        || /[{}]/.test(text.replace(/\{[^{}]+\}/g, ""))) {
-        throw new Error(`${name}: invalid badge text or undeclared placeholder`);
-    }
-}
-function validateBadgeType(value, name) {
-    if (!badgeRecord(value) || Object.hasOwn(value, "$schema")
-        || !badgeKeys(value, ["id", "title", "description",
-        "rule", "defaultText", "defaultColor", "enabled"])
-        || typeof value.id !== "string" || !BADGE_ID.test(value.id)
-        || typeof value.rule !== "string" || !BADGE_ID.test(value.rule)
-        || typeof value.title !== "string" || !value.title.trim() || value.title.length > 120
-        || typeof value.description !== "string" || !value.description.trim()
-        || value.description.length > 1000 || typeof value.enabled !== "boolean"
-        || typeof value.defaultColor !== "string" || !BADGE_COLOR.test(value.defaultColor)) {
-        throw new Error(`${name}: invalid badge type definition`);
-    }
-}
-function validateBadgeSettings(value, name) {
-    if (!badgeRecord(value) || !badgeKeys(value, ["schemaVersion", "types"])
-        || value.schemaVersion !== 1 || !Array.isArray(value.types)
-        || !value.types.length || value.types.length > 30) {
-        throw new Error(`${name}: invalid badges settings`);
-    }
-    schemaMetadata(value, name);
-    for (const type of value.types) validateBadgeType(type, name);
-    if (new Set(value.types.map((type) => type.id)).size !== value.types.length) {
-        throw new Error(`${name}: duplicate badge type ID`);
-    }
-}
-export function validateBadgeRule(value, name) {
-    if (!badgeRecord(value) || !badgeKeys(value, ["schemaVersion", "id", "label", "description",
-        "inputs", "textPlaceholders", "module",
-        ...(Object.hasOwn(value, "placementPhaseInput") ? ["placementPhaseInput"] : [])])
-        || value.schemaVersion !== 1 || typeof value.id !== "string" || !BADGE_ID.test(value.id)
-        || typeof value.module !== "string" || !BADGE_ID.test(value.module)
-        || typeof value.label !== "string" || !value.label.trim() || value.label.length > 120
-        || typeof value.description !== "string" || !value.description.trim()
-        || value.description.length > 1000
-        || !Array.isArray(value.inputs) || value.inputs.length > 10
-        || value.inputs.some((input) => !badgeRecord(input) || !badgeKeys(input, ["id", "type",
-            ...(Object.hasOwn(input, "scope") ? ["scope"] : []),
-            ...(Object.hasOwn(input, "before") ? ["before"] : []),
-            ...(Object.hasOwn(input, "label") ? ["label"] : [])])
-            || typeof input.id !== "string" || !BADGE_ID.test(input.id)
-            || !["artifact", "artifact-set", "ordered-artifacts", "phase", "text"].includes(input.type)
-            || (input.label !== undefined
-                && (typeof input.label !== "string" || !input.label.trim() || input.label.length > 80))
-            || (input.scope !== undefined
-                && !(input.type === "artifact" && ["directory", "metadata"].includes(input.scope)
-                    || input.type === "ordered-artifacts" && input.scope === "metadata"))
-            || (input.type === "ordered-artifacts"
-                && (input.scope !== "metadata" || typeof input.before !== "string"))
-            || (input.before !== undefined && (input.type !== "ordered-artifacts"
-                || !value.inputs.some((candidate) => candidate.id === input.before
-                    && candidate.type === "artifact" && candidate.scope === "metadata"))))
-        || new Set(value.inputs.map((input) => input.id)).size !== value.inputs.length
-        || (value.placementPhaseInput !== undefined
-            && !value.inputs.some((input) =>
-                input.id === value.placementPhaseInput && input.type === "artifact"))
-        || !Array.isArray(value.textPlaceholders) || value.textPlaceholders.length > 10
-        || value.textPlaceholders.some((placeholder) => typeof placeholder !== "string"
-            || !/^[a-z][a-z0-9-]{0,39}$/.test(placeholder))
-        || new Set(value.textPlaceholders).size !== value.textPlaceholders.length) {
-        throw new Error(`${name}: invalid badge rule definition`);
-    }
-    schemaMetadata(value, name);
 }
 
 async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, specify, remainingBytes,

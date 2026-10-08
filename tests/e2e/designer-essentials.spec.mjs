@@ -1,13 +1,18 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { test, expect } from "./playwright.mjs";
+import { validateLocalSource } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server/designer-local-sources.mjs";
 
 const ui = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/ui/",
     import.meta.url);
 const extension = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
 const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design/shared-controls/",
     import.meta.url);
+const subAgents = await validateLocalSource("presets", fileURLToPath(
+    new URL("../../spec-kit-presets/copilot-sub-agents/", import.meta.url)));
 
-async function openDesigner(page, fields, extraPage, warnings = []) {
+async function openDesigner(page, fields, extraPage, warnings = [], templates = []) {
     const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
         JSON.parse(await readFile(new URL(`${name}/control.json`, stockControls), "utf8"))));
     const constraints = {
@@ -16,11 +21,12 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
         "canvas.displayName": { type: "string", minLength: 1, maxLength: 120 },
         "canvas.description": { type: "string", maxLength: 240 },
         "canvas.workflowListName": { type: "string", maxLength: 80 },
+        "workflowSlug.userProvided": { type: "boolean" },
         "billing.costCode": { type: "string", maxLength: 64 },
     };
     const values = { "canvas.id": "", "canvas.displayName": "",
         "canvas.description": "", "canvas.workflowListName": "",
-        "billing.costCode": "" };
+        "workflowSlug.userProvided": false, "billing.costCode": "" };
     const ids = [...fields, ...(extraPage?.fields ?? [])].map((field) => field.id);
     for (const field of [...fields, ...(extraPage?.fields ?? [])]) {
         field.validation = { ...constraints[field.id],
@@ -29,7 +35,7 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
             ] } : {}) };
     }
     const state = { handoffId: "test", revision: "test", generationAvailable: true,
-        settingsRevision: 0, persisted: false, templates: [], controls,
+        settingsRevision: 0, persisted: false, templates, controls,
         adapters: { "stock.text": "designer-control-adapter-text",
             "stock.checkbox": "designer-control-adapter-checkbox" },
         pages: [{ page: "designer-essentials", title: "Essentials", order: 10,
@@ -60,6 +66,7 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
                 contentType: "text/javascript" });
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css"
             || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js"
+            || path === "/ui/control-adapter-contract.js"
             || path === "/ui/badges-control.js" || path === "/ui/badge-duplicates.js") {
             const file = path === "/" ? "index.html" : path.slice(4);
             await route.fulfill({ body: await readFile(new URL(file, ui)), contentType:
@@ -75,24 +82,57 @@ async function openDesigner(page, fields, extraPage, warnings = []) {
 const core = [{ id: "canvas.id", label: "Canvas ID" },
     { id: "canvas.displayName", label: "Title" }];
 const stock = [{ id: "canvas.description", label: "Description" },
-    { id: "canvas.workflowListName", label: "Workflow header" }];
+    { id: "canvas.workflowListName", label: "Workflow header" },
+    { id: "workflowSlug.userProvided", label: "Allow custom slug", type: "boolean" }];
 
 test("Generate remains queued and displays installed-version warnings", async ({ page }) => {
+    const warning = `presets ${subAgents.id}: Wizard version ${subAgents.version}, installed version unverified.`;
     const requests = await openDesigner(page, core, undefined,
-        ["presets copilot-sub-agents: Wizard version 1.0.0, installed version unverified."]);
+        [warning]);
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("stock-canvas");
     await page.getByRole("textbox", { name: /Title/ }).fill("Stock Canvas");
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect(page.locator("#action-message"))
-        .toContainText("Warning: presets copilot-sub-agents: Wizard version 1.0.0, installed version unverified.");
+        .toContainText(`Warning: ${warning}`);
     expect(requests).toHaveLength(1);
 });
 
-test("stock Essentials keep four ordered controls and Generate submits all enabled values", async ({ page }) => {
+test("computed provider approval cancels without sending and submits the approved source and hash", async ({ page }) => {
+    const provider = await readFile(new URL(
+        "../../spec-kit-presets/copilot-canvas-values-test/values/workflow.mjs", import.meta.url));
+    const approved = { name: "canvas-value-workflow-provider",
+        sourceId: "copilot-canvas-values-test",
+        hash: createHash("sha256").update(provider).digest("hex") };
+    const requests = await openDesigner(page, core, undefined, [], [
+        { ...approved, kind: "generated.computed-value-provider" },
+    ]);
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("provider-canvas");
+    await page.getByRole("textbox", { name: /Title/ }).fill("Provider Canvas");
+    const generate = page.getByRole("button", { name: "Generate", exact: true });
+    await generate.click();
+    const dialog = page.getByRole("dialog", { name: "Approve generated value providers" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(approved.name);
+    await expect(dialog).toContainText(`Source: ${approved.sourceId}`);
+    await expect(dialog).toContainText(`SHA-256: ${approved.hash}`);
+    await expect(generate).toBeDisabled();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect(generate).toBeEnabled();
+    expect(requests).toHaveLength(0);
+    await generate.click();
+    await dialog.getByRole("button", { name: "Approve and Generate" }).click();
+    await expect.poll(() => requests.length).toBe(1);
+    expect(requests[0].approvedProviders).toEqual([approved]);
+    await expect(generate).toBeDisabled();
+    await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+});
+
+test("stock Essentials keep five ordered controls and Generate submits all enabled values", async ({ page }) => {
     const requests = await openDesigner(page, [...core, ...stock]);
     await expect(page.locator(".settings-field label")).toHaveText([
         "Canvas ID (required)", "Title (required)", "Description",
-        "Workflow header",
+        "Workflow header", "Allow custom slug",
     ]);
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect(page.locator("#page-error")).toContainText("Invalid Canvas ID (canvas.id)");
@@ -100,11 +140,13 @@ test("stock Essentials keep four ordered controls and Generate submits all enabl
     await page.getByRole("textbox", { name: /Title/ }).fill("Stock Canvas");
     await page.getByRole("textbox", { name: "Description" }).fill("A description");
     await page.getByRole("textbox", { name: "Workflow header" }).fill("My workflows");
+    await page.getByRole("checkbox", { name: "Allow custom slug" }).check();
     await page.getByRole("button", { name: "Generate", exact: true }).click();
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1].values).toEqual({
         "canvas.id": "stock-canvas", "canvas.displayName": "Stock Canvas",
         "canvas.description": "A description", "canvas.workflowListName": "My workflows",
+        "workflowSlug.userProvided": true,
     });
 });
 

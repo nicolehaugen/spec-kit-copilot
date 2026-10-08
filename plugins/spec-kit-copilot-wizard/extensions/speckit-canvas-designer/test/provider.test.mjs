@@ -4251,9 +4251,10 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
     for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
-        "settings.mjs", "generation.mjs", "image.mjs", "badges.mjs"]) {
+        "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
+    await cp(join(source, "contracts"), join(extension, "contracts"), { recursive: true });
     const extensionSource = await readFile(join(extension, "extension.mjs"), "utf8");
     const openCall = "model = await loadResolvedDesignerPages(handoff, project, pages, templates);";
     assert.ok(extensionSource.includes(openCall));
@@ -4293,7 +4294,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     }
     await mkdir(join(extension, "ui"));
     for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js",
-        "badges-control.js", "badge-duplicates.js", "styles.css"]) {
+        "control-adapter-contract.js", "badges-control.js", "badge-duplicates.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
     const { project, entries } = await projectFixture(t, workspace);

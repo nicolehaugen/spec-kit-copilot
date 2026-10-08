@@ -9,17 +9,19 @@ import { validControlContract, validControlValue } from "../generated-scaffold/c
 import { validateRuntimeSetup } from "../generated-scaffold/setup.mjs";
 import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
 import { phaseContract } from "../generated-scaffold/contract.mjs";
+import { REQUEST_LIMIT, validateGenerationRequestIntegrity } from "./contracts/generation-request.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "generated-scaffold");
 const featureFiles = ["server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
-    "phase-response.mjs", "badge-runtime.mjs",
+    "phase-response.mjs", "contracts/agent-actions.mjs", "contracts/workflow-state.mjs",
+    "contracts/host-adapter.mjs", "contracts/packaged-contributions.mjs",
+    "badge-runtime.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/page-assets.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 const RESERVED_GENERATED_PAGE_ID = "workflow";
 const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
-const REQUEST_LIMIT = 4 * 1024 * 1024;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided", "setup.show"]);
@@ -1331,11 +1333,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
     }
     const request = JSON.parse(await readBoundedSessionFile(
         generation, "request.json", REQUEST_LIMIT, "Generation request"));
-    const { integrity, ...payload } = request;
-    const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-    if (integrity !== hash || request.handoffId !== handoffId || request.requestId !== requestId) {
-        throw new Error("Generation request integrity mismatch");
-    }
+    validateGenerationRequestIntegrity(request, handoffId, requestId);
     if (request.project !== projectRoot) throw new Error("Generation request is bound to another checkout");
     const handoffFolder = join(workspaceRoot, "speckit-canvas-designer", "handoffs", handoffId);
     const handoff = JSON.parse(await readBoundedSessionFile(
@@ -1492,6 +1490,7 @@ export async function materialize(project, workspace, handoffId, requestId) {
         throw error;
     }
     await mkdir(join(target, "ui"));
+    await mkdir(join(target, "contracts"));
     if (pageFiles.length) await mkdir(join(target, "pages"));
     if (controlFiles.length) await mkdir(join(target, "controls"));
     if (providerFiles.length) await mkdir(join(target, "providers"));

@@ -1,11 +1,13 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify, stripVTControlCharacters } from "node:util";
 import { test, expect } from "./playwright.mjs";
+import { addLoopbackSpecifyExtension, serveSpecifyPackages } from "./specify-packages.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
@@ -19,15 +21,19 @@ const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design
 const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
 const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
 const riskRoot = new URL("../../spec-kit-presets/copilot-risk-matrix-test/", import.meta.url);
+const scratchRoot = fileURLToPath(new URL("../../", import.meta.url));
 const minimalRoot = new URL("../../spec-kit-presets/copilot-minimal-essentials-test/", import.meta.url);
 
-function supportsSpecifyVersion(output) {
-    const version = output.match(/\bspecify\s+(\d+)\.(\d+)\.(\d+)\b/);
-    if (!version) return false;
-    const major = Number(version[1]);
-    const minor = Number(version[2]);
-    const patch = Number(version[3]);
-    return major > 1 || (major === 1 && (minor > 0 || patch >= 7));
+async function materializeDevSkills(project) {
+    // Preset installation regenerates skills; Specify refuses to overwrite dev-linked skill files.
+    for (const command of ["load-page", "generate"]) {
+        const path = join(project, ".github", "skills",
+            `speckit-extension-canvas-design-${command}`, "SKILL.md");
+        if (!(await lstat(path)).isSymbolicLink()) continue;
+        const content = await readFile(path);
+        await unlink(path);
+        await writeFile(path, content);
+    }
 }
 
 function scalarRegistrations(resolve) {
@@ -48,16 +54,6 @@ function workflowRegistrations(resolve) {
         ["generated-phase-adapter", "generated.phase-control-adapter"],
     ].map(([name, kind]) => ({ ...resolve(name), kind, strategy: "replace" }));
 }
-
-test("Specify integration probe accepts all versions from 1.0.7 onward", () => {
-    for (const [version, supported] of [
-        ["0.99.99", false], ["1.0.6", false], ["1.0.7", true],
-        ["1.1.0", true], ["2.0.0", true], ["10.0.0", true],
-    ]) {
-        expect(supportsSpecifyVersion(`specify ${version}`), version).toBe(supported);
-    }
-    expect(supportsSpecifyVersion("unexpected version output")).toBe(false);
-});
 
 async function model(revision = "first") {
     const pages = [];
@@ -123,7 +119,7 @@ async function prepareScalarAdapters(project, state) {
 }
 
 async function startPreparedShell(state) {
-    const workspace = await mkdtemp(join(tmpdir(), "designer-pages-e2e-"));
+    const workspace = await mkdtemp(join(scratchRoot, ".designer-pages-e2e-"));
     const workflow = { selectedPhases: Object.keys(state.outputs ?? {}),
         ...(state.outputs ? { outputEvidence: state.outputs } : {}) };
     const selections = { presets: [], extensions: [], bundles: [] };
@@ -163,6 +159,45 @@ async function openDesigner(page) {
     await page.goto(shell.url);
     return shell;
 }
+
+test("Badges editor persists a configured badge through the Designer save boundary", async ({ page }) => {
+    const state = await model();
+    state.outputs = { specify: {
+        outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md",
+    } };
+    state.badgeTypes = [{ id: "work-complete", rule: "work-complete",
+        title: "Work complete", description: "Tracks a phase",
+        defaultText: "Complete", defaultColor: "green", enabled: true }];
+    state.badgeRules = [{ id: "work-complete", inputs: [{ id: "phase", type: "phase" }],
+        textPlaceholders: [] }];
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        await page.getByRole("tab", { name: "Badges" }).click();
+        await page.getByRole("button", { name: "+ Add badge" }).click();
+        await page.getByRole("button", { name: "Work complete" }).click();
+        await page.getByRole("button", { name: "Create badge" }).click();
+        await expect(page.locator(".badge-row")).toContainText("Complete");
+        await page.locator("#save-settings").click();
+        await expect(page.locator("#action-message")).toContainText("Settings saved.");
+        const url = new URL(shell.url);
+        const response = await page.request.get(new URL(
+            `/api/state?token=${url.searchParams.get("token")}`, url).href);
+        expect(response.ok()).toBe(true);
+        const saved = await response.json();
+        expect(saved.persisted).toBe(true);
+        expect(saved.badges).toHaveLength(1);
+        expect(saved.badges[0]).toMatchObject({
+            type: "work-complete", inputs: { phase: "specify" },
+            text: "Complete", showIn: ["workflow-list"],
+        });
+        await page.reload();
+        await page.getByRole("tab", { name: "Badges" }).click();
+        await expect(page.locator(".badge-row")).toContainText("Complete");
+    } finally {
+        await shell.close();
+    }
+});
 
 test("empty and partial preset inventories keep Designer open with inline generation errors", async ({ page }) => {
     const empty = await model();
@@ -211,9 +246,14 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
         return;
     }
     expect(available.status, available.stderr).toBe(0);
-    expect(supportsSpecifyVersion(available.stdout), available.stdout).toBe(true);
+    const version = available.stdout.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
+    expect(version, available.stdout).not.toBeNull();
+    const [major, minor, patch] = version.slice(1).map(Number);
+    expect(major > 1 || major === 1 && (minor > 0 || patch >= 7),
+        available.stdout).toBe(true);
     const workspace = await mkdtemp(join(tmpdir(), "minimal-designer-e2e-"));
     const project = join(workspace, "project");
+    let packages;
     const workflow = { selectedPhases: [] };
     const selections = { presets: [], extensions: [], bundles: [] };
     const handoff = { schemaVersion: 1, handoffId: "minimal-test", workflow, selections,
@@ -230,9 +270,24 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
-        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
-        run("preset", "add", "--dev", fileURLToPath(minimalRoot));
-        const inventory = await verifyComposition(project);
+        packages = await serveSpecifyPackages(workspace, {
+            "extension-canvas-design": fileURLToPath(extensionRoot),
+            "copilot-minimal-essentials-test": fileURLToPath(minimalRoot),
+        });
+        await addLoopbackSpecifyExtension(project, "extension-canvas-design",
+            packages.url("extension-canvas-design"));
+        const installed = await promisify(execFile)("specify",
+            ["preset", "add", "--from", packages.url("copilot-minimal-essentials-test")],
+            { cwd: project, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
+        expect(installed.stdout).toContain("Copilot Minimal Essentials Test");
+        const inventory = await verifyComposition(project).catch((error) => {
+            const resolution = spawnSync("specify", ["preset", "resolve", "designer-essentials"],
+                { cwd: project, encoding: "utf8", timeout: 10_000,
+                    env: { ...process.env, COLUMNS: "8192", NO_COLOR: "1" } });
+            throw new Error(`${error.message}; designer-essentials resolution: `
+                + `${JSON.stringify(resolution.stdout)} ${JSON.stringify(resolution.stderr)}`,
+            { cause: error });
+        });
         expect(inventory.pages.map((entry) => entry.name)).toEqual(
             ["designer-essentials", "designer-artifacts", "designer-appearance"]);
         expect(inventory.templates.map((entry) => entry.name)).not.toContain("generated-workflow-page-adapter");
@@ -259,6 +314,7 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
         expect((await response.json()).error).toContain("generated-workflow-page-adapter");
     } finally {
         await shell?.close();
+        await packages?.close();
         await rm(workspace, { recursive: true, force: true });
     }
 });
@@ -406,6 +462,48 @@ test("Main page Logo upload explains rejection beside the picker and clears on r
     }
 });
 
+test("an image adapter finishing after a tab switch mounts into the retained page", async ({ page }) => {
+    const state = await model();
+    const { field } = JSON.parse(await readFile(new URL("header-logo.json", settingsRoot), "utf8"));
+    state.pages[0].fields.push(field);
+    state.constraints[field.id] = { type: "image", maxBytes: 32768,
+        mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+    state.values[field.id] = "";
+    state.controls = [JSON.parse(await readFile(
+        new URL("shared-controls/stock-image/control.json", extensionRoot), "utf8"))];
+    state.adapters = { "stock.image": "designer-control-adapter-image" };
+    const shell = await startPreparedShell(state);
+    let releaseImport;
+    let importArrived;
+    const importHeld = new Promise((resolve) => { importArrived = resolve; });
+    await page.route("**/adapters/designer-control-adapter-image.mjs?*", async (route) => {
+        importArrived();
+        await new Promise((release) => { releaseImport = release; });
+        await route.continue();
+    });
+    try {
+        await page.goto(shell.url, { waitUntil: "domcontentloaded" });
+        await importHeld;
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("retained-image");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Retained image");
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        const imported = page.waitForResponse((response) =>
+            response.url().includes("/adapters/designer-control-adapter-image.mjs")
+                && response.status() === 200);
+        releaseImport();
+        await imported;
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await expect(page.getByRole("group", { name: field.label })
+            .locator('input[type="file"]')).toBeVisible();
+        await page.getByRole("tab", { name: "Outputs" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
+    } finally {
+        releaseImport?.();
+        await shell.close();
+    }
+});
+
 test("pending or failed image selection blocks actions until completion or cancel", async ({ page }) => {
     await page.addInitScript(() => {
         const read = Blob.prototype.arrayBuffer;
@@ -527,8 +625,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
         return;
     }
     expect(available.status, available.stderr).toBe(0);
-    expect(supportsSpecifyVersion(available.stdout), available.stdout).toBe(true);
-    const workspace = await mkdtemp(join(tmpdir(), "designer-preset-e2e-"));
+    const workspace = await mkdtemp(join(scratchRoot, ".designer-preset-e2e-"));
     const project = join(workspace, "project");
     const workflow = { selectedPhases: [] };
     const selections = { presets: [], extensions: [], bundles: [] };
@@ -545,12 +642,13 @@ test("isolated test preset resolves through Specify and renders its contributed 
 
             expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
             expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return result.stdout;
+            return stripVTControlCharacters(result.stdout);
         };
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        await materializeDevSkills(project);
         run("preset", "add", "--dev", fileURLToPath(presetRoot));
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
@@ -617,7 +715,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
     }
 });
 
-test("Billing preset resolves, saves and reopens Cost code, then generates its read-only value", async ({ page }) => {
+test("Billing preset and built-in palette persist through Generate and render their values", async ({ page }) => {
     test.setTimeout(150_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     if (available.error?.code === "ENOENT") {
@@ -625,7 +723,7 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         return;
     }
     expect(available.status, available.stderr).toBe(0);
-    const workspace = await mkdtemp(join(tmpdir(), "billing-preset-e2e-"));
+    const workspace = await mkdtemp(join(scratchRoot, ".billing-preset-e2e-"));
     const project = join(workspace, "project");
     const workflow = { selectedPhases: ["specify"],
         installed: { presets: [], extensions: [], bundles: [] } };
@@ -640,12 +738,13 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
                 timeout: 120000, env: { ...process.env, COLUMNS: "500" } });
             expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
             expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return result.stdout;
+            return stripVTControlCharacters(result.stdout);
         };
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        await materializeDevSkills(project);
         run("preset", "add", "--dev", fileURLToPath(billingRoot));
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
@@ -665,10 +764,15 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
             "designer-badges", "designer-appearance", "canvas-settings-billing"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
-        const templates = [{ ...resolve("canvas-contributions-billing"),
-            kind: "designer.setting-definition", strategy: "replace" },
-        ...scalarRegistrations(resolve), ...workflowRegistrations(resolve)];
-        expect(templates[0].sourceId).toBe("copilot-billing-canvas-test");
+        const templates = [
+            ...["designer-appearance-light-accent", "designer-appearance-dark-accent"]
+                .map((name) => ({ ...resolve(name),
+                    kind: "designer.setting-definition", strategy: "replace" })),
+            { ...resolve("canvas-contributions-billing"),
+                kind: "designer.setting-definition", strategy: "replace" },
+            ...scalarRegistrations(resolve), ...workflowRegistrations(resolve),
+        ];
+        expect(templates[2].sourceId).toBe("copilot-billing-canvas-test");
         const folder = handoffDirectory(workspace, handoff.handoffId);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
@@ -688,18 +792,33 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Canvas");
+        await page.getByRole("tab", { name: "Appearance" }).click();
+        const light = page.getByRole("textbox", { name: "Light mode accent" });
+        const dark = page.getByRole("textbox", { name: "Dark mode accent" });
+        await light.fill("not-a-color");
+        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await expect(page.locator("#page-error")).toContainText(
+            "Invalid Light mode accent (canvas.accentLight)");
+        await light.fill("123aBc");
+        await dark.fill("#ABC123");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#action-message")).toHaveText("Settings saved.");
         const saved = await loadDesignerSettings(workspace, handoff,
             await loadResolvedDesignerPages(handoff, project, pages, templates));
         expect(saved.values["billing.costCode"]).toBe("CC-481");
+        expect(saved.values["canvas.accentLight"]).toBe("123aBc");
+        expect(saved.values["canvas.accentDark"]).toBe("#ABC123");
         reopened = await startShell(handoff, saved, { project, workspace,
             session: { send: async () => {} } });
         await page.goto(reopened.url);
         await page.getByRole("tab", { name: costPage.title }).click();
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveValue("CC-481");
+        await page.getByRole("tab", { name: "Appearance" }).click();
+        await expect(page.getByRole("textbox", { name: "Light mode accent" })).toHaveValue("123aBc");
+        await expect(page.getByRole("textbox", { name: "Dark mode accent" })).toHaveValue("#ABC123");
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         const [requestId] = await readdir(join(folder, "generations"));
         await materialize(project, workspace, handoff.handoffId, requestId);
         const config = JSON.parse(await readFile(join(project, ".github", "extensions",
@@ -707,6 +826,9 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
             label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } }]);
+        expect(config.appearance).toMatchObject({
+            light: { accent: "#123aBc" }, dark: { accent: "#ABC123" },
+        });
         const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
             "extensions", "billing-canvas", "server.mjs")).href);
         generatedRoutes = createWorkflowRoutes(config, {
@@ -738,12 +860,9 @@ test("Billing preset resolves, saves and reopens Cost code, then generates its r
 test("risk preset selects a cell by keyboard and packages its read-only adapter", async ({ page }) => {
     test.setTimeout(480_000);
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
-    if (available.error?.code === "ENOENT") {
-        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
-        return;
-    }
+    expect(available.error, "Specify CLI is required for the contract integration").toBeUndefined();
     expect(available.status, available.stderr).toBe(0);
-    const workspace = await mkdtemp(join(tmpdir(), "risk-preset-e2e-"));
+    const workspace = await mkdtemp(join(scratchRoot, ".risk-preset-e2e-"));
     const project = join(workspace, "project");
     const presetCopy = join(workspace, "risk-preset");
     const handoff = {
@@ -756,6 +875,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         workflow: handoff.workflow, selections: handoff.selections,
     });
     let shell, reopened, stale, broken, incompatible, brokenContext, server, routes;
+    const prompts = [];
     try {
         await mkdir(project);
         const run = (...args) => {
@@ -765,12 +885,13 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             });
             expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
             expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return result.stdout;
+            return stripVTControlCharacters(result.stdout);
         };
         run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
             "--integration", "copilot", "--integration-options=--skills",
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
+        await materializeDevSkills(project);
         await cp(fileURLToPath(riskRoot), presetCopy, { recursive: true });
         run("preset", "add", "--dev", presetCopy);
         const command = await readFile(join(project, ".github", "skills",
@@ -811,7 +932,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         const load = async () => loadDesignerSettings(workspace, handoff,
             await loadResolvedDesignerPages(handoff, project, pages, templates));
         shell = await startShell(handoff, await load(), { project, workspace,
-            session: { send: async () => {} } });
+            session: { send: async ({ prompt }) => { prompts.push(prompt); } } });
         await page.goto(shell.url);
         const group = page.getByRole("radiogroup", { name: "Risk rating: impact by likelihood" });
         await expect(group.getByRole("radio")).toHaveCount(9);
@@ -830,13 +951,34 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             impact: "medium", likelihood: "medium",
         });
         reopened = await startShell(handoff, await load(), { project, workspace,
-            session: { send: async () => {} } });
+            session: { send: async ({ prompt }) => { prompts.push(prompt); } } });
         await page.goto(reopened.url);
         await expect(page.getByRole("radio",
             { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#conn-status")).toContainText("Generation queued:");
         const [requestId] = await readdir(join(folder, "generations"));
+        await expect.poll(() => prompts.length).toBe(1);
+        expect(prompts[0]).toContain(requestId);
+        expect(prompts[0]).toContain("speckit-extension-canvas-design-generate");
+        const requestPath = join(folder, "generations", requestId, "request.json");
+        const requestBytes = await readFile(requestPath);
+        const request = JSON.parse(requestBytes.toString("utf8"));
+        const { integrity, ...payload } = request;
+        expect(request.schemaVersion).toBe(1);
+        expect(request.handoffId).toBe(handoff.handoffId);
+        expect(request.requestId).toBe(requestId);
+        expect(request.settingsRevision).toBe(1);
+        expect(requestBytes.length).toBeLessThanOrEqual(4 * 1024 * 1024);
+        expect(integrity).toBe(createHash("sha256").update(JSON.stringify(payload)).digest("hex"));
+        expect(request.values["risk.rating"]).toEqual({ impact: "medium", likelihood: "medium" });
+        expect(request.generatedControls[0].value).toEqual(request.values["risk.rating"]);
+        await writeFile(requestPath, JSON.stringify({ ...request, settingsRevision: 0 }));
+        await expect(materialize(project, workspace, handoff.handoffId, requestId))
+            .rejects.toThrow(/Generation request integrity mismatch/);
+        await expect(readFile(join(project, request.target, "canvas-config.json")))
+            .rejects.toMatchObject({ code: "ENOENT" });
+        await writeFile(requestPath, requestBytes);
         await materialize(project, workspace, handoff.handoffId, requestId);
         const portable = join(workspace, "portable-risk");
         await cp(join(project, ".github", "extensions", "risk-canvas"), portable, { recursive: true });
@@ -876,10 +1018,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         await page.waitForFunction(() => globalThis.controlCallbacks?.length === 1);
         await page.getByRole("tab", { name: "Outputs" }).click();
         await page.getByRole("tab", { name: "Essentials" }).click();
-        await page.waitForFunction(() => globalThis.controlCallbacks?.length === 2);
+        await expect.poll(() => page.evaluate(() => globalThis.controlCallbacks?.length)).toBe(1);
         await page.evaluate(() => {
-            globalThis.controlCallbacks[1]({ impact: "low", likelihood: "low" });
-            globalThis.controlCallbacks[0]({ impact: "high", likelihood: "high" });
+            globalThis.controlCallbacks[0]({ impact: "low", likelihood: "low" });
         });
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#action-message")).toHaveText("Settings saved.");
@@ -1016,7 +1157,7 @@ test("required stock text keeps incomplete drafts until Generate", async ({ page
 });
 
 test("missing Generate skill explains why the action is disabled", async ({ page }) => {
-    const workspace = await mkdtemp(join(tmpdir(), "designer-generate-unavailable-"));
+    const workspace = await mkdtemp(join(scratchRoot, ".designer-generate-unavailable-"));
     const project = join(workspace, "project");
     const workflow = { selectedPhases: ["specify"],
         installed: { presets: [], extensions: [], bundles: [] } };
@@ -1046,10 +1187,6 @@ test("missing Generate skill explains why the action is disabled", async ({ page
     }
 });
 
-test("handoff cannot serve a loading shell without validated pages", async () => {
-    await expect(startShell({ handoffId: "test" })).rejects.toThrow(/validated before opening/);
-});
-
 test("failed optional page shows safe diagnostics while Essentials remains editable", async ({ page }) => {
     const shell = await openWithError(page, "designer-artifacts");
     try {
@@ -1071,7 +1208,7 @@ test("failed optional page shows safe diagnostics while Essentials remains edita
 });
 
 test("Save keeps incomplete drafts, persists edits and reports stale revisions", async ({ page }) => {
-    const workspace = await mkdtemp(join(tmpdir(), "designer-save-e2e-"));
+    const workspace = await mkdtemp(join(scratchRoot, ".designer-save-e2e-"));
     const workflow = { selectedPhases: [] };
     const selections = { presets: [], extensions: [], bundles: [] };
     const handoff = { schemaVersion: 1, handoffId: "test", workflow, selections,

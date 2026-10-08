@@ -4,11 +4,11 @@ import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fixedConstitutionOutputs, handoffDirectory, validateConfirmedOutputs,
     validatePhaseOutputs } from "./handoff.mjs";
-import { isWindowsDeviceName } from "./pages.mjs";
-import { validateBadges } from "./badges.mjs";
+import { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues, validateSavedSettings,
+    validateSaveRequest } from "./contracts/designer-settings.mjs";
+export { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues } from "./contracts/designer-settings.mjs";
+import { validateBadges } from "./contracts/badges.mjs";
 
-export const SETTINGS_LIMIT = 1024 * 1024;
-export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
 const saves = new Map();
 export const initialOutputs = (handoff) => fixedConstitutionOutputs(
     handoff.workflow.outputEvidence
@@ -29,28 +29,6 @@ function restorePipelineOutputs(saved, pipeline) {
             ?? original.view;
         return [id, { outputs, view }];
     }));
-}
-
-export function validateValues(values, constraints) {
-    if (!values || typeof values !== "object" || Array.isArray(values)
-        || Object.keys(values).length !== Object.keys(constraints).length
-        || Object.keys(values).some((key) => !Object.hasOwn(constraints, key))) {
-        throw new Error("Designer settings contain unexpected or missing fields");
-    }
-    for (const [key, rule] of Object.entries(constraints)) {
-        const value = values[key];
-        const invalidType = rule.type === "boolean" ? typeof value !== "boolean"
-            : rule.type === "string" ? typeof value !== "string"
-                : rule.type === "image" ? typeof value !== "string"
-                    || value.length > Math.ceil(rule.maxBytes / 3) * 4 + 64
-                    : rule.type === "object" ? value !== null
-                        && (typeof value !== "object" || Array.isArray(value))
-                        : true;
-        if (invalidType || key === "canvas.id" && typeof value === "string"
-            && (/[/\\]/.test(value) || isWindowsDeviceName(value))) {
-            throw new Error(`Invalid Designer setting: ${key}`);
-        }
-    }
 }
 
 async function settingsPath(workspacePath, handoff) {
@@ -101,18 +79,7 @@ async function readSettings(path, handoff, model, openFile = open) {
     } finally {
         await file.close();
     }
-    if (!record || typeof record !== "object" || Array.isArray(record)
-        || Object.keys(record).sort().join() !== [
-            "handoffId", "modelRevision", "revision", "schemaVersion", "values",
-            ...(Object.hasOwn(record, "outputs") ? ["outputs"] : []),
-            ...(Object.hasOwn(record, "badges") ? ["badges"] : []),
-        ].sort().join()
-        || record.schemaVersion !== 1 || record.handoffId !== handoff.handoffId
-        || !Number.isSafeInteger(record.revision) || record.revision < 1
-        || record.modelRevision !== model.revision) {
-        throw new Error("Saved Designer settings do not match the current handoff or pages");
-    }
-    validateValues(record.values, model.constraints);
+    validateSavedSettings(record, handoff, model);
     if (record.outputs !== undefined) {
         validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases);
     }
@@ -148,17 +115,7 @@ export async function loadDesignerSettings(workspacePath, handoff, model, openFi
 }
 
 export async function saveDesignerSettings(workspacePath, handoff, model, request, openFile = open) {
-    if (!request || typeof request !== "object" || Array.isArray(request)
-        || Object.keys(request).sort().join() !== [
-            "modelRevision", "revision", "values",
-            ...(Object.hasOwn(request, "outputs") ? ["outputs"] : []),
-            ...(Object.hasOwn(request, "badges") ? ["badges"] : []),
-        ].sort().join()
-        || request.modelRevision !== model.revision
-        || !Number.isSafeInteger(request.revision) || request.revision < 0) {
-        throw new Error("Invalid Designer save request");
-    }
-    validateValues(request.values, model.constraints);
+    validateSaveRequest(request, model);
     const outputs = validateConfirmedOutputs(Object.hasOwn(request, "outputs")
         ? request.outputs : model.outputs ?? initialOutputs(handoff),
         handoff.workflow.selectedPhases, initialOutputs(handoff));

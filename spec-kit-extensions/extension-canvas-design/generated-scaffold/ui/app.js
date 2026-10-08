@@ -1,6 +1,8 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
 const { mountPageAssets, createStockImageRenderer } = await import(
     `./page-assets.mjs${new URL(import.meta.url).search}`);
+const { validatePhaseAdapter, validatePhaseMount } = await import(
+    `/contracts/host-adapter.mjs${new URL(import.meta.url).search}`);
 const token = new URL(location.href).searchParams.get("token");
 const imageRegistration = document.getElementById("stock-image-registration");
 const renderStockImage = createStockImageRenderer(imageRegistration, token);
@@ -1308,17 +1310,9 @@ $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 const pipelineRoot = $("workflow-pipeline");
 const workflowRoot = $("workflow-content") ?? $("workflow-surface");
 try {
-    const { mount, controlId, contractVersion, requiredCapabilities = [] } = await import(
-        `${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
-    if (controlId !== "workflow-phases" || contractVersion !== 1 || typeof mount !== "function") {
-        throw new Error("Incompatible phase control adapter");
-    }
-    const capabilities = new Set(["workflow.rows.v1", "workflow.managed-run.v1"]);
-    if (!Array.isArray(requiredCapabilities)
-        || requiredCapabilities.some((name) => !capabilities.has(name))
-        || new Set(requiredCapabilities).size !== requiredCapabilities.length) {
-        throw new Error("Phase control adapter requires unavailable host capabilities");
-    }
+    const adapter = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
+    const mount = validatePhaseAdapter(adapter);
+    const { controlId } = adapter;
     const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
     const mountPhase = (root, initialState) => {
         phaseControl = mount({ root,
@@ -1361,10 +1355,7 @@ try {
             },
             error: (error) => message(error.message, "phase-action-error", true),
         } });
-        if (typeof phaseControl?.update !== "function" || typeof phaseControl.dispose !== "function") {
-            throw new Error("Phase control adapter must return update and dispose");
-        }
-        return phaseControl;
+        return validatePhaseMount(phaseControl);
     };
     const initialState = {
         phases: initialPhases, current: initialPhases.length ? 0 : -1,

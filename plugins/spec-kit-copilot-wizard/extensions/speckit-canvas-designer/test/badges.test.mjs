@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateBadges } from "../badges.mjs";
+import { validateBadges } from "../contracts/badges.mjs";
 
 const model = {
     phases: ["specify", "plan"],

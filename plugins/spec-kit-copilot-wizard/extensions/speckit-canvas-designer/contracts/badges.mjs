@@ -1,4 +1,4 @@
-import { findDuplicateBadge } from "./ui/badge-duplicates.js";
+import { findDuplicateBadge } from "../ui/badge-duplicates.js";
 
 const PLACEMENTS = new Set(["workflow-list", "workflow-summary", "phase-card"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);

@@ -82,4 +82,5 @@ const handler = createHandler({
     }),
 });
 
-createServer((req, res) => { void handler(req, res); }).listen(4177, "127.0.0.1");
+createServer((req, res) => { void handler(req, res); })
+    .listen(Number(process.env.SPECKIT_E2E_PORT || 4177), "127.0.0.1");

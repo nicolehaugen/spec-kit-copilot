@@ -1,5 +1,5 @@
 const token = new URL(location.href).searchParams.get("token");
-let mountIdentity, mountOutputs, mountBadges;
+let mountIdentity, mountOutputs, mountBadges, adapterContract;
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
@@ -289,36 +289,22 @@ function renderPage(pageId, invalidFieldId) {
             mount.textContent = `Could not load ${field.label}: missing Designer adapter`;
             continue;
         }
-        const mountAdapter = ({ mount: render, validate, controlId, valueContract }) => {
+        const isRetained = () => mount.isConnected
+            || pageViews.get(pageId)?.some((node) => node.contains(mount));
+        const mountAdapter = (module) => {
                 if (model.revision !== renderRevision) return;
-                if (typeof render !== "function") throw new Error("Missing mount export");
-                if (typeof validate !== "function") throw new Error("Missing validate export");
                 const expected = model.controls.find((item) => item.id === control)?.value;
-                if (controlId !== control || valueContract?.type !== expected?.type
-                    || (image
-                        ? valueContract.maxBytes !== expected.maxBytes
-                            || JSON.stringify(valueContract.mimeTypes) !== JSON.stringify(expected.mimeTypes)
-                        : object
-                            ? JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
-                                !== JSON.stringify(Object.entries(expected.properties).sort())
-                            : Object.keys(valueContract).sort().join() !== "type")) {
-                    throw new Error("Incompatible control ID or value contract");
-                }
-                const handle = render({ root: mount, field, value: draft[field.id],
+                adapterContract.validateAdapterModule(module, control, expected, image, object);
+                if (!isRetained()) return;
+                const handle = module.mount({ root: mount, field, value: draft[field.id],
                     ...(image ? { context: { setBusy(busy) {
                             if (busy) activeUploads.add(field.id);
                             else activeUploads.delete(field.id);
                             updateSave();
                         } } } : {}),
                     onChange(value) {
-                        if (!mount.isConnected) return;
-                        if (rules.type === "image" ? typeof value !== "string"
-                            || value.length > Math.ceil(rules.maxBytes / 3) * 4 + 64
-                            : rules.type === "boolean" ? typeof value !== "boolean"
-                                : rules.type === "string" ? typeof value !== "string"
-                                    : value !== null && (typeof value !== "object" || Array.isArray(value))) {
-                            throw new Error(`Invalid Designer setting: ${field.id}`);
-                        }
+                            if (model.revision !== renderRevision || !isRetained()) return;
+                        adapterContract.validateAdapterChange(value, rules, field.id);
                         draft[field.id] = value;
                         fieldError.hidden = true;
                         messageBox.hidden = true;
@@ -326,9 +312,7 @@ function renderPage(pageId, invalidFieldId) {
                         updateSave();
                         updateGenerate();
                     } });
-                if (typeof handle?.isReady !== "function") {
-                    throw new Error("Missing isReady handle");
-                }
+                adapterContract.validateAdapterHandle(handle);
                 mounted.set(field.id, handle);
         };
         const showAdapterError = (error) => {
@@ -423,10 +407,11 @@ function applyState(next) {
 
 const status = document.getElementById("conn-status");
 try {
-    [{ mountIdentity }, { mountOutputs }, { mountBadges }] = await Promise.all([
+    [{ mountIdentity }, { mountOutputs }, { mountBadges }, adapterContract] = await Promise.all([
         import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
         import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
         import(`/ui/badges-control.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/control-adapter-contract.js?token=${encodeURIComponent(token)}`),
     ]);
     const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);

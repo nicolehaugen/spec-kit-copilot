@@ -24,6 +24,12 @@ and adapter. `shared-controls/` contains definitions and adapters used by both
 hosts. `generated-scaffold/` is the static app scaffold; Generate
 copies the resolved generated-host assets into its `pages/` directory, so the
 finished app does not depend on this extension at runtime.
+`scripts/contracts/generation-request.mjs` checks the frozen request's IDs
+and SHA-256 integrity before materialization. The generated app packages
+`generated-scaffold/contracts/` with agent action/response, host adapter,
+contribution, and persisted workflow state rules; no design-time preset is
+needed when reopening it. These files define custom workflow behavior, not
+the generic `create-canvas` browser/server protocol.
 
 | Template | Page | Default contents |
 | --- | --- | --- |
