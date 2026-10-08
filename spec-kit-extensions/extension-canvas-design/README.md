@@ -5,11 +5,11 @@ an Essentials-driven workflow canvas generation command for the Copilot Designer
 
 ## What It Does
 
-Canvas Design **0.1.19** registers three JSON page templates, fifteen ordered
+Canvas Design **0.1.19** registers four JSON page templates, fifteen ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition, phase control definition with its required placement,
-and phase adapter, plus the
+and phase adapter, badge types and evaluator rules, plus the
 `speckit.extension-canvas-design.load-page` and
 `speckit.extension-canvas-design.generate` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
@@ -48,7 +48,8 @@ the generic `create-canvas` browser/server protocol.
 | `designer-appearance-dark-surface` | Appearance slot | Optional dark-mode card surface |
 | `designer-appearance-dark-secondary` | Appearance slot | Optional dark-mode secondary surface |
 | `designer-appearance-dark-text` | Appearance slot | Optional dark-mode main text |
-| `generated-workflow` | Generated Workflow page | Required page metadata and named slots; host shell stays fixed |
+| `generated-workflow` | Generated Workflow page | Required page metadata, adapter reference, badge destinations, and named slots |
+| `generated-workflow-page-adapter` | Generated Workflow page | Replaceable setup, constitution, list, summary, phase composition, values, and contribution presentation |
 | `generated-phase-control` | Generated Workflow page | Phase identity, placement, adapter reference, and per-phase view labels |
 | `generated-phase-adapter` | Generated Workflow page | Replaceable phase navigation and card presentation |
 | `shared-controls-image` | Shared control | Image value contract and paired adapter names |
@@ -60,6 +61,7 @@ the generic `create-canvas` browser/server protocol.
 | `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
 | `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
 | `designer-artifacts` | Outputs | Review fixed pipeline artifacts, add viewer links, and select the default viewer target |
+| `designer-badges` | Badges | Add opt-in result badges to workflow rows, summaries, phase cards, and individual phase outputs |
 | `designer-appearance` | Appearance | Logos and per-mode palette colors |
 
 The Essentials core template lives in `designer-host/tabs/essentials.json`; its
@@ -67,9 +69,11 @@ The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 Its required Canvas ID and Title are rendered by the fixed identity control,
 while optional text contributions use the registered `stock.text` adapter.
 The Outputs tab uses a separate fixed phase-artifacts control. The Designer
-checks these core declarations before displaying either page; presets can
-still contribute to the `essentials.options` slot. Identity length, requiredness,
-and identifier rules are checked at Generate;
+validates each supplied page without requiring every default tab to open;
+presets can still contribute to the `essentials.options` slot. An empty or
+partial composition opens with inline diagnostics, but Generate requires
+valid identity fields and the selected generated Workflow assets. Identity
+length, requiredness, and identifier rules are checked at Generate;
 the generator independently guards the generated extension path. Description and
 Workflow header use the packaged stock-text adapter for their visible
 generated presentation. Authors may set `"required": true` on a text field
@@ -86,7 +90,8 @@ defaults to `Spec Kit workflow canvas.` and heading to `Workflows`.
 Generate validates all enabled Designer pages, including custom fields;
 an invalid page blocks generation until repaired.
 Appearance's independent Header logo and Main page logo controls accept PNG, JPEG, GIF,
-or WebP images up to 32 KiB each. Upload, preview, replace, and remove are
+or WebP images up to 32 KiB each. They appear before palette colors.
+Upload, preview, replace, and remove are
 available for both in Designer. The smaller header logo replaces the existing
 brand mark; the optional larger main-page logo appears next to the workflow
 heading and description. Either image may be used alone. Generate freezes
@@ -126,7 +131,7 @@ are needed at runtime.
 The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
 runtime package inventory from the Wizard handoff. Designer-only `canvas-design`
-selections are not runtime canvas configuration. Artifacts remains a placeholder;
+selections are not runtime canvas configuration.
 Appearance exposes per-mode accent, page background, card surface, secondary
 surface, and main text colors. Each optional setting accepts `RRGGBB` or
 `#RRGGBB` (case-insensitive), or blank. Generate validates and freezes nonblank
@@ -135,8 +140,8 @@ generated canvas's `canvas-config.json`. Each blank setting retains its existing
 theme color. Viewers can still switch between light and dark mode. Invalid hex
 blocks Generate, but incomplete drafts may be saved. There is no color preview
 or contrast warning; choose contrasting text and surfaces. Existing generated
-canvases are not updated. Result badges are deferred; generation does not
-configure or render them.
+canvases are not updated. A newly opened Badges tab has no configured badges;
+no badge is evaluated or rendered until one is explicitly added.
 
 The Workflow header names the collection with the description just below it.
 The generated canvas keeps New workflow in the header and shows a bordered,
@@ -162,7 +167,13 @@ constitution follows the workflow list and applies to every workflow. The horizo
 visible, scrolling on narrow screens, even before a new workflow is started;
 phase details appear when a row is selected. Phase navigation
 shows phase names without run states; the selected phase card retains its status.
+Its subtitle uses the Wizard's phase description when provided, with a built-in
+description for canonical phases in older handoffs instead of a command ID.
 Dispatch success does not add a separate "Request sent" notice to the canvas.
+Phase and Constitution run buttons read "Running" while a request is being
+sent or running; they remain available for retries.
+Rerunning a completed or failed phase, or a phase with an available artifact,
+asks for overwrite confirmation as in the Wizard; in-flight retries do not.
 View output opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
 The Outputs tab shows one phase at a time, except Constitution. Wizard-inferred
@@ -228,6 +239,107 @@ approved template code, not sandboxed JSON. The test-only
 `spec-kit-presets/copilot-dialog-buttons-test` fixture adds one `speckit.implement`
 confirmation and a separate `workflow.actions` button; it is not a runtime
 package or a catalog release.
+The Badges tab offers **Value match**, **Artifact current**,
+**Artifact stale**, **Checklist progress**, **Checklist complete**,
+**Markdown files**, **Work complete**, **Phase run complete**, and **Phase artifact complete**. It starts empty; the new rule does not create default instances. Use
+**+ Add badge** to open a separate type picker. The focused editor shows
+badge color first, then phase checkboxes with outputs nested under
+each selected phase. Selecting a phase starts with its View output; the rule
+determines whether one output or several can be selected. Placement offers Workflow list, Workflow summary, and Phase. Each checked
+placement has its own editable badge text: Workflow-list text (`text`) and
+phase-card text (`phaseText`) accept the rule's per-workflow placeholders;
+summary text (`summaryText`) accepts `{workflows}` for the aggregate count
+instead of per-workflow placeholders. Phase shows the badge on each selected
+evidence phase's card and follows changes to that selection.
+Previously saved custom phase/output placements remain visible and are
+preserved when edited; select Phase to replace them with evidence-phase cards
+or remove the saved placements explicitly. Unavailable saved placements can
+be removed without losing valid ones. Only one primary action appears per view:
+Add badge on the list, then Create badge or Save changes in the editor.
+Configured badges have Edit and Remove actions. Selected evidence outputs stay pinned if their View
+default later changes; removing one requires choosing another before Generate.
+The same badge type can be added again with different placement text or rule inputs,
+even at the same placement. Only the same type, placement texts, inputs, and overlapping
+phase/output target (or untargeted badge) are rejected as duplicates by
+Save and Generate.
+Work complete requires both
+checked checklist items and a completed run of a separately chosen phase.
+**Markdown files** uses the selected confirmed output as a folder anchor,
+counting regular `.md` files in that folder for each workflow, including
+when the selected file is absent. Its Workflow summary counts workflows with
+at least one matching file (not the total number of files); individual badges
+can still show the file count using `{count}`. It does not count checklist items;
+**Checklist progress** continues to count Markdown checkboxes.
+**Checklist complete** requires a second, earlier confirmed output. It matches
+only when the checklist contains at least one item, every item is checked, and
+the checklist file is at least as recent as that earlier output. Existing saved
+Checklist complete badges must select the earlier output before saving or
+generating again; frozen generated apps are not changed automatically.
+**Phase artifact complete** checks one target phase and its selected output
+against an optional ordered chain of outputs from earlier selected workflow
+phases. Each checked prerequisite phase contributes exactly one declared
+output, evaluated in workflow phase order; the target is checked last. All
+chosen outputs must be regular files, and each later modification time must
+be at least the preceding one (equal times pass). A missing output does not
+match; unsafe or unavailable metadata produces a diagnostic. Intervening
+phases that were not checked are not prerequisites, and no completed phase run
+is required. A target-only Specify badge needs no earlier output. When Phase
+is checked, the badge appears on the **target** phase card, not on each
+prerequisite's card. Workflow list and Workflow summary can be checked
+independently, each with its own editable text separate from the phase-card
+text. The summary counts matching **workflows**, including zero; it does not
+count files or phase runs.
+Constitution can provide badge evidence for workflow badges, but its separate
+project card and output are not phase-card or phase-output badge destinations.
+Summary badges use their configured summary text, interpolating `{workflows}`
+with the aggregate count, including zero before any workflows exist. Older
+instances without `summaryText` retain the type title plus count; those without
+`phaseText` retain their previous phase-card text. Rules contribute one per
+matching workflow unless they explicitly supply a numeric summary total.
+Renaming a type/default does not overwrite previously saved custom badge text.
+**Value match** searches for a required literal string anywhere in one selected
+confirmed Markdown output, ignoring capitalization. It does not require a field
+label, interpret regex syntax, exclude fenced blocks, or count occurrences.
+Enter the whole string (for example, `Verdict: needs-clarification`) if context
+matters. Previously saved **Needs clarification** badges are not converted:
+the removed type cannot be used in a new Designer configuration. Saved settings
+are bound to their original page-model revision, so reopening with changed
+templates can require recreating those settings. Already generated apps retain
+their frozen rule.
+
+The complete Designer badge list lives in
+`designer-host/badges-settings/badge-types.json`. It is one replace-only
+Specify template: replace the whole file to add or remove types, rename their
+IDs, change picker titles and descriptions, or change default text, color, and
+enabled state. Its definitions also supply the selected types in generated
+canvases; a type must refer to a registered rule. Rules and their self-contained
+JavaScript adapters remain independently replaceable templates under
+`generated-host/badges/`; rule metadata declares typed evidence inputs and
+supported text placeholders. Saved badge instances refer to type IDs, so renaming
+one requires updating existing instances before Generate. Generate
+freezes only selected definitions and adapters into the app so runtime never
+needs the design-time preset. Generated apps use bounded reads of declared
+outputs and recorded runs; rule adapters decide whether evidence matches and
+produce badge values and optional nonnegative `summaryCount`. Directory-scoped
+artifact evidence counts regular Markdown siblings of the selected output,
+without assuming a folder or phase name. Freshness compares artifact modification
+time to the latest run's start (or completion for older records without a start).
+Counts and freshness are best-effort; unreadable evidence
+produces a diagnostic rather than an invented exact result. A replacement
+phase adapter must declare badge support before phase-card placement is used.
+The generated Workflow page advertises its supported badge destinations
+(`workflow.list`, `workflow.summary`, `phase.card`, and `phase.output`) in
+`generated-host/workflow-page/workflow.json`. A preset can replace its
+registered whole-page adapter and declare a subset; Generate rejects selected
+placements outside that subset. The replaceable
+phase control declares `phase.card` and `phase.output` in
+`generated-host/phase-control/phase-control.json`; its adapter renders the
+badge beside the selected phase or individual output link. These names
+identify the four supported destinations and are checked at Generate.
+The Workflow adapter owns the list, summary, setup, constitution, and phase
+composition; the generated host retains authorized actions, persistence,
+safe artifact access, and shared application chrome. Declaring another slot
+alone does not add a fifth placement choice.
 
 ## Requirements
 
@@ -441,10 +553,14 @@ not the JSON document. No kind is inferred from a filename.
 | --- | --- | --- |
 | `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
 | `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
-| `generated.workflow-page-definition` | Required generated Workflow page and slots | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `generated.workflow-page-definition` | Required generated Workflow page, adapter reference, and supported destinations | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `generated.workflow-page-adapter` | Replaceable whole Workflow-page `.mjs` presentation | Module contract below |
 | `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/generated.field-placement.schema.json) |
 | `generated.phase-control-definition` | Required phase identity, placement, adapter reference, and optional phase view labels | [phase control](schemas/generated.phase-control-definition.schema.json) |
 | `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
+| `designer.badges-settings-definition` | Complete replaceable badge type list and default appearance, shared by Designer and generated canvases | [badges settings](schemas/designer.badges-settings-definition.schema.json) |
+| `generated.badge-rule-definition` | Evidence inputs, badge text placeholders, and evaluator reference | [badge rule](schemas/generated.badge-rule-definition.schema.json) |
+| `generated.badge-rule-adapter` | Self-contained `.mjs` evaluator | Module contract below |
 | `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
 | `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
@@ -459,7 +575,7 @@ not the JSON document. No kind is inferred from a filename.
 | `generated.button-adapter` | Generated `.mjs` button presentation | Module contract below |
 | `generated.button-placement` | Setup or workflow button placement and action | [button placement](schemas/generated.button-placement.schema.json) |
 
-Each JSON kind has a matching schema filename. The three required tabs are
+Each JSON kind has a matching schema filename. The four required tabs are
 identified by their registered names; added tabs use the same document shape.
 These schemas describe document shapes, not the entire loader:
 the loader additionally verifies template-name/ID equality where applicable,
@@ -477,13 +593,19 @@ module under its own name as well as its referencing JSON template. The generate
 app packages the winning generated-host modules; it does not load source presets
 at runtime. Do not import another module from a renderer or provider.
 
-The required `generated-workflow` page has `id: "workflow"`, title, order,
-and named slots, including the required `workflow.phases`. The generated host
-owns its header, collection, details, values, controls, page navigation,
-constitution, messages, and artifact viewer in a fixed shell. Presets may
-replace the Workflow page JSON to add slots; additional slots render together
-in one ordered contributions area. They cannot remove `workflow.phases` or
-reorder the shell. The `generated-phase-control` definition places itself in
+The required `generated-workflow` page has `schemaVersion: 2`,
+`id: "workflow"`, title, order, an `adapter` reference, supported
+`badgeDestinations`, and named slots including `workflow.phases`. Its
+registered page adapter uses `mount({ root, definition, state, actions })`
+and returns `{ update, dispose }`. It renders the Workflow collection,
+summary, setup, constitution, details, values, controls, and contribution
+slots, composing the independently replaceable phase adapter. The host keeps
+shared chrome, navigation to additional pages, persistence, and authorized
+actions. Presets may replace both the Workflow page JSON and its adapter,
+declare a subset of supported badge destinations, and add slots; unsupported
+configured placements fail rather than disappearing. Existing generated apps
+with the older page definition keep their original presentation.
+The `generated-phase-control` definition places itself in
 `workflow.phases`, has `schemaVersion: 1`, `id: "workflow-phases"`, an `adapter` name (stock:
 `generated-phase-adapter`), and optional `viewLabels` keyed by selected phase ID,
 for example `{ "plan": "View Plan" }`. Unspecified phases retain "View artifact".
@@ -515,7 +637,13 @@ supplies `actions.select(index)`,
 host-validated operations; adapters do not call workflow endpoints directly.
 The host owns dispatch safeguards, persistence, and artifacts; it never
 reaches into the adapter's DOM. An adapter renders its own controls and updates
-them in `update` when the host supplies new state. A minimal phase list:
+them in `update` when the host supplies new state.
+The generated host displays failures beside the relevant workflow, phase,
+dialog, or page rather than in dismissible notifications. When a declared
+Markdown output does not exist yet, its link opens the nearest existing
+directory inside the checkout instead of showing an empty viewer. This is
+host/runtime behavior, not a phase data-contract requirement.
+A minimal phase list:
 
 The catalog-listed `copilot-vertical-phase-control` preset replaces the
 `generated-phase-adapter` and `generated-phase-control` named templates.
@@ -623,8 +751,11 @@ validation logic. An image adapter keeps readiness false during upload and
 after failure until retry or explicit cancellation; it owns decoding, upload
 progress, and errors.
 
-Save can retain unfinished work. The browser checks `isReady()` before Save,
-Generate, or leaving the tab; the server invokes the approved adapter's
+Save can retain unfinished work. The browser checks `isReady()` before Save or
+Generate across visited tabs, but always allows switching tabs so a broken
+control cannot trap the user. Returning to a tab retains its control state so
+an unfinished upload can be retried or cancelled.
+The server invokes the approved adapter's
 validator on the values it will freeze before creating a canvas. Keeping these
 responsibilities behind a small, documented contract lets the Designer evolve
 without requiring presets to follow changes to its internals. There is no

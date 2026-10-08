@@ -7,6 +7,7 @@ import { fixedConstitutionOutputs, handoffDirectory, validateConfirmedOutputs,
 import { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues, validateSavedSettings,
     validateSaveRequest } from "./contracts/designer-settings.mjs";
 export { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues } from "./contracts/designer-settings.mjs";
+import { validateBadges } from "./contracts/badges.mjs";
 
 const saves = new Map();
 export const initialOutputs = (handoff) => fixedConstitutionOutputs(
@@ -82,6 +83,12 @@ async function readSettings(path, handoff, model, openFile = open) {
     if (record.outputs !== undefined) {
         validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases);
     }
+    if (record.badges !== undefined) {
+        const pipeline = initialOutputs(handoff);
+        validateBadges(record.badges, { ...model, phases: handoff.workflow.selectedPhases,
+            outputs: record.outputs
+            ? restorePipelineOutputs(record.outputs, pipeline) : pipeline });
+    }
     return record;
 }
 
@@ -101,7 +108,9 @@ export async function loadDesignerSettings(workspacePath, handoff, model, openFi
     const pipeline = initialOutputs(handoff);
     const outputs = record?.outputs ? restorePipelineOutputs(record.outputs, pipeline) : pipeline;
     validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases, pipeline);
-    return { ...model, values: record?.values ?? model.values, outputs,
+    const badges = validateBadges(record?.badges ?? model.badges ?? [],
+        { ...model, phases: handoff.workflow.selectedPhases, outputs });
+    return { ...model, values: record?.values ?? model.values, outputs, badges,
         settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
 }
 
@@ -110,6 +119,9 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
     const outputs = validateConfirmedOutputs(Object.hasOwn(request, "outputs")
         ? request.outputs : model.outputs ?? initialOutputs(handoff),
         handoff.workflow.selectedPhases, initialOutputs(handoff));
+    const badges = validateBadges(Object.hasOwn(request, "badges")
+        ? request.badges : model.badges ?? [],
+        { ...model, phases: handoff.workflow.selectedPhases, outputs });
     const path = await settingsPath(workspacePath, handoff);
     const prior = saves.get(path) ?? Promise.resolve();
     const work = prior.catch(() => {}).then(async () => {
@@ -119,7 +131,7 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
         }
         const record = { schemaVersion: 1, handoffId: handoff.handoffId,
             modelRevision: model.revision, revision: request.revision + 1, values: request.values,
-            outputs };
+            outputs, badges };
         const bytes = JSON.stringify(record);
         if (Buffer.byteLength(bytes) > SETTINGS_LIMIT) throw new Error("Designer settings exceed the size limit");
         const folder = dirname(path);
@@ -141,7 +153,7 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
         } finally {
             await rm(temporary, { force: true });
         }
-        return { ...model, values: record.values, outputs,
+        return { ...model, values: record.values, outputs, badges,
             settingsRevision: record.revision, persisted: true };
     });
     saves.set(path, work);

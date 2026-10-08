@@ -1,15 +1,12 @@
 const token = new URL(location.href).searchParams.get("token");
-const [{ mountIdentity }, { mountOutputs }, adapterContract] = await Promise.all([
-    import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
-    import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
-    import(`/ui/control-adapter-contract.js?token=${encodeURIComponent(token)}`),
-]);
+let mountIdentity, mountOutputs, mountBadges, adapterContract;
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
-let model, currentPage, draft, draftOutputs, saving = false;
+let model, currentPage, draft, draftOutputs, draftBadges, saving = false;
+let badgeView;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queued = false;
@@ -17,6 +14,7 @@ const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
 const mounted = new Map();
+const pageViews = new Map();
 
 function outputPathsReady() {
     return Object.values(draftOutputs ?? {}).every((entry) =>
@@ -29,15 +27,19 @@ function updateGenerate() {
     const failed = model?.pages.find((page) => page.error);
     const missingIdentity = model && !failed && (!setup || setup.enabled === false
         || !required.every((field) => setup.fields?.some((item) => item.id === field)));
-    generationError.textContent = failed
+    generationError.textContent = model?.preview ? "" : model?.generationError
+        ? model.generationError
+        : failed
         ? `Cannot generate: ${failed.page} could not load. ${failed.error.reason}`
+        : model?.generationBlockers?.length
+            ? `Cannot generate: ${model.generationBlockers.join("; ")}`
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
     generationError.hidden = !generationError.textContent;
-    generate.disabled = saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
+    generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating || queued || !outputPathsReady()
         || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
-        || missingIdentity;
+        || missingIdentity || !!model?.generationBlockers?.length;
 }
 
 function confirmProviders(providers) {
@@ -55,7 +57,7 @@ function confirmProviders(providers) {
 }
 
 generate.addEventListener("click", async () => {
-    if (generate.disabled || !checkReady()) return;
+    if (model?.preview || generate.disabled || !checkReady()) return;
     const providers = model.templates.filter((item) => item.kind === "generated.computed-value-provider")
         .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
@@ -68,6 +70,7 @@ generate.addEventListener("click", async () => {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
                 settingsRevision: model.settingsRevision, values, outputs: draftOutputs,
+                badges: draftBadges,
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
@@ -122,17 +125,19 @@ function showFieldError(message) {
 }
 
 function checkReady() {
-    const page = model.pages.find((entry) => entry.page === currentPage);
-    for (const field of page?.fields ?? []) {
-        const handle = mounted.get(field.id);
-        try {
-            if (typeof handle?.isReady !== "function" || handle.isReady() !== true) {
-                showFieldError(`${field.label} (${field.id}) is still processing or needs attention.`);
+    for (const page of model.pages) {
+        if (page.page !== currentPage && !pageViews.has(page.page)) continue;
+        for (const field of page.fields ?? []) {
+            const handle = mounted.get(field.id);
+            try {
+                if (typeof handle?.isReady !== "function" || handle.isReady() !== true) {
+                    showFieldError(`${field.label} (${field.id}) is still processing or needs attention.`);
+                    return false;
+                }
+            } catch (error) {
+                showFieldError(`${field.label} (${field.id}) readiness failed: ${error.message}`);
                 return false;
             }
-        } catch (error) {
-            showFieldError(`${field.label} (${field.id}) readiness failed: ${error.message}`);
-            return false;
         }
     }
     return true;
@@ -141,8 +146,10 @@ function checkReady() {
 function updateSave() {
     const noChanges = model?.persisted
         && JSON.stringify(draft) === JSON.stringify(model.values)
-        && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs);
-    saveButton.disabled = saving || activeUploads.size > 0 || !model || noChanges || !outputPathsReady();
+        && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs)
+        && JSON.stringify(draftBadges) === JSON.stringify(model.badges);
+    saveButton.disabled = model?.preview || saving || activeUploads.size > 0 || !model
+        || !model.pages.length || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
@@ -154,7 +161,7 @@ function updateSave() {
 }
 
 saveButton.addEventListener("click", async () => {
-    if (saving || !model || !checkReady()) return;
+    if (model?.preview || saving || !model || !checkReady()) return;
     saving = true;
     messageBox.hidden = true;
     showError("");
@@ -164,7 +171,8 @@ saveButton.addEventListener("click", async () => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
-                revision: model.settingsRevision, values: draft, outputs: draftOutputs }),
+                revision: model.settingsRevision, values: draft, outputs: draftOutputs,
+                badges: draftBadges }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Designer save failed (${response.status})`);
@@ -182,14 +190,31 @@ saveButton.addEventListener("click", async () => {
 function renderPage(pageId, invalidFieldId) {
     const page = model.pages.find((entry) => entry.page === pageId);
     if (!page) throw new Error("Unknown Designer page");
+    const renderRevision = model.revision;
+    if (currentPage && root.childNodes.length) {
+        pageViews.set(currentPage, [...root.childNodes]);
+    }
     currentPage = pageId;
-    mounted.clear();
     for (const tab of tabs.children) {
         const active = tab.dataset.page === pageId;
         tab.setAttribute("aria-selected", String(active));
         tab.tabIndex = active ? 0 : -1;
     }
     root.setAttribute("aria-labelledby", `page-tab-${pageId}`);
+    if (pageViews.has(pageId)) {
+        root.replaceChildren(...pageViews.get(pageId));
+        if (page.fixedControl === "designer.badges") badgeView.updateOutputs(draftOutputs);
+        if (invalidFieldId) {
+            const mount = [...root.querySelectorAll("[data-field-id]")]
+                .find((item) => item.dataset.fieldId === invalidFieldId);
+            if (mount) {
+                mount.nextElementSibling.hidden = false;
+                mount.parentElement.focus();
+            }
+        }
+        root.setAttribute("aria-busy", "false");
+        return true;
+    }
     if (page.error) {
         const { name, path, reason } = page.error;
         const details = element("div", undefined, "page-diagnostic");
@@ -204,6 +229,13 @@ function renderPage(pageId, invalidFieldId) {
     if (page.fixedControl === "designer.outputs") {
         mountOutputs({ root, page, phases: model.phases, draftOutputs,
             pipelineOutputs: model.pipelineOutputs, onChange: updateSave });
+        root.setAttribute("aria-busy", "false");
+        return true;
+    }
+    if (page.fixedControl === "designer.badges") {
+        badgeView = mountBadges({ root, page, phases: model.phases, outputs: draftOutputs,
+            badgeTypes: model.badgeTypes ?? [], badgeRules: model.badgeRules ?? [],
+            draftBadges, onChange: updateSave });
         root.setAttribute("aria-busy", "false");
         return true;
     }
@@ -258,6 +290,7 @@ function renderPage(pageId, invalidFieldId) {
             continue;
         }
         const mountAdapter = (module) => {
+                if (model.revision !== renderRevision) return;
                 const expected = model.controls.find((item) => item.id === control)?.value;
                 adapterContract.validateAdapterModule(module, control, expected, image, object);
                 if (!mount.isConnected) return;
@@ -281,7 +314,7 @@ function renderPage(pageId, invalidFieldId) {
                 mounted.set(field.id, handle);
         };
         const showAdapterError = (error) => {
-            if (!mount.isConnected) return;
+            if (model.revision !== renderRevision) return;
             mount.replaceChildren();
             mount.setAttribute("role", "alert");
             mount.textContent = `Could not load ${field.label}: ${error.message}`;
@@ -306,7 +339,7 @@ function renderPage(pageId, invalidFieldId) {
 
 tabs.addEventListener("click", (event) => {
     const tab = event.target.closest("[data-page]");
-    if (tab && tab.dataset.page !== currentPage && checkReady()) renderPage(tab.dataset.page);
+    if (tab && tab.dataset.page !== currentPage) renderPage(tab.dataset.page);
 });
 tabs.addEventListener("keydown", (event) => {
     const buttons = [...tabs.children];
@@ -319,23 +352,32 @@ tabs.addEventListener("keydown", (event) => {
     else if (event.key === "End") next = buttons.length - 1;
     else return;
     event.preventDefault();
-    if (buttons[next].dataset.page !== currentPage && checkReady()) {
+    if (buttons[next].dataset.page !== currentPage) {
         renderPage(buttons[next].dataset.page);
         buttons[next].focus();
     }
 });
 
 function applyState(next) {
-    if (!Array.isArray(next.pages) || !next.pages.length) {
-        throw new Error("Designer returned no settings pages");
-    }
+    if (!Array.isArray(next.pages)) throw new Error("Designer returned invalid settings pages");
     const changed = !model || next.revision !== model.revision;
     if (changed) {
         model = next;
+        pageViews.clear();
+        mounted.clear();
+        badgeView = undefined;
+        root.replaceChildren();
+        document.getElementById("preview-banner").hidden = !model.preview;
+        document.getElementById("save-help").hidden = !!model.preview;
+        generate.hidden = !!model.preview;
         draft = structuredClone(model.values);
         draftOutputs = structuredClone(model.outputs ?? Object.fromEntries(
             (model.phases ?? []).map((id) => [id, { outputs: [], view: null }])));
+        draftBadges = structuredClone(model.badges ?? []);
         tabs.replaceChildren();
+        const compositionError = document.getElementById("composition-error");
+        compositionError.textContent = (model.compositionErrors ?? []).join("; ");
+        compositionError.hidden = !compositionError.textContent;
         for (const page of model.pages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,
                 `tab${page.error ? " tab-error" : ""}`);
@@ -349,7 +391,13 @@ function applyState(next) {
         const selected = model.pages.find((page) => page.page === currentPage)
             ?? model.pages.find((page) => page.page === "designer-essentials")
             ?? model.pages[0];
-        renderPage(selected.page);
+        if (selected) renderPage(selected.page);
+        else {
+            currentPage = null;
+            root.setAttribute("aria-busy", "false");
+            root.replaceChildren(element("h1", "No Designer pages registered"),
+                element("p", "This preset composition contains no settings pages."));
+        }
         updateSave();
         updateGenerate();
     }
@@ -357,6 +405,12 @@ function applyState(next) {
 
 const status = document.getElementById("conn-status");
 try {
+    [{ mountIdentity }, { mountOutputs }, { mountBadges }, adapterContract] = await Promise.all([
+        import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/badges-control.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/control-adapter-contract.js?token=${encodeURIComponent(token)}`),
+    ]);
     const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);
     const initial = await response.json();
@@ -371,8 +425,11 @@ try {
         }));
     applyState(initial);
     const failures = initial.pages.filter((page) => page.error).length;
-    status.className = failures ? "conn conn-connecting" : "conn conn-live";
-    status.textContent = failures ? `Pages need attention (${failures})` : "Ready";
+    status.className = failures || initial.compositionErrors?.length || !initial.pages.length || initial.preview
+        ? "conn conn-connecting" : "conn conn-live";
+    status.textContent = failures ? `Pages need attention (${failures})`
+        : initial.compositionErrors?.length || !initial.pages.length ? "Design needs attention"
+        : initial.preview ? "Preview only" : "Ready";
 } catch (error) {
     root.setAttribute("aria-busy", "false");
     root.replaceChildren(element("h1", "Settings unavailable"));

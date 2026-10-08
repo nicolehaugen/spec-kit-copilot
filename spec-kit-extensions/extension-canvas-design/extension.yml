@@ -22,18 +22,21 @@ provides:
       file: commands/generate.md
       description: Generate a source-owned workflow canvas from frozen Designer Essentials.
   templates:
-    # designer.tab-definition: required Designer tabs
+    # Designer tabs: required pages for configuring the generated canvas.
     - name: designer-essentials
       file: designer-host/tabs/essentials.json
       description: Essentials fields for canvas identity and workflow naming.
     - name: designer-artifacts
       file: designer-host/tabs/outputs.json
       description: Outputs page for confirming phase files and viewer defaults.
+    - name: designer-badges
+      file: designer-host/tabs/badges.json
+      description: Configure result badges for workflow lists, summaries, and phase cards.
     - name: designer-appearance
       file: designer-host/tabs/appearance.json
       description: Generated canvas logos and per-mode palette colors.
 
-    # designer.setting-definition: fields placed in Designer tab slots
+    # Designer settings: fields placed in Designer tab slots.
     - name: designer-essentials-description
       file: designer-host/essentials-settings/description.json
       description: Optional Essentials collection description.
@@ -80,10 +83,15 @@ provides:
       file: designer-host/appearance-settings/dark-text.json
       description: Optional generated canvas dark-mode main text color.
 
-    # Workflow page and its required phase control.
+    # Workflow page: page layout and declared contribution slots.
     - name: generated-workflow
       file: generated-host/workflow-page/workflow.json
       description: Required Workflow page definition and declared contribution slots.
+    - name: generated-workflow-page-adapter
+      file: generated-host/workflow-page/generated-workflow-page-adapter.mjs
+      description: Replaceable whole Workflow-page presentation adapter.
+
+    # Phase control: placement, internal slots, and replaceable UI adapter.
     - name: generated-phase-control
       file: generated-host/phase-control/phase-control.json
       description: Workflow phase control identity, placement, and adapter reference.
@@ -105,6 +113,36 @@ provides:
     - name: generated-setup-button
       file: generated-host/setup-button-control/setup.json
       description: Replaceable setup-only button placement.
+
+    # Badges: one replaceable type list, with independently replaceable rules and adapters.
+    - name: badges-settings
+      file: designer-host/badges-settings/badge-types.json
+    - name: badge-rule-value-match
+      file: generated-host/badges/rules/value-match.json
+    - name: badge-rule-artifact-current
+      file: generated-host/badges/rules/artifact-current.json
+    - name: badge-rule-checklist-progress
+      file: generated-host/badges/rules/checklist-progress.json
+    - name: badge-rule-markdown-file-count
+      file: generated-host/badges/rules/markdown-file-count.json
+    - name: badge-rule-checklist-complete
+      file: generated-host/badges/rules/checklist-complete.json
+    - name: badge-rule-work-complete
+      file: generated-host/badges/rules/work-complete.json
+    - name: badge-rule-phase-run-complete
+      file: generated-host/badges/rules/phase-run-complete.json
+    - name: badge-rule-phase-artifact-complete
+      file: generated-host/badges/rules/phase-artifact-complete.json
+    - name: badge-rule-artifact-stale
+      file: generated-host/badges/rules/artifact-stale.json
+    - name: badge-rule-content-adapter
+      file: generated-host/badges/adapters/content.mjs
+    - name: badge-rule-artifact-state-adapter
+      file: generated-host/badges/adapters/artifact-state.mjs
+    - name: badge-rule-run-adapter
+      file: generated-host/badges/adapters/run.mjs
+    - name: badge-rule-phase-artifact-complete-adapter
+      file: generated-host/badges/adapters/phase-artifact-complete.mjs
 
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image

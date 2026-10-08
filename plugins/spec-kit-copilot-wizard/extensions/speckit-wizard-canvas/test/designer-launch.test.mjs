@@ -97,6 +97,27 @@ test("Designer handoff carries existing Wizard file outputs and default without 
     assert.throws(() => validateHandoff(invalid, invalid.handoffId), /Invalid outputs for phase plan/);
 });
 
+test("Designer handoff carries Wizard phase descriptions for generated cards", () => {
+    const state = { ...snapshot,
+        pipeline: [{ id: "specify" }, { id: "speckit.assess.intake" }],
+        phases: { specify: { tagline: "Describe what to build and why." },
+            "commands/speckit.assess.intake": { description: "Assess the request." } },
+    };
+    const handoff = buildDesignerHandoff(state, empty, undefined, empty);
+    assert.deepEqual(handoff.workflow.phaseDescriptions, {
+        specify: "Describe what to build and why.",
+        "speckit.assess.intake": "Assess the request.",
+    });
+    assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
+    assert.throws(() => buildDesignerHandoff({ ...state,
+        phases: { specify: { tagline: "x".repeat(241) } } }, empty, undefined, empty),
+    /Phase description exceeds 240 characters/);
+    handoff.workflow.phaseDescriptions.specify = " ".repeat(241);
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow,
+        selections: handoff.selections, canvasDesign: handoff.canvasDesign });
+    assert.throws(() => validateHandoff(handoff, handoff.handoffId), /Invalid Designer handoff/);
+});
+
 test("Designer handoff deduplicates case-only file evidence and retains the default", () => {
     const state = { ...snapshot, pipeline: [{ id: "plan" }], artifactEvidence: {
         plan: { primaryIndex: 1, candidates: [

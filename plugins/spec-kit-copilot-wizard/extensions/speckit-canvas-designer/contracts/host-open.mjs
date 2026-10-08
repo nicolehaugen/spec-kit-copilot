@@ -6,6 +6,7 @@ export const handoffIdSchema = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-
 export const designerOpenInputSchema = {
     type: "object", additionalProperties: false,
     properties: {
+        preview: { type: "boolean" },
         handoffId: handoffIdSchema,
         pages: { type: "array", minItems: 3, maxItems: 100, items: {
             type: "object", additionalProperties: false, required: ["name", "path", "kind", "strategy"],
@@ -20,8 +21,10 @@ export const designerOpenInputSchema = {
                 path: { type: "string", minLength: 1, maxLength: 4096 },
                 sourceId: { type: "string", minLength: 1, maxLength: 160 },
                 kind: { type: "string", enum: ["designer.setting-definition",
-                    "generated.workflow-page-definition", "generated.phase-control-definition",
-                    "generated.phase-control-adapter", "generated.field-placement",
+                    "generated.workflow-page-definition", "generated.workflow-page-adapter",
+                    "generated.phase-control-definition", "generated.phase-control-adapter",
+                    "designer.badges-settings-definition", "generated.badge-rule-definition",
+                    "generated.badge-rule-adapter", "generated.field-placement",
                     "generated.added-page-definition", "generated.added-page-renderer",
                     "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                     "generated.value-definition", "generated.computed-value-provider",
@@ -34,10 +37,13 @@ export const designerOpenInputSchema = {
 };
 
 export function validateDesignerOpenInput(input) {
-    const { handoffId, pages, templates } = input ?? {};
+    const { preview, handoffId, pages, templates } = input ?? {};
+    if (preview && (handoffId !== undefined || pages !== undefined || templates !== undefined)) {
+        throw new Error("Designer preview cannot include a Wizard handoff, pages, or templates");
+    }
     if ((handoffId === undefined) !== (pages === undefined)
         || (handoffId === undefined) !== (templates === undefined)) {
         throw new Error("Designer handoff and complete resolved inventory are required together");
     }
-    return { handoffId, pages, templates };
+    return { preview, handoffId, pages, templates };
 }

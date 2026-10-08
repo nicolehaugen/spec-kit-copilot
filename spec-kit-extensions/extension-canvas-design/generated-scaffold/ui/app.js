@@ -6,13 +6,19 @@ const { validatePhaseAdapter, validatePhaseMount } = await import(
 const token = new URL(location.href).searchParams.get("token");
 const imageRegistration = document.getElementById("stock-image-registration");
 const renderStockImage = createStockImageRenderer(imageRegistration, token);
-for (const root of document.querySelectorAll("[data-stock-image]")) {
-    void renderStockImage(root, { id: root.dataset.stockImage, label: root.dataset.imageAlt },
-        { file: root.dataset.imageFile }, root.dataset.imageAlt, root.dataset.imageClass);
-}
 const textRegistration = document.getElementById("stock-text-registration");
-if (textRegistration) {
+const renderedStock = new WeakSet();
+function mountStockPresentation() {
+    for (const root of document.querySelectorAll("[data-stock-image]")) {
+        if (renderedStock.has(root)) continue;
+        renderedStock.add(root);
+        void renderStockImage(root, { id: root.dataset.stockImage, label: root.dataset.imageAlt },
+            { file: root.dataset.imageFile }, root.dataset.imageAlt, root.dataset.imageClass);
+    }
+    if (!textRegistration) return;
     for (const root of document.querySelectorAll("[data-stock-text]")) {
+        if (renderedStock.has(root)) continue;
+        renderedStock.add(root);
         void (async () => {
             try {
                 const { mount, controlId, valueContract } = await import(
@@ -30,6 +36,7 @@ if (textRegistration) {
         })();
     }
 }
+mountStockPresentation();
 async function mountGeneratedControl(root) {
     const field = { id: root.dataset.controlId, label: root.dataset.fieldLabel };
     try {
@@ -173,6 +180,9 @@ function renderSetup() {
     status.classList.toggle("workflow-error", Boolean(setup.error));
     const button = $("setup-actions").querySelector("button");
     if (button) button.disabled = setupBusy || ["initializing", "installing"].includes(setup.stage);
+    confirmSetup(setup);
+}
+function confirmSetup(setup) {
     if (setup.stage === "awaiting-confirmation" && setup.planId
         && activeSetupPlan !== setup.planId) {
         activeSetupPlan = setup.planId;
@@ -199,12 +209,13 @@ function renderSetup() {
 }
 const workflowIdentity = $("workflow-identity");
 let phaseControl;
+let workflowPage;
 const drafts = new Map();
 const failedValueDrafts = new Map();
 const failedPatches = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
 let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null,
-    pendingValueSaves = 0, workflowQuery = "", slugTouched = false;
+    pendingValueSaves = 0, workflowQuery = "", previousBadgeRows, slugTouched = false;
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const reservedSlug = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const selectedPending = () => model?.items.some((entry) => entry.id === model.selected && entry.pending);
@@ -219,6 +230,7 @@ function slugError() {
 }
 const THEME_STORAGE_KEY = "speckit-generated-canvas.theme";
 const placements = JSON.parse($("generated-field-placements")?.dataset.placements ?? "[]");
+const phaseBadgeSlots = JSON.parse($("workflow-pipeline")?.dataset.badgeSlots ?? "[]");
 const mountedFields = new Map();
 const pendingFieldDrafts = new Map();
 let pageSelection = 0, mountedPage = "workflow", renderedPageValues = null;
@@ -389,6 +401,7 @@ function wireGeneratedPages() {
         const introLogo = document.querySelector('[data-stock-image="workflow.intro"]');
         if (introLogo) introLogo.hidden = !workflow;
         root.hidden = workflow;
+        message("", "generated-page-error");
         root.replaceChildren();
         renderedPageValues = null;
         root.classList.remove("workflow-error");
@@ -464,9 +477,15 @@ function setConnectionStatus(status) {
 }
 
 function message(text, id = "canvas-message", error = false) {
-    $(id).textContent = text;
-    $(id).classList.toggle("workflow-error", error);
-    if (id === "setup-status") $(id).hidden = false;
+    if (id === "canvas-message") {
+        if (!error) return;
+        id = mountedPage === "workflow" ? "workflow-action-error" : "generated-page-error";
+    }
+    const notice = $(id) ?? $("workflow-action-error") ?? $("canvas-fatal-error");
+    notice.textContent = text;
+    notice.hidden = !text;
+    notice.setAttribute("role", error ? "alert" : "status");
+    notice.classList.toggle("workflow-error", error);
 }
 function displayValue(value) {
     return typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -608,7 +627,7 @@ function saveFieldValue(id, value) {
     pendingValueSaves++;
     saving = saving.catch(() => {}).then(async () => {
         if (saveFailure) throw saveFailure;
-        const result = await api("/api/values", { id: field.id, value, revision: model.revision });
+        const result = await retryRevision("/api/values", { id: field.id, value });
         model.revision = result.revision;
         failedValueDrafts.delete(field.id);
         if (pendingFieldDrafts.get(id) === draft) pendingFieldDrafts.delete(id);
@@ -620,14 +639,36 @@ function saveFieldValue(id, value) {
     saving.catch(() => {});
     return saving.then(() => refresh());
 }
-async function api(path, input) {
+async function api(path, input, options = {}) {
     const response = await fetch(path, {
         headers: { "x-canvas-token": token, ...(input === undefined ? {} : { "Content-Type": "application/json" }) },
         ...(input === undefined ? {} : { method: "POST", body: JSON.stringify(input) }),
+        ...options,
     });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? `Request failed (${response.status}).`);
+    if (!response.ok) {
+        const error = new Error(result.error ?? `Request failed (${response.status}).`);
+        error.status = response.status;
+        error.code = result.code;
+        throw error;
+    }
     return result;
+}
+async function retryRevision(path, input) {
+    try {
+        return await api(path, { ...input, revision: model.revision });
+    } catch (error) {
+        if (error.status !== 409 || error.code !== "STALE_REVISION") throw error;
+        await refresh();
+        try {
+            return await api(path, { ...input, revision: model.revision });
+        } catch (retryError) {
+            if (retryError.status === 409 && retryError.code === "STALE_REVISION") {
+                throw new Error("Canvas state is still changing. Try this action again.");
+            }
+            throw retryError;
+        }
+    }
 }
 const workflowPhases = () => model?.phases.filter((phase) => !phase.project) ?? [];
 const phase = () => workflowPhases()[current];
@@ -651,14 +692,14 @@ function persist(patch) {
     if (patch.draft) parts.push([`draft:${JSON.stringify([patch.draft.item, patch.draft.phase])}`,
         { draft: patch.draft }]);
     saving = saving.catch(() => {}).then(async () => {
-        const saved = await api("/api/state", { revision: model.revision, ...patch });
+        const saved = await retryRevision("/api/state", patch);
         model.revision = saved.revision;
         for (const [key] of parts) failedPatches.delete(key);
         if (!failedPatches.size) saveFailure = null;
     }).catch((error) => {
         for (const [key, value] of parts) failedPatches.set(key, value);
         saveFailure = error;
-        message(`Inputs could not be saved: ${error.message} Your draft is retained in this panel.`, "canvas-message", true);
+        message(`Inputs could not be saved: ${error.message} Your draft is retained in this panel.`, "workflow-action-error", true);
         throw error;
     });
     // Input events have no awaiter; keep rejection observable via feedback and flush().
@@ -711,8 +752,12 @@ function phaseState(pendingLabel = () => null) {
     const output = selected
         ? (pending && selected.output
             ? resolveOutput(selected.output) : status?.output ?? resolveOutput(selected.output)) : null;
-    return { phases: phases.map(({ id, label, output, outputs }) => ({ id, label, output, outputs })),
+    return { phases: phases.map(({ id, label, description, output, outputs }) =>
+        ({ id, label, description, output, outputs })),
         statuses: model?.statuses ?? {}, autopilot: model?.autopilot ?? null,
+        badgeSlots: phaseBadgeSlots,
+        badgeModels: (model?.badges?.selected ?? []).filter((badge) =>
+            badge.showIn.includes("phase-card") || badge.targets?.length),
         current: selected ? current : -1, workflow: pending ? "__new__" : model?.selected ?? "__new__",
         status: status && output !== status.output
             ? { ...status, artifactAvailability: "unknown", artifactError: null } : status,
@@ -725,18 +770,26 @@ function phaseState(pendingLabel = () => null) {
         setupPending: Boolean(model?.showSetup && !model?.setup?.ready),
         blocked: model?.showSetup && !model?.setup?.ready ? "Available after setup"
             : !model?.items.length ? "Choose New workflow to start."
-            : !model?.constitutionReady ? "Create a project constitution before running a workflow."
+            : !model?.constitutionReady ? "Create a constitution before running a workflow."
                 : pending && model?.userProvidesSlug ? slugError() : null,
         sending: Boolean(selected && sending && sending.phase === selected.id
             && sending.item === model.selected),
         runLabel: selected ? pendingLabel(selected) : null };
 }
+function pendingLabel(step) {
+    const item = step.project ? "project" : model.selected;
+    if (sending && sending.phase === step.id && sending.item === item) return "Running";
+    const status = model.statuses[step.id]?.status;
+    return status === "Request sent" || status === "Running" ? "Running" : null;
+}
 function renderStatus() {
-    function pendingLabel(step) {
-        const item = step.project ? "project" : model.selected;
-        if (sending && sending.phase === step.id && sending.item === item) return "Sending...";
-        const status = model.statuses[step.id]?.status;
-        return status === "Request sent" ? "Request sent..." : status === "Running" ? "Running..." : null;
+    if (workflowPage) {
+        workflowPage.update({ model: structuredClone(model), phaseState: phaseState(pendingLabel),
+            pendingLabel, sending, setupBusy, inputPending: Boolean(timer),
+            slugTouched, slugError: slugError(),
+            valueDrafts: Object.fromEntries([...failedValueDrafts, ...pendingFieldDrafts]
+                .map(([id, draft]) => [id, draft.value])) });
+        return;
     }
     function artifactAction(buttonId, noticeId, status) {
         const button = $(buttonId), notice = $(noticeId);
@@ -771,7 +824,7 @@ function renderStatus() {
         $("run-constitution").disabled = setupPending;
         $("run-constitution").title = setupPending ? "Available after setup" : "";
         $("send-constitution").disabled = setupPending;
-        $("constitution-dialog-title").textContent = available ? "Update project constitution" : "Create project constitution";
+        $("constitution-dialog-title").textContent = available ? "Update constitution" : "Create constitution";
         $("constitution-args-label").textContent = available ? "Guidance (optional)" : "Project principles";
         $("constitution-args").required = !available;
     }
@@ -827,8 +880,11 @@ function renderCollection() {
     $("workflow-pipeline").classList.toggle("workflow-pipeline-idle", !hasSelectedWorkflow());
     const list = $("workflow-rows");
     const scroll = $("workflow-list").scrollTop;
+    const badgeRows = JSON.stringify(model.badges?.items ?? {});
     const matches = list.children.length === model.items.length
-        && model.items.every((entry, index) => list.children[index].dataset.workflowId === entry.id);
+        && model.items.every((entry, index) => list.children[index].dataset.workflowId === entry.id)
+        && previousBadgeRows === badgeRows;
+    previousBadgeRows = badgeRows;
     if (!matches) list.replaceChildren(...model.items.map((entry) => {
         const item = document.createElement("div");
         item.className = "instance-row";
@@ -844,6 +900,13 @@ function renderCollection() {
         identity.append(name);
         identity.append(document.createElement("code"));
         button.append(identity);
+        const badges = (model.badges?.items?.[entry.id] ?? []).filter((badge) =>
+            badge.showIn.includes("workflow-list"));
+        if (badges.length && list.dataset.badgeSlot) {
+            const slot = badgeList(badges);
+            slot.dataset.badgeSlot = list.dataset.badgeSlot;
+            button.append(slot);
+        }
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "instance-delete";
@@ -882,6 +945,17 @@ function renderCollection() {
     const selectedRow = [...list.children].find((row) => row.dataset.workflowId === model.selected);
     editor.hidden = !selectedPending();
     if (selectedPending() && editor.parentElement !== selectedRow) selectedRow.append(editor);
+    const summary = $("workflow-badge-summary");
+    if (summary) {
+        const badges = model.badges?.summary ?? [];
+        summary.replaceChildren(...(badges.length ? [badgeList(badges)] : []));
+        summary.hidden = !badges.length;
+    }
+    const diagnostics = $("workflow-badge-diagnostics");
+    if (diagnostics) {
+        diagnostics.textContent = model.badges?.diagnostics?.join(" ") ?? "";
+        diagnostics.hidden = !diagnostics.textContent;
+    }
     $("workflow-empty").hidden = Boolean(model.items.length);
     $("workflow-empty").textContent = workflowPhases().length
         ? "No workflows yet." : "No workflow phases are configured.";
@@ -889,6 +963,31 @@ function renderCollection() {
     $("workflow-search-field").hidden = model.items.length <= 8;
     $("workflow-search").value = workflowQuery;
     filterWorkflowList();
+}
+function readableBadgeForeground(hex) {
+    const rgb = [1, 3, 5].map((index) => {
+        const channel = parseInt(hex.slice(index, index + 2), 16) / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    const luminance = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    return (luminance + 0.05) / (0.005605 + 0.05) >= 1.05 / (luminance + 0.05)
+        ? "#111" : "#fff";
+}
+function badgeList(badges) {
+    const group = document.createElement("span");
+    group.className = "canvas-badges";
+    for (const badge of badges) {
+        const label = document.createElement("span");
+        label.className = "canvas-badge";
+        label.dataset.color = badge.color;
+        if (/^#[0-9a-fA-F]{6}$/.test(badge.color)) {
+            label.style.backgroundColor = badge.color;
+            label.style.color = readableBadgeForeground(badge.color);
+        }
+        label.textContent = badge.text;
+        group.append(label);
+    }
+    return group;
 }
 function filterWorkflowList() {
     const query = workflowQuery.trim().toLowerCase();
@@ -910,7 +1009,7 @@ async function refresh(reconcile = false) {
     if (sequence !== refreshSequence) return;
     const previous = model;
     model = next;
-    renderSetup();
+    if (!workflowPage) renderSetup();
     if (!previous) current = Math.max(0, workflowPhases().findIndex((step) => step.id === model.phase));
     // Do not replace live input text during events or background refresh.
     if (previous && (timer || saveFailure)) {
@@ -926,8 +1025,8 @@ async function refresh(reconcile = false) {
         && $("constitution-message")?.classList.contains("workflow-error")) {
         message("", "constitution-message");
     }
-    renderCollection();
-    renderValues();
+    if (!workflowPage) renderCollection();
+    if (!workflowPage) renderValues();
     renderPhase();
     if (mountedPage === "workflow") {
         try { await syncFieldMounts("workflow", $("workflow-content") ?? document,
@@ -952,10 +1051,7 @@ async function refresh(reconcile = false) {
     }
 }
 async function selectPhase(index) {
-    if (index < 0 || index >= workflowPhases().length) {
-        message(index < 0 ? "You are at the first phase." : "You are at the last phase.", "canvas-message");
-        return;
-    }
+    if (index < 0 || index >= workflowPhases().length) return;
     await flush();
     await persist({ phase: workflowPhases()[index].id });
     current = index;
@@ -966,12 +1062,21 @@ async function selectFeature(value) {
     await persist({ selected: value });
     await refresh();
 }
+async function createWorkflow() {
+    await flush();
+    await retryRevision("/api/workflow/new", {});
+    message("", "workflow-action-error");
+    workflowQuery = "";
+    slugTouched = false;
+    current = 0;
+    await refresh();
+}
 async function deleteFeature(itemId) {
     const item = model.items.find((entry) => entry.id === itemId);
     if (!item) throw new Error("This workflow is no longer available. Refresh and try again.");
     if (item.pending) {
         await flush();
-        await api("/api/workflow/pending/remove", { itemId, revision: model.revision });
+        await retryRevision("/api/workflow/pending/remove", { itemId });
         await refresh();
         message(`Removed ${item.label}. No directory was created.`);
         return;
@@ -993,18 +1098,18 @@ async function deleteFeature(itemId) {
     });
     if (!confirmed) return;
     await flush();
-    await api("/api/workflow/delete", { itemId, confirmation: item.slug, revision: model.revision });
+    await retryRevision("/api/workflow/delete", { itemId, confirmation: item.slug });
     await refresh();
     message(`Deleted ${item.label} and its directory.`);
 }
-async function send(step, value, target = "canvas-message") {
+async function send(step, value, target = "phase-action-error") {
     if (step.project && !model.constitutionReady && !value.trim()) {
         message("Enter project principles before creating the constitution.", target, true);
-        $("constitution-args").focus();
+        $("constitution-args")?.focus();
         return;
     }
     if (!step.project && !model.constitutionReady) {
-        message("Create a project constitution before starting a workflow.", target, true);
+        message("Create a constitution before starting a workflow.", target, true);
         return;
     }
     if (!step.project && selectedPending() && model.userProvidesSlug && slugError()) {
@@ -1013,31 +1118,40 @@ async function send(step, value, target = "canvas-message") {
         return;
     }
     if (sending) { message("This request is being sent. Check chat before trying again.", target); return; }
+    const previous = model.statuses[step.id];
+    if ((previous?.artifactAvailability === "available"
+        || ["Completed", "Failed"].includes(previous?.status))
+        && !window.confirm("Rerun will overwrite the artifact, with valid content preserved. Proceed?")) return;
     sending = { phase: step.id, item: step.project ? "project" : model.selected };
     renderStatus();
     let accepted = false;
+    let runSignal;
     try {
         await flush();
+        runSignal = AbortSignal.timeout(30_000);
         await api("/api/run", { phase: step.id, args: value,
             ...(!step.project ? { itemId: model.selected,
                 ...(selectedPending() && model.name?.trim() ? { name: model.name.trim() } : {}),
-                ...(selectedPending() && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) });
+                ...(selectedPending() && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) },
+        { signal: runSignal });
         accepted = true;
         if (step.project) {
-            $("constitution-dialog").close();
-            $("run-constitution").focus({ preventScroll: true });
+            $("constitution-dialog")?.close();
+            $("run-constitution")?.focus({ preventScroll: true });
         }
-        message("", step.project ? "canvas-message" : target);
+        message("", target);
         await refresh();
     } catch (error) {
-        message(accepted ? `Request sent, but status could not be refreshed. Check chat before rerunning. ${error.message}` : error.message,
-            accepted && step.project ? "canvas-message" : target, true);
+        message(accepted ? `Request sent, but status could not be refreshed. Check chat before rerunning. ${error.message}`
+            : runSignal?.aborted ? "Run request timed out. It may have been sent; check chat before trying again."
+                : error.message,
+            accepted && step.project ? "workflow-action-error" : target, true);
     }
     finally {
         sending = false; renderStatus();
     }
 }
-async function refreshArtifact() {
+async function refreshArtifact(initial) {
     const context = viewer;
     if (!context) return;
     if (context.reading) { message("The artifact is already loading.", "artifact-message"); return; }
@@ -1046,7 +1160,7 @@ async function refreshArtifact() {
     try {
         const query = new URLSearchParams({ phase: context.phase, itemId: context.itemId,
             ...(context.output !== undefined ? { output: context.output } : {}) });
-        const result = await api(`/api/artifact?${query}`);
+        const result = initial ?? await api(`/api/artifact?${query}`);
         if (viewer !== context) return;
         $("artifact-path").textContent = result.path;
         $("artifact-content").innerHTML = renderMarkdown(result.content);
@@ -1057,21 +1171,33 @@ async function refreshArtifact() {
             ? `Could not refresh the artifact. Displayed content is retained. ${error.message}` : error.message, "artifact-message", true);
     } finally { context.reading = false; }
     try { await refresh(); }
-    catch (error) { message(`Could not refresh artifact availability: ${error.message}`, "canvas-message", true); }
+    catch (error) { message(`Could not refresh artifact availability: ${error.message}`, "artifact-message", true); }
 }
 async function openArtifact(step, output) {
     if (!step) throw new Error("Wait for the canvas to connect, then try again.");
-    viewer = { phase: step.id, itemId: step.project ? "project" : model.selected,
-        ...(output !== undefined ? { output } : {}), loaded: false };
+    const itemId = step.project ? "project" : model.selected;
+    const query = new URLSearchParams({ phase: step.id, itemId,
+        ...(output !== undefined ? { output } : {}) });
+    let result;
+    try {
+        result = await api(`/api/artifact?${query}`);
+    } catch (error) {
+        if (error.status !== 404) throw error;
+        await api("/api/reveal", { phase: step.id, itemId,
+            ...(output !== undefined ? { output } : {}) });
+        return;
+    }
+    viewer = { phase: step.id, itemId, ...(output !== undefined ? { output } : {}), loaded: false };
     $("artifact-title").textContent = step.project ? "Constitution" : step.label;
     $("artifact-path").textContent = "";
     $("artifact-content").replaceChildren();
     $("artifact-viewer").showModal();
     $("close-artifact").focus();
-    await refreshArtifact();
+    await refreshArtifact(result);
 }
 document.addEventListener("input", (event) => {
     if (!model) return;
+    if (workflowPage) return;
     if (event.target.id === "workflow-name") {
         model.name = event.target.value;
         const entry = model.items.find((item) => item.id === model.selected && item.pending);
@@ -1109,6 +1235,7 @@ document.addEventListener("input", (event) => {
     }
 });
 document.addEventListener("focusout", (event) => {
+    if (workflowPage) return;
     if (event.target.id === "workflow-slug" && selectedPending()
         && event.target.value.trim()) {
         slugTouched = true;
@@ -1116,12 +1243,14 @@ document.addEventListener("focusout", (event) => {
     }
 });
 document.addEventListener("change", (event) => {
+    if (workflowPage) return;
     if (event.target.closest?.("[data-edit-value]")) {
         editValue(event.target).catch((error) =>
-            message(`Value could not be saved: ${error.message} Your edit remains in this panel.`, "canvas-message", true));
+            message(`Value could not be saved: ${error.message} Your edit remains in this panel.`, "canvas-value-errors", true));
     }
 });
-$("workflow-search").addEventListener("input", (event) => {
+$("workflow-search")?.addEventListener("input", (event) => {
+    if (workflowPage) return;
     workflowQuery = event.target.value;
     if (model) filterWorkflowList();
 });
@@ -1154,46 +1283,41 @@ document.addEventListener("click", (event) => {
                 else await saveInputs();
             }
             if (saveFailure) throw saveFailure;
-            message("Canvas refreshed.");
+            message("", "workflow-action-error");
             return;
         }
         requireModel();
+        if (workflowPage) return;
         if (button.dataset.deleteWorkflowId) { await deleteFeature(button.dataset.deleteWorkflowId); return; }
         if (button.dataset.workflowId) { await selectFeature(button.dataset.workflowId); return; }
         if (button.id === "new-workflow") {
-            await flush();
-            await api("/api/workflow/new", { revision: model.revision });
-            workflowQuery = "";
-            slugTouched = false;
-            current = 0;
-            await refresh();
+            await createWorkflow();
             $("workflow-name")?.focus();
         }
-        else if (button.id === "view-constitution") await openArtifact(constitution());
+        else if (button.id === "view-constitution") {
+            try { await openArtifact(constitution()); }
+            catch (error) { message(error.message, "workflow-action-error", true); }
+        }
         else if (button.id === "run-constitution") {
             const key = draftKey(constitution());
             $("constitution-args").value = drafts.get(key) ?? model.drafts[key] ?? "";
             $("constitution-dialog").showModal();
             $("constitution-args").focus();
         } else if (button.id === "send-constitution") await send(constitution(), $("constitution-args").value, "constitution-message");
-    })().catch((error) => message(error.message, "canvas-message", true));
+    })().catch((error) => message(error.message, "workflow-action-error", true));
 });
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 const pipelineRoot = $("workflow-pipeline");
+const workflowRoot = $("workflow-content") ?? $("workflow-surface");
 try {
     const adapter = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
     const mount = validatePhaseAdapter(adapter);
     const { controlId } = adapter;
     const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
-    phaseControl = mount({ root: pipelineRoot,
+    const mountPhase = (root, initialState) => {
+        phaseControl = mount({ root,
         definition: { id: controlId, viewLabels: JSON.parse(pipelineRoot.dataset.viewLabels) },
-        state: {
-        phases: initialPhases, current: initialPhases.length ? 0 : -1,
-        workflow: "__new__", status: null, draft: "",
-        output: initialPhases[0]?.output ?? null, outputLinks: [],
-        slugEditable: Boolean($("workflow-slug")), sending: false, statuses: {}, autopilot: null,
-        setupPending: false,
-    },
+        state: initialState,
         actions: {
             select: (index) => { requireModel(); return selectPhase(index); },
             run: (value) => { requireModel(); return send(phase(), value); },
@@ -1223,17 +1347,110 @@ try {
             reveal: async () => {
                 requireModel();
                 await flush();
-                const result = await api("/api/reveal", { phase: phase().id, itemId: model.selected });
-                message(result.message, "canvas-message");
+                await api("/api/reveal", { phase: phase().id, itemId: model.selected });
+                message("", "phase-action-error");
             },
             draft: (value) => {
                 if (model) { remember(phase(), value); queueInput(); }
             },
-            error: (error) => message(error.message, "canvas-message", true),
+            error: (error) => message(error.message, "phase-action-error", true),
         } });
-    validatePhaseMount(phaseControl);
+        return validatePhaseMount(phaseControl);
+    };
+    const initialState = {
+        phases: initialPhases, current: initialPhases.length ? 0 : -1,
+        workflow: "__new__", status: null, draft: "",
+        output: initialPhases[0]?.output ?? null, outputLinks: [],
+        badgeSlots: phaseBadgeSlots, badgeModels: [],
+        slugEditable: Boolean($("workflow-slug")), sending: false, statuses: {}, autopilot: null,
+        setupPending: false,
+    };
+    if (workflowRoot.dataset.pageModule) {
+        const pageModule = await import(`${workflowRoot.dataset.pageModule}?token=${encodeURIComponent(token)}`);
+        if (pageModule.pageId !== "workflow" || pageModule.contractVersion !== 1
+            || typeof pageModule.mount !== "function") {
+            throw new Error("Incompatible Workflow page adapter");
+        }
+        workflowPage = await pageModule.mount({
+            root: workflowRoot, definition: JSON.parse(workflowRoot.dataset.pageDefinition),
+            state: { model: null, phaseState: initialState },
+            actions: {
+                selectWorkflow: (id) => { requireModel(); return selectFeature(id); },
+                createWorkflow: async () => {
+                    requireModel();
+                    await createWorkflow();
+                },
+                deleteWorkflow: (id) => { requireModel(); return deleteFeature(id); },
+                selectPhase: (index) => { requireModel(); return selectPhase(index); },
+                run: (index, value) => {
+                    requireModel();
+                    const step = workflowPhases()[index];
+                    if (!step) throw new Error("This phase is no longer configured");
+                    return send(step, value);
+                },
+                view: (index, output) => {
+                    requireModel();
+                    return openArtifact(workflowPhases()[index], output);
+                },
+                saveDraft: (index, value) => {
+                    requireModel();
+                    const step = workflowPhases()[index];
+                    if (!step) throw new Error("This phase is no longer configured");
+                    remember(step, value); queueInput();
+                },
+                runConstitution: (value) => {
+                    requireModel();
+                    return send(constitution(), value, "constitution-message");
+                },
+                viewConstitution: () => { requireModel(); return openArtifact(constitution()); },
+                constitutionDraft: () => {
+                    requireModel();
+                    const step = constitution();
+                    if (!step) throw new Error("Constitution is not configured");
+                    const key = draftKey(step);
+                    return drafts.get(key) ?? model.drafts[key] ?? "";
+                },
+                saveValue: (id, value) => { requireModel(); return saveFieldValue(id, value); },
+                setIdentity: (field, value) => {
+                    requireModel();
+                    if (field !== "name" && field !== "slug") throw new Error("Unknown workflow identity field");
+                    model[field] = value;
+                    const entry = model.items.find((item) => item.id === model.selected && item.pending);
+                    if (entry) {
+                        entry.slug = model.slug;
+                        entry.label = model.name?.trim() || entry.slug || "Unstarted workflow";
+                    }
+                    queueInput();
+                    renderStatus();
+                },
+                setConstitutionDraft: (value) => {
+                    requireModel();
+                    const step = constitution();
+                    if (!step) throw new Error("Constitution is not configured");
+                    constitutionDraft = remember(step, value);
+                    clearTimeout(constitutionTimer);
+                    constitutionTimer = setTimeout(() => {
+                        constitutionTimer = null;
+                        saveConstitutionDraft();
+                    }, 400);
+                },
+                touchSlug: () => {
+                    requireModel();
+                    if (selectedPending()) { slugTouched = true; renderStatus(); }
+                },
+                confirmSetup, clearSetupPlan: () => { activeSetupPlan = null; },
+                mountPhase,
+                showDialog: showGeneratedDialog,
+                error: (error) => message(error.message, "workflow-action-error", true),
+            },
+        });
+        if (typeof workflowPage?.update !== "function" || typeof workflowPage.dispose !== "function") {
+            throw new Error("Workflow page adapter must return update and dispose");
+        }
+        mountStockPresentation();
+    } else mountPhase(pipelineRoot, initialState);
 } catch (error) {
-    message(`Pipeline could not render: ${error.message}`, "canvas-message", true);
+    message(`Pipeline could not render: ${error.message}`, "canvas-fatal-error", true);
     throw error;
 }
 wireThemeToggle();
@@ -1258,7 +1475,8 @@ window.addEventListener("beforeunload", (event) => {
 });
 window.addEventListener("pagehide", () => {
     events.close();
-    phaseControl?.dispose();
+    if (workflowPage) workflowPage.dispose();
+    else phaseControl?.dispose();
     buttonMounts.forEach((instance) => instance.dispose());
     disposeFieldMounts(mountedPage);
 });

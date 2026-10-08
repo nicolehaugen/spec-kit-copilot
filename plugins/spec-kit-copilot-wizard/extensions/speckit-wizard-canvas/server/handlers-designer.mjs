@@ -176,6 +176,21 @@ export function designerPhaseIds(snapshot) {
     return ids;
 }
 
+export function designerPhaseDescriptions(snapshot) {
+    return Object.fromEntries(designerPhaseIds(snapshot).flatMap((id) => {
+        const fullId = id.startsWith("speckit.") ? id : `speckit.${id}`;
+        const description = snapshot.phases?.[id]?.tagline
+            ?? snapshot.phases?.[`commands/${fullId}`]?.description
+            ?? snapshot.composition?.artifacts?.find((artifact) =>
+                artifact.id === `commands/${fullId}`)?.description;
+        if (typeof description === "string" && description.trim().length > 240) {
+            throw new Error(`Phase description exceeds 240 characters: ${id}`);
+        }
+        return typeof description === "string" && description.trim()
+            ? [[id, description.trim()]] : [];
+    }));
+}
+
 export function designerPhaseOutputs(snapshot) {
     return Object.fromEntries(designerPhaseIds(snapshot).map((id) => {
         if (id.replace(/^speckit\./, "") === "constitution") {
@@ -327,6 +342,7 @@ export function buildDesignerHandoff(snapshot, selections, localSelections, inst
     const runtimeSetup = buildPortableRuntimeSetup(installed, installLocators,
         snapshot.catalog, selections, localSelections);
     const workflow = { selectedPhases: designerPhaseIds(snapshot),
+        phaseDescriptions: designerPhaseDescriptions(snapshot),
         outputEvidence: designerPhaseOutputs(snapshot), installed, installLocators, runtimeSetup };
     const handoff = { schemaVersion: 1, handoffId, workflow, selections,
         ...(canvasDesign ? { canvasDesign } : {}),

@@ -2,15 +2,305 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
+import { UserError } from "../extension-canvas-design/generated-scaffold/files.mjs";
+import { errorPayload } from "../extension-canvas-design/generated-scaffold/server.mjs";
 
 const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
     import.meta.url), "utf8").then((text) => text.replaceAll("\r\n", "\n"));
+const serverSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/server.mjs",
+    import.meta.url), "utf8");
+const runtimeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/runtime.mjs",
+    import.meta.url), "utf8");
+const themeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/workflow-theme.css",
+    import.meta.url), "utf8");
+const runtimeCss = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/runtime.css",
+    import.meta.url), "utf8");
+
+test("generated host supplies badge slots to the initial phase adapter mount", () => {
+    const initial = section("const initialState = {", "if (workflowRoot.dataset.pageModule)");
+    assert.match(initial, /badgeSlots:\s*phaseBadgeSlots/);
+    assert.match(initial, /badgeModels:\s*\[\]/);
+});
+
+test("workflow actions share a fixed-width column and failures render inline without a popup", () => {
+    assert.match(themeSource, /\.instance-delete\s*\{[^}]*flex:\s*0 0 7rem/s);
+    assert.doesNotMatch(serverSource, /id="canvas-message"/);
+    assert.doesNotMatch(serverSource, /id="canvas-message-dismiss"/);
+    assert.match(serverSource, /id="workflow-action-error"[^>]*role="alert"/);
+    assert.match(serverSource, /id="generated-page-error"[^>]*role="alert"/);
+    assert.match(serverSource, /id="canvas-fatal-error"[^>]*role="alert"/);
+    const notice = { hidden: true, textContent: "", attributes: {}, classList: { toggle() {} },
+        setAttribute(name, value) { this.attributes[name] = value; } };
+    const message = runInNewContext(`${section("function message(", "function displayValue(")}
+        message`, {
+        $: (id) => ({ "workflow-action-error": notice })[id],
+        mountedPage: "workflow",
+    });
+    message("Saved");
+    assert.equal(notice.hidden, true);
+    message("An error", "canvas-message", true);
+    assert.equal(notice.hidden, false);
+    assert.equal(notice.attributes.role, "alert");
+    assert.equal(notice.textContent, "An error");
+    message("", "workflow-action-error");
+    assert.equal(notice.hidden, true);
+    assert.doesNotMatch(source, /canvas-message-dismiss|messageTimer/);
+});
 
 function section(start, end) {
     const first = source.indexOf(start), last = source.indexOf(end, first + start.length);
     assert.ok(first >= 0 && last > first, `Missing UI section ${start}`);
     return source.slice(first, last);
 }
+
+test("a timed-out Run clears the in-flight guard without automatically resubmitting", async () => {
+    let attempts = 0;
+    const messages = [];
+    const actions = runInNewContext(`let sending = false;
+        ${section("async function api(", "async function retryRevision(")}
+        ${section("async function send(", "async function refreshArtifact(")}
+        ({ send, pending: () => Boolean(sending) })`, {
+        token: "test", model: { constitutionReady: true, userProvidesSlug: false,
+            selected: "specs/demo", statuses: {} },
+        selectedPending: () => false, renderStatus() {}, flush: async () => {},
+        refresh: async () => {}, message: (text) => messages.push(text),
+        AbortSignal: { timeout() {
+            const controller = new AbortController();
+            setTimeout(() => controller.abort(), 5);
+            return controller.signal;
+        } },
+        fetch: (_path, options) => {
+            if (++attempts === 2) return Promise.resolve({ ok: true, json: async () => ({}) });
+            return new Promise((_, reject) => options.signal.addEventListener("abort",
+                () => reject(new Error("aborted")), { once: true }));
+        },
+    });
+    await actions.send({ id: "specify", project: false }, "");
+    assert.equal(actions.pending(), false);
+    assert.match(messages.at(-1), /timed out.*check chat before trying again/i);
+    assert.equal(attempts, 1);
+    await actions.send({ id: "specify", project: false }, "");
+    assert.equal(attempts, 2);
+    assert.equal(actions.pending(), false);
+});
+
+test("named badge colors meet small-text contrast in light, dark and automatic dark themes", () => {
+    const theme = (selector) => {
+        const start = themeSource.indexOf(selector);
+        assert.ok(start >= 0);
+        const block = themeSource.slice(start, themeSource.indexOf("}", start));
+        return (name) => {
+            const value = block.match(new RegExp(`--${name}: (#[0-9a-f]{6});`));
+            assert.ok(value, `${name} is defined in ${selector}`);
+            return value[1];
+        };
+    };
+    const luminance = (hex) => [0, 2, 4].map((offset) =>
+        parseInt(hex.slice(offset + 1, offset + 3), 16) / 255)
+        .map((channel) => channel <= 0.04045 ? channel / 12.92
+            : ((channel + 0.055) / 1.055) ** 2.4)
+        .reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const badge = /\.canvas-badge\[data-color="([^"]+)"\]\s*\{\s*color:\s*color-mix\(in srgb, var\(--text-color-default\) (\d+)%, (var\(--([a-z-]+)\)|#[0-9a-f]{6})\);/g;
+    const matches = [...runtimeCss.matchAll(badge)];
+    assert.deepEqual(matches.map((match) => match[1]),
+        ["green", "amber", "red", "blue", "purple", "pink", "orange"]);
+    for (const selector of [":root {", '[data-theme="dark"] {', ":root:not([data-theme]) {"]) {
+        const color = theme(selector);
+        const text = color("text-color-default");
+        const background = luminance(color("background-color-secondary"));
+        for (const [, name, percentage, hue, variable] of matches) {
+            const base = variable ? color(variable) : hue;
+            const proportion = Number(percentage) / 100;
+            const mixed = `#${[1, 3, 5].map((offset) =>
+                Math.round(parseInt(text.slice(offset, offset + 2), 16) * proportion
+                    + parseInt(base.slice(offset, offset + 2), 16) * (1 - proportion))
+                    .toString(16).padStart(2, "0")).join("")}`;
+            const foreground = luminance(mixed);
+            const contrast = (Math.max(foreground, background) + 0.05)
+                / (Math.min(foreground, background) + 0.05);
+            assert.ok(contrast >= 4.5, `${name} in ${selector} has ${contrast.toFixed(2)}:1 contrast`);
+        }
+    }
+});
+
+test("a stale revision refreshes internally and retries a workflow action once", async () => {
+    const calls = [];
+    const model = { revision: 3 };
+    const context = {
+        model,
+        api: async (path, input) => {
+            calls.push({ path, input });
+            if (calls.length === 1) throw Object.assign(new Error("Stale revision"),
+                { status: 409, code: "STALE_REVISION" });
+            return { revision: 5 };
+        },
+        refresh: async () => { model.revision = 4; },
+    };
+    const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+        retryRevision`, context);
+    assert.equal((await retry("/api/workflow/new", {})).revision, 5);
+    assert.deepEqual(calls.map(({ input }) => input.revision), [3, 4]);
+    assert.ok(calls.every(({ path }) => path === "/api/workflow/new"));
+});
+
+test("a persistent revision conflict asks for another attempt, not a manual refresh", async () => {
+    const model = { revision: 3 };
+    let attempts = 0, refreshes = 0;
+    const context = {
+        model,
+        api: async () => {
+            attempts++;
+            throw Object.assign(new Error("Stale revision"), { status: 409, code: "STALE_REVISION" });
+        },
+        refresh: async () => { model.revision++; refreshes++; },
+    };
+    const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+        retryRevision`, context);
+    await assert.rejects(retry("/api/workflow/new", {}),
+        /Canvas state is still changing. Try this action again./);
+    assert.equal(attempts, 2);
+    assert.equal(refreshes, 1);
+});
+
+test("non-revision conflicts keep their error without refreshing or replaying the action", async () => {
+    for (const detail of ["A workflow operation is in progress.", "Workflow or confirmation does not match."]) {
+        const conflict = Object.assign(new Error(detail), { status: 409 });
+        let attempts = 0, refreshes = 0;
+        const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+            retryRevision`, {
+            model: { revision: 3 },
+            api: async () => { attempts++; throw conflict; },
+            refresh: async () => { refreshes++; },
+        });
+        await assert.rejects(retry("/api/workflow/delete", { itemId: "demo", confirmation: "demo" }),
+            (error) => error === conflict);
+        assert.equal(attempts, 1);
+        assert.equal(refreshes, 0);
+    }
+});
+
+test("a different conflict after a stale revision retry preserves its original error", async () => {
+    const conflict = Object.assign(new Error("This workflow has an unfinished phase."), { status: 409 });
+    let attempts = 0, refreshes = 0;
+    const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+        retryRevision`, {
+        model: { revision: 3 },
+        api: async () => {
+            if (++attempts === 1) throw Object.assign(new Error("Stale revision"),
+                { status: 409, code: "STALE_REVISION" });
+            throw conflict;
+        },
+        refresh: async () => { refreshes++; },
+    });
+    await assert.rejects(retry("/api/workflow/delete", { itemId: "demo", confirmation: "demo" }),
+        (error) => error === conflict);
+    assert.equal(attempts, 2);
+    assert.equal(refreshes, 1);
+});
+
+test("server exposes only revision conflicts as coded and UI retains that code", async () => {
+    const staleRevision = runInNewContext(runtimeSource.slice(runtimeSource.indexOf("function staleRevision("),
+        runtimeSource.indexOf("export async function existingOutputFolder("))
+        + "staleRevision", { UserError });
+    const stale = staleRevision("Canvas state changed.");
+    assert.equal(stale.status, 409);
+    assert.deepEqual(errorPayload(stale), { error: "Canvas state changed.", code: "STALE_REVISION" });
+    const busy = new UserError("A workflow operation is in progress.", 409);
+    assert.deepEqual(errorPayload(busy), { error: "A workflow operation is in progress." });
+    let responseError = stale;
+    const api = runInNewContext(`${section("async function api(", "async function retryRevision(")}
+        api`, {
+        token: "test",
+        fetch: async () => ({ ok: false, status: 409, json: async () => errorPayload(responseError) }),
+    });
+    await assert.rejects(api("/api/state", { revision: 1 }),
+        (error) => error.status === 409 && error.code === "STALE_REVISION"
+            && error.message === "Canvas state changed.");
+    responseError = busy;
+    await assert.rejects(api("/api/workflow/delete", { revision: 1 }),
+        (error) => error.status === 409 && error.code === undefined
+            && error.message === busy.message);
+});
+
+test("all pending run buttons share the Running label, including Constitution", () => {
+    const model = { selected: "demo", statuses: {
+        specify: { status: "Request sent" }, constitution: { status: "Running" },
+    } };
+    const context = { model, sending: false };
+    const label = runInNewContext(`${section("function pendingLabel(", "function renderStatus(")}
+        pendingLabel`, context);
+    assert.equal(label({ id: "specify", project: false }), "Running");
+    assert.equal(label({ id: "constitution", project: true }), "Running");
+    model.statuses.specify.status = "Completed";
+    assert.equal(label({ id: "specify", project: false }), null);
+    context.sending = { phase: "specify", item: "demo" };
+    assert.equal(label({ id: "specify", project: false }), "Running");
+});
+
+test("rerunning a phase or Constitution requires overwrite confirmation, but first runs and pending retries do not", async () => {
+    const model = { selected: "demo", constitutionReady: true, userProvidesSlug: false,
+        items: [{ id: "demo", pending: false }], statuses: {
+            specify: { status: "Not run" }, constitution: { status: "Completed",
+                artifactAvailability: "available" },
+        } };
+    let confirmations = 0, submissions = 0, approved = false;
+    const context = {
+        model, sending: false, window: { confirm: () => { confirmations++; return approved; } },
+        selectedPending: () => false, slugError: () => null,
+        message: () => {}, renderStatus: () => {}, flush: async () => {},
+        api: async () => { submissions++; }, refresh: async () => {},
+        $: () => null, AbortSignal: { timeout: () => new AbortController().signal },
+    };
+    const send = runInNewContext(`${section("async function send(", "async function refreshArtifact(")}
+        send`, context);
+    const phase = { id: "specify", project: false };
+    const constitution = { id: "constitution", project: true };
+    await send(phase, "First run");
+    assert.equal(confirmations, 0);
+    assert.equal(submissions, 1);
+    model.statuses.specify.status = "Request sent";
+    await send(phase, "Retry while pending");
+    assert.equal(confirmations, 0);
+    assert.equal(submissions, 2);
+    await send(constitution, "Updated principles");
+    assert.equal(confirmations, 1);
+    assert.equal(submissions, 2);
+    approved = true;
+    await send(constitution, "Updated principles");
+    assert.equal(confirmations, 2);
+    assert.equal(submissions, 3);
+    model.statuses.specify = { status: "Completed" };
+    await send(phase, "Run again");
+    assert.equal(confirmations, 3);
+    assert.equal(submissions, 4);
+});
+
+test("a not-yet-created output browses its parent without opening the artifact viewer", async () => {
+    const calls = [];
+    let viewerOpened = false;
+    const context = {
+        model: { selected: "specs/demo" },
+        URLSearchParams,
+        api: async (path, input) => {
+            calls.push({ path, input });
+            if (path.startsWith("/api/artifact")) throw Object.assign(new Error("Not found"), { status: 404 });
+        },
+        $: () => { viewerOpened = true; throw new Error("Viewer should stay closed"); },
+    };
+    const openArtifact = runInNewContext(`${section("async function openArtifact(", 'document.addEventListener("input"')}
+        openArtifact`, context);
+    await openArtifact({ id: "specify", project: false }, "specs/<slug>/notes.md");
+    assert.equal(viewerOpened, false);
+    assert.equal(calls.length, 2);
+    assert.match(calls[0].path, /^\/api\/artifact\?/);
+    assert.equal(calls[1].path, "/api/reveal");
+    assert.equal(calls[1].input.phase, "specify");
+    assert.equal(calls[1].input.itemId, "specs/demo");
+    assert.equal(calls[1].input.output, "specs/<slug>/notes.md");
+    context.api = async () => { throw Object.assign(new Error("Access denied"), { status: 403 }); };
+    await assert.rejects(openArtifact({ id: "specify" }), /Access denied/);
+    assert.equal(viewerOpened, false);
+});
 
 class Element {
     constructor(tag = "div", dataset = {}) {
@@ -20,11 +310,13 @@ class Element {
         this.parent = null;
         this.listeners = new Map();
         this.attributes = new Map();
-        this.classList = { add() {}, remove() {}, contains: () => false };
+        this.style = {};
+        this.classList = { add() {}, remove() {}, toggle() {}, contains: () => false };
         this.textContent = "";
         this.value = "";
         this.checked = false;
     }
+
     get isConnected() { return Boolean(this.parent && (this.parent.isConnected || this.parent.tagName === "document")); }
     get firstElementChild() { return this.children[0] ?? null; }
     set textContent(value) { this._text = value; if (this.children) this.replaceChildren(); }
@@ -55,6 +347,14 @@ class Element {
     }
     querySelector(selector) {
         if (selector === "input") return this.children.find((child) => child.tagName === "input") ?? null;
+        const matches = (node) => selector === "strong" ? node.tagName === "strong"
+            : selector === "code" ? node.tagName === "code"
+                : selector.startsWith(".") && node.className?.split(" ").includes(selector.slice(1));
+        for (const child of this.children) {
+            if (matches(child)) return child;
+            const nested = child.querySelector(selector);
+            if (nested) return nested;
+        }
         return null;
     }
     setAttribute(key, value) { this.attributes.set(key, value); }
@@ -63,6 +363,79 @@ class Element {
     click() { return this.listeners.get("click")?.(); }
     change() { return this.listeners.get("change")?.(); }
 }
+
+test("workflow badges render text nodes rather than HTML", () => {
+    const context = { document: { createElement: (tag) => new Element(tag) } };
+    const create = runInNewContext(`${section("function readableBadgeForeground(", "function filterWorkflowList(")}
+        badgeList([{ text: "<unsafe>", color: "amber" },
+            { text: "White", color: "#ffffff" },
+            { text: "Black", color: "#000000" }]);`, context);
+    assert.equal(create.children[0].textContent, "<unsafe>");
+    assert.equal(create.children[0].dataset.color, "amber");
+    assert.deepEqual({ ...create.children[1].style },
+        { backgroundColor: "#ffffff", color: "#111" });
+    assert.deepEqual({ ...create.children[2].style },
+        { backgroundColor: "#000000", color: "#fff" });
+    assert.equal(create.children[0].children.length, 0);
+});
+
+test("summary displays runtime-provided zero count without a selected workflow", () => {
+    const nodes = new Map([
+        ["workflow-count", new Element()],
+        ["workflow-identity", new Element()],
+        ["workflow-list", new Element()],
+        ["workflow-rows", new Element()],
+        ["workflow-pipeline", new Element()],
+        ["workflow-constitution-note", new Element()],
+        ["new-workflow", new Element()],
+        ["workflow-badge-summary", new Element()],
+        ["workflow-badge-diagnostics", new Element()],
+        ["workflow-empty", new Element()],
+        ["workflow-search-field", new Element()],
+        ["workflow-search", new Element()],
+    ]);
+    const summary = nodes.get("workflow-badge-summary");
+    const context = { document: { createElement: (tag) => new Element(tag) },
+        $: (id) => nodes.get(id), model: { selected: "__new__", items: [],
+            badges: { selected: [], summary: [{ text: "Workflows with checklists (0)", color: "amber" }] } },
+        workflowQuery: "", previousBadgeRows: undefined, workflowIdentity: new Element(), workflowPhases: () => [],
+        hasSelectedWorkflow: () => false, selectedPending: () => false, filterWorkflowList() {} };
+    runInNewContext(`${section("function renderCollection()", "function readableBadgeForeground(")}
+        ${section("function readableBadgeForeground(", "function filterWorkflowList(")}
+        renderCollection();`, context);
+    assert.equal(summary.hidden, false);
+    assert.equal(summary.firstElementChild.firstElementChild.textContent, "Workflows with checklists (0)");
+});
+
+test("workflow row badges update when evidence changes without changing workflow IDs", () => {
+    const nodes = new Map([
+        ["workflow-count", new Element()],
+        ["workflow-list", new Element()],
+        ["workflow-rows", new Element("div", { badgeSlot: "workflow.list" })],
+        ["workflow-pipeline", new Element()],
+        ["workflow-constitution-note", new Element()],
+        ["new-workflow", new Element()],
+        ["workflow-empty", new Element()],
+        ["workflow-search-field", new Element()],
+        ["workflow-search", new Element()],
+    ]);
+    const model = { items: [{ id: "alpha", label: "Alpha", slug: "alpha" }],
+        selected: "alpha", constitutionReady: true,
+        badges: { items: { alpha: [{ text: "One", color: "blue", showIn: ["workflow-list"] }] } } };
+    const context = { document: { createElement: (tag) => new Element(tag) },
+        $: (id) => nodes.get(id), model, workflowQuery: "", previousBadgeRows: undefined,
+        workflowIdentity: new Element(), workflowPhases: () => [{}],
+        hasSelectedWorkflow: () => true, selectedPending: () => false, filterWorkflowList() {} };
+    const render = `${section("function renderCollection()", "function readableBadgeForeground(")}
+        ${section("function readableBadgeForeground(", "function filterWorkflowList(")}
+        renderCollection();`;
+    runInNewContext(render, context);
+    const first = nodes.get("workflow-rows").firstElementChild;
+    assert.equal(first.querySelector(".canvas-badge").textContent, "One");
+    model.badges.items.alpha[0].text = "Two";
+    runInNewContext("renderCollection();", context);
+    assert.equal(nodes.get("workflow-rows").firstElementChild.querySelector(".canvas-badge").textContent, "Two");
+});
 
 function harness({ placements, fields = [], pageSlots = [], adapter = null }) {
     const nodes = new Map();
@@ -124,6 +497,7 @@ function harness({ placements, fields = [], pageSlots = [], adapter = null }) {
         "const $ = (id) => document.getElementById(id);",
         section("let phaseControl;", "function currentTheme()"),
         section("function editValue(element)", "async function api("),
+        section("async function retryRevision(", "const workflowPhases ="),
         section("async function refresh(reconcile", "async function selectPhase("),
     ].join("\n")
         .replaceAll("await import(`${registration.dataset.module}?token=${encodeURIComponent(token)}`)",

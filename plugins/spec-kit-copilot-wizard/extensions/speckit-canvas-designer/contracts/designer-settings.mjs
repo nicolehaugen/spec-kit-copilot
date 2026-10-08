@@ -27,9 +27,11 @@ export function validateValues(values, constraints) {
 
 export function validateSavedSettings(record, handoff, model) {
     if (!record || typeof record !== "object" || Array.isArray(record)
-        || Object.keys(record).sort().join() !== (record.outputs === undefined
-            ? "handoffId,modelRevision,revision,schemaVersion,values"
-            : "handoffId,modelRevision,outputs,revision,schemaVersion,values")
+        || Object.keys(record).sort().join() !== [
+            "handoffId", "modelRevision", "revision", "schemaVersion", "values",
+            ...(Object.hasOwn(record, "outputs") ? ["outputs"] : []),
+            ...(Object.hasOwn(record, "badges") ? ["badges"] : []),
+        ].sort().join()
         || record.schemaVersion !== 1 || record.handoffId !== handoff.handoffId
         || !Number.isSafeInteger(record.revision) || record.revision < 1
         || record.modelRevision !== model.revision) {
@@ -40,8 +42,11 @@ export function validateSavedSettings(record, handoff, model) {
 
 export function validateSaveRequest(request, model) {
     if (!request || typeof request !== "object" || Array.isArray(request)
-        || Object.keys(request).sort().join() !== (request.outputs === undefined
-            ? "modelRevision,revision,values" : "modelRevision,outputs,revision,values")
+        || Object.keys(request).sort().join() !== [
+            "modelRevision", "revision", "values",
+            ...(Object.hasOwn(request, "outputs") ? ["outputs"] : []),
+            ...(Object.hasOwn(request, "badges") ? ["badges"] : []),
+        ].sort().join()
         || request.modelRevision !== model.revision
         || !Number.isSafeInteger(request.revision) || request.revision < 0) {
         throw new Error("Invalid Designer save request");

@@ -1,9 +1,27 @@
 export const controlId = "workflow-phases";
 export const contractVersion = 1;
 export const requiredCapabilities = ["workflow.rows.v1", "workflow.managed-run.v1"];
+export const capabilities = ["workflow.badges.v1", "workflow.badges.targets.v1"];
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
+function readableBadgeForeground(hex) {
+    const rgb = [1, 3, 5].map((index) => {
+        const channel = parseInt(hex.slice(index, index + 2), 16) / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    const luminance = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    return (luminance + 0.05) / (0.005605 + 0.05) >= 1.05 / (luminance + 0.05)
+        ? "#111" : "#fff";
+}
+const badgeMarkup = (badges) => badges.map((badge) =>
+    `<span class="canvas-badge" data-color="${escapeHtml(badge.color)}" ${
+        /^#[0-9a-fA-F]{6}$/.test(badge.color)
+            ? `style="background-color:${badge.color};color:${readableBadgeForeground(badge.color)}"` : ""
+    }>${escapeHtml(badge.phaseText ?? badge.text)}</span>`).join("");
+const badgesForTarget = (badges, phase, output = null) => badges.filter((badge) =>
+    badge.targets ? badge.targets.some((target) => target.phase === phase && target.output === output)
+        : output === null && (!badge.phase || badge.phase === phase));
 
 const style = `<style>
 .vertical-phase-intro { margin: 0 0 .75rem; color: var(--text-color-muted); }
@@ -35,11 +53,15 @@ function validState(state) {
         && state.outputLinks.every((link) => link && typeof link.template === "string"
             && typeof link.label === "string")
         && typeof state.sending === "boolean"
+        && (state.badgeSlots === undefined || Array.isArray(state.badgeSlots)
+            && state.badgeSlots.every((slot) => ["phase.card", "phase.output"].includes(slot?.id)))
+        && (state.badgeModels === undefined || Array.isArray(state.badgeModels))
         && (state.runLabel == null || typeof state.runLabel === "string");
 }
 
 function render(state, definition) {
     const { phases, current } = state;
+    const badgeSlots = new Set((state.badgeSlots ?? []).map((slot) => slot.id));
     const phase = phases[current];
     const status = state.status?.status ?? "Not run";
     const output = state.output;
@@ -74,6 +96,9 @@ function render(state, definition) {
                         aria-label="Step ${index}: ${escapeHtml(item.label)}">Step ${index} · ${escapeHtml(item.label)}
                         ${item.output ? `→ ${escapeHtml(item.output)}` : ""}</button>
                     <span class="vertical-phase-status" data-status="${escapeHtml(itemStatus)}">${escapeHtml(itemStatus === "Completed" ? "done" : itemStatus === "Not run" ? "pending" : itemStatus.toLowerCase())}</span>
+                    ${badgeSlots.has("phase.card")
+                        ? `<span class="canvas-badges" data-phase-badge-slot="phase.card">${badgeMarkup(badgesForTarget(
+                            state.badgeModels ?? [], item.id))}</span>` : ""}
                     ${result?.error ? `<span class="workflow-error" role="alert">${escapeHtml(result.error)}</span>` : ""}
                 </div>
                 <div class="vertical-phase-actions">
@@ -88,10 +113,16 @@ function render(state, definition) {
     <section class="phase-card vertical-phase-detail" aria-label="Selected phase">${phase ? `
         <header class="workflow-header"><div class="workflow-header-main">
             <div class="phase-heading"><h2>${escapeHtml(phase.label)}</h2><span class="phase-notice">${escapeHtml(status)}</span></div>
+            ${badgeSlots.has("phase.card")
+                ? `<div class="canvas-badges" data-phase-badge-slot="phase.card" aria-label="Phase badges">${badgeMarkup(badgesForTarget(
+                    state.badgeModels ?? [], phase.id))}</div>` : ""}
             <p class="tagline">${escapeHtml(phase.id.startsWith("speckit.") ? phase.id : `speckit.${phase.id}`)}</p>
         </div></header>
         <dl class="phase-facts"><dt>View target</dt><dd><button class="phase-artifact-link" data-action="reveal" type="button"
-            title="Open the viewer target's folder" ${!output || output.includes("<slug>") ? "disabled" : ""}><code>${escapeHtml(output || "No declared output")}</code></button></dd></dl>
+            title="Open the viewer target's folder" ${!output || output.includes("<slug>") ? "disabled" : ""}><code>${escapeHtml(output || "No declared output")}</code></button>
+            ${badgeSlots.has("phase.output") ? `<span class="canvas-badges" data-phase-badge-slot="phase.output">${badgeMarkup(phase.output
+                && !state.outputLinks.some((link) => link.template === phase.output) ? badgesForTarget(
+                state.badgeModels ?? [], phase.id, phase.output) : [])}</span>` : ""}</dd></dl>
         <p class="muted" role="status">${escapeHtml(state.status?.artifactError ??
             (available ? "" : output
                 ? `${output} is not available yet. Run the phase, then refresh to check again.`
@@ -99,7 +130,9 @@ function render(state, definition) {
         ${state.outputLinks.length ? `<div class="phase-output-list" aria-label="Phase outputs">
             <strong>Outputs</strong>${state.outputLinks.map(({ template, label }) =>
                 `<button class="phase-artifact-link" type="button" data-action="output"
-                    data-output="${escapeHtml(template)}">${escapeHtml(label)}</button>`).join("")}
+                    data-output="${escapeHtml(template)}">${escapeHtml(label)}</button>
+                ${badgeSlots.has("phase.output") ? `<span class="canvas-badges" data-phase-badge-slot="phase.output">${badgeMarkup(badgesForTarget(
+                    state.badgeModels ?? [], phase.id, template))}</span>` : ""}`).join("")}
         </div>` : ""}
         <label class="field"><span class="field-label">Phase input</span>
             <textarea class="phase-input-control" data-phase-draft placeholder="Add details or direction for this phase."

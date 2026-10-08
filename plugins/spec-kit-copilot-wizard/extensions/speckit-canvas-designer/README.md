@@ -6,8 +6,9 @@ Wizard and Designer canvases.
 
 The provider's `contracts/` directory names the Wizard handoff and open input
 (`wizard-handoff.mjs`, `host-open.mjs`), saved settings and save request
-(`designer-settings.mjs`), frozen generation writer
-(`generation-request.mjs`), Specify version inventory (`specify-inventory.mjs`),
+(`designer-settings.mjs`), configured Badge instances (`badges.mjs`) and
+registered Badge definitions (`badge-definitions.mjs`), generation submission
+and frozen request writer (`generation-request.mjs`), Specify version inventory (`specify-inventory.mjs`),
 control adapter exports (`control-adapter.mjs`), and contribution field/schema
 rules (`design-contributions.mjs`). The existing readers and handlers retain
 filesystem confinement, UI lifecycle, and revision conflicts. The generator is
@@ -16,6 +17,13 @@ independently packaged and validates request integrity with its own
 The browser's matching mount, readiness, and draft-change rules live in
 `ui/control-adapter-contract.js`, served with the provider rather than loaded
 from a preset.
+
+For local UX inspection, the project skill `speckit-designer-preview` opens the
+official Designer canvas with `{preview:true}`. It shows an illustrative Badges
+tab with sample phases and output paths, without a Wizard handoff or Specify
+installation. The banner marks the session as a preview; Save and Generate are
+unavailable in both the UI and HTTP API. Edits are ephemeral and do not verify
+template composition, project setup, or the published hosted package.
 
 The Wizard hands approved customizations to a separate child session. That
 session initializes Spec Kit in Copilot skills mode if needed, installs the
@@ -84,15 +92,19 @@ is shared across Header, Main, and preset placements. An absent Header logo
 retains the brand mark; a configured image with a failing adapter reports a
 visible error rather than falling back.
 
-The required generated Workflow page now declares named slots instead of
-ordering host shell regions. Designer validates and freezes its required
-`workflow.phases` placement, plus separately registered typed field placements
-targeting that page or a preset-added page. Additional Workflow slots render
-together in a host-owned contributions area; preset-added page renderers expose
-`data-field-slot` targets. Designer's own tabs, settings UI, and control model
-are unchanged. Read-only values remain the default; explicit editable
-generated values use the generated shell's existing typed value API, while
-packaged images are display-only.
+The required generated Workflow page declares named slots and a replaceable
+`generated.workflow-page-adapter` for its whole-page presentation. Designer
+validates and freezes the required `workflow.phases` placement, plus separately
+registered typed field placements targeting that page or a preset-added page.
+The stock page adapter renders the workflow collection, summary, setup,
+constitution, phase composition, and additional Workflow contribution slots;
+a replacement adapter controls their presentation rather than inheriting a
+host-owned contributions area. Preset-added page renderers expose
+`data-field-slot` targets. The generated host retains authorized actions,
+persistence, and shared navigation. Designer's own tabs, settings UI, and
+control model are unchanged. Read-only values remain the default; explicit
+editable generated values use the generated shell's existing typed value API,
+while packaged images are display-only.
 
 Workflow name appears in the generated canvas's workflow collection, before
 phase navigation, while creating a workflow. It labels the workflow there.

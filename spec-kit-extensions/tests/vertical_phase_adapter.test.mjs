@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { controlId, contractVersion, mount } from "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs";
+import { controlId, contractVersion, capabilities, mount } from "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs";
 
 const phases = [
     { id: "specify", label: "Specify", output: "specs/demo/spec.md" },
@@ -12,6 +12,7 @@ const initial = {
     draft: "Initial <input>", output: phases[0].output,
     outputLinks: [{ template: "specs/<slug>/checklist.md", label: "specs/demo/checklist.md" }],
     sending: false, runLabel: null,
+    badgeSlots: [{ id: "phase.card" }, { id: "phase.output" }],
 };
 
 function rootFixture() {
@@ -117,6 +118,32 @@ test("vertical phase adapter handles empty workflows without host phase markup",
         output: null, outputLinks: [], sending: false, runLabel: null,
     }, actions });
     assert.match(root.innerHTML, /No workflow phases are configured/);
+});
+
+test("vertical phase adapter renders phase/output badge pairs without cross-phase leakage", () => {
+    assert.ok(capabilities.includes("workflow.badges.targets.v1"));
+    const { root } = rootFixture();
+    const actions = Object.fromEntries(["select", "draft", "runAt", "viewAt",
+        "startManagedRun", "stopManagedRun", "reveal", "error"]
+        .map((name) => [name, () => {}]));
+    const state = { ...initial,
+        badgeModels: [
+            { text: "Specify only", color: "blue", targets: [
+                { phase: "specify", output: "specs/demo/spec.md" }] },
+            { text: "Plan only", color: "green", targets: [
+                { phase: "plan", output: "specs/demo/plan.md" }] },
+            { text: "Plan card only", color: "amber", targets: [
+                { phase: "plan", output: null }] },
+        ] };
+    const control = mount({ root, definition, state, actions });
+    const detail = () => root.innerHTML.split('<section class="phase-card vertical-phase-detail"')[1];
+    assert.match(detail(), /Specify only/);
+    assert.doesNotMatch(detail(), /Plan only|Plan card only/);
+    control.update({ ...state, current: 1, output: "specs/demo/plan.md", outputLinks: [] });
+    assert.match(detail(), /Plan only/);
+    assert.match(detail(), /Plan card only/);
+    assert.doesNotMatch(detail(), /Specify only/);
+    control.dispose();
 });
 
 test("the adapter confirms only Autopilot transitions, never pending manual retries", async () => {

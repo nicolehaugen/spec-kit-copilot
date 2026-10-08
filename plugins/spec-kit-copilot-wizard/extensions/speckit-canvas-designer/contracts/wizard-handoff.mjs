@@ -180,10 +180,16 @@ export function validateHandoff(handoff, id) {
         || handoff.schemaVersion !== 1 || handoff.handoffId !== id
         || !record(handoff.workflow)
         || Object.keys(handoff.workflow).some((key) =>
-            !["selectedPhases", "outputEvidence", "installed", "installLocators", "runtimeSetup"].includes(key))
+            !["selectedPhases", "phaseDescriptions", "outputEvidence", "installed", "installLocators", "runtimeSetup"].includes(key))
         || !Array.isArray(handoff.workflow.selectedPhases)
         || handoff.workflow.selectedPhases.length > 30
         || !handoff.workflow.selectedPhases.every((phase) => typeof phase === "string" && PACKAGE.test(phase))
+        || (handoff.workflow.phaseDescriptions !== undefined
+            && (!record(handoff.workflow.phaseDescriptions)
+                || Object.entries(handoff.workflow.phaseDescriptions).some(([phase, description]) =>
+                    !handoff.workflow.selectedPhases.includes(phase)
+                    || typeof description !== "string" || !description.trim()
+                    || description.length > 240)))
         || (handoff.workflow.installed !== undefined
             && (!record(handoff.workflow.installed)
                 || KINDS.some((kind) => !Array.isArray(handoff.workflow.installed[kind])

@@ -1,0 +1,65 @@
+export function previewModel() {
+    const phases = ["constitution", "specify", "clarify", "plan", "tasks",
+        "taskstoissues", "analyze", "checklist", "implement"];
+    const outputs = {
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
+        specify: { outputs: ["specs/<slug>/spec.md",
+            "specs/<slug>/checklists/requirements.md"], view: "specs/<slug>/spec.md" },
+        clarify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+        plan: { outputs: ["specs/<slug>/plan.md"], view: "specs/<slug>/plan.md" },
+        tasks: { outputs: ["specs/<slug>/tasks.md"], view: "specs/<slug>/tasks.md" },
+        taskstoissues: { outputs: [], view: null },
+        analyze: { outputs: [], view: null },
+        checklist: { outputs: [], view: null },
+        implement: { outputs: [], view: null },
+    };
+    const badgeTypes = [
+        ["value-match", "Value match", "Matches text anywhere in one selected output, ignoring capitalization.",
+            "Value matched", "amber"],
+        ["artifact-current", "Artifact current", "Shows whether a selected output is current.",
+            "Artifact current", "green"],
+        ["artifact-stale", "Artifact stale", "Shows when an output may be stale.",
+            "Artifact stale", "amber"],
+        ["markdown-file-count", "Markdown files", "Counts Markdown files beside a selected output.",
+            "Files ({count})", "blue"],
+        ["checklist-progress", "Checklist progress", "Shows completed versus total checklist items.",
+            "{completed}/{total} complete", "blue"],
+        ["checklist-complete", "Checklist complete", "Shows when every checklist item is checked and its output is at least as recent as an earlier output.",
+            "Checklist complete", "green"],
+        ["work-complete", "Work complete", "Checks an output and a completed phase.",
+            "Work complete", "green"],
+        ["phase-run-complete", "Phase run complete", "Shows when a selected phase run completes.",
+            "Phase run complete", "blue"],
+    ].map(([id, title, description, defaultText, defaultColor]) =>
+        ({ id, rule: id, title, description, defaultText, defaultColor, enabled: true }));
+    const artifact = [{ id: "artifact", type: "artifact" }];
+    const badgeRules = [
+        { id: "value-match", description: "Match text anywhere in one selected output, ignoring capitalization.",
+            inputs: [{ id: "artifact", type: "artifact", label: "Output to search" },
+                { id: "value", type: "text", label: "Text to match" }], textPlaceholders: [] },
+        { id: "checklist-progress", description: "Count checked and total checklist items.",
+            inputs: artifact, textPlaceholders: ["completed", "total", "percent"] },
+        { id: "markdown-file-count", description: "Count regular Markdown files in the selected output folder.",
+            inputs: [{ id: "artifact", type: "artifact", scope: "directory" }],
+            textPlaceholders: ["count"] },
+        { id: "artifact-current", description: "Check whether the selected output is current.",
+            inputs: artifact, textPlaceholders: [] },
+        { id: "checklist-complete", description: "Check all checklist items and confirm the output is at least as recent as an earlier output.",
+            inputs: [{ id: "artifact", type: "artifact", label: "Checklist output" },
+                { id: "prerequisite", type: "artifact", label: "Earlier output" }],
+            textPlaceholders: [] },
+        { id: "work-complete", description: "Check an output and a completed phase.",
+            inputs: [...artifact, { id: "phase", type: "phase" }], textPlaceholders: [] },
+        { id: "phase-run-complete", description: "Check the selected phase's latest run.",
+            inputs: [{ id: "phase", type: "phase" }], textPlaceholders: [] },
+        { id: "artifact-stale", description: "Check whether the selected output may be stale.",
+            inputs: artifact, textPlaceholders: [] },
+    ];
+    return { revision: "designer-preview", settingsRevision: 0, persisted: true,
+        pages: [{ page: "designer-badges", title: "Badges",
+            description: "Add result badges for your configured phases and outputs.",
+            fixedControl: "designer.badges", fields: [] }],
+        phases, outputs, pipelineOutputs: outputs, badges: [], badgeTypes, badgeRules,
+        values: {}, constraints: {}, controls: [], adapters: {}, templates: [] };
+}

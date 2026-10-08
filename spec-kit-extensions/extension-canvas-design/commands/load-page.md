@@ -14,6 +14,7 @@ Load these default pages:
 
 - Essentials (`designer-essentials`)
 - `designer-artifacts`
+- `designer-badges`
 - `designer-appearance`
 
 Use **Essentials** in progress messages and other user-facing descriptions of
@@ -27,8 +28,10 @@ set; they do not run a second load operation.
 The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
-Each registration declares its Canvas Design kind (`designer.setting-definition`,
-`generated.workflow-page-definition`, `generated.phase-control-definition`,
+Each registration declares its Canvas Design kind (`designer.badges-settings-definition`,
+`generated.badge-rule-definition`, `generated.badge-rule-adapter`, `designer.setting-definition`,
+`generated.workflow-page-definition`, `generated.workflow-page-adapter`,
+`generated.phase-control-definition`,
 `generated.phase-control-adapter`,
 `generated.field-placement`,
 `generated.added-page-definition`, `generated.added-page-renderer`,
@@ -47,8 +50,15 @@ Designer/generated adapters must be resolved alongside any image field.
 Generate packages the frozen image and winning generated adapter into the
 generated app; it never loads Specify at runtime.
 All Designer tabs have kind `designer.tab-definition` and strategy `replace`
-(implicit for the extension's three required tabs). The required tabs are
-identified by their registered names, not by a separate kind.
+(implicit for the extension's default tabs). Tabs are identified by their
+registered names, not by a separate kind. A preset may replace this command
+with fewer or no pages; Designer still opens and shows the resolved pages or
+an empty state. Missing generated-canvas dependencies prevent Generate, not
+Designer launch. Missing explicitly declared names still stop resolution.
+An omitted page slot, field control, host adapter, generated field placement
+dependency, or generated-page renderer is reported in Designer while healthy
+pages remain editable. Conflicting registrations and invalid or unsafe assets
+still stop loading.
 A name must be a Specify template
 in the manifest. The `canvas-design` tag and files on disk do not register
 themselves. Control definitions, host-specific adapters, value definitions,
@@ -57,7 +67,16 @@ declares a typed constant or a workflow-scoped computed value; a generated page
 declares the value IDs it consumes in its `values` list. A processing-only value
 is not automatically presented and is not secret from its declared consumers.
 Computed-value providers are packaged, never evaluated by Designer.
-The required `generated-workflow` page declares `workflow.phases` first; the
+The required `generated-workflow` page declares `workflow.phases` first, names a
+replaceable `generated.workflow-page-adapter`, and advertises supported badge
+destinations (`workflow.list`, `workflow.summary`, `phase.card`, `phase.output`).
+The page adapter mounts with `{ root, definition, state, actions }` and returns
+`{ update, dispose }`; its state snapshots are read-only, while all actions
+are authorized and validated by the host. Presets replacing the adapter may
+advertise only the badge destinations they actually render. Generation rejects
+badge placements the selected adapter does not support. Legacy generated
+copies keep their original Workflow presentation.
+The
 `generated-phase-control` definition places itself in that slot and references
 its registered adapter by name and may set `viewLabels` for selected
 non-Constitution phase IDs
@@ -121,6 +140,7 @@ unregistered files are not loaded.
 - `designer-appearance-dark-secondary` — `designer.setting-definition`, `replace`
 - `designer-appearance-dark-text` — `designer.setting-definition`, `replace`
 - `generated-workflow` — `generated.workflow-page-definition`, `replace`
+- `generated-workflow-page-adapter` — `generated.workflow-page-adapter`, `replace`
 - `generated-phase-control` — `generated.phase-control-definition`, `replace`
 - `generated-phase-adapter` — `generated.phase-control-adapter`, `replace`
 - `generated-setup-dialog` — `generated.dialog-definition`, `replace`
@@ -128,6 +148,20 @@ unregistered files are not loaded.
 - `generated-setup-button-control` — `generated.button-control-definition`, `replace`
 - `generated-setup-button-adapter` — `generated.button-adapter`, `replace`
 - `generated-setup-button` — `generated.button-placement`, `replace`
+- `badges-settings` — `designer.badges-settings-definition`, `replace`
+- `badge-rule-value-match` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-artifact-current` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-markdown-file-count` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-checklist-progress` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-checklist-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-work-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-phase-run-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-phase-artifact-complete` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-artifact-stale` — `generated.badge-rule-definition`, `replace`
+- `badge-rule-content-adapter` — `generated.badge-rule-adapter`, `replace`
+- `badge-rule-artifact-state-adapter` — `generated.badge-rule-adapter`, `replace`
+- `badge-rule-run-adapter` — `generated.badge-rule-adapter`, `replace`
+- `badge-rule-phase-artifact-complete-adapter` — `generated.badge-rule-adapter`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`
 - `designer-control-adapter-image` — `designer.control-adapter`, `replace`
 - `generated-control-adapter-image` — `generated.control-adapter`, `replace`
@@ -144,8 +178,8 @@ After installation and one successful skill reload, run
 <child-checkout>` once from the child project root. It reads this **generated**
 composed skill, checks all declarations and performs the read-only resolution,
 replace-only stack and script-collision checks in steps 1-3. Use its complete
-`pages` and `templates` JSON for step 4; stop on a nonzero exit or missing
-registration. Do not repeat those CLI checks or open twice. Older compatible
+`pages` and `templates` JSON for step 4; stop on a nonzero exit or an
+unresolved declared name. Do not repeat those CLI checks or open twice. Older compatible
 hosted packages without this verifier must perform steps 1-3 manually.
 
 1. Read this entire composed command first. Collect the defaults and every name
@@ -198,8 +232,9 @@ hosted packages without this verifier must perform steps 1-3 manually.
    additional pages, and registered templates in this single call. The provider
    validates the handoff and complete inventory before returning a URL. A
    resolved page with invalid or missing file contents appears as an error tab
-   with its path and reason; other pages remain available. Invalid or missing
-   non-page contributions stop the open with an actionable error. Generated
+   with its path and reason; other pages remain available. Malformed, safely
+   readable non-page files show a named composition error; invalid registrations
+   and unsupported dependencies stop the open with an actionable error. Generated
    pages require a matching registered renderer and do not create Designer tabs. Do not
    substitute another provider or open if resolution failed.
    Confirm the `open_canvas` result matches the requested canvas ID, plugin

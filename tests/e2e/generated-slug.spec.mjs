@@ -12,11 +12,15 @@ const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-desig
 const phaseControlSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/phase-control/", import.meta.url);
 const scaffoldSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-scaffold/", import.meta.url);
 const workflowDefinition = await readFile(new URL("workflow.json", workflowSource));
+const workflowAdapter = await readFile(new URL("generated-workflow-page-adapter.mjs", workflowSource));
 const phaseControlDefinition = await readFile(new URL("phase-control.json", phaseControlSource));
 const phaseAdapter = await readFile(new URL("generated-phase-adapter.mjs", phaseControlSource));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const { title, order, slots } = JSON.parse(workflowDefinition);
-const workflowPage = { title, order, slots, phaseControl: "generated-phase-control",
+const { title, order, slots, badgeDestinations } = JSON.parse(workflowDefinition);
+const control = JSON.parse(phaseControlDefinition);
+const workflowPage = { title, order, slots, badgeDestinations,
+    pageAdapter: "generated-workflow-page-adapter", pageAdapterHash: digest(workflowAdapter),
+    phaseSlots: control.slots ?? [], phaseControl: "generated-phase-control",
     adapter: "generated-phase-adapter", definitionHash: digest(workflowDefinition),
     placement: { page: "workflow", slot: "workflow.phases" }, viewLabels: {},
     controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter) };
@@ -33,7 +37,7 @@ test("New workflow reports connecting before the first state refresh", async ({ 
         await page.goto(canvas.url, { waitUntil: "commit" });
         await expect(page.locator("#new-workflow")).toBeVisible();
         await page.locator("#new-workflow").click();
-        await expect(page.locator("#canvas-message")).toHaveText(
+        await expect(page.locator("#workflow-action-error")).toHaveText(
             "The canvas is connecting. Use Refresh to try again.");
         releaseState();
         await expect(page.locator("#phase-card")).toBeHidden();
@@ -75,7 +79,7 @@ test("vertical phase adapter keeps the numbered step list and manual retry acces
         await expect(page.locator(".vertical-phase-list [data-phase-index]")).toHaveCount(2);
         await page.locator("#theme-toggle").click();
         await expect(page.locator(".vertical-phase-list [data-phase-index]").first()).toBeVisible();
-        await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
+        await expect(page.locator("#canvas-fatal-error")).toBeHidden();
     } finally { await canvas.close(); }
 });
 
@@ -131,8 +135,8 @@ test("a different phase adapter uses the same row and managed-run capabilities",
         await expect.poll(() => canvas.sent.length).toBe(1);
         assert.equal(canvas.sent[0].agentMode, "autopilot");
         await page.locator("#other-step").click();
-        await expect(page.locator("#canvas-message")).toContainText("Stop Autopilot before starting a manual step");
-        await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
+        await expect(page.locator("#workflow-action-error")).toContainText("Stop Autopilot before starting a manual step");
+        await expect(page.locator("#canvas-fatal-error")).toBeHidden();
     } finally { await canvas.close(); }
 });
 
@@ -167,7 +171,7 @@ for (const [scenario, module, error] of [
                 contentType: "text/javascript", body: module,
             }));
             await page.goto(canvas.url);
-            await expect(page.locator("#canvas-message")).toContainText(
+            await expect(page.locator("#canvas-fatal-error")).toContainText(
                 `Pipeline could not render: ${error}`);
         } finally { await canvas.close(); }
     });
@@ -188,7 +192,7 @@ test("phase adapter mobile navigation selects phases", async ({ page }) => {
         await page.locator('[data-phase-index="1"]').click();
         await expect(page.locator("#phase-card h2")).toHaveText("Plan");
         await expect(page.locator('[data-phase-index="1"]')).toHaveAttribute("aria-current", "step");
-        await expect(page.locator("#canvas-message")).not.toContainText("Pipeline could not render");
+        await expect(page.locator("#canvas-fatal-error")).toBeHidden();
     } finally { await canvas.close(); }
 });
 
@@ -206,7 +210,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
     const config = {
         schemaVersion: 1, userProvidesSlug,
         workflowPage: { ...workflowPage, managedRun, controlHash: digest(controlDefinition),
-            hash: digest(selectedAdapter) },
+            hash: digest(selectedAdapter), phaseSlots: JSON.parse(controlDefinition).slots ?? [] },
         canvas: { id: "sample-canvas", displayName: "Sample Canvas",
             description: "Workflow canvas.", workflowListName: "Workflows" },
         phases,
@@ -235,6 +239,7 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         ].map(([file, source]) => copyFile(new URL(file, source), join(sdk, "pages", file))));
         await writeFile(join(sdk, "pages", "phase-control.json"), controlDefinition);
         await writeFile(join(sdk, "pages", "generated-phase-adapter.mjs"), selectedAdapter);
+        await writeFile(join(sdk, "pages", "generated-workflow-page-adapter.mjs"), workflowAdapter);
         const { createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
         const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
         const sent = [], events = [];
@@ -418,7 +423,7 @@ test("generated value editors save typed changes canvas-wide and retain failed e
         await note.fill("Unsaved draft");
         await note.press("Tab");
         expect((await rejectedSave).status()).toBe(409);
-        await expect(page.locator("#canvas-message")).toContainText("Value could not be saved");
+        await expect(page.locator("#workflow-action-error")).toContainText("Value could not be saved");
         await expect(note).toHaveValue("Unsaved draft");
         expect(await page.evaluate(() => {
             const event = new Event("beforeunload", { cancelable: true });
@@ -734,19 +739,19 @@ test("failed autosave retains workflow identity through SSE and Refresh for retr
         await page.locator("#workflow-name").fill("Unsaved workflow");
         await page.locator("#workflow-slug").fill("unsaved-slug");
         await page.locator("#phase-args").focus();
-        await expect(page.locator("#canvas-message")).toContainText("Your draft is retained");
+        await expect(page.locator("#workflow-action-error")).toContainText("Your draft is retained");
         await mkdir(join(canvas.root, "specs", "other-workflow"), { recursive: true });
         canvas.broadcast();
         await expect(page.locator("#workflow-count")).toHaveText("(1)");
         await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
         await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#canvas-message")).toContainText("Temporary save failure");
+        await expect(page.locator("#workflow-action-error")).toContainText("Temporary save failure");
         await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
         await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
         rejectSaves = false;
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        await expect(page.locator("#workflow-action-error")).toBeHidden();
         const saved = await canvas.runtime.snapshot();
         expect(saved.name).toBe("Unsaved workflow");
         expect(saved.slug).toBe("unsaved-slug");
@@ -771,11 +776,11 @@ test("failed New creation leaves the list intact and can be retried explicitly",
         await page.getByRole("button", { name: "existing", exact: true }).click();
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("specs/existing");
         await page.locator("#new-workflow").click();
-        await expect(page.locator("#canvas-message")).toContainText("Temporary creation failure");
+        await expect(page.locator("#workflow-action-error")).toContainText("Temporary creation failure");
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         rejectNew = false;
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        await expect(page.locator("#workflow-action-error")).toBeHidden();
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await page.locator("#new-workflow").click();
         expect(saves.at(-1)).toMatchObject({ revision: expect.any(Number) });
@@ -843,10 +848,10 @@ test("sending a phase keeps the navigation free of run states and clears the dis
         await page.locator("#run-phase").click();
         const result = await (await dispatched).json();
         expect(result).toEqual({ ok: true, runId: expect.any(String) });
-        await expect(page.locator("#run-phase")).toHaveText("Request sent...");
+        await expect(page.locator("#run-phase")).toHaveText("Running");
         await expect(page.locator("#phase-card .phase-notice")).toHaveText("Request sent");
         await expect(page.locator("#phase-message")).toBeEmpty();
-        await expect(page.locator("#canvas-message")).toBeEmpty();
+        await expect(page.locator("#phase-action-error")).toBeHidden();
         await expect(page.locator(".stepper .phase-run-state")).toHaveCount(0);
         await expect(page.locator('[data-phase-index="0"]')).toHaveAttribute("aria-label", "Phase 1 of 2: Specify");
         await expect(page.locator('[data-phase-index="0"]')).not.toHaveAttribute("title", /Request sent|Running/);
@@ -1021,14 +1026,14 @@ test("a later successful save does not hide a failed phase draft", async ({ page
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
         const pendingId = (await canvas.runtime.snapshot()).selected;
         await page.locator("#phase-args").fill("Keep this draft");
-        await expect(page.locator("#canvas-message")).toContainText("Phase draft save failed");
+        await expect(page.locator("#workflow-action-error")).toContainText("Phase draft save failed");
         await page.locator("#run-constitution").click();
         await page.locator("#constitution-args").fill("Constitution guidance");
         await expect.poll(() => saves.some((patch) => patch.draft?.phase === "constitution")).toBe(true);
         expect((await canvas.runtime.snapshot()).drafts[JSON.stringify([pendingId, "specify"])]).toBeUndefined();
         await page.locator("#cancel-constitution").click();
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        await expect(page.locator("#workflow-action-error")).toBeHidden();
         expect((await canvas.runtime.snapshot()).drafts[JSON.stringify([pendingId, "specify"])])
             .toBe("Keep this draft");
     } finally {
@@ -1071,11 +1076,11 @@ test("Constitution guidance saves once after typing and flushes before sending",
         expect(draftBeforeRun).toBe("latest draft");
         rejectDraft = true;
         await page.locator("#constitution-args").fill("retry draft");
-        await expect(page.locator("#canvas-message")).toContainText("Temporary draft failure");
+        await expect(page.locator("#workflow-action-error")).toContainText("Temporary draft failure");
         rejectDraft = false;
         await page.locator("#cancel-constitution").click();
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#canvas-message")).toHaveText("Canvas refreshed.");
+        await expect(page.locator("#workflow-action-error")).toBeHidden();
         expect((await canvas.runtime.snapshot()).drafts[JSON.stringify(["project", "constitution"])])
             .toBe("retry draft");
     } finally {
@@ -1089,8 +1094,9 @@ test("one workflow header, compact constitution and legible narrow phase navigat
     try {
         await page.setViewportSize({ width: 390, height: 780 });
         await page.goto(canvas.url);
+        await expect(page.locator("#instance-collection")).toBeVisible();
         expect(await page.evaluate(() => {
-            const body = document.querySelector("main");
+            const body = document.querySelector("#workflow-content");
             return [...body.children].slice(0, 3).map((child) => child.id);
         })).toEqual(["setup-surface", "instance-collection", "constitution-card"]);
         await expect(page.locator("#instance-collection .collection-description")).toHaveText("Workflow canvas.");
@@ -1109,7 +1115,7 @@ test("one workflow header, compact constitution and legible narrow phase navigat
             const navigation = document.querySelector("#phase-navigation").getBoundingClientRect();
             return navigation.top - constitution.bottom;
         })).toBeLessThanOrEqual(28);
-        await expect(page.locator("#canvas-message")).toBeHidden();
+        await expect(page.locator("#workflow-action-error")).toBeHidden();
         await expect(page.locator("#view-constitution")).toBeHidden();
         await expect(page.locator("#mobile-phase-select")).toBeHidden();
         await page.locator("#new-workflow").click();
@@ -1255,6 +1261,7 @@ test("workflow list stays bounded and searchable across selection and refresh", 
         await page.locator("#workflow-search").fill("missing-workflow");
         await expect(page.locator("#workflow-list-status")).toHaveText("0 of 11 workflows match.");
         await page.locator("#new-workflow").click();
+        await expect(page.locator("#workflow-search")).toHaveValue("");
         await expect(page.locator("#workflow-identity")).toBeVisible();
         await page.setViewportSize({ width: 1100, height: 800 });
         await expect(page.locator("#workflow-list")).toBeVisible();

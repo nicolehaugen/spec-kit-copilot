@@ -17,8 +17,8 @@ from jsonschema import Draft202012Validator, ValidationError
 EXTENSIONS = Path(__file__).resolve().parents[1]
 EXTENSION_ID = "extension-canvas-design"
 PACKAGE = EXTENSIONS / EXTENSION_ID
-PAGE_NAMES = ("essentials", "outputs", "appearance")
-PAGE_IDS = ("essentials", "artifacts", "appearance")
+PAGE_NAMES = ("essentials", "outputs", "badges", "appearance")
+PAGE_IDS = ("essentials", "artifacts", "badges", "appearance")
 FILES = {
     "extension.yml",
     "README.md",
@@ -30,6 +30,8 @@ FILES = {
     "scripts/verify-launch.mjs",
     "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
+    "schemas/designer.badges-settings-definition.schema.json",
+    "schemas/generated.badge-rule-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
     "schemas/generated.workflow-page-definition.schema.json",
     "schemas/generated.phase-control-definition.schema.json",
@@ -47,6 +49,15 @@ FILES = {
     *(f"designer-host/appearance-settings/{mode}-{color}.json"
       for mode in ("light", "dark")
       for color in ("accent", "background", "surface", "secondary", "text")),
+    "designer-host/badges-settings/badge-types.json",
+    *(f"generated-host/badges/rules/{name}.json" for name in (
+        "value-match", "artifact-current", "checklist-progress", "markdown-file-count",
+        "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
+        "phase-artifact-complete",
+    )),
+    *(f"generated-host/badges/adapters/{name}.mjs" for name in (
+        "content", "artifact-state", "run", "phase-artifact-complete",
+    )),
     "shared-controls/stock-image/control.json",
     "shared-controls/stock-image/designer.mjs",
     "shared-controls/stock-image/generated.mjs",
@@ -56,6 +67,7 @@ FILES = {
     "shared-controls/stock-checkbox/control.json",
     "shared-controls/stock-checkbox/designer.mjs",
     "generated-host/workflow-page/workflow.json",
+    "generated-host/workflow-page/generated-workflow-page-adapter.mjs",
     "generated-host/phase-control/phase-control.json",
     "generated-host/phase-control/generated-phase-adapter.mjs",
     "generated-host/dialog/setup.json",
@@ -68,6 +80,7 @@ FILES = {
         "phase-response.mjs",
         "contracts/agent-actions.mjs", "contracts/host-adapter.mjs",
         "contracts/packaged-contributions.mjs", "contracts/workflow-state.mjs",
+        "badge-runtime.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
         "ui/page-assets.mjs",
     )),
@@ -133,6 +146,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
                for mode in ("light", "dark")
                for color in ("accent", "background", "surface", "secondary", "text")]
             + [("generated-workflow", "generated-host/workflow-page/workflow.json"),
+               ("generated-workflow-page-adapter",
+                "generated-host/workflow-page/generated-workflow-page-adapter.mjs"),
                ("generated-phase-control", "generated-host/phase-control/phase-control.json"),
                ("generated-phase-adapter", "generated-host/phase-control/generated-phase-adapter.mjs"),
                ("generated-setup-dialog", "generated-host/dialog/setup.json"),
@@ -140,6 +155,15 @@ class CanvasDesignPackageTests(unittest.TestCase):
                ("generated-setup-button-control", "generated-host/setup-button-control/control.json"),
                ("generated-setup-button-adapter", "generated-host/setup-button-control/generated-setup-button-adapter.mjs"),
                ("generated-setup-button", "generated-host/setup-button-control/setup.json")]
+            + [("badges-settings", "designer-host/badges-settings/badge-types.json")]
+            + [(f"badge-rule-{name}", f"generated-host/badges/rules/{name}.json")
+               for name in ("value-match", "artifact-current", "checklist-progress",
+                            "markdown-file-count", "checklist-complete", "work-complete",
+                            "phase-run-complete", "phase-artifact-complete", "artifact-stale")]
+            + [(f"badge-rule-{name}-adapter", f"generated-host/badges/adapters/{name}.mjs")
+               for name in ("content", "artifact-state", "run")]
+            + [("badge-rule-phase-artifact-complete-adapter",
+                "generated-host/badges/adapters/phase-artifact-complete.mjs")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [
@@ -211,11 +235,11 @@ class CanvasDesignPackageTests(unittest.TestCase):
             with self.subTest(page=page["id"]):
                 self.validator.validate(page)
                 self.assertEqual(page["id"], f"designer-{PAGE_IDS[index]}")
-                self.assertEqual(page["order"], (index + 1) * 10)
+                self.assertEqual(page["order"], (10, 20, 25, 30)[index])
                 self.assertTrue(page["enabled"])
         self.assertEqual(
             [page["title"] for page in self.pages],
-            ["Essentials", "Outputs", "Appearance"],
+            ["Essentials", "Outputs", "Badges", "Appearance"],
         )
         self.assertEqual(
             self.pages[0]["fields"],

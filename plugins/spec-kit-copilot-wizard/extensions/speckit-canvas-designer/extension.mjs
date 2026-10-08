@@ -4,6 +4,7 @@ import { isAbsolute } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages } from "./pages.mjs";
+import { previewModel } from "./preview.mjs";
 import { loadDesignerSettings } from "./settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from "./contracts/host-open.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
@@ -59,7 +60,7 @@ const session = await joinSession({
     canvases: [createCanvas({
         id: "speckit-canvas-designer",
         displayName: "Spec Kit Canvas Designer",
-        description: "Open Designer with the complete preset-resolved page set.",
+        description: "Open Designer with the complete preset-resolved page set or a nonpersistent UX preview.",
         inputSchema: designerOpenInputSchema,
         open: async (ctx) => {
             if (opening.has(ctx.instanceId)) {
@@ -73,10 +74,10 @@ const session = await joinSession({
                     servers.delete(ctx.instanceId);
                     await previous.close();
                 }
-                await ensureDependencies();
-                const { handoffId, pages, templates } = validateDesignerOpenInput(ctx.input);
+                const { preview, handoffId, pages, templates } = validateDesignerOpenInput(ctx.input);
+                if (!preview) await ensureDependencies();
                 let handoff = null;
-                let model = null;
+                let model = preview ? previewModel() : null;
                 if (handoffId !== undefined) {
                     try {
                         handoff = await readHandoff(session.workspacePath, handoffId);
@@ -90,7 +91,7 @@ const session = await joinSession({
                 }
                 const next = await startShell(handoff, model, handoff
                     ? { project: await getCheckout(), workspace: session.workspacePath, session }
-                    : {});
+                    : { preview: preview === true });
                 if (opening.get(ctx.instanceId) !== token) {
                     await next.close();
                     throw new CanvasError("designer_open_failed", "Designer panel closed while opening");

@@ -10,7 +10,7 @@
  * as root, with context.setBusy(busy) to block actions during an upload.
  * Render and style only inside that div. onChange(nextValue) updates
  * the unsaved draft without remounting; return { isReady(): boolean }.
- * The Designer requires isReady() === true before Save, Generate, or tab exit.
+ * The Designer requires isReady() === true before Save or Generate, not tab navigation.
  * isReady is false during an upload or after failure until retry or cancellation.
  * validate: Return a pure, synchronous boolean using the canonical field.
  * Generate calls it in Node on the value being frozen; false, a throw, or

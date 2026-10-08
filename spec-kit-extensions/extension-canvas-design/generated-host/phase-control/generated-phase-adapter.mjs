@@ -3,21 +3,58 @@ const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
 
 export const controlId = "workflow-phases";
 export const contractVersion = 1;
+export const capabilities = ["workflow.badges.v1", "workflow.badges.targets.v1"];
 
-function card(phase) {
+function readableBadgeForeground(hex) {
+    const rgb = [1, 3, 5].map((index) => {
+        const channel = parseInt(hex.slice(index, index + 2), 16) / 255;
+        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    const luminance = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+    return (luminance + 0.05) / (0.005605 + 0.05) >= 1.05 / (luminance + 0.05)
+        ? "#111" : "#fff";
+}
+
+function badgeMarkup(badges) {
+    return badges.map((badge) => `<span class="canvas-badge" data-color="${escapeHtml(badge.color)}" ${
+        /^#[0-9a-fA-F]{6}$/.test(badge.color)
+            ? `style="background-color:${badge.color};color:${readableBadgeForeground(badge.color)}"` : ""
+    }>${escapeHtml(badge.phaseText ?? badge.text)}</span>`).join("");
+}
+
+export function badgesForTarget(badges, phase, output = null) {
+    return badges.filter((badge) => badge.targets
+        ? badge.targets.some((target) => target.phase === phase && target.output === output)
+        : output === null && (!badge.phase || badge.phase === phase));
+}
+
+function card(phase, slots) {
+    const legacyDescriptions = {
+        constitution: "Establish the project's guiding principles.",
+        specify: "Describe what to build and why.",
+        clarify: "Resolve unanswered questions in the spec.",
+        plan: "Choose the tech stack and approach.",
+        tasks: "Break the plan into actionable work items.",
+        analyze: "Check the spec, plan, and tasks for consistency.",
+        implement: "Execute the tasks to build the feature.",
+        taskstoissues: "Convert generated task lists into GitHub issues for tracking and execution.",
+    };
+    const description = phase.description
+        ?? legacyDescriptions[phase.id.replace(/^speckit\./, "")];
     return `<header class="workflow-header">
         <div class="workflow-header-main"><div class="phase-heading"><h2>${escapeHtml(phase.label)}</h2><span class="phase-notice">Not run</span></div>
-        <p class="tagline">${escapeHtml(phase.id.startsWith("speckit.") ? phase.id : `speckit.${phase.id}`)}</p></div>
+        ${slots.has("phase.card") ? '<div id="phase-badges" data-phase-badge-slot="phase.card" class="canvas-badges" aria-label="Phase badges"></div>' : ""}
+        ${description ? `<p class="tagline">${escapeHtml(description)}</p>` : ""}</div>
     </header>
-    <dl class="phase-facts"><dt>Output(s)</dt><dd><span id="phase-output-default" class="phase-output-label">DEFAULT:</span> <button class="phase-artifact-link" id="browse-output-folder" type="button" title="Open the viewer target's folder"><code></code></button><span id="phase-output-prompt" class="muted" hidden>Choose an artifact folder name to preview the output path.</span><button id="phase-output-toggle" class="phase-output-toggle" type="button" aria-controls="phase-other-outputs" aria-expanded="false" hidden></button></dd></dl>
+    <dl class="phase-facts"><dt>Output(s)</dt><dd><span id="phase-output-default" class="phase-output-label">DEFAULT:</span> <button class="phase-artifact-link" id="browse-output-folder" type="button" title="Open the viewer target's folder"><code></code></button>${slots.has("phase.output") ? '<span id="phase-view-badges" data-phase-badge-slot="phase.output" class="canvas-badges"></span>' : ""}<span id="phase-output-prompt" class="muted" hidden>Choose an artifact folder name to preview the output path.</span><button id="phase-output-toggle" class="phase-output-toggle" type="button" aria-controls="phase-other-outputs" aria-expanded="false" hidden></button><div id="phase-other-outputs" class="phase-output-list" aria-label="Additional phase outputs" hidden></div></dd></dl>
     <p id="phase-artifact-status" class="muted" role="status"></p>
-    <div id="phase-other-outputs" class="phase-output-list" aria-label="Additional phase outputs" hidden></div>
     <label class="field" for="phase-args">
         <span class="field-label" id="phase-input-label">Phase input</span>
         <span class="visually-hidden" id="phase-input-help">Add details or direction for this phase.</span>
         <textarea class="phase-input-control" id="phase-args" aria-labelledby="phase-input-label" aria-describedby="phase-input-help" placeholder="Add details or direction for this phase."></textarea>
     </label>
     <div id="phase-message" class="muted" role="status"></div>
+    <p id="phase-action-error" class="workflow-error" role="alert" hidden></p>
     <footer class="phase-actions phase-actions-nav">
         <div class="phase-actions-left"><button class="btn btn-secondary" id="previous-phase" type="button">&#9664; Back</button></div>
         <div class="phase-actions-center">
@@ -43,10 +80,14 @@ export function mount({ root, definition, state, actions }) {
     function update(next) {
         if (!next || !Array.isArray(next.phases) || !Number.isInteger(next.current)
             || next.current < -1 || next.current >= next.phases.length
-            || typeof next.draft !== "string" || !Array.isArray(next.outputLinks)) {
+            || typeof next.draft !== "string" || !Array.isArray(next.outputLinks)
+            || (next.badgeSlots !== undefined && (!Array.isArray(next.badgeSlots)
+                || next.badgeSlots.some((slot) => !["phase.card", "phase.output"].includes(slot?.id))))
+            || (next.badgeModels !== undefined && !Array.isArray(next.badgeModels))) {
             throw new Error("Invalid phase control state");
         }
-        const key = `${next.workflow}:${next.current}`;
+        const badgeSlots = new Set((next.badgeSlots ?? []).map((slot) => slot.id));
+        const key = JSON.stringify([next.workflow, next.current, [...badgeSlots].sort()]);
         const changed = !currentState || previousKey !== key
             || currentState.phases.length !== next.phases.length;
         if (changed) outputsExpanded = false;
@@ -63,7 +104,7 @@ export function mount({ root, definition, state, actions }) {
                         <span class="step-label"><span class="step-name">${escapeHtml(phase.label)}</span></span>
                     </button></li>`).join("")}</ol>` : ""}</nav>
                 <section id="phase-card" class="phase-card" aria-label="Selected phase">${next.current >= 0
-                    ? card(next.phases[next.current]) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>`;
+                    ? card(next.phases[next.current], badgeSlots) : '<div class="workflow-empty">No workflow phases are configured.</div>'}</section>`;
         }
         if (next.current < 0) return;
         const phase = next.phases[next.current];
@@ -90,6 +131,9 @@ export function mount({ root, definition, state, actions }) {
         if (changed || document.activeElement !== input) input.value = next.draft;
         input.readOnly = Boolean(next.setupPending);
         $(".phase-notice").textContent = status?.status ?? "Not run";
+        if (badgeSlots.has("phase.card")) {
+            $("#phase-badges").innerHTML = badgeMarkup(badgesForTarget(next.badgeModels ?? [], phase.id));
+        }
         const output = next.output ?? "No file output";
         const browse = $("#browse-output-folder");
         browse.querySelector("code").textContent = output;
@@ -98,6 +142,12 @@ export function mount({ root, definition, state, actions }) {
         $("#phase-output-default").hidden = !next.output || needsSlug;
         $("#phase-output-prompt").hidden = !needsSlug;
         browse.hidden = needsSlug;
+        if (badgeSlots.has("phase.output")) {
+            const viewBadges = $("#phase-view-badges");
+            viewBadges.innerHTML = badgeMarkup(!needsSlug && phase.output
+                ? badgesForTarget(next.badgeModels ?? [], phase.id, phase.output) : []);
+            viewBadges.hidden = needsSlug;
+        }
         const unresolved = !next.output || next.output.includes("<slug>");
         browse.disabled = unresolved;
         browse.title = unresolved
@@ -129,6 +179,15 @@ export function mount({ root, definition, state, actions }) {
             path.textContent = output.label;
             button.append(path);
             row.append(button);
+            const badges = badgeSlots.has("phase.output")
+                ? badgesForTarget(next.badgeModels ?? [], phase.id, output.template) : [];
+            if (badges.length) {
+                const marks = document.createElement("span");
+                marks.className = "canvas-badges";
+                marks.dataset.phaseBadgeSlot = "phase.output";
+                marks.innerHTML = badgeMarkup(badges);
+                row.append(marks);
+            }
             others.append(row);
         }
         const toggle = $("#phase-output-toggle");
@@ -137,9 +196,7 @@ export function mount({ root, definition, state, actions }) {
         toggle.setAttribute("aria-expanded", String(outputsExpanded));
         others.hidden = !additional.length || !outputsExpanded;
         $("#run-phase").textContent = next.runLabel
-            ?? (next.workflow === "__new__" && next.current === 0
-                ? `Create workflow and run ${phase.label}`
-                : status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
+            ?? (status?.status && status.status !== "Not run" ? "Run again" : "Run phase");
         $("#run-phase").disabled = Boolean(next.blocked);
         $("#run-phase").title = next.blocked ?? "";
         const notice = $("#phase-message");

@@ -2,6 +2,21 @@ import { createHash } from "node:crypto";
 
 export const REQUEST_LIMIT = 4 * 1024 * 1024;
 
+export function validateGenerateSubmission(input, model) {
+    const expectedKeys = ["modelRevision", "settingsRevision", "values",
+        ...(Object.hasOwn(input ?? {}, "outputs") ? ["outputs"] : []),
+        ...(Object.hasOwn(input ?? {}, "badges") ? ["badges"] : []),
+        ...(model.templates?.some((item) => item.kind === "generated.computed-value-provider")
+            ? ["approvedProviders"] : [])];
+    if (!input || typeof input !== "object" || Array.isArray(input)
+        || Object.keys(input).sort().join() !== expectedKeys.sort().join()
+        || input.modelRevision !== model.revision
+        || !Number.isSafeInteger(input.settingsRevision) || input.settingsRevision < 0) {
+        throw new Error("Invalid Designer generation request");
+    }
+    return input;
+}
+
 export function serializeGenerationRequest(request) {
     const payload = JSON.stringify(request);
     request.integrity = createHash("sha256").update(payload).digest("hex");

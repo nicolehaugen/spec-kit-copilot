@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "phase-artifact-complete",
+  "label": "Phase artifact complete",
+  "description": "The selected phase output and every chosen earlier output exist and are current in workflow order.",
+  "placementPhaseInput": "target",
+  "inputs": [
+    {
+      "id": "target",
+      "type": "artifact",
+      "scope": "metadata",
+      "label": "Phase and output to check"
+    },
+    {
+      "id": "prerequisites",
+      "type": "ordered-artifacts",
+      "scope": "metadata",
+      "before": "target",
+      "label": "Which earlier outputs must be current?"
+    }
+  ],
+  "textPlaceholders": [],
+  "module": "badge-rule-phase-artifact-complete-adapter"
+}
