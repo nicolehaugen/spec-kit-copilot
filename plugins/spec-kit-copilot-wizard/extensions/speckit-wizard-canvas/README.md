@@ -52,7 +52,11 @@ artifacts, provide input, and run the matching `speckit-*` skill.
 
 ### Browser tests
 
-From this extension directory, run `npm ci`; also run `npm ci` in the sibling
+Install the Specify CLI separately (`uv tool install specify-cli` or
+`pipx install specify-cli`) and ensure `specify` is on `PATH`:
+`specify --version` must succeed in the shell running the tests. Node
+dependencies do not install the CLI. From this extension directory, run
+`npm ci`; also run `npm ci` in the sibling
 `speckit-canvas-designer` extension directory. Then run
 `npx playwright install chromium` and `npm run test:e2e` here.
 The browser tests live in the repository's
@@ -60,7 +64,9 @@ The browser tests live in the repository's
 catalog data. The contract journey in `contracts.spec.mjs` injects raw
 `specify … list --json` responses through the real inventory reader, captures
 the launch prompt, and opens the resulting handoff in a Designer shell;
-it needs no live agent or Specify installation.
+only this mocked journey needs no live agent or Specify installation.
+`specify-fixtures.spec.mjs` runs the CLI to initialize projects, install
+packages, and read inventory, so the full browser suite requires Specify.
 `wizard-journeys.spec.mjs` uses isolated temporary checkouts and controlled
 test-only preset/extension packages for catalog, refresh, phase, and output
 journeys; it does not depend on live catalog inventory. The local test server
