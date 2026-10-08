@@ -352,6 +352,35 @@ test("phase status and execution report reach the stepper, then verified output 
     });
 });
 
+test("phase can be rerun after acknowledgement expires while the first agent turn is unanswered", async ({ page }) => {
+    await page.clock.install();
+    await withWizardCheckout(page, async ({ prompts, inst }) => {
+        await page.getByRole("tab", { name: "Phases" }).click();
+        await page.locator("#stepper .step").first().click();
+        const submit = page.waitForResponse((res) => res.url().includes("/api/phase/submit")
+            && res.request().method() === "POST");
+        await page.locator("#phase-card").getByRole("button", { name: "Run phase" }).click();
+        const { runId } = await (await submit).json();
+        await expect.poll(() => prompts.length).toBe(1);
+        await expect(page.locator("#phase-card").getByRole("button", { name: "Running…" })).toBeDisabled();
+        expect(inst.state.phases?.constitution?.status).not.toBe("done");
+
+        await page.clock.fastForward(15_001);
+        const rerun = page.locator("#phase-card").getByRole("button", { name: "Rerun phase" });
+        await expect(rerun).toBeEnabled();
+        const retry = page.waitForResponse((res) => res.url().includes("/api/phase/submit")
+            && res.request().method() === "POST");
+        await rerun.click();
+        await page.getByRole("dialog").getByRole("button", { name: "Yes" }).click();
+        const { runId: retryRunId } = await (await retry).json();
+        await expect.poll(() => prompts.length).toBe(2);
+        expect(retryRunId).not.toBe(runId);
+        expect(prompts[1]).toContain("speckit-constitution");
+        expect(prompts[1]).toContain(`runId: "${retryRunId}"`);
+        expect(inst.state.phases?.constitution?.status).not.toBe("done");
+    });
+});
+
 test("failed composition inference exposes retry and starts a new refresh", async ({ page }) => {
     let attempts = 0;
     await withWizardCheckout(page, async ({ root, inst, prompts }) => {
