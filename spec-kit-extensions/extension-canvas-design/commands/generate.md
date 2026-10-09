@@ -34,8 +34,9 @@ packages or run workflow phases.
    inspection; do not create an alternative implementation or retry.
 4. After successful validation, report the generated target and any warnings.
    Do not reload extensions or open the new canvas here: reloading replaces the
-   Designer provider and disconnects its panel, preventing another generation.
-   The user can reload extensions later to register and open generated canvases.
+   Designer provider and disconnects its panel. Tell the user to close Designer
+   and restart the Copilot app to discover and open the new canvas. On failure,
+   report the error unchanged; do not tell the user that the canvas is ready.
    Do not run a workflow phase.
 
 Generated canvases are not automatically updated when this extension changes later.

@@ -730,7 +730,7 @@ test("Billing preset and built-in palette persist through Generate and render th
     const selections = { presets: [], extensions: [], bundles: [] };
     const handoff = { schemaVersion: 1, handoffId: "billing-test", workflow, selections,
         sourceFingerprint: fingerprint({ workflow, selections }) };
-    let shell, reopened, generatedRoutes, generatedServer;
+    let shell, reopened, next, generatedRoutes, generatedServer;
     try {
         await mkdir(project);
         const run = (...args) => {
@@ -748,6 +748,7 @@ test("Billing preset and built-in palette persist through Generate and render th
         const generatedCommand = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-generate", "SKILL.md"), "utf8");
         expect(generatedCommand).toContain("Do not reload extensions or open the new canvas here");
+        expect(generatedCommand).toContain("restart the Copilot app");
         run("preset", "add", "--dev", fileURLToPath(billingRoot));
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
@@ -820,10 +821,10 @@ test("Billing preset and built-in palette persist through Generate and render th
         await expect(page.getByRole("textbox", { name: "Light mode accent" })).toHaveValue("123aBc");
         await expect(page.getByRole("textbox", { name: "Dark mode accent" })).toHaveValue("#ABC123");
         await page.getByRole("button", { name: "Generate", exact: true }).click();
-        await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+        await expect(page.locator("#conn-status")).toHaveText("Live");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeHidden();
-        await expect(page.locator("#generation-note")).toContainText("already queued", { timeout: 15000 });
+        await expect(page.locator("#generation-note")).toContainText("Generation queued", { timeout: 15000 });
         const [requestId] = await readdir(join(folder, "generations"));
         await materialize(project, workspace, handoff.handoffId, requestId);
         const config = JSON.parse(await readFile(join(project, ".github", "extensions",
@@ -838,14 +839,21 @@ test("Billing preset and built-in palette persist through Generate and render th
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-second");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
         await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#conn-status")).toHaveText("Live");
         await expect(page.locator("#generation-error")).toBeHidden();
-        await expect(page.locator("#generation-note")).toBeHidden();
-        await page.getByRole("button", { name: "Generate", exact: true }).click();
-        await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(2);
+        await expect(page.locator("#generation-note")).toContainText("restart the Copilot app");
+        await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(1);
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#conn-status")).not.toHaveText("Disconnected");
+        next = await startShell(handoff, await loadDesignerSettings(workspace, handoff,
+            await loadResolvedDesignerPages(handoff, project, pages, templates)),
+        { project, workspace, session: { send: async () => {} } });
+        await page.goto(next.url);
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await expect(page.locator("#generation-note")).toContainText("Generation queued");
+        await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(2);
         const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
             "extensions", "billing-canvas", "server.mjs")).href);
         generatedRoutes = createWorkflowRoutes(config, {
@@ -868,6 +876,7 @@ test("Billing preset and built-in palette persist through Generate and render th
                 generatedServer.closeAllConnections();
             });
         }
+        await next?.close();
         await reopened?.close();
         await shell?.close();
         await rm(workspace, { recursive: true, force: true });
@@ -973,7 +982,8 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         await expect(page.getByRole("radio",
             { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
         await page.getByRole("button", { name: "Generate", exact: true }).click();
-        await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+        await expect(page.locator("#conn-status")).toHaveText("Live");
+        await expect(page.locator("#generation-note")).toContainText("Generation queued");
         const [requestId] = await readdir(join(folder, "generations"));
         await expect.poll(() => prompts.length).toBe(1);
         expect(prompts[0]).toContain(requestId);
@@ -985,7 +995,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         expect(request.schemaVersion).toBe(1);
         expect(request.handoffId).toBe(handoff.handoffId);
         expect(request.requestId).toBe(requestId);
-        expect(request.settingsRevision).toBe(1);
+        expect(request.settingsRevision).toBe(2);
         expect(requestBytes.length).toBeLessThanOrEqual(4 * 1024 * 1024);
         expect(integrity).toBe(createHash("sha256").update(JSON.stringify(payload)).digest("hex"));
         expect(request.values["risk.rating"]).toEqual({ impact: "medium", likelihood: "medium" });

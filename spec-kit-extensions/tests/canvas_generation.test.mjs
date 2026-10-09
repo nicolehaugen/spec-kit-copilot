@@ -22,11 +22,12 @@ const entryTemplate = await readFile(new URL("../extension-canvas-design/generat
     import.meta.url), "utf8");
 const runtimeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/runtime.mjs",
     import.meta.url), "utf8");
-test("Generate command preserves the Designer provider until a later explicit reload", async () => {
+test("Generate command leaves extension discovery to the user's app restart", async () => {
     const command = await readFile(new URL("../extension-canvas-design/commands/generate.md",
         import.meta.url), "utf8");
     assert.match(command, /After successful validation, report the generated target and any warnings/);
     assert.match(command, /Do not reload extensions or open the new canvas here/);
+    assert.match(command, /close Designer\s+and restart the Copilot app/);
     assert.doesNotMatch(command, /call `extensions_reload`|open its canvas with a new instance ID/);
 });
 

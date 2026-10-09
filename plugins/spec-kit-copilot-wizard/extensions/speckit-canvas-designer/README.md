@@ -189,22 +189,24 @@ bytes before execution; this is not a sandbox for approved provider code.
 Runtime-editable values belong to the generated canvas shell, not to a
 particular workflow's drafts.
 Save rejects stale revisions and malformed draft shapes, but accepts incomplete
-field values and reports failures without discarding edits. Generate invokes the
+field values and reports failures without discarding edits. Generate first saves
+the current settings using the same revision check; if that save fails it does
+not dispatch generation. Generate invokes the
 approved Designer adapter validator and freezes fields on every enabled page
 while requiring non-reserved Canvas ID and Title on Essentials, and dispatches the
 installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-Once generation is queued, the current panel waits for the generated app's
-`extension.mjs` entry point, written after syntax and render validation.
-To generate another app, choose a different Canvas
-ID and Save; Generate then becomes available again. An existing Canvas ID
-cannot be generated twice. Successful generation does not reload the provider
-or open the new canvas; reload extensions later to register generated apps.
-A partial generation without an entry point remains
-queued in that panel; reopening Designer after investigating the failure
-restores the saved settings without claiming the app was generated.
+Once generation is queued, Generate stays disabled for this Designer panel,
+even after the generated app's `extension.mjs` entry point appears following
+syntax and render validation. Close Designer and restart the Copilot app to
+discover and open the new canvas. To generate another app, reopen Designer,
+choose a different Canvas ID, and Generate (which saves the new settings).
+An existing Canvas ID cannot be generated twice. Generation does not reload
+the provider or open the new canvas. A partial generation without an entry
+point remains queued in that panel; reopen Designer only after investigating
+the failure, without assuming the app was generated.
 The queued-request guard is local to the running Designer provider. If the
 provider restarts during generation, inspect the generated output or wait for
 the original request to finish before retrying: the reopened panel cannot

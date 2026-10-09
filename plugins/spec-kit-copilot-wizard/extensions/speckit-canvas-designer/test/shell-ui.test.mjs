@@ -88,32 +88,64 @@ test("dark badge text and accent buttons meet small-text contrast", async () => 
     assert.match(css, /\.badge-editor \.badge-actions button:first-child[^}]+color: var\(--accent-contrast\)/);
 });
 
-test("Generate remembers the submitted ID when the draft changes during dispatch", async () => {
+test("Generate saves a snapshot and dispatches with the returned revision", async () => {
     const start = source.indexOf('generate.addEventListener("click"');
     const end = source.indexOf("function element(", start);
     assert.ok(start >= 0 && end > start);
     const draft = { "canvas.id": "first-canvas" };
     let click, release, submitted;
+    const calls = [];
     const context = {
         generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
         model: { preview: false, templates: [], revision: "model-1", settingsRevision: 0 },
         draft, draftOutputs: {}, draftBadges: [], queuedCanvasId: null, token: "test",
         generating: false, status: {}, messageBox: {}, checkReady: () => true,
-        showError: () => {}, updateGenerate: () => {},
+        showError: () => {}, updateSave: () => {},
         showFieldError: (message) => { throw new Error(message); },
+        persistSettings: async (input) => {
+            calls.push(["save", input.values["canvas.id"]]);
+            return { revision: "model-1", settingsRevision: 1 };
+        },
         fetch: (_url, options) => {
-            submitted = JSON.parse(options.body).values["canvas.id"];
+            const body = JSON.parse(options.body);
+            submitted = body.values["canvas.id"];
+            assert.equal(body.settingsRevision, 1);
+            calls.push(["generate", submitted]);
             return new Promise((resolve) => { release = resolve; });
         },
         structuredClone, encodeURIComponent,
     };
     runInNewContext(source.slice(start, end), context);
     const request = click();
+    await new Promise((resolve) => setImmediate(resolve));
     assert.equal(submitted, "first-canvas");
     draft["canvas.id"] = "second-canvas";
     release({ ok: true, json: async () => ({ target: ".github/extensions/first-canvas/" }) });
     await request;
+    assert.deepEqual(calls, [["save", "first-canvas"], ["generate", "first-canvas"]]);
     assert.equal(context.queuedCanvasId, "first-canvas");
+});
+
+test("Generate does not dispatch or disable future attempts when the implicit save fails", async () => {
+    const start = source.indexOf('generate.addEventListener("click"');
+    const end = source.indexOf("function element(", start);
+    let click, reported = "";
+    const context = {
+        generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
+        model: { preview: false, templates: [], revision: "model-1", settingsRevision: 0 },
+        draft: { "canvas.id": "first-canvas" }, draftOutputs: {}, draftBadges: [],
+        queuedCanvasId: null, token: "test", generating: false, messageBox: {},
+        checkReady: () => true, showError: () => {}, updateSave: () => {},
+        showFieldError: (message) => { reported = message; },
+        persistSettings: async () => { throw new Error("stale settings revision"); },
+        fetch: () => { throw new Error("Generate must not be dispatched"); },
+        structuredClone, encodeURIComponent,
+    };
+    runInNewContext(source.slice(start, end), context);
+    await click();
+    assert.match(reported, /Could not save settings: stale settings revision/);
+    assert.equal(context.queuedCanvasId, null);
+    assert.equal(context.generating, false);
 });
 
 test("Designer health check reports failed and restored connections without replacing drafts", async () => {
@@ -158,7 +190,7 @@ test("Designer health check reports failed and restored connections without repl
     assert.equal(reloaded, false);
 });
 
-test("Generate remains disabled for the queued ID and enables for a different saved ID", () => {
+test("Generate stays disabled in the queued panel even after publication and a different saved ID", () => {
     const start = source.indexOf("function outputPathsReady()");
     const end = source.indexOf("function confirmProviders(", start);
     assert.ok(start >= 0 && end > start);
@@ -187,7 +219,7 @@ test("Generate remains disabled for the queued ID and enables for a different sa
     assert.equal(generate.disabled, true);
     assert.equal(generationError.hidden, true);
     assert.equal(generationNote.hidden, false);
-    assert.match(generationNote.textContent, /already queued/);
+    assert.match(generationNote.textContent, /restart the Copilot app/);
     draft["canvas.id"] = "second-canvas";
     update();
     assert.equal(generate.disabled, true);
@@ -195,8 +227,8 @@ test("Generate remains disabled for the queued ID and enables for a different sa
     model.generationAvailable = true;
     model.generationError = null;
     update();
-    assert.equal(generate.disabled, false);
-    assert.equal(generationNote.hidden, true);
+    assert.equal(generate.disabled, true);
+    assert.equal(generationNote.hidden, false);
     assert.equal(generationError.hidden, true);
     draft["canvas.id"] = "first-canvas";
     update();
@@ -206,9 +238,10 @@ test("Generate remains disabled for the queued ID and enables for a different sa
     model.generationError = "Canvas already exists; choose and save a different Canvas ID.";
     update();
     assert.equal(generationNote.hidden, false);
+    assert.match(generationNote.textContent, /Canvas generated.*Restart the Copilot app/);
     assert.equal(generationError.hidden, true);
     model.generationError = "Canvas Design does not provide Generate in this session.";
     update();
-    assert.equal(generationNote.hidden, true);
+    assert.equal(generationNote.hidden, false);
     assert.equal(generationError.hidden, false);
 });

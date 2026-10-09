@@ -44,12 +44,22 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
         constraints: Object.fromEntries(ids.map((id) => [id, constraints[id]])),
         values: Object.fromEntries(ids.map((id) => [id, values[id]])) };
     const requests = [];
+    const saved = [];
     await page.route("**/*", async (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === "/api/state") {
             await route.fulfill({ json: state });
+        } else if (path === "/api/save") {
+            const request = route.request().postDataJSON();
+            saved.push(request);
+            state.values = request.values;
+            state.settingsRevision += 1;
+            state.persisted = true;
+            await route.fulfill({ json: state });
         } else if (path === "/api/generate") {
             const request = route.request().postDataJSON();
+            expect(request.settingsRevision).toBe(state.settingsRevision);
+            expect(request.values).toEqual(state.values);
             requests.push(request);
             const invalid = !/^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$/.test(request.values["canvas.id"])
                 ? "Canvas ID (canvas.id)"
@@ -76,6 +86,7 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
     });
     await page.goto("/?token=designer-essentials-test");
     await expect(page.getByRole("heading", { name: "Essentials" })).toBeVisible();
+    requests.saved = saved;
     return requests;
 }
 
@@ -95,6 +106,25 @@ test("Generate remains queued and displays installed-version warnings", async ({
     await expect(page.locator("#action-message"))
         .toContainText(`Warning: ${warning}`);
     expect(requests).toHaveLength(1);
+});
+
+test("a failed implicit Save leaves the draft editable and never dispatches Generate", async ({ page }) => {
+    const requests = await openDesigner(page, core);
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("retry-canvas");
+    await page.getByRole("textbox", { name: /Title/ }).fill("Retry Canvas");
+    const rejectSave = (route) => route.fulfill({ status: 409,
+        json: { error: "Designer settings changed elsewhere" } });
+    await page.route("**/api/save?*", rejectSave);
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await expect(page.locator("#page-error")).toContainText(
+        "Could not save settings: Designer settings changed elsewhere");
+    await expect(page.getByRole("textbox", { name: /Canvas ID/ })).toHaveValue("retry-canvas");
+    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+    expect(requests).toHaveLength(0);
+    await page.unroute("**/api/save?*", rejectSave);
+    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await expect.poll(() => requests.length).toBe(1);
+    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
 });
 
 test("computed provider approval cancels without sending and submits the approved source and hash", async ({ page }) => {
@@ -123,9 +153,12 @@ test("computed provider approval cancels without sending and submits the approve
     await generate.click();
     await dialog.getByRole("button", { name: "Approve and Generate" }).click();
     await expect.poll(() => requests.length).toBe(1);
+    expect(requests.saved).toHaveLength(1);
+    expect(requests.saved[0].values["canvas.id"]).toBe("provider-canvas");
     expect(requests[0].approvedProviders).toEqual([approved]);
     await expect(generate).toBeDisabled();
-    await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+    await expect(page.locator("#generation-note")).toContainText("restart the Copilot app");
+    await expect(page.locator("#conn-status")).toHaveText("Live");
 });
 
 test("stock Essentials keep five ordered controls and Generate submits all enabled values", async ({ page }) => {

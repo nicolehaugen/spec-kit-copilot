@@ -68,13 +68,17 @@ function updateGenerate() {
             : model?.generationError ?? "";
     const expectedState = reason === "Generation is already queued for this Designer panel"
         || reason === "Canvas already exists; choose and save a different Canvas ID.";
-    generationNote.textContent = expectedState ? reason : "";
+    generationNote.textContent = queuedCanvasId
+        ? reason === "Canvas already exists; choose and save a different Canvas ID."
+            && model?.values?.["canvas.id"] === queuedCanvasId
+            ? "Canvas generated. Restart the Copilot app to discover and open it. Close this Designer panel before restarting."
+            : "Generation queued. After your agent confirms the canvas was generated, close this Designer panel and restart the Copilot app to discover and open it. If generation fails, inspect the output before reopening Designer."
+        : expectedState ? reason : "";
     generationNote.hidden = !generationNote.textContent;
     generationError.textContent = expectedState ? "" : reason;
     generationError.hidden = !generationError.textContent;
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
-        || (queuedCanvasId && (draft?.["canvas.id"] === queuedCanvasId
-            || draft?.["canvas.id"] !== model?.values?.["canvas.id"])) || !outputPathsReady()
+        || !!queuedCanvasId || !outputPathsReady()
         || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity || !!model?.generationBlockers?.length;
@@ -99,22 +103,30 @@ generate.addEventListener("click", async () => {
     const providers = model.templates.filter((item) => item.kind === "generated.computed-value-provider")
         .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
-    updateGenerate();
+    updateSave();
     showError("");
     try {
         if (providers.length && !await confirmProviders(providers)) return;
         const values = structuredClone(draft);
+        const outputs = structuredClone(draftOutputs);
+        const badges = structuredClone(draftBadges);
         const submittedId = values["canvas.id"];
+        let saved;
+        try {
+            saved = await persistSettings({ values, outputs, badges });
+        } catch (error) {
+            throw new Error(`Could not save settings: ${error.message}`, { cause: error });
+        }
+        model = saved;
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ modelRevision: model.revision,
-                settingsRevision: model.settingsRevision, values, outputs: draftOutputs,
-                badges: draftBadges,
+            body: JSON.stringify({ modelRevision: saved.revision,
+                settingsRevision: saved.settingsRevision, values, outputs,
+                badges,
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);
-        status.textContent = `Generation queued: ${result.target}`;
         if (result.warnings?.length) {
             messageBox.textContent = `Warning: ${result.warnings.join(" ")}`;
             messageBox.hidden = false;
@@ -124,7 +136,7 @@ generate.addEventListener("click", async () => {
         showFieldError(error.message);
     } finally {
         generating = false;
-        updateGenerate();
+        updateSave();
     }
 });
 
@@ -187,35 +199,38 @@ function updateSave() {
         && JSON.stringify(draft) === JSON.stringify(model.values)
         && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs)
         && JSON.stringify(draftBadges) === JSON.stringify(model.badges);
-    saveButton.disabled = model?.preview || saving || activeUploads.size > 0 || !model
+    saveButton.disabled = model?.preview || saving || generating || activeUploads.size > 0 || !model
         || !model.pages.length || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
     saveButton.textContent = saving ? "Saving..." : "Save";
     saveButton.setAttribute("aria-busy", String(saving));
-    root.inert = saving || activeUploads.size > 0;
-    for (const tab of tabs.children) tab.disabled = saving || activeUploads.size > 0;
+    root.inert = saving || generating || activeUploads.size > 0;
+    for (const tab of tabs.children) tab.disabled = saving || generating || activeUploads.size > 0;
     updateGenerate();
 }
 
+async function persistSettings({ values, outputs, badges }) {
+    const response = await fetch(`/api/save?token=${encodeURIComponent(token)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelRevision: model.revision,
+            revision: model.settingsRevision, values, outputs, badges }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `Designer save failed (${response.status})`);
+    return result;
+}
+
 saveButton.addEventListener("click", async () => {
-    if (model?.preview || saving || !model || !checkReady()) return;
+    if (model?.preview || saving || generating || !model || !checkReady()) return;
     saving = true;
     messageBox.hidden = true;
     showError("");
     updateSave();
     try {
-        const response = await fetch(`/api/save?token=${encodeURIComponent(token)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ modelRevision: model.revision,
-                revision: model.settingsRevision, values: draft, outputs: draftOutputs,
-                badges: draftBadges }),
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error ?? `Designer save failed (${response.status})`);
-        model = result;
+        model = await persistSettings({ values: draft, outputs: draftOutputs, badges: draftBadges });
         messageBox.textContent = "Settings saved.";
         messageBox.hidden = false;
     } catch (error) {
