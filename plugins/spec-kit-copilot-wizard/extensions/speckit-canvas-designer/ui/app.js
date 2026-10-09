@@ -226,7 +226,7 @@ generate.addEventListener("click", async () => {
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const body = await response.json();
-        if (!response.ok) throw new Error(body.error ?? `Generation failed (${response.status})`);
+        if (!response.ok) throw new Error(validateOutputError(body).error);
         const result = validateGenerateResponse(body, submittedId);
         if (result.warnings?.length) {
             setMessage(messageBox, `Warning: ${result.warnings.join(" ")}`);
@@ -712,10 +712,23 @@ function applyState(next) {
 
 const status = document.getElementById("conn-status");
 let connectionError = "";
+let outputStatusError = "";
 let healthChecks = 0;
 function connectionStatus(state) {
     status.className = `conn conn-${state}`;
     status.textContent = state === "live" ? "Live" : state === "connecting" ? "Connecting" : "Disconnected";
+}
+async function checkOutputStatus(id) {
+    try {
+        await refreshOutputStatus(id);
+        if (outputStatusError && errorBox.textContent === outputStatusError)
+            setMessage(errorBox, "");
+        outputStatusError = "";
+    } catch (error) {
+        if (!errorBox.textContent || errorBox.textContent === outputStatusError)
+            setMessage(errorBox, error.message);
+        outputStatusError = error.message;
+    }
 }
 async function checkConnection() {
     try {
@@ -735,13 +748,12 @@ async function checkConnection() {
                 model.generationError = latest.generationError;
                 updateGenerate();
             }
-            if (requestedCanvasId || currentPage === "designer-generate") {
-                await refreshOutputStatus(draft?.["canvas.id"]);
-            }
             connectionStatus("live");
             if (connectionError && generationNote.textContent === connectionError)
                 setMessage(generationNote, "");
             connectionError = "";
+            if (requestedCanvasId || currentPage === "designer-generate")
+                await checkOutputStatus(draft?.["canvas.id"]);
         }
     } catch (error) {
         connectionStatus("lost");
@@ -786,7 +798,7 @@ try {
     }));
     applyState(initial);
     connectionStatus("live");
-    if (!initial.preview) await refreshOutputStatus(draft?.["canvas.id"]);
+    if (!initial.preview) await checkOutputStatus(draft?.["canvas.id"]);
 } catch (error) {
     root.setAttribute("aria-busy", "false");
     root.replaceChildren(element("h1", "Settings unavailable"));

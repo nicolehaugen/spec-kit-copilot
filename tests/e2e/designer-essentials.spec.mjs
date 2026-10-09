@@ -12,7 +12,8 @@ const stockControls = new URL("../../spec-kit-extensions/extension-canvas-design
 const subAgents = await validateLocalSource("presets", fileURLToPath(
     new URL("../../spec-kit-presets/copilot-sub-agents/", import.meta.url)));
 
-async function openDesigner(page, fields, extraPage, warnings = [], templates = []) {
+async function openDesigner(page, fields, extraPage, warnings = [], templates = [],
+    outputStatusFailure = false) {
     const controls = await Promise.all(["stock-text", "stock-checkbox"].map(async (name) =>
         JSON.parse(await readFile(new URL(`${name}/control.json`, stockControls), "utf8"))));
     const constraints = {
@@ -43,6 +44,7 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
         ...(extraPage ? [extraPage] : [])],
         constraints: Object.fromEntries(ids.map((id) => [id, constraints[id]])),
         values: Object.fromEntries(ids.map((id) => [id, values[id]])) };
+    if (outputStatusFailure) state.values["canvas.id"] = "blocked-canvas";
     const requests = [];
     const saved = [];
     const revealed = [];
@@ -52,6 +54,10 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
         if (path === "/api/state") {
             await route.fulfill({ json: state });
         } else if (path === "/api/output-status") {
+            if (outputStatusFailure) {
+                await route.fulfill({ status: 500, json: { error: "Cannot inspect this canvas folder" } });
+                return;
+            }
             const canvasId = new URL(route.request().url()).searchParams.get("canvasId");
             await route.fulfill({ json: { status: requests.ready ? "ready" : "absent",
                 target: `.github/extensions/${canvasId}/`, ...(requests.ready
@@ -125,6 +131,15 @@ const core = [{ id: "canvas.id", label: "Canvas ID" },
 const stock = [{ id: "canvas.description", label: "Description" },
     { id: "canvas.workflowListName", label: "Workflow header" },
     { id: "workflowSlug.userProvided", label: "Allow custom slug", type: "boolean" }];
+
+test("output status errors leave the Designer form available on initial load", async ({ page }) => {
+    await openDesigner(page, core, undefined, [], [], true);
+    await expect(page.locator("#conn-status")).toHaveText("Live");
+    await expect(page.locator("#page-error")).toHaveText("Cannot inspect this canvas folder");
+    await expect(page.getByRole("heading", { name: "Essentials" })).toBeVisible();
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("different-canvas");
+    await expect(page.getByRole("textbox", { name: /Canvas ID/ })).toHaveValue("different-canvas");
+});
 
 test("incompatible Generate response reports an error without recording a request", async ({ page }) => {
     await openDesigner(page, core);

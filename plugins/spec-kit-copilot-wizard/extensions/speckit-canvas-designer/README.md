@@ -147,6 +147,8 @@ reports Live when the current provider responds and Disconnected when a
 bounded health check fails; the check does not replace the panel or discard
 unsaved drafts. A transient interruption notice clears when the connection
 recovers, without clearing unrelated errors or accepted Open guidance.
+An output-status lookup error is shown on the page without marking a responsive
+provider disconnected or removing the editable form.
 The 10-second liveness probe fetches a small authenticated
 stylesheet; every sixth probe also refreshes the full generation availability
 state. The server remains authoritative at Generate if availability changes

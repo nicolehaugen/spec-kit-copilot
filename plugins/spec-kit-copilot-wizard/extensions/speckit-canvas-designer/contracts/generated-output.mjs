@@ -94,7 +94,9 @@ export async function generatedOutput(project, id, handoffId, readJson = readGen
             : { ...result, status: "incomplete" };
     } catch (error) {
         if (error.code === "ENOENT") return { ...result, status: "incomplete" };
-        if (error instanceof SyntaxError) return result;
+        if (error instanceof SyntaxError || error.code === "ELOOP"
+            || ["Generated canvas metadata parent changed during read",
+                "Generated canvas metadata changed during read"].includes(error.message)) return result;
         throw error;
     }
 }

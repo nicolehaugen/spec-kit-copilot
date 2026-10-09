@@ -123,6 +123,33 @@ test("generated metadata reads reject replaced entries and oversized files", asy
     assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
 });
 
+test("unsafe generated metadata is foreign without hiding unrelated read errors", async (t) => {
+    const project = await mkdtemp(join(tmpdir(), "designer-output-unsafe-"));
+    t.after(() => rm(project, { recursive: true, force: true }));
+    const target = join(project, ".github", "extensions", "team-dashboard");
+    await mkdir(target, { recursive: true });
+    const result = { status: "foreign", target: ".github/extensions/team-dashboard/" };
+    for (const error of [
+        Object.assign(new Error("Symlinked metadata"), { code: "ELOOP" }),
+        new Error("Generated canvas metadata changed during read"),
+        new Error("Generated canvas metadata parent changed during read"),
+    ]) {
+        assert.deepEqual(await generatedOutput(project, "team-dashboard", "handoff-1",
+            async () => { throw error; }), result);
+    }
+    await assert.rejects(generatedOutput(project, "team-dashboard", "handoff-1",
+        async () => { throw Object.assign(new Error("Permission denied"), { code: "EACCES" }); }),
+    /Permission denied/);
+    try {
+        await symlink(project, join(target, "canvas-config.json"), "file");
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; metadata assertion skipped");
+        return;
+    }
+    assert.deepEqual(await generatedOutput(project, "team-dashboard", "handoff-1"), result);
+});
+
 test("generated output rejects a target replaced between provenance and entry lookup", async (t) => {
     const project = await mkdtemp(join(tmpdir(), "designer-output-replace-"));
     t.after(() => rm(project, { recursive: true, force: true }));

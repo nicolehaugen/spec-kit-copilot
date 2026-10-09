@@ -172,7 +172,7 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
         outputStatus: "absent", requestedRequestId: null,
         GENERATION_EXISTS,
         generating: false, status: {}, messageBox: {}, checkReady: () => true,
-        validateGenerateResponse,
+        validateGenerateResponse, validateOutputError,
         showError: () => {}, updateSave: () => {},
         refreshOutputStatus: async () => ({ status: "absent", requestId: null }),
         updateOutputDisplay: () => {},
@@ -253,12 +253,38 @@ test("replacement uses the confirmed output identity even when status changes du
                 json: async () => ({ error: "Canvas changed since replacement was confirmed" }) };
         },
         showFieldError: () => {}, setMessage: () => {}, updateOutputDisplay: () => {},
+        validateOutputError,
         structuredClone, encodeURIComponent,
     };
     runInNewContext(source.slice(start, end), context);
     await click();
     assert.equal(submitted.replaceExisting, true);
     assert.equal(submitted.replaceRequestId, "original-request");
+});
+
+test("Generate reports valid errors and rejects incompatible error responses", async () => {
+    const start = source.indexOf('generate.addEventListener("click"');
+    const end = source.indexOf('openGenerated.addEventListener("click"', start);
+    for (const [body, expected] of [
+        [{ error: "Generation unavailable" }, "Generation unavailable"],
+        [{ error: "", extra: true }, "Invalid generated canvas error response"],
+    ]) {
+        let click, reported;
+        runInNewContext(source.slice(start, end), {
+            generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
+            model: { preview: false, templates: [] },
+            draft: { "canvas.id": "first-canvas" }, draftOutputs: {}, draftBadges: [],
+            generating: false, messageBox: {}, requestedCanvasId: null,
+            checkReady: () => true, updateSave: () => {}, setMessage: () => {},
+            showError: () => {}, refreshOutputStatus: async () => ({ status: "absent" }),
+            persistSettings: async () => ({ revision: "model-1", settingsRevision: 1 }),
+            fetch: async () => ({ ok: false, status: 422, json: async () => body }),
+            showFieldError: (message) => { reported = message; },
+            validateOutputError, structuredClone, encodeURIComponent, token: "test",
+        });
+        await click();
+        assert.equal(reported, expected);
+    }
 });
 
 test("Designer health check reports failed and restored connections without replacing drafts", async () => {
@@ -329,6 +355,42 @@ test("Designer health check reports failed and restored connections without repl
     await check();
     assert.equal(status.textContent, "Live");
     assert.equal(generationNote.textContent, "");
+});
+
+test("output status failures keep the Designer live and clear only their own error on recovery", async () => {
+    const start = source.indexOf('const status = document.getElementById("conn-status");');
+    const end = source.lastIndexOf("try {", source.indexOf("    [{ mountIdentity", start));
+    const status = {};
+    const errorBox = { textContent: "" };
+    const generationNote = { textContent: "" };
+    let failure = new Error("Output status unavailable");
+    const { checkConnection: check } = runInNewContext(`${source.slice(start, end)}
+({ checkConnection })`, {
+        document: { getElementById: () => status }, errorBox, generationNote,
+        token: "test", model: {}, draft: { "canvas.id": "first-canvas" },
+        requestedCanvasId: "first-canvas", openingRequested: false, currentPage: "designer-generate",
+        fetch: async () => ({ ok: true }), refreshOutputStatus: async () => {
+            if (failure) throw failure;
+        },
+        updateGenerate: () => {}, setMessage: (slot, text) => { slot.textContent = text; },
+        setInterval: () => 1, clearInterval: () => {}, window: { addEventListener: () => {} },
+        AbortSignal, encodeURIComponent,
+    });
+    await check();
+    assert.equal(status.textContent, "Live");
+    assert.equal(errorBox.textContent, "Output status unavailable");
+    assert.equal(generationNote.textContent, "");
+    failure = null;
+    await check();
+    assert.equal(errorBox.textContent, "");
+    failure = new Error("Output status unavailable");
+    errorBox.textContent = "Unrelated field error";
+    await check();
+    assert.equal(errorBox.textContent, "Unrelated field error");
+    failure = null;
+    await check();
+    assert.equal(status.textContent, "Live");
+    assert.equal(errorBox.textContent, "Unrelated field error");
 });
 
 test("health checks use a small authenticated asset, but periodically refresh generation availability", async () => {

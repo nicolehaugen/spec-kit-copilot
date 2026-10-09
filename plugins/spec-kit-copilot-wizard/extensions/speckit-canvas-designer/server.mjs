@@ -381,7 +381,7 @@ export async function startShell(handoff = null, model = null,
                 const status = error.code ? 500 : error.message.startsWith("Designer settings changed elsewhere.")
                         || error.message.startsWith("Canvas already exists:") ? 409 : 422;
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
-                    .end(JSON.stringify({ error: error.message }));
+                    .end(JSON.stringify(validateOutputError({ error: error.message })));
             } finally {
                 generating = false;
             }
