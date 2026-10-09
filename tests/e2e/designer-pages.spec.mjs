@@ -143,6 +143,30 @@ async function startPreparedShell(state) {
             state.templates.push({ name: "designer-control-adapter-image", path,
                 hash: createHash("sha256").update(bytes).digest("hex"), kind: "designer.control-adapter" });
         }
+        if (state.badgeInputControls?.length) {
+            const name = "designer-badge-input-stock-adapter";
+            const path = join(project, ".specify", "extensions", "extension-canvas-design",
+                "badge-input-controls", "stock", "designer.mjs");
+            await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
+                "badge-input-controls", "stock"), { recursive: true });
+            await copyFile(new URL("designer-host/badge-input-controls/stock/designer.mjs",
+                extensionRoot), path);
+            const bytes = await readFile(path);
+            state.templates.push({ name, path,
+                hash: createHash("sha256").update(bytes).digest("hex"),
+                kind: "designer.badge-input-adapter" });
+            const evaluator = state.badgeRules[0].adapter;
+            const evaluatorPath = join(project, ".specify", "extensions", "extension-canvas-design",
+                "badges", "adapters", "content.mjs");
+            await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
+                "badges", "adapters"), { recursive: true });
+            await copyFile(new URL("generated-host/badges/adapters/content.mjs",
+                extensionRoot), evaluatorPath);
+            const evaluatorBytes = await readFile(evaluatorPath);
+            state.templates.push({ name: evaluator, path: evaluatorPath,
+                hash: createHash("sha256").update(evaluatorBytes).digest("hex"),
+                kind: "generated.badge-rule-adapter" });
+        }
         const shell = await startShell(handoff, state, { workspace, project });
         return { url: shell.url, close: async () => {
             await shell.close();
@@ -160,7 +184,7 @@ async function openDesigner(page) {
     return shell;
 }
 
-test("Badges editor persists a configured badge through the Designer save boundary", async ({ page }) => {
+async function badgeState() {
     const state = await model();
     state.outputs = { specify: {
         outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md",
@@ -168,8 +192,15 @@ test("Badges editor persists a configured badge through the Designer save bounda
     state.badgeTypes = [{ id: "work-complete", rule: "work-complete",
         title: "Work complete", description: "Tracks a phase",
         defaultText: "Complete", defaultColor: "green", enabled: true }];
-    state.badgeRules = [{ id: "work-complete", inputs: [{ id: "phase", type: "phase" }],
-        textPlaceholders: [] }];
+    state.badgeRules = [JSON.parse(await readFile(new URL(
+        "generated-host/badges/rules/work-complete.json", extensionRoot), "utf8"))];
+    const adapter = "designer-badge-input-stock-adapter";
+    state.badgeInputControls = [{ rule: "work-complete", control: "stock.badge-inputs", adapter }];
+    return state;
+}
+
+test("Badges editor persists a configured badge through the Designer save boundary", async ({ page }) => {
+    const state = await badgeState();
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
@@ -188,12 +219,30 @@ test("Badges editor persists a configured badge through the Designer save bounda
         expect(saved.persisted).toBe(true);
         expect(saved.badges).toHaveLength(1);
         expect(saved.badges[0]).toMatchObject({
-            type: "work-complete", inputs: { phase: "specify" },
+            type: "work-complete", inputs: { phase: "specify",
+                artifact: { phase: "specify", output: "specs/<slug>/spec.md" } },
             text: "Complete", showIn: ["workflow-list"],
         });
         await page.reload();
         await page.getByRole("tab", { name: "Badges" }).click();
         await expect(page.locator(".badge-row")).toContainText("Complete");
+    } finally {
+        await shell.close();
+    }
+});
+
+test("a failed badge adapter import leaves other Designer pages available", async ({ page }) => {
+    const shell = await startPreparedShell(await badgeState());
+    try {
+        await page.route("**/adapters/designer-badge-input-stock-adapter.mjs?*", (route) => route.abort());
+        await page.goto(shell.url);
+        await expect(page.getByRole("tab", { name: "Essentials" })).toBeVisible();
+        await page.getByRole("tab", { name: "Badges" }).click();
+        await page.getByRole("button", { name: "+ Add badge" }).click();
+        await page.getByRole("button", { name: "Work complete" }).click();
+        await expect(page.locator(".badge-editor")).toContainText("Could not load badge input control");
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toBeVisible();
     } finally {
         await shell.close();
     }
@@ -625,7 +674,7 @@ test("isolated test preset resolves through Specify and renders its contributed 
         return;
     }
     expect(available.status, available.stderr).toBe(0);
-    const workspace = await mkdtemp(join(scratchRoot, ".designer-preset-e2e-"));
+    const workspace = await mkdtemp(join(tmpdir(), "speckit-designer-preset-e2e-"));
     const project = join(workspace, "project");
     const workflow = { selectedPhases: [] };
     const selections = { presets: [], extensions: [], bundles: [] };
@@ -723,7 +772,7 @@ test("Billing preset and built-in palette persist through Generate and render th
         return;
     }
     expect(available.status, available.stderr).toBe(0);
-    const workspace = await mkdtemp(join(scratchRoot, ".billing-preset-e2e-"));
+    const workspace = await mkdtemp(join(tmpdir(), "speckit-billing-preset-e2e-"));
     const project = join(workspace, "project");
     const workflow = { selectedPhases: ["specify"],
         installed: { presets: [], extensions: [], bundles: [] } };
@@ -862,7 +911,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
     const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
     expect(available.error, "Specify CLI is required for the contract integration").toBeUndefined();
     expect(available.status, available.stderr).toBe(0);
-    const workspace = await mkdtemp(join(scratchRoot, ".risk-preset-e2e-"));
+    const workspace = await mkdtemp(join(tmpdir(), "speckit-risk-preset-e2e-"));
     const project = join(workspace, "project");
     const presetCopy = join(workspace, "risk-preset");
     const handoff = {

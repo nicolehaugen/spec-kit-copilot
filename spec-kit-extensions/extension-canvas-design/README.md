@@ -340,7 +340,12 @@ Designer input controls are separate from generated evaluators. Each registered
 exports `controlId`, `contractVersion = 1`, and
 `mount({root, rule, inputs, phases, outputs, onChange})`. It renders inside the
 provided root and reports the **complete** structured `inputs` object through
-`onChange`; the Designer validates saved input IDs, types, and confirmed
+`onChange`. The host passes a detached input snapshot; changing that object
+does not change the draft. Adapters must send a complete replacement after
+initializing defaults and after each edit. Missing or partial callback payloads
+are rejected, and a failed adapter import is reported in its badge editor
+without preventing other Designer pages from loading. The Designer validates
+saved input IDs, types, and confirmed
 outputs against the rule, regardless of what the adapter allows in the browser.
 The base extension binds its nine rules to `stock.badge-inputs`; a preset can
 register a custom JSON definition, adapter, and rule binding without editing

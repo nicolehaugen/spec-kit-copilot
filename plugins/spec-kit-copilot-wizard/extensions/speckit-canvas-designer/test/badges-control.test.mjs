@@ -123,6 +123,38 @@ test("host accepts a custom input control without rendering rule-specific inputs
     } finally { cleanup(); }
 });
 
+test("host ignores direct input mutation and rejects missing or partial control updates", () => {
+    let update;
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" },
+            { id: "text", type: "text" }] }],
+        controlMount({ inputs, onChange }) {
+            inputs.phase = "specify";
+            inputs.text = "mutated";
+            update = onChange;
+            return { isReady: () => true };
+        },
+    });
+    try {
+        const editor = choose(root);
+        update();
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /do not match its rule/);
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        update({ phase: "plan" });
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        const replacement = { phase: "plan", text: "valid" };
+        update(replacement);
+        replacement.text = "mutated afterward";
+        submit(editor);
+        assert.deepEqual(draftBadges[0].inputs, { phase: "plan", text: "valid" });
+    } finally { cleanup(); }
+});
+
 test("preset control edits and reopens its own labeled phase input", () => {
     const badgeTypes = [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
         defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];

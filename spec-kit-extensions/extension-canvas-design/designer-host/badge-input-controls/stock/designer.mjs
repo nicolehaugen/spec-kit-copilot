@@ -78,6 +78,8 @@ function initializeInputs(rule, inputs, phases, outputs) {
 export function mount({ root, rule, inputs, phases, outputs, onChange }) {
     initializeInputs(rule, inputs, phases, outputs);
     const pending = { inputs, id: globalThis.crypto?.randomUUID?.() ?? `badge-${Date.now()}` };
+    const emitChange = () => onChange(structuredClone(pending.inputs));
+    emitChange();
     const editor = root;
     const phaseChoices = phaseOptions(phases);
     const ordered = (rule.inputs ?? []).find(({ type }) => type === "ordered-artifacts");
@@ -113,6 +115,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                 remove.addEventListener("click", () => {
                     pending.inputs[ordered.id] = prerequisites.filter((entry) => !invalid.includes(entry));
                     refresh();
+                    emitChange();
                 });
                 earlierGroup.append(remove);
             }
@@ -123,6 +126,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                 pending.inputs[ordered.id] = remaining.sort((a, b) =>
                     phases.indexOf(a.phase) - phases.indexOf(b.phase));
                 refresh();
+                emitChange();
             };
             for (const id of earlier) {
                 const title = phaseOptions([id])[0][1];
@@ -173,16 +177,17 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                 explanation.append(element("p",
                     "All of these conditions must pass for a workflow."));
             }
-            onChange();
         };
         targetPhase.addEventListener("change", () => {
             target.phase = targetPhase.value;
             target.output = outputs[target.phase]?.view ?? outputs[target.phase]?.outputs?.[0] ?? "";
             refresh();
+            emitChange();
         });
         targetOutput.addEventListener("change", () => {
             target.output = targetOutput.value;
             refresh();
+            emitChange();
         });
         editor.append(field("Target phase", targetPhase), field("Required output", targetOutput),
             targetWarning,
@@ -204,7 +209,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                 value.value = pending.inputs[descriptor.id];
                 value.addEventListener("input", () => {
                     pending.inputs[descriptor.id] = value.value;
-                    onChange();
+                    emitChange();
                 });
                 editor.append(field(descriptor.label ?? "Text to match", value,
                     "Match this literal text anywhere in the output, ignoring capitalization."));
@@ -220,7 +225,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                     checkbox.addEventListener("change", () => {
                         pending.inputs[descriptor.id] = checkbox.checked ? id : "";
                         for (const [otherId, other] of choices) other.checked = otherId === pending.inputs[descriptor.id];
-                        onChange();
+                        emitChange();
                     });
                     choices.push([id, checkbox]);
                     label.append(checkbox, element("span", title));
@@ -256,7 +261,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                                     input.checked = otherId === value.phase && otherPath === value.output;
                                 }
                             }
-                            onChange();
+                            emitChange();
                         });
                         outputChoices.push([path, output]);
                         item.append(output, element("span", path));
@@ -274,7 +279,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                                 input.checked = otherId === value.phase && path === value.output;
                             }
                         }
-                        onChange();
+                        emitChange();
                     });
                     choices.push([id, checkbox, outputList, outputChoices]);
                     label.append(checkbox, element("span", title));
@@ -294,7 +299,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                         phase: id, outputs: (outputs[id]?.outputs ?? [])
                             .filter((path) => chosen.has(JSON.stringify([id, path]))),
                     })).filter((entry) => entry.outputs.length);
-                    onChange();
+                    emitChange();
                 };
                 const warning = element("p", stale.length
                     ? "Some selected evidence outputs are no longer confirmed. Choose a current output to replace them."

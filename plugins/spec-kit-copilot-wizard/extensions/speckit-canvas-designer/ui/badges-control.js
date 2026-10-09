@@ -335,21 +335,18 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const controlRoot = element("div", undefined, "badge-input-controls");
         editor.append(controlRoot);
         let control;
+        const inputIds = (rule.inputs ?? []).map(({ id }) => id).sort().join();
+        const hasDeclaredInputs = (value) => value && typeof value === "object"
+            && !Array.isArray(value) && Object.keys(value).sort().join() === inputIds;
         try {
-            control = controlMount?.({ root: controlRoot, rule, inputs: pending.inputs,
+            control = controlMount?.({ root: controlRoot, rule, inputs: structuredClone(pending.inputs),
                 phases, outputs, onChange(nextInputs) {
-                    if (nextInputs !== undefined) {
-                        const ids = (rule.inputs ?? []).map(({ id }) => id);
-                        if (!nextInputs || typeof nextInputs !== "object"
-                            || Array.isArray(nextInputs)
-                            || Object.keys(nextInputs).sort().join() !== ids.sort().join()) {
-                            revealError("Badge control returned inputs that do not match its rule.");
-                            return;
-                        }
-                        const copy = structuredClone(nextInputs);
-                        for (const key of Object.keys(pending.inputs)) delete pending.inputs[key];
-                        Object.assign(pending.inputs, copy);
+                    if (!hasDeclaredInputs(nextInputs)) {
+                        revealError("Badge control returned inputs that do not match its rule.");
+                        return;
                     }
+                    pending.inputs = structuredClone(nextInputs);
+                    revealError("");
                     syncPhasePlacement();
                 } });
         } catch (error) {
@@ -536,6 +533,9 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             if (!pending.color) return revealError("Select a badge color.");
             if (!control || typeof control.isReady !== "function") {
                 return revealError("Badge input controls are unavailable.");
+            }
+            if (!hasDeclaredInputs(pending.inputs)) {
+                return revealError("Badge control returned inputs that do not match its rule.");
             }
             if (!control.isReady()) {
                 return revealError(control.validationError?.() || "Complete the badge inputs before saving.");

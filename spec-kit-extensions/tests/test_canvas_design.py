@@ -23,6 +23,7 @@ FILES = {
     "extension.yml",
     "README.md",
     "ARCHITECTURE.md",
+    "BADGE-EXTENSIBILITY-PLAN.md",
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
@@ -31,6 +32,8 @@ FILES = {
     "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
     "schemas/designer.badges-settings-definition.schema.json",
+    "schemas/designer.badge-input-control.schema.json",
+    "schemas/designer.badge-input-binding.schema.json",
     "schemas/generated.badge-rule-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
     "schemas/generated.workflow-page-definition.schema.json",
@@ -50,6 +53,13 @@ FILES = {
       for mode in ("light", "dark")
       for color in ("accent", "background", "surface", "secondary", "text")),
     "designer-host/badges-settings/badge-types.json",
+    "designer-host/badge-input-controls/stock/control.json",
+    "designer-host/badge-input-controls/stock/designer.mjs",
+    *(f"designer-host/badge-input-controls/stock/bindings/{name}.json" for name in (
+        "value-match", "artifact-current", "artifact-stale", "markdown-file-count",
+        "checklist-progress", "checklist-complete", "work-complete",
+        "phase-run-complete", "phase-artifact-complete",
+    )),
     *(f"generated-host/badges/rules/{name}.json" for name in (
         "value-match", "artifact-current", "checklist-progress", "markdown-file-count",
         "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
@@ -164,6 +174,16 @@ class CanvasDesignPackageTests(unittest.TestCase):
                for name in ("content", "artifact-state", "run")]
             + [("badge-rule-phase-artifact-complete-adapter",
                 "generated-host/badges/adapters/phase-artifact-complete.mjs")]
+            + [("designer-badge-input-stock",
+                "designer-host/badge-input-controls/stock/control.json"),
+               ("designer-badge-input-stock-adapter",
+                "designer-host/badge-input-controls/stock/designer.mjs")]
+            + [(f"designer-badge-binding-{name}",
+                f"designer-host/badge-input-controls/stock/bindings/{name}.json")
+               for name in ("value-match", "artifact-current", "artifact-stale",
+                            "markdown-file-count", "checklist-progress",
+                            "checklist-complete", "work-complete", "phase-run-complete",
+                            "phase-artifact-complete")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [

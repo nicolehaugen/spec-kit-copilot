@@ -241,6 +241,7 @@ function renderPage(pageId, invalidFieldId) {
                 const binding = model.badgeInputControls?.find((item) => item.rule === rule.id);
                 if (!binding) throw new Error(`Missing Designer badge input control for ${rule.id}`);
                 const adapter = badgeInputAdapters.get(binding.adapter);
+                if (adapter instanceof Error) throw adapter;
                 if (!adapter) throw new Error(`Missing Designer badge input adapter ${binding.adapter}`);
                 if (adapter.controlId !== binding.control || adapter.contractVersion !== 1
                     || typeof adapter.mount !== "function") {
@@ -439,8 +440,12 @@ try {
         }));
     await Promise.all([...new Set((initial.badgeInputControls ?? [])
         .map((item) => item.adapter))].map(async (name) => {
-        badgeInputAdapters.set(name, await import(
-            `/adapters/${name}.mjs?token=${encodeURIComponent(token)}`));
+        try {
+            badgeInputAdapters.set(name, await import(
+                `/adapters/${name}.mjs?token=${encodeURIComponent(token)}`));
+        } catch (error) {
+            badgeInputAdapters.set(name, error);
+        }
     }));
     applyState(initial);
     const failures = initial.pages.filter((page) => page.error).length;
