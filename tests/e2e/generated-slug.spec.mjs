@@ -586,7 +586,7 @@ test("generated page hides all Workflow content and restores it on return", asyn
             body: 'export function renderPage({ root }) { root.textContent = "Overview"; }',
         }));
         await page.goto(canvas.url);
-        await page.locator("#new-workflow").click();
+        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
         await page.locator("#workflow-name").fill("Draft workflow");
         await expect(page.locator("#instance-collection")).toBeVisible();
         await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
@@ -738,15 +738,14 @@ test("failed autosave retains workflow identity through SSE and Refresh for retr
             return route.continue();
         });
         await page.goto(canvas.url);
-        await expect(page.locator("#workflow-empty")).toBeVisible();
-        await page.locator("#new-workflow").click();
+        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
         await page.locator("#workflow-name").fill("Unsaved workflow");
         await page.locator("#workflow-slug").fill("unsaved-slug");
         await page.locator("#phase-args").focus();
         await expect(page.locator("#workflow-action-error")).toContainText("Your draft is retained");
         await mkdir(join(canvas.root, "specs", "other-workflow"), { recursive: true });
         canvas.broadcast();
-        await expect(page.locator("#workflow-count")).toHaveText("(1)");
+        await expect(page.locator("#workflow-count")).toHaveText("(2)");
         await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
         await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
         await page.locator("#refresh-state").click();
@@ -816,16 +815,13 @@ test("disabled custom slugs leave the artifact directory unresolved until Specif
     }
 });
 
-test("empty workflow list creates a numbered pending row without making a directory", async ({ page }) => {
+test("first visit auto-creates a numbered pending row without making a directory", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-list")).toBeVisible();
-        await expect(page.locator("#workflow-empty")).toBeVisible();
-        await expect(page.locator("#workflow-empty")).toContainText("No workflows yet");
-        await expect(page.locator("#workflow-name")).toBeHidden();
-        await page.locator("#new-workflow").click();
-        await expect(page.locator("#workflow-name")).toBeFocused();
+        await expect(page.locator("#workflow-empty")).toBeHidden();
+        await expect(page.locator("#workflow-name")).toBeVisible();
         await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await expect(readFile(join(canvas.root, "specs", "workflow-1")))
@@ -915,8 +911,8 @@ test("browser draft and in-flight run recover in a new host, while invalid run s
         await mkdir(skill, { recursive: true });
         await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
         await page.goto(canvas.url);
-        await page.locator("#new-workflow").click();
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
+        await expect(page.locator("#phase-args")).toBeVisible();
         const pendingId = (await canvas.runtime.snapshot()).selected;
         const draftKey = JSON.stringify([pendingId, "specify"]);
         await page.locator("#phase-args").fill("Browser-entered draft");
@@ -1026,9 +1022,8 @@ test("a later successful save does not hide a failed phase draft", async ({ page
             return route.continue();
         });
         await page.goto(canvas.url);
-        await expect(page.locator("#workflow-empty")).toBeVisible();
-        await page.locator("#new-workflow").click();
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
+        await expect(page.locator("#phase-args")).toBeVisible();
         const pendingId = (await canvas.runtime.snapshot()).selected;
         await page.locator("#phase-args").fill("Keep this draft");
         await expect(page.locator("#workflow-action-error")).toContainText("Phase draft save failed");
@@ -1109,12 +1104,12 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await expect(page.locator("#feature-select")).toHaveCount(0);
         await expect(page.locator("#new-workflow")).toBeVisible();
         await expect(page.locator("#workflow-list")).toBeVisible();
-        await expect(page.locator("#workflow-empty")).toHaveText("No workflows yet.");
-        await expect(page.locator("#workflow-name")).toBeHidden();
+        await expect(page.locator("#workflow-empty")).toBeHidden();
+        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
         await expect(page.locator("#constitution-status")).toHaveText("Needed before starting a workflow");
         await expect(page.locator(".stepper")).toBeVisible();
-        await expect(page.locator('[data-phase-index="0"]')).toBeDisabled();
-        await expect(page.locator("#phase-card")).toBeHidden();
+        await expect(page.locator('[data-phase-index="0"]')).toBeEnabled();
+        await expect(page.locator("#phase-card")).toBeVisible();
         expect(await page.evaluate(() => {
             const constitution = document.querySelector("#constitution-card").getBoundingClientRect();
             const navigation = document.querySelector("#phase-navigation").getBoundingClientRect();
@@ -1123,8 +1118,6 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await expect(page.locator("#workflow-action-error")).toBeHidden();
         await expect(page.locator("#view-constitution")).toBeHidden();
         await expect(page.locator("#mobile-phase-select")).toBeHidden();
-        await page.locator("#new-workflow").click();
-        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
         await expect(page.locator("#workflow-slug")).toBeVisible();
         await expect(page.locator("#workflow-slug")).toHaveValue("");
         await expect(page.locator("#run-phase")).toBeDisabled();
