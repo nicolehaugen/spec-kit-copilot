@@ -435,7 +435,8 @@ reloads before reopening the existing app, using its unique provenance
 when the frozen request file is no longer available; it does not regenerate
 or assume reset registered the provider. Generation accepts an optional
 `--replace-existing=<prior-request-id>` fifth argument only after the Designer server authorizes
-replacement for the same handoff and existing target's provenance; no
+replacement for the same handoff and existing target's provenance. The exported
+generator rejects a bare `true` in place of that request-bound token; no
 replacement permission is stored in the frozen request.
 The generated `canvas-config.json` records the versions observed in the child
 checkout's Specify inventory at Generate; changed versions produce warnings

@@ -62,6 +62,8 @@ test("replacement requires explicit confirmation and preserves the old app on ca
     const before = await readFile(join(sdk, "canvas-config.json"), "utf8");
     await assert.rejects(regenerate(false), /already exists/);
     assert.equal(await readFile(join(sdk, "canvas-config.json"), "utf8"), before);
+    await assert.rejects(regenerate(true), /Invalid replaceExisting confirmation/);
+    assert.equal(await readFile(join(sdk, "canvas-config.json"), "utf8"), before);
     await assert.rejects(regenerate("--replace-existing=stale-request"),
         /Canvas changed since replacement was confirmed/);
     assert.equal(await readFile(join(sdk, "canvas-config.json"), "utf8"), before);
@@ -71,7 +73,7 @@ test("replacement requires explicit confirmation and preserves the old app on ca
 });
 
 test("confirmed replacement discards regular manual edits and extra files", async (t) => {
-    const { sdk, regenerate } = await fixture(t);
+    const { sdk, first, regenerate } = await fixture(t);
     await writeFile(join(sdk, "extension.mjs"), "manual change");
     const configPath = join(sdk, "canvas-config.json");
     const config = JSON.parse(await readFile(configPath, "utf8"));
@@ -82,7 +84,7 @@ test("confirmed replacement discards regular manual edits and extra files", asyn
     await writeFile(join(sdk, "custom", "notes.txt"), "my notes");
     await assert.rejects(regenerate(false), /already exists/);
     assert.equal(await readFile(join(sdk, "custom", "notes.txt"), "utf8"), "my notes");
-    await regenerate(true);
+    await regenerate(`--replace-existing=${first.requestId}`);
     assert.equal(JSON.parse(await readFile(configPath, "utf8")).canvas.displayName, "Second");
     assert.notEqual(await readFile(join(sdk, "extension.mjs"), "utf8"), "manual change");
     await assert.rejects(readFile(join(sdk, "custom", "notes.txt")), /ENOENT/);
@@ -108,10 +110,10 @@ test("replacement rejects forged provenance, unrelated canvas identity and incom
         async (sdk) => writeFile(join(sdk, "settings-provenance.json"),
             "x".repeat(4 * 1024 * 1024 + 1)),
     ]) {
-        const { sdk, regenerate } = await fixture(t);
+        const { sdk, first, regenerate } = await fixture(t);
         await corrupt(sdk);
         const before = await readdir(sdk);
-        await assert.rejects(regenerate(true), /cannot be safely replaced|Incomplete/);
+        await assert.rejects(regenerate(`--replace-existing=${first.requestId}`), /cannot be safely replaced|Incomplete/);
         assert.deepEqual(await readdir(sdk), before);
     }
 });
@@ -130,26 +132,26 @@ test("replacement metadata reader rejects an entry swapped after opening", async
 });
 
 test("replacement refuses symlinked canvas and symlinked contents", async (t) => {
-    const { sdk, regenerate } = await fixture(t);
+    const { sdk, first, regenerate } = await fixture(t);
     await writeFile(join(sdk, "linked-entry.mjs"), "manual");
     try { await symlink(join(sdk, "linked-entry.mjs"), join(sdk, "manual-link.mjs")); }
     catch (error) {
         if (error.code === "EPERM") { t.skip("Symlinks require Windows developer mode"); return; }
         throw error;
     }
-    await assert.rejects(regenerate(true), /link/);
+    await assert.rejects(regenerate(`--replace-existing=${first.requestId}`), /link/);
     assert.ok((await lstat(join(sdk, "manual-link.mjs"))).isSymbolicLink());
 });
 
 test("renderer failure during staging rolls back without touching the prior app", async (t) => {
-    const { sdk, workspace, next, regenerate } = await fixture(t);
+    const { sdk, workspace, first, next, regenerate } = await fixture(t);
     const previous = await readFile(join(sdk, "extension.mjs"));
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", next.requestId, "request.json");
     const request = JSON.parse(await readFile(requestPath, "utf8"));
     request.workflowPage.assets[2].content = Buffer.from("export {", "utf8").toString("base64");
     await writeFile(requestPath, JSON.stringify(request));
-    await assert.rejects(regenerate(true));
+    await assert.rejects(regenerate(`--replace-existing=${first.requestId}`));
     assert.deepEqual(await readFile(join(sdk, "extension.mjs")), previous);
     assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
 });

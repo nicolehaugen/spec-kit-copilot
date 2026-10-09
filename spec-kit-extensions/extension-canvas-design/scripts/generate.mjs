@@ -1421,8 +1421,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
     const priorRequestId = typeof replaceExisting === "string"
         ? /^--replace-existing=([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/.exec(replaceExisting)?.[1]
         : null;
-    if (priorRequestId) replaceExisting = true;
-    if (replaceExisting !== true && replaceExisting !== false) throw new Error("Invalid replaceExisting confirmation");
+    if (replaceExisting !== false && !priorRequestId) throw new Error("Invalid replaceExisting confirmation");
     if (!requestPattern.test(handoffId) || !requestPattern.test(requestId)) throw new Error("Invalid generation identifiers");
     const projectRoot = await realpath(project), workspaceRoot = await realpath(workspace);
     const generation = join(workspaceRoot, "speckit-canvas-designer", "handoffs", handoffId, "generations", requestId);
@@ -1587,11 +1586,11 @@ export async function materialize(project, workspace, handoffId, requestId, repl
     } catch (error) {
         if (error.code !== "ENOENT") throw error;
     }
-    if (original && !replaceExisting) throw new Error(`Canvas extension already exists: ${output}`);
+    if (original && !priorRequestId) throw new Error(`Canvas extension already exists: ${output}`);
     if (original) {
         const previous = await existingGeneratedCanvas(output, projectRoot, workspaceRoot,
             handoff, config.canvas.id, files);
-        if (priorRequestId && priorRequestId !== previous.requestId) {
+        if (priorRequestId !== previous.requestId) {
             throw new Error("Canvas changed since replacement was confirmed");
         }
     }
@@ -1665,7 +1664,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         }
         const previous = await existingGeneratedCanvas(output, projectRoot, workspaceRoot,
             handoff, config.canvas.id, files);
-        if (priorRequestId && priorRequestId !== previous.requestId) {
+        if (priorRequestId !== previous.requestId) {
             throw new Error("Canvas changed since replacement was confirmed");
         }
         const backupDir = await mkdtemp(join(parent, `.${config.canvas.id}-backup-`));
