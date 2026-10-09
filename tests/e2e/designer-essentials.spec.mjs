@@ -433,5 +433,6 @@ test("incompatible Open responses leave Designer usable and do not claim accepta
     await expect(page.locator("#open-status")).toContainText("Opening requested. Check the child-session chat.");
     await expect(page.locator("#generate-canvas")).toBeDisabled();
     await expect(page.locator("#open-generated-canvas")).toBeDisabled();
+    await expect.poll(() => requests.opened.length).toBe(1);
     expect(requests.opened).toEqual([{ canvasId: "ready-canvas" }]);
 });

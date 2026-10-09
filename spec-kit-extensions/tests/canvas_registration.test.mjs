@@ -119,6 +119,16 @@ test("generated registration fails closed on malformed tool input and invalid ex
     assert.notEqual(invoke("unrecognized", { list, inspect: inspect() }).status, 0);
     assert.throws(() => validateGeneratedProvider(list, inspect(), checkout, "../other", requestId),
         /invalid checkout, canvas ID or request ID/);
+    for (const invalid of ["con", "lpt1", "speckit-wizard", "a".repeat(101)]) {
+        assert.throws(() => validateGeneratedProvider(list, inspect(), checkout, invalid, requestId),
+            /invalid checkout, canvas ID or request ID/);
+    }
+    const maxId = "a".repeat(100);
+    assert.equal(validateGeneratedCanvas({ canvasId: maxId, extensionId: `project:${maxId}` },
+        checkout, maxId, requestId).canvasId, maxId);
+    assert.notEqual(spawnSync(process.execPath, [script, "canvas", checkout, "con", requestId], {
+        encoding: "utf8", input: JSON.stringify({ capabilities }),
+    }).status, 0);
     assert.throws(() => validateGeneratedProvider(list, inspect(), checkout, canvasId, "../other"),
         /invalid checkout, canvas ID or request ID/);
     assert.throws(() => validateGeneratedProvider(list, inspect(), checkout, canvasId, "a".repeat(129)),

@@ -1,5 +1,8 @@
 import { isAbsolute, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
+
+const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
 
 function fail(message) {
     throw new Error(`Generated canvas registration: ${message}`);
@@ -11,7 +14,9 @@ function field(text, label) {
 
 function expected(checkout, canvasId, requestId) {
     if (typeof checkout !== "string" || !isAbsolute(checkout)
-        || !/^[a-z0-9][a-z0-9-]*$/.test(canvasId)
+        || typeof canvasId !== "string"
+        || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(canvasId)
+        || reserved.has(canvasId) || isWindowsDeviceName(canvasId)
         || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(requestId)) {
         fail("invalid checkout, canvas ID or request ID.");
     }

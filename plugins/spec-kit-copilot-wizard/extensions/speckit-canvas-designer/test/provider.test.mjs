@@ -1192,6 +1192,7 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
             { page: "designer-outputs", fields: [], fixedControl: "designer.outputs" },
         ] },
         root, pageViews, currentPage: null,
+        generate: { hidden: false }, openGenerated: { hidden: false },
         tabs: { children: [{ dataset: { page: "designer-badges" }, setAttribute() {} },
             { dataset: { page: "designer-outputs" }, setAttribute() {} }] },
         mountBadges: () => {

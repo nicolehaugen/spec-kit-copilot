@@ -260,7 +260,8 @@ test("a failed badge adapter import leaves other Designer pages available", asyn
         await page.getByRole("button", { name: "Work complete" }).click();
         await expect(page.locator(".badge-editor")).toContainText("Could not load badge input control");
         await page.getByRole("tab", { name: "Essentials" }).click();
-        await expect(page.getByRole("tab", { name: "Outputs" })).toBeVisible();
+        await expect(page.getByRole("tab", { name: "Generate" })).toBeVisible();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveCount(0);
     } finally {
         await shell.close();
     }

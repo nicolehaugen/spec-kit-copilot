@@ -211,7 +211,7 @@ enabled fields, then freezes and dispatches a file-creation-only request to the
 child-session agent. A brief **Submitting...** lock ends when the request is
 acknowledged, before the child agent begins; later dispatch failures are
 reported in the session log, not the already-sent HTTP response.
-the Designer stays editable while creation continues. An authenticated output
+The Designer stays editable while creation continues. An authenticated output
 status check verifies the matching config, provenance, and final entry point
 before reporting **Canvas files created.** A second click during submission is
 blocked, but Generate can dispatch again while awaiting the child-session agent
