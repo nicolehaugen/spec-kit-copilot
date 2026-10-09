@@ -171,6 +171,63 @@ test("host isolates adapter data and rejects missing or partial control updates"
     } finally { cleanup(); }
 });
 
+test("host rejects non-JSON-safe and invalid rule inputs before updating the badge draft", () => {
+    let update;
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [
+            { id: "phase", type: "phase" }, { id: "text", type: "text" },
+            { id: "artifact", type: "artifact" },
+            { id: "artifacts", type: "artifact-set" },
+            { id: "ordered", type: "ordered-artifacts", before: "artifact" },
+        ] }],
+        controlMount({ onChange }) {
+            update = onChange;
+            return { isReady: () => true };
+        },
+    });
+    try {
+        const editor = choose(root);
+        const valid = { phase: "plan", text: "Ready",
+            artifact: { phase: "plan", output: "plan.md" },
+            artifacts: [{ phase: "specify", outputs: ["spec.md"] }],
+            ordered: [{ phase: "specify", output: "other.md" }] };
+        const invalid = [
+            { ...valid, phase: 42 },
+            { ...valid, phase: "unknown" },
+            { ...valid, text: 42 },
+            { ...valid, artifact: { phase: "plan", output: "unknown.md" } },
+            { ...valid, artifacts: [{ phase: "specify", outputs: ["unknown.md"] }] },
+            { ...valid, ordered: [{ phase: "unknown", output: "other.md" }] },
+            { ...valid, artifact: { phase: "plan", output: undefined } },
+            { ...valid, text: Infinity },
+            { ...valid, artifacts: [new Date()] },
+        ];
+        const cyclic = structuredClone(valid);
+        cyclic.artifacts[0].self = cyclic;
+        invalid.push(cyclic);
+        const sparse = structuredClone(valid);
+        sparse.ordered = new Array(1);
+        invalid.push(sparse);
+        const hidden = structuredClone(valid);
+        Object.defineProperty(hidden.artifact, "extra", { value: "not serialized" });
+        invalid.push(hidden);
+        for (const inputs of invalid) {
+            update(inputs);
+            assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+                /do not match its rule or available evidence/);
+            submit(editor);
+            assert.equal(draftBadges.length, 0);
+        }
+        update(valid);
+        update({ ...valid, phase: "unknown" });
+        submit(editor);
+        assert.deepEqual(draftBadges[0].inputs, valid);
+        assert.doesNotThrow(() => JSON.stringify(draftBadges));
+    } finally { cleanup(); }
+});
+
 test("disposed badge controls cannot update a redrawn editor or another badge", () => {
     const callbacks = [];
     const { root, view, draftBadges, cleanup } = setup({

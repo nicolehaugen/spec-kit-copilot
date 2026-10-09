@@ -48,8 +48,8 @@ export function validateSavedSettings(record, handoff, model) {
                                             || Object.keys(badge.inputs).sort().join()
                                                 !== (rule.inputs ?? []).map((input) => input.id).sort().join()
                                             ? `changed inputs for rule ${rule.id}` : null;
-                    return problem ? `${badge.id} (${problem})` : badge.id;
-                }) : [];
+                    return problem ? `${badge.id} (${problem})` : null;
+                }).filter(Boolean) : [];
         throw new Error("Saved Designer settings do not match the current handoff or pages"
             + (affected.length ? `; saved badges: ${affected.join(", ")}` : "")
             + ". Restore the previous preset composition or recreate incompatible settings explicitly.");
