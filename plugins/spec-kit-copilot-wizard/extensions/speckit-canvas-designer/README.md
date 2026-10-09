@@ -48,8 +48,8 @@ If the installed Canvas Design page schema itself is missing or unusable,
 Designer does not open and reports the schema path with repair guidance;
 individual page errors still appear as tabs once the schema loads.
 
-Essentials requires Canvas ID and Title from the resolved core page. Description
-and Workflow header are ordered Essentials contributions.
+Essentials requires Canvas ID and Title from the resolved core page. Description,
+Workflow header, and Allow custom artifact directory slug are ordered Essentials contributions.
 Header logo, Main page logo, and light/dark accent, page background, surface,
 secondary surface, and text colors are ordered Appearance contributions
 registered by the composed load-page command. The two required identity fields
@@ -63,8 +63,9 @@ shared text validator rejects blank or whitespace-only values at Generate,
 while Save can keep an incomplete draft.
 Canvas ID and Title remain unconditionally required, and other text fields
 remain optional unless configured otherwise. The current generated canvas
-requires an artifact folder name (slug) for each new workflow; it is entered
-in the generated app, not configured by a Designer toggle. The optional Show
+allows an optional artifact directory slug for each new workflow when
+Essentials' default-off Allow custom artifact directory slug option is enabled. Otherwise Spec Kit
+chooses the directory. The optional Show
 setup checkbox follows the stock control pattern without delegating project
 setup to adapter code. The Appearance's optional image controls upload, preview, replace,
 and remove independent PNG,
@@ -109,8 +110,8 @@ while packaged images are display-only.
 
 Workflow name appears in the generated canvas's workflow collection, before
 phase navigation, while creating a workflow. It labels the workflow there.
-The generated workflow also collects a required Artifact folder name (slug)
-for the artifact directory. The slug previews the View target; the created
+When Allow custom artifact directory slug is on, the generated workflow accepts an optional
+Artifact directory slug. If entered, it previews the View target; the created
 directory, which may include a numeric prefix, remains authoritative.
 The **Outputs** tab (resolved template ID `designer-artifacts`) lets users select
 one phase at a time, except Constitution. Wizard-inferred pipeline artifacts are

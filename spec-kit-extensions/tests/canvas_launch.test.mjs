@@ -40,6 +40,7 @@ test("generated skill declarations include appended pages and templates anywhere
     assert.deepEqual(declarations("## Pages\n\nNo pages selected.\n"), []);
     assert.ok(names.includes("designer-essentials"));
     assert.ok(names.includes("designer-essentials-description"));
+    assert.ok(names.includes("designer-essentials-custom-slug"));
     assert.ok(names.includes("generated-phase-control"));
     assert.ok(names.includes("generated-phase-adapter"));
     assert.ok(names.includes("sample-renderer"));
@@ -99,6 +100,7 @@ test("composed verification resolves every name, rejects warnings and native scr
         "designer-appearance": join(installed, "designer-host", "tabs", "appearance.json"),
         "designer-essentials-description": join(installed, "designer-host", "essentials-settings", "description.json"),
         "designer-essentials-workflow-heading": join(installed, "designer-host", "essentials-settings", "workflow-heading.json"),
+        "designer-essentials-custom-slug": join(installed, "designer-host", "essentials-settings", "custom-slug.json"),
         "designer-essentials-show-setup": join(installed, "designer-host", "essentials-settings", "show-setup.json"),
         "designer-essentials-header-logo": join(installed, "designer-host", "essentials-settings", "header-logo.json"),
         "designer-essentials-main-page-logo": join(installed, "designer-host", "essentials-settings", "main-page-logo.json"),

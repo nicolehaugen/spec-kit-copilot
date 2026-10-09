@@ -7,6 +7,7 @@ import { createSetup, validateRuntimeSetup } from "../extension-canvas-design/ge
 import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
 import { createWorkflowRoutes } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { createServer } from "node:http";
+import { validatePhaseState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
 
 const phase = { skill: "speckit-specify" };
 const preset = { id: "real-preset", version: "1.0.0", enabled: true, priority: 12,
@@ -354,7 +355,8 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     setupBusy: false, activeSetupPlan: null, buttons: [], workflowPage: null, phaseControl: { update: (state) => {
         phasePending = state.setupPending;
     } }, pendingLabel: () => null, phaseState: () => ({
-        setupPending: Boolean(context.model.showSetup && !context.model.setup?.ready) }),
+        slugEditable: false, setupPending: Boolean(context.model.showSetup && !context.model.setup?.ready) }),
+    validatePhaseState,
     constitution: () => null, hasSelectedWorkflow: () => false, renderName() {}, renderSlug() {},
     $: (id) => nodes.get(id), Map, Object, Boolean };
     runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);

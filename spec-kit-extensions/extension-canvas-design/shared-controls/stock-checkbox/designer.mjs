@@ -35,11 +35,16 @@ export function mount({ root, field, value, onChange }) {
     label.htmlFor = input.id;
     input.name = field.id;
     input.checked = value;
+    let hint;
     if (field.description) {
         label.title = field.description;
-        input.setAttribute("aria-description", field.description);
+        hint = document.createElement("p");
+        hint.className = "settings-hint";
+        hint.id = `${input.id}-hint`;
+        hint.textContent = field.description;
+        input.setAttribute("aria-describedby", hint.id);
     }
     input.addEventListener("input", () => onChange(input.checked));
-    root.replaceChildren(input, label);
+    root.replaceChildren(input, label, ...(hint ? [hint] : []));
     return { isReady: () => true };
 }

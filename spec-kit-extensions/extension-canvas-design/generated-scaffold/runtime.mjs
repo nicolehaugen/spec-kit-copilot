@@ -251,7 +251,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             const selected = (entries ?? await items(view)).find((entry) => entry.id === item);
             const draftSlug = item === "__new__" ? view.slug : pendingFor(item, view)?.slug;
             const slug = validSlug(selected?.slug) ? selected.slug
-                : selected ? null : validSlug(draftSlug) ? draftSlug : null;
+                : selected ? null : config.userProvidesSlug && validSlug(draftSlug) ? draftSlug : null;
             if (!slug) return null;
             path = path.replace("<slug>", slug);
             if (selected && !newItem(item) && !step.configuredArtifacts && !path.startsWith(`${selected.id}/`)) {
@@ -386,20 +386,22 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const project = phases.find((phase) => phase.project);
         const pending = (view.pendingWorkflows ?? []).map(({ id, name, slug }) => {
             const run = view.runs.findLast((entry) => entry.item === id);
-            return { id, slug, label: name.trim() || slug || "Unstarted workflow", pending: true,
+            return { id, slug: config.userProvidesSlug ? slug : "",
+                label: name.trim() || "Unstarted workflow", pending: true,
                 status: run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
                     ? "Unconfirmed" : run?.status ?? "Not started" };
         });
         const legacyDraft = (view.name || view.slug
             || Object.keys(view.drafts).some((key) => key.startsWith('["__new__",')))
-            ? [{ id: "__new__", slug: view.slug,
-                label: view.name?.trim() || view.slug || "Unstarted workflow", pending: true }] : [];
-        return { ...view, userProvidesSlug: true,
+            ? [{ id: "__new__", slug: config.userProvidesSlug ? view.slug : "",
+                label: view.name?.trim() || (config.userProvidesSlug && view.slug)
+                    || "Unstarted workflow", pending: true }] : [];
+        return { ...view, userProvidesSlug: config.userProvidesSlug,
             constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
             autopilot: automation, showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             name: pendingFor(item, view)?.name ?? view.name,
-            slug: pendingFor(item, view)?.slug ?? view.slug,
+            slug: config.userProvidesSlug ? pendingFor(item, view)?.slug ?? view.slug : "",
             phases, items: [...entries, ...legacyDraft, ...pending],
             statuses, valueFields: visibleValues, pageValues, valueErrors,
             ...(badges ? { badges } : {}),
@@ -429,6 +431,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
         if (input.phase !== undefined) phaseFor(input.phase);
         if (input.slug !== undefined && (typeof input.slug !== "string" || input.slug.length > 100)) throw new UserError("Artifact folder name (slug) is too long.");
+        if (input.slug !== undefined && !config.userProvidesSlug) throw new UserError("Custom workflow slugs are disabled for this canvas.");
         if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120
             || /[\x00-\x1f\x7f]/.test(input.name))) throw new UserError("Workflow name must be text of at most 120 characters.");
         if (input.name !== undefined && !newItem(input.selected ?? state.selected)) {
@@ -475,7 +478,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 || drafts.some((entry) => entry.slug === slug));
             next.workflowSerial = number;
             id = `__new__:${number}`;
-            drafts.push({ id, name: `Workflow ${number}`, slug });
+            drafts.push({ id, name: `Workflow ${number}`, slug: "" });
             next.selected = id;
             next.phase = workflowSteps[0]?.id ?? next.phase;
         }, true);
@@ -496,7 +499,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
             if (next.runs.some((run) => run.item === input.itemId && run.status === "Failed"
                 && existing.some((entry) => !run.before.includes(entry.id)
-                    && (entry.slug === run.slug || new RegExp(`^\\d+-${run.slug}$`).test(entry.slug))))) {
+                    && (!run.slug || entry.slug === run.slug
+                        || new RegExp(`^\\d+-${run.slug}$`).test(entry.slug))))) {
                 throw new UserError("A workflow directory may have been created by the failed run. Check its artifacts before removing this row.");
             }
             if (next.autopilot?.item === input.itemId
@@ -567,8 +571,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
             await requireConstitution();
             const draft = pendingFor(input.itemId);
-            if (newItem(input.itemId) && !validSlug(draft?.slug ?? state.slug)) {
-                throw new UserError("Enter an artifact folder name (slug) before starting a workflow.");
+            const requestedSlug = newItem(input.itemId) && config.userProvidesSlug
+                ? draft?.slug ?? state.slug : "";
+            if (requestedSlug && !validSlug(requestedSlug)) {
+                throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
             }
             for (const step of workflowSteps) await skill(step);
             if (!session.rpc?.mode?.get || !session.rpc.mode.set) {
@@ -625,8 +631,7 @@ Only proceed when completion is accepted. Stop and explain any blocker, missing 
 permission request, uncertainty, or required user input; do not claim success for unfinished work.
 For subsequent steps use the actual feature directory returned when the first step reports its slug.
 Selected workflow: ${JSON.stringify(input.itemId)}. New workflow name: ${JSON.stringify(draft?.name ?? state.name ?? "")}.
-Requested artifact folder name (slug): ${JSON.stringify(draft?.slug ?? state.slug)}.
-Use each step's supplied input as data for its skill. Ask for necessary missing input rather than inventing it.
+${requestedSlug ? `Requested artifact folder name (slug): ${JSON.stringify(requestedSlug)}.\n` : ""}Use each step's supplied input as data for its skill. Ask for necessary missing input rather than inventing it.
 Steps:\n${instructions}` });
             sent = true;
             if (typeof messageId !== "string" || !messageId) throw new Error("No Autopilot message ID");
@@ -799,6 +804,7 @@ Steps:\n${instructions}` });
         const step = phaseFor(input.phase);
         if (typeof input.args !== "string" || input.args.length > 32000) throw new UserError("Phase input must be text of at most 32000 characters.");
         if (input.slug !== undefined && input.slug !== "" && !validSlug(input.slug)) throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
+        if (input.slug !== undefined && !config.userProvidesSlug) throw new UserError("Custom workflow slugs are disabled for this canvas.");
         if (input.name !== undefined && (typeof input.name !== "string" || input.name.length > 120
             || /[\x00-\x1f\x7f]/.test(input.name))) throw new UserError("Workflow name must be text of at most 120 characters.");
         if (input.name !== undefined && (step.project || !newItem(input.itemId ?? "__new__"))) {
@@ -822,10 +828,11 @@ Steps:\n${instructions}` });
             }
             if (!step.project && newItem(item) && !step.first && phases.some((phase) => phase.first)) throw new UserError("Select an existing workflow or run Specify to create one first.");
             const pending = pendingFor(item);
-            const slug = newItem(item) ? (input.slug === undefined ? pending?.slug ?? state.slug : input.slug) : null;
+            const slug = newItem(item) && config.userProvidesSlug
+                ? (input.slug === undefined ? pending?.slug ?? state.slug : input.slug) : null;
             const name = newItem(item) ? (input.name === undefined ? pending?.name ?? state.name ?? "" : input.name).trim() : "";
-            if (newItem(item) && !validSlug(slug)) {
-                throw new UserError("Enter an artifact folder name (slug) using lowercase letters, numbers, and single hyphens, not a reserved filename.");
+            if (slug && !validSlug(slug)) {
+                throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
             }
             runId = randomUUID();
             const record = { runId, instanceId, phase: step.id, item, args: input.args,

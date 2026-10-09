@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import * as stock from "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs";
 import * as vertical from "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs";
+import { validatePhaseState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
 import { phaseControlDom } from "./phase_control_dom_fixture.mjs";
 
 const phases = [
@@ -11,13 +12,44 @@ const phases = [
 ];
 const state = {
     phases, current: 0, workflow: "demo", status: null, draft: "initial",
-    output: phases[0].output, outputLinks: [], sending: false, runLabel: null,
+    output: phases[0].output, outputLinks: [], slugEditable: false, sending: false, runLabel: null,
     badgeSlots: [{ id: "phase.card" }, { id: "phase.output" }],
 };
 const definition = { id: "workflow-phases", viewLabels: { plan: "Inspect Plan" } };
 
+test("phase state requires boolean slugEditable for optional path previews", () => {
+    assert.equal(validatePhaseState({ ...state, slugEditable: true }).slugEditable, true);
+    assert.equal(validatePhaseState(state).slugEditable, false);
+    for (const invalid of [undefined, null, "false", 0]) {
+        assert.throws(() => validatePhaseState({ ...state, slugEditable: invalid }),
+            /slugEditable must be a boolean/);
+    }
+});
+
 for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
     if (name === "stock") {
+        test("stock leaves unresolved paths hidden when slugs are disabled and previews when enabled", (t) => {
+            const dom = phaseControlDom();
+            const previousDocument = globalThis.document;
+            globalThis.document = dom.document;
+            t.after(() => { globalThis.document = previousDocument; });
+            const actions = Object.fromEntries(["select", "draft", "run", "view",
+                "reveal", "error"].map((action) => [action, () => {}]));
+            const pending = { ...state, workflow: "__new__", output: "specs/<slug>/spec.md" };
+            const control = adapter.mount({ root: dom.root, definition, actions,
+                state: validatePhaseState(pending) });
+            assert.equal(dom.root.querySelector("#browse-output-folder").hidden, true);
+            assert.equal(dom.root.querySelector("#phase-output-prompt").textContent,
+                "Run the phase to resolve the output path.");
+            control.update(validatePhaseState({ ...pending, slugEditable: true }));
+            assert.equal(dom.root.querySelector("#phase-output-prompt").textContent,
+                "Choose an artifact folder name to preview the output path.");
+            control.update(validatePhaseState({
+                ...pending, slugEditable: true, output: "specs/demo/spec.md",
+            }));
+            assert.equal(dom.root.querySelector("#browse-output-folder").hidden, false);
+            control.dispose();
+        });
         test("stock shows a supplied phase description instead of its command ID", (t) => {
             const dom = phaseControlDom();
             const previousDocument = globalThis.document;
