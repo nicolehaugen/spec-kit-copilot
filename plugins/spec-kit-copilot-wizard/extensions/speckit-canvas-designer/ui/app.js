@@ -71,8 +71,8 @@ function updateGenerate() {
     generationNote.textContent = queuedCanvasId
         ? reason === "Canvas already exists; choose and save a different Canvas ID."
             && model?.values?.["canvas.id"] === queuedCanvasId
-            ? "Canvas files validated. The agent is registering and opening the app. Editing is locked in this Designer panel; close it and reopen Designer to make more changes."
-            : "Generation queued. The agent will register and open the app automatically. Editing is locked in this Designer panel; close it and reopen Designer after the app opens. If generation fails, inspect the output before reopening."
+            ? "Canvas files validated. The agent is registering and opening the app. This Designer panel is locked. After the app opens, restart Designer (close this panel and open Designer again) to make more changes."
+            : "Generation queued. The agent will register and open the app automatically. This Designer panel is locked. After the app opens, restart Designer (close this panel and open Designer again) to make more changes. If generation fails, inspect the output before restarting Designer."
         : generating ? "Saving settings and preparing generation. Editing is temporarily locked."
             : expectedState ? reason : "";
     generationNote.hidden = !generationNote.textContent;
@@ -490,7 +490,7 @@ async function checkConnection() {
         connectionStatus("lost");
         if (generating || queuedCanvasId) {
             const note = document.getElementById("generation-note");
-            note.textContent = "Designer connection ended during generation. The agent may be opening the generated app. Close this panel and reopen Designer to edit; if generation failed, inspect the agent's report.";
+            note.textContent = "Designer connection ended during generation. The agent may be opening the generated app. After it opens, restart Designer (close this panel and open Designer again) to edit; if generation failed, inspect the agent's report first.";
             note.hidden = false;
             return;
         }

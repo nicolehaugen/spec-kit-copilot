@@ -7,6 +7,7 @@ import { assertPageCommand, loadResolvedDesignerPages } from "./pages.mjs";
 import { previewModel } from "./preview.mjs";
 import { loadDesignerSettings } from "./settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from "./contracts/host-open.mjs";
+import { loadLastOpen, saveLastOpen } from "./open-state.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
 
 const servers = new Map();
@@ -70,11 +71,10 @@ const session = await joinSession({
             opening.set(ctx.instanceId, token);
             try {
                 const previous = servers.get(ctx.instanceId);
-                if (previous) {
-                    servers.delete(ctx.instanceId);
-                    await previous.close();
-                }
-                const { preview, handoffId, pages, templates } = validateDesignerOpenInput(ctx.input);
+                const requested = validateDesignerOpenInput(ctx.input);
+                const restored = !requested.preview && requested.handoffId === undefined
+                    ? await loadLastOpen(session.workspacePath) : null;
+                const { preview, handoffId, pages, templates } = restored ?? requested;
                 if (!preview) await ensureDependencies();
                 let handoff = null;
                 let model = preview ? previewModel() : null;
@@ -95,6 +95,22 @@ const session = await joinSession({
                 if (opening.get(ctx.instanceId) !== token) {
                     await next.close();
                     throw new CanvasError("designer_open_failed", "Designer panel closed while opening");
+                }
+                if (handoff && !restored) {
+                    try {
+                        await saveLastOpen(session.workspacePath, { handoffId, pages, templates });
+                    } catch (error) {
+                        await next.close();
+                        throw error;
+                    }
+                }
+                if (previous) {
+                    try {
+                        await previous.close();
+                    } catch (error) {
+                        await next.close();
+                        throw error;
+                    }
                 }
                 servers.set(ctx.instanceId, next);
                 return { title: "Spec Kit Canvas Designer", url: next.url };

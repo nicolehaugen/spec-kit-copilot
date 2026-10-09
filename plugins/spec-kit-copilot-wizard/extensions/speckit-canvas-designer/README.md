@@ -202,7 +202,8 @@ Once generation is queued, editing and Generate stay disabled in that Designer
 panel, even after the generated app's `extension.mjs` entry point appears
 following syntax and render validation. The agent reloads extensions and opens
 the generated app automatically; this disconnects the original Designer panel.
-Close it and reopen Designer to make further changes. The edit lock and queued
+Restart Designer (close the panel and open Designer again) to make further
+changes. The edit lock and queued
 state belong only to that panel, not to subsequent Designer instances. To
 generate another app, choose a different Canvas ID in the reopened Designer
 and Generate (which saves the new settings). An existing Canvas ID cannot be
@@ -227,9 +228,18 @@ current local source, before any generation request is prepared. Healthy pages r
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
 no Canvas ID or Title values, so Generate remains unavailable. Tab changes display the in-memory model without re-resolving
-pages; there is no page-reload control or persisted page snapshot. Reopening
-with the same handoff ID reads and validates the pages again. Opening `speckit-canvas-designer`
-without input (or with `{}`) still shows an empty shell.
+pages; there is no page-reload control or persisted page snapshot. After a
+successful handoff launch, the provider saves its complete resolved open
+inventory in the Designer session's `speckit-canvas-designer/last-open.json`.
+Restarting Designer in that same session with no input restores the most recent
+successful handoff and revalidates its pages, templates, and saved settings.
+An invalid saved inventory or missing handoff fails explicitly rather than
+opening a blank shell; an explicit launch can repair the saved inventory.
+Opening `speckit-canvas-designer` without input before any successful handoff
+launch still shows an empty shell. A different session cannot reuse this
+session's handoff or resolved inventory. Panels opened before this restore
+feature was installed have no `last-open.json`; launch once with the original
+complete resolved input to establish it.
 
 A supplied `handoffId` must match the bounded handoff ID pattern; the provider
 checks the handoff structure, fingerprint, size, and session-artifact boundary.

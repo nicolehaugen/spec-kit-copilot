@@ -263,6 +263,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     assert.equal(generationError.hidden, true);
     assert.equal(generationNote.hidden, false);
     assert.match(generationNote.textContent, /agent will register and open the app automatically/);
+    assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
     draft["canvas.id"] = "second-canvas";
     update();
     assert.equal(generate.disabled, true);
@@ -282,6 +283,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     update();
     assert.equal(generationNote.hidden, false);
     assert.match(generationNote.textContent, /Canvas files validated.*agent is registering and opening the app/);
+    assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
     assert.equal(generationError.hidden, true);
     model.generationError = "Canvas Design does not provide Generate in this session.";
     update();

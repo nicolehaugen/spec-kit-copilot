@@ -47,3 +47,39 @@ export function validateDesignerOpenInput(input) {
     }
     return { preview, handoffId, pages, templates };
 }
+
+export function validateLastOpen(record) {
+    const validKeys = (value, required) => value && typeof value === "object"
+        && !Array.isArray(value)
+        && Object.keys(value).length === required.length
+        && required.every((key) => Object.hasOwn(value, key));
+    const validString = (value, limit) => typeof value === "string"
+        && value.length > 0 && value.length <= limit;
+    const validEntry = (entry, schema) => {
+        const properties = schema.properties;
+        if (!validKeys(entry, Object.keys(properties))) return false;
+        return Object.entries(properties).every(([key, spec]) => {
+            const value = entry[key];
+            if (spec.const !== undefined) return value === spec.const;
+            if (spec.enum) return spec.enum.includes(value);
+            if (!validString(value, spec.maxLength ?? 4096)) return false;
+            return !spec.pattern || new RegExp(spec.pattern).test(value);
+        });
+    };
+    const input = record && typeof record === "object" && !Array.isArray(record)
+        ? { handoffId: record.handoffId, pages: record.pages, templates: record.templates }
+        : null;
+    if (!validKeys(record, ["schemaVersion", "handoffId", "pages", "templates"])
+        || record.schemaVersion !== 1
+        || !validString(record.handoffId, 128)
+        || !new RegExp(handoffIdSchema.pattern).test(record.handoffId)
+        || !Array.isArray(record.pages) || record.pages.length > 100
+        || !record.pages.every((entry) =>
+            validEntry(entry, designerOpenInputSchema.properties.pages.items))
+        || !Array.isArray(record.templates) || record.templates.length > 100
+        || !record.templates.every((entry) =>
+            validEntry(entry, designerOpenInputSchema.properties.templates.items))) {
+        throw new Error("Invalid saved Designer open inventory");
+    }
+    return input;
+}

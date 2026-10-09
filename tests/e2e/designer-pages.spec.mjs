@@ -842,6 +842,7 @@ test("Billing preset and built-in palette persist through Generate and render th
         await expect(page.locator("#conn-status")).toHaveText("Live");
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#generation-note")).toContainText("open the app automatically");
+        await expect(page.locator("#generation-note")).toContainText("restart Designer");
         await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(1);
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#conn-status")).not.toHaveText("Disconnected");

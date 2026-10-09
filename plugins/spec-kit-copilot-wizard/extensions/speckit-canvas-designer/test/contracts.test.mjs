@@ -4,7 +4,7 @@ import { serializeGenerationRequest, validateGenerateSubmission } from "../contr
 import { validateGenerationRequestIntegrity } from "../../../../../spec-kit-extensions/extension-canvas-design/scripts/contracts/generation-request.mjs";
 import { normalizeObservedVersions } from "../contracts/specify-inventory.mjs";
 import { validateSaveRequest, validateSavedSettings } from "../contracts/designer-settings.mjs";
-import { designerOpenInputSchema, validateDesignerOpenInput } from "../contracts/host-open.mjs";
+import { designerOpenInputSchema, validateDesignerOpenInput, validateLastOpen } from "../contracts/host-open.mjs";
 import { checkSchema } from "../contracts/design-contributions.mjs";
 import { validateDesignerAdapterExports } from "../contracts/control-adapter.mjs";
 
@@ -56,6 +56,25 @@ test("Designer handoff and generation contracts include badges without accepting
         /Invalid Designer generation request/);
     assert.throws(() => validateGenerateSubmission({ ...request, settingsRevision: -1 }, model),
         /Invalid Designer generation request/);
+});
+
+test("saved Designer open inventory accepts complete resolved inputs and rejects incompatible records", () => {
+    const record = { schemaVersion: 1, handoffId: "handoff-1",
+        pages: [{ name: "designer-essentials", path: "C:\\templates\\essentials.json",
+            kind: "designer.tab-definition", strategy: "replace" }],
+        templates: [{ name: "designer-setting", path: "C:\\templates\\setting.json",
+            sourceId: "extension:extension-canvas-design",
+            kind: "designer.setting-definition", strategy: "replace" }] };
+    assert.deepEqual(validateLastOpen(record), {
+        handoffId: record.handoffId, pages: record.pages, templates: record.templates,
+    });
+    for (const invalid of [
+        { ...record, schemaVersion: 2 }, { ...record, extra: true },
+        { ...record, handoffId: "../other" }, { ...record, pages: "not pages" },
+        { ...record, pages: [{ ...record.pages[0], strategy: "merge" }] },
+        { ...record, templates: [{ ...record.templates[0], sourceId: "" }] },
+        { ...record, templates: [{ ...record.templates[0], extra: true }] },
+    ]) assert.throws(() => validateLastOpen(invalid), /Invalid saved Designer open inventory/);
 });
 
 test("observed Specify versions reject duplicate relevant IDs and retain priority", () => {

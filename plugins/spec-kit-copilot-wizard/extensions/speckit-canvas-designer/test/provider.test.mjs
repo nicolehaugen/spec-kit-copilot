@@ -4306,7 +4306,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
+    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "open-state.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
         "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
@@ -4449,7 +4449,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             (error) => error.code === "designer_open_failed"
                 && error.message.includes(schema)
                 && /Repair or reinstall extension-canvas-design/.test(error.message));
-        await assert.rejects(fetch(empty.url));
+        assert.match(await (await fetch(empty.url)).text(), /No Wizard handoff is attached yet/);
         await writeFile(schema, installedSchema);
         await assert.rejects(canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [{ ...entries[0], path: join(project, ".specify", "missing.json") },
@@ -4465,6 +4465,43 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         const initial = await (await fetch(stateUrl)).json();
         assert.equal(initial.pages.length, 4);
         assert.equal((await fetch(new URL("/api/reload", filled.url), { method: "POST" })).status, 404);
+        await canvas.onClose({ instanceId: "same" });
+        const resumed = await canvas.open({ instanceId: "resumed", input: {} });
+        const resumedStateUrl = new URL(resumed.url);
+        resumedStateUrl.pathname = "/api/state";
+        const resumedState = await (await fetch(resumedStateUrl)).json();
+        assert.equal(resumedState.handoffId, ID);
+        assert.equal(resumedState.pages.length, initial.pages.length);
+        assert.equal(resumedState.revision, initial.revision);
+        await canvas.onClose({ instanceId: "resumed" });
+        await import(`${pathToFileURL(join(extension, "extension.mjs")).href}?restart=1`);
+        const restartedCanvas = globalThis.__designerTestCanvas;
+        delete globalThis.__designerTestCanvas;
+        delete globalThis.__designerTestTools;
+        const afterRestart = await restartedCanvas.open({ instanceId: "after-restart", input: {} });
+        const afterRestartState = new URL(afterRestart.url);
+        afterRestartState.pathname = "/api/state";
+        assert.equal((await (await fetch(afterRestartState)).json()).handoffId, ID);
+        await restartedCanvas.onClose({ instanceId: "after-restart" });
+        const lastOpen = join(workspace, "speckit-canvas-designer", "last-open.json");
+        const originalOpen = await readFile(lastOpen);
+        await writeFile(lastOpen, "{broken");
+        await assert.rejects(canvas.open({ instanceId: "resumed", input: {} }),
+            /Invalid saved Designer open inventory JSON/);
+        await writeFile(lastOpen, JSON.stringify({ ...JSON.parse(originalOpen),
+            templates: [{ name: "wrong", path: "bad", sourceId: "x",
+                kind: "unknown", strategy: "replace" }] }));
+        await assert.rejects(canvas.open({ instanceId: "resumed", input: {} }),
+            /Invalid saved Designer open inventory/);
+        await writeFile(lastOpen, originalOpen);
+        const handoffPath = join(handoffDirectory(workspace, ID), "handoff.json");
+        const originalHandoff = await readFile(handoffPath);
+        await rm(handoffPath);
+        await assert.rejects(canvas.open({ instanceId: "resumed", input: {} }),
+            (error) => error.code === "designer_handoff_invalid");
+        await writeFile(handoffPath, originalHandoff);
+        await canvas.open({ instanceId: "resumed", input: {} });
+        await canvas.onClose({ instanceId: "resumed" });
         const templatePath = join(project, ".specify", "billing.json");
         await writeFile(templatePath, JSON.stringify({
             schemaVersion: 1, id: "billing-code", host: "designer",
