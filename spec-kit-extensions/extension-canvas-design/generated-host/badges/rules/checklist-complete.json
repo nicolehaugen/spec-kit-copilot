@@ -3,7 +3,6 @@
   "id": "checklist-complete",
   "label": "Markdown checklist complete",
   "description": "All checkbox items are checked and the checklist output is not older than a required earlier output.",
-  "placementPhaseInput": "artifact",
   "inputs": [
     {
       "id": "artifact",

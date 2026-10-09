@@ -12,6 +12,8 @@ import { phaseContract } from "../extension-canvas-design/generated-scaffold/con
 import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { validateBadges as validateDesignerBadges } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/badges.mjs";
+import { validateBadges as validateGeneratedBadges } from "../extension-canvas-design/generated-scaffold/badge-runtime.mjs";
 import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
@@ -563,11 +565,24 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
         inputs: { artifact: { phase: "plan", output: "specs/<slug>/plan.md" },
             prerequisite: { phase: "specify", output: "specs/<slug>/spec.md" } },
         text: "Checklist complete", color: "green", showIn: ["workflow-summary"], phase: null };
+    const outputTarget = { ...instance, id: "checklist-output",
+        targets: [{ phase: "plan", output: "specs/<slug>/plan.md" }] };
+    const multipleTargets = { ...instance, id: "checklist-multiple",
+        targets: [{ phase: "specify", output: null },
+            { phase: "specify", output: "specs/<slug>/spec.md" }] };
+    assert.deepEqual(validateDesignerBadges([outputTarget, multipleTargets],
+        { ...selected, phases: ["specify", "plan"], outputs }), [outputTarget, multipleTargets]);
     const frozen = await freezeGeneration({ project, workspace, model: selected, values,
-        handoff, outputs, badges: [instance] });
+        handoff, outputs, badges: [instance, outputTarget, multipleTargets] });
     await materialize(project, workspace, handoff.handoffId, frozen.requestId);
     const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.badges.instances[0].inputs, instance.inputs);
+    assert.deepEqual(config.badges.instances.slice(1).map(({ targets }) => targets),
+        [outputTarget.targets, multipleTargets.targets]);
+    validateGeneratedBadges(config.badges, [
+        { id: "specify", outputs: outputs.specify.outputs },
+        { id: "plan", outputs: outputs.plan.outputs },
+    ]);
     assert.deepEqual(config.badges.rules[0].inputs, definition.inputs);
     assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content-adapter.mjs")),
         await readFile(new URL("generated-host/badges/adapters/content.mjs", root)));
