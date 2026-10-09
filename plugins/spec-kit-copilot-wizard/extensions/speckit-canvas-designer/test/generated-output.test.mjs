@@ -172,7 +172,8 @@ test("generated output rejects a target replaced between provenance and entry lo
     await mkdir(target, { recursive: true });
     await writeFile(join(target, "canvas-config.json"), JSON.stringify({ canvas: { id: "team-dashboard" } }));
     await writeFile(join(target, "settings-provenance.json"),
-        JSON.stringify({ handoffId: "handoff-1", requestId: "request-1" }));
+        JSON.stringify({ handoffId: "handoff-1", requestId: "request-1",
+            sourceFingerprint: "a".repeat(64) }));
     await writeFile(join(target, "extension.mjs"), "export {};");
     const status = await generatedOutput(project, "team-dashboard", "handoff-1",
         async (...args) => {

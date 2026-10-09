@@ -160,14 +160,27 @@ test("replacement refuses symlinked canvas and symlinked contents", async (t) =>
 });
 
 test("renderer failure during staging rolls back without touching the prior app", async (t) => {
-    const { sdk, workspace, first, next, regenerate } = await fixture(t);
+    const { sdk, workspace, first, regenerate } = await fixture(t);
     const previous = await readFile(join(sdk, "extension.mjs"));
-    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
-        handoff.handoffId, "generations", next.requestId, "request.json");
-    const request = JSON.parse(await readFile(requestPath, "utf8"));
-    request.workflowPage.assets[2].content = Buffer.from("export {", "utf8").toString("base64");
-    await writeFile(requestPath, JSON.stringify(request));
-    await assert.rejects(regenerate(`--replace-existing=${first.requestId}`));
+    const preload = join(workspace, "fail-renderer.cjs");
+    await writeFile(preload, `if (process.execArgv.includes("-e")
+        && process.argv[1]?.endsWith("/server.mjs")) {
+        throw new Error("Renderer fixture failure");
+    }`);
+    const previousOptions = process.env.NODE_OPTIONS;
+    process.env.NODE_OPTIONS = [previousOptions,
+        `--require="${preload.replaceAll("\\", "\\\\")}"`]
+        .filter(Boolean).join(" ");
+    try {
+        await assert.rejects(regenerate(`--replace-existing=${first.requestId}`), (error) => {
+            assert.match(error.message, /Workflow renderer failed:/);
+            assert.match(error.message, /Renderer fixture failure/);
+            return true;
+        });
+    } finally {
+        if (previousOptions === undefined) delete process.env.NODE_OPTIONS;
+        else process.env.NODE_OPTIONS = previousOptions;
+    }
     assert.deepEqual(await readFile(join(sdk, "extension.mjs")), previous);
     assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
 });

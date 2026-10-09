@@ -218,6 +218,10 @@ status check verifies the matching config, provenance, and final entry point
 before reporting **Canvas files created.** A second click during submission is
 blocked, but Generate can dispatch again while awaiting the child-session agent
 if its first attempt stalls. Inspect the child-session chat before retrying.
+These local checkout and session-artifact checks reject unsafe links and
+metadata; they do not coordinate with another local process replacing ordinary
+directories while Designer is using them. Avoid concurrent edits to these
+folders during Generate or Open.
 Reopening starts with template defaults while retaining the saved revision.
 Generation requires both separate Generate and Open skills and a complete
 Wizard handoff; a hosted package with only the older combined Generate command
