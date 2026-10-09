@@ -26,6 +26,7 @@ const openGenerated = document.getElementById("open-generated-canvas");
 let generating = false;
 let requestedCanvasId = null;
 let requestedRequestId = null;
+let pendingReplacement = null;
 let opening = false;
 let requestedAt = 0;
 let openingRequested = false;
@@ -37,11 +38,11 @@ const generationGuidance = "Opening requested. Check the child-session chat. If 
 function updateOpenStatus() {
     const status = document.getElementById("open-status");
     if (status) status.textContent = opening || openingRequested ? generationGuidance
+        : pendingReplacement
+            ? "Regeneration requested. Wait for the new canvas files before opening. If regeneration fails, reopen Designer to use the existing canvas."
         : outputIdentity === draft?.["canvas.id"] && outputStatus === "ready"
-            && (requestedCanvasId !== draft?.["canvas.id"]
-                || !requestedRequestId || requestedRequestId === outputRequestId)
-                ? "Ready to open. Opening will disconnect Designer. If you want to keep using Designer in this session, reopen it after the canvas opens."
-                : "Generate the canvas first.";
+            ? "Ready to open. Opening will disconnect Designer. If you want to keep using Designer in this session, reopen it after the canvas opens."
+            : "Generate the canvas first.";
 }
 const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
@@ -91,23 +92,28 @@ function outputPath(id) {
 
 function updateOutputDisplay() {
     const id = draft?.["canvas.id"] ?? "";
+    const ready = outputIdentity === id && outputStatus === "ready";
     const target = document.getElementById("output-target");
     if (target) target.textContent = outputPath(id);
+    const projectCopy = document.getElementById("share-project-copy");
+    if (projectCopy) projectCopy.hidden = !ready || !!pendingReplacement;
     const team = document.getElementById("share-project-path");
-    if (team) team.textContent = outputPath(requestedCanvasId ?? id);
+    if (team) team.textContent = ready && !pendingReplacement ? outputPath(id) : "";
     const shareNote = document.getElementById("share-target-note");
     if (shareNote) {
-        shareNote.hidden = !requestedCanvasId || requestedCanvasId === id;
-        shareNote.textContent = shareNote.hidden ? ""
-            : "This is the last submitted Canvas ID, not the current draft. Generate the current ID before sharing it.";
+        shareNote.hidden = ready && !pendingReplacement;
+        shareNote.textContent = shareNote.hidden ? "" : pendingReplacement
+            ? "Wait for regeneration to finish before sharing this canvas."
+            : "Generate and verify the current Canvas ID before sharing it.";
     }
     const status = document.getElementById("generation-status");
-    if (status) status.textContent = requestedCanvasId === id
-        && requestedRequestId && requestedRequestId !== outputRequestId
+    if (status) status.textContent = pendingReplacement?.canvasId === id
+        ? "Regenerating canvas files. Check the child-session chat for progress or errors."
+        : ready ? "Canvas files created."
+        : requestedCanvasId === id && requestedRequestId
         ? Date.now() - requestedAt < 120000 ? "Creating canvas files."
             : "Canvas creation is taking longer than expected. Check the child-session chat for progress or errors."
-        : outputIdentity === id && outputStatus === "ready"
-        ? "Canvas files created." : outputIdentity === id && outputStatus === "foreign"
+        : outputIdentity === id && outputStatus === "foreign"
             ? "An unrelated canvas folder already exists at this location."
             : outputIdentity === id && outputStatus === "incomplete"
                 ? "Canvas files are incomplete. Inspect the target folder before trying again."
@@ -132,6 +138,8 @@ async function refreshOutputStatus(id = requestedCanvasId ?? draft?.["canvas.id"
     outputIdentity = id;
     outputStatus = validated.status;
     outputRequestId = validated.requestId ?? null;
+    if (pendingReplacement?.canvasId === id && validated.status === "ready"
+        && pendingReplacement.requestId === validated.requestId) pendingReplacement = null;
     updateOutputDisplay();
     updateGenerate();
     return validated;
@@ -155,7 +163,7 @@ function updateGenerate() {
         setMessage(generationNote, expectedState ? reason : "");
     setMessage(generationError, expectedState ? "" : reason);
     generate.textContent = generating ? "Submitting..." : outputIdentity === (draft?.["canvas.id"] ?? "")
-        && outputStatus === "ready" && (!requestedRequestId || requestedRequestId === outputRequestId)
+        && outputStatus === "ready"
         ? "Regenerate canvas" : "Generate canvas";
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
         || opening || openingRequested
@@ -164,9 +172,8 @@ function updateGenerate() {
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity || !!model?.generationBlockers?.length;
     openGenerated.disabled = model?.preview || !model?.handoffId || opening || openingRequested
-        || generating || outputIdentity !== draft?.["canvas.id"] || outputStatus !== "ready"
-        || requestedCanvasId === draft?.["canvas.id"]
-            && !!requestedRequestId && requestedRequestId !== outputRequestId;
+        || !!pendingReplacement
+        || generating || outputIdentity !== draft?.["canvas.id"] || outputStatus !== "ready";
     updateOpenStatus();
     updateOutputDisplay();
 }
@@ -239,6 +246,7 @@ generate.addEventListener("click", async () => {
         }
         requestedCanvasId = submittedId;
         requestedRequestId = result.requestId;
+        if (replaceExisting) pendingReplacement = { canvasId: submittedId, requestId: result.requestId };
         requestedAt = Date.now();
         updateOutputDisplay();
     } catch (error) {
@@ -450,12 +458,12 @@ function renderPage(pageId, invalidFieldId) {
             element("p", "Choose how you want to make this canvas available:"),
             element("h3", "Team project extension"));
         const projectCopy = element("p");
+        projectCopy.id = "share-project-copy";
         const sharePath = element("code");
         sharePath.id = "share-project-path";
         projectCopy.append("Once generated, commit ", sharePath, " to your repository.");
         const shareNote = element("p");
         shareNote.id = "share-target-note";
-        shareNote.hidden = true;
         share.append(projectCopy,
             shareNote,
             element("p", "Teammates will get the canvas when they use that repository."),

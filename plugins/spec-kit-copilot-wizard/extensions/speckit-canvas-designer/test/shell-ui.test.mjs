@@ -15,6 +15,7 @@ test("overlapping output polls return their own validated snapshot without repla
     let releaseFirst;
     const context = {
         outputCheck: 0, outputIdentity: "", outputStatus: "absent",
+        pendingReplacement: null,
         outputRequestId: null, draft: { "canvas.id": "first-canvas" },
         token: "test", encodeURIComponent, AbortSignal,
         validateCanvasId, validateOutputStatusResponse, validateOutputError,
@@ -41,26 +42,102 @@ test("overlapping output polls return their own validated snapshot without repla
     assert.equal(context.outputRequestId, "second-request");
 });
 
-test("Share identifies the last submitted folder when Canvas ID changes", () => {
+test("Share offers the current folder only after its output is verified", () => {
     const start = source.indexOf("function outputPath(id)");
     const end = source.indexOf("async function refreshOutputStatus(", start);
-    const elements = new Map(["output-target", "share-project-path", "share-target-note",
+    const elements = new Map(["output-target", "share-project-copy",
+        "share-project-path", "share-target-note",
         "generation-status"].map((id) => [id, { textContent: "" }]));
     const context = {
         document: { getElementById: (id) => elements.get(id) },
         draft: { "canvas.id": "new-id" }, requestedCanvasId: "old-id",
         requestedRequestId: null, outputRequestId: null, outputIdentity: "",
-        outputStatus: "absent",
+        outputStatus: "absent", pendingReplacement: null,
     };
     const update = runInNewContext(`${source.slice(start, end)}
 updateOutputDisplay`, context);
     update();
     assert.equal(elements.get("output-target").textContent, ".github/extensions/new-id/");
-    assert.equal(elements.get("share-project-path").textContent, ".github/extensions/old-id/");
-    assert.match(elements.get("share-target-note").textContent, /last submitted Canvas ID/);
-    context.draft["canvas.id"] = "old-id";
+    assert.equal(elements.get("share-project-copy").hidden, true);
+    assert.equal(elements.get("share-project-path").textContent, "");
+    assert.match(elements.get("share-target-note").textContent, /verify the current Canvas ID/);
+    context.outputIdentity = "new-id";
+    context.outputStatus = "ready";
     update();
+    assert.equal(elements.get("share-project-copy").hidden, false);
+    assert.equal(elements.get("share-project-path").textContent, ".github/extensions/new-id/");
     assert.equal(elements.get("share-target-note").textContent, "");
+    context.pendingReplacement = { canvasId: "new-id", requestId: "new-request" };
+    update();
+    assert.equal(elements.get("share-project-copy").hidden, true);
+    assert.equal(elements.get("share-project-path").textContent, "");
+    assert.match(elements.get("share-target-note").textContent, /Wait for regeneration/);
+});
+
+test("a successful earlier Generate retry stays openable, but replacement waits for its own output", async () => {
+    const start = source.indexOf("function outputPath(id)");
+    const end = source.indexOf("function confirmReplacement(", start);
+    const elements = new Map(["output-target", "share-project-copy",
+        "share-project-path", "share-target-note", "generation-status"]
+        .map((id) => [id, { textContent: "" }]));
+    const generate = { disabled: false };
+    const openGenerated = { disabled: true };
+    let publishedRequestId = "request-a";
+    const context = {
+        document: { getElementById: (id) => elements.get(id) },
+        draft: { "canvas.id": "first-canvas" }, draftOutputs: {},
+        model: { handoffId: "handoff-1", generationAvailable: true,
+            pages: [{ page: "designer-essentials", fields: [
+                { id: "canvas.id" }, { id: "canvas.displayName" },
+            ] }] },
+        requestedCanvasId: "first-canvas", requestedRequestId: "request-b",
+        pendingReplacement: null, requestedAt: Date.now(),
+        outputIdentity: "", outputStatus: "absent", outputRequestId: null, outputCheck: 0,
+        generate, openGenerated, generationNote: { textContent: "" },
+        generationError: { textContent: "" }, token: "test",
+        saving: false, generating: false, opening: false, openingRequested: false,
+        activeUploads: new Set(), connectionError: "", GENERATION_PENDING,
+        required: ["canvas.id", "canvas.displayName"], outputPathsReady: () => true,
+        updateOpenStatus: () => {}, setMessage: (slot, message) => { slot.textContent = message; },
+        validateCanvasId, validateOutputStatusResponse, validateOutputError,
+        fetch: async () => ({ ok: true, json: async () => ({
+            status: "ready", target: ".github/extensions/first-canvas/",
+            requestId: publishedRequestId,
+        }) }), AbortSignal, encodeURIComponent,
+    };
+    const { refreshOutputStatus, updateGenerate } = runInNewContext(
+        `${source.slice(start, end)}\n({ refreshOutputStatus, updateGenerate })`, context);
+    await refreshOutputStatus("first-canvas");
+    assert.equal(openGenerated.disabled, false);
+    assert.equal(generate.textContent, "Regenerate canvas");
+    assert.equal(elements.get("generation-status").textContent, "Canvas files created.");
+    assert.equal(elements.get("share-project-path").textContent, ".github/extensions/first-canvas/");
+
+    context.pendingReplacement = { canvasId: "first-canvas", requestId: "request-c" };
+    updateGenerate();
+    assert.equal(openGenerated.disabled, true);
+    assert.equal(elements.get("share-project-copy").hidden, true);
+    await refreshOutputStatus("first-canvas");
+    assert.equal(openGenerated.disabled, true);
+    assert.deepEqual({ ...context.pendingReplacement },
+        { canvasId: "first-canvas", requestId: "request-c" });
+
+    publishedRequestId = "request-c";
+    await refreshOutputStatus("first-canvas");
+    assert.equal(context.pendingReplacement, null);
+    assert.equal(openGenerated.disabled, false);
+    assert.equal(elements.get("share-project-copy").hidden, false);
+
+    context.pendingReplacement = { canvasId: "first-canvas", requestId: "failed-request" };
+    publishedRequestId = "request-c";
+    await refreshOutputStatus("first-canvas");
+    assert.equal(openGenerated.disabled, true);
+    const reopened = { ...context, pendingReplacement: null, outputCheck: 0,
+        outputIdentity: "", outputStatus: "absent", outputRequestId: null };
+    const recovered = runInNewContext(
+        `${source.slice(start, end)}\nrefreshOutputStatus`, reopened);
+    await recovered("first-canvas");
+    assert.equal(openGenerated.disabled, false);
 });
 
 test("Designer shows only one message bar across repeated errors and generation guidance", () => {
@@ -586,6 +663,7 @@ test("Generate stays reachable after files are created and shows Regenerate", ()
         model, draft, draftOutputs: {}, generate, openGenerated, generationNote, generationError,
         saving: false, generating: false, opening: false, openingRequested: false, connectionError: "",
         requestedCanvasId: "first-canvas", requestedRequestId: "request-1",
+        pendingReplacement: null,
         outputIdentity: "first-canvas", outputStatus: "ready", outputRequestId: "request-1",
         activeUploads: new Set(), GENERATION_PENDING,
         outputPathsReady: () => true, updateOutputDisplay: () => {}, updateOpenStatus: () => {},
@@ -610,7 +688,12 @@ test("Generate stays reachable after files are created and shows Regenerate", ()
     assert.equal(generationError.hidden, true);
     context.requestedRequestId = "new-request";
     update();
+    assert.equal(openGenerated.disabled, false);
+    assert.equal(generate.textContent, "Regenerate canvas");
+    context.pendingReplacement = { canvasId: "first-canvas", requestId: "new-request" };
+    update();
     assert.equal(openGenerated.disabled, true);
+    context.pendingReplacement = null;
     context.requestedCanvasId = "other-canvas";
     update();
     assert.equal(openGenerated.disabled, false);
@@ -654,7 +737,7 @@ test("a missing Generate capability cannot be bypassed by changing an existing C
     const context = {
         model, draft, draftOutputs: {}, generate, openGenerated, generationNote, generationError,
         saving: false, generating: false, opening: false, openingRequested: false,
-        connectionError: "", requestedCanvasId: null,
+        connectionError: "", requestedCanvasId: null, pendingReplacement: null,
         outputIdentity: "", outputStatus: "absent", requestedRequestId: null,
         outputRequestId: null, activeUploads: new Set(), GENERATION_PENDING,
         outputPathsReady: () => true, updateOutputDisplay: () => {}, updateOpenStatus: () => {},

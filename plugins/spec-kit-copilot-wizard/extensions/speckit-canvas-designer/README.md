@@ -219,7 +219,9 @@ The Designer stays editable while creation continues. An authenticated output
 status check verifies the matching config, provenance, and final entry point
 before reporting **Canvas files created.** A second click during submission is
 blocked, but Generate can dispatch again while awaiting the child-session agent
-if its first attempt stalls. Inspect the child-session chat before retrying.
+if its first attempt stalls. If an earlier non-replacement request publishes
+after a retry is accepted, its verified output remains openable even if the
+newer request fails. Inspect the child-session chat before retrying.
 These local checkout and session-artifact checks reject unsafe links and
 metadata; they do not coordinate with another local process replacing ordinary
 directories while Designer is using them. Avoid concurrent edits to these
@@ -235,6 +237,10 @@ incomplete output is not replaceable. The target-folder path is a link that
 reveals `.github/extensions/` until the generated folder exists, and reveals
 the generated folder afterward.
 **Open canvas** is available only after the generated files are verified.
+An accepted regeneration waits for its own verified output before enabling
+Open or Share, so the previous published version cannot disconnect Designer
+while replacement is pending. If regeneration fails or stalls, reopen Designer
+to clear that panel-local wait and recheck the previously published files.
 Before dispatch, the Open step warns that registration disconnects Designer
 and shows the child-chat guidance. Generate and Open stay disabled after the
 opening request is accepted; an error before acceptance restores them. The
@@ -243,9 +249,9 @@ and opens its canvas. Reopen Designer to continue editing after registration;
 the child chat reports success or failure and can retry opening existing files
 without regenerating. There is no supported provider-initiated panel-close operation.
 Sharing remains optional instructions for a team project extension, a personal
-extension, or a plugin; no distribution happens automatically. After editing
-the Canvas ID, the Share path still refers to the last submitted ID until the
-new ID is generated, and the page labels that distinction.
+extension, or a plugin; no distribution happens automatically. The Share commit
+path appears only for the current Canvas ID's verified output when no
+regeneration is pending; otherwise the page asks for generation and verification.
 At Generate, Designer checks the child checkout's Specify inventory for packages
 in the Wizard handoff and freezes their installed versions alongside the original
 Wizard snapshot. Unrelated installed packages do not affect version verification.
