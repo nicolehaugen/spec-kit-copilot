@@ -134,7 +134,7 @@ test("a stale revision refreshes internally and retries a workflow action once",
                 { status: 409, code: "STALE_REVISION" });
             return { revision: 5 };
         },
-        refresh: async () => { model.revision = 4; },
+        refreshCurrent: async () => { model.revision = 4; },
     };
     const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
         retryRevision`, context);
@@ -144,7 +144,7 @@ test("a stale revision refreshes internally and retries a workflow action once",
 });
 
 test("first open creates a workflow only when no workflow exists and phases are configured", async () => {
-    const startup = section("await refresh().then(async () => {",
+    const startup = section("await refreshCurrent().then(async () => {",
         "for (const root of document.querySelectorAll(\"[data-control-id]\"))");
     for (const [items, phases, expected] of [
         [[], [{ id: "specify", project: false }], 1],
@@ -155,7 +155,7 @@ test("first open creates a workflow only when no workflow exists and phases are 
         const calls = [];
         const context = {
             model: null,
-            refresh: async () => { context.model = { items, phases }; },
+            refreshCurrent: async () => { context.model = { items, phases }; },
             workflowPhases: () => context.model.phases.filter((phase) => !phase.project),
             createWorkflow: async (initial) => { calls.push(initial); },
             message: (text) => { throw new Error(text); },
@@ -174,6 +174,7 @@ test("first open uses the existing workflow endpoint and selects the new pending
             context.model = { revision: calls.length, phases: [{ id: "specify", project: false }],
                 items: calls.length ? [{ id: "__new__:1", pending: true }] : [] };
         },
+        refreshCurrent: async () => context.refresh(),
         workflowPhases: () => context.model.phases.filter((phase) => !phase.project),
         api: async (path, input) => {
             calls.push({ path, revision: input.revision });
@@ -184,7 +185,7 @@ test("first open uses the existing workflow endpoint and selects the new pending
     await runInNewContext(`(async () => {
         ${section("async function retryRevision(", "const workflowPhases =")}
         ${section("async function createWorkflow(", "async function deleteFeature(")}
-        ${section("await refresh().then(async () => {",
+        ${section("await refreshCurrent().then(async () => {",
             "for (const root of document.querySelectorAll(\"[data-control-id]\"))")}
     })()`, context);
     assert.deepEqual(calls, [{ path: "/api/workflow/new", revision: 0 }]);
@@ -200,7 +201,7 @@ test("first-open workflow creation does not duplicate one created by another pan
             calls.push({ path, revision: input.revision });
             throw Object.assign(new Error("Stale revision"), { status: 409, code: "STALE_REVISION" });
         },
-        refresh: async () => { context.model = { revision: 1, items: [{ id: "__new__:1" }] }; },
+        refreshCurrent: async () => { context.model = { revision: 1, items: [{ id: "__new__:1" }] }; },
         message: () => { throw new Error("Unexpected message"); },
     };
     const create = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
@@ -212,6 +213,60 @@ test("first-open workflow creation does not duplicate one created by another pan
     assert.equal(calls.length, 1);
 });
 
+test("first open waits for an applied snapshot when an SSE refresh supersedes its request", async () => {
+    const requests = [];
+    let creations = 0;
+    const context = {
+        refreshSequence: 0, model: null, workflowPage: {}, mountedPage: "workflow",
+        timer: null, saveFailure: null, constitution: () => null,
+        workflowPhases: () => context.model?.phases.filter((phase) => !phase.project) ?? [],
+        renderPhase() {}, syncFieldMounts: async () => {}, $: () => null, document: {},
+        api: () => new Promise((resolve) => requests.push(resolve)),
+        createWorkflow: async () => { creations++; },
+        message: (text) => { throw new Error(text); },
+    };
+    const actions = runInNewContext(`
+        ${section("async function refresh(reconcile = false) {", "async function selectPhase(")}
+        ({ start: async () => {
+            ${section("await refreshCurrent().then(async () => {",
+                "for (const root of document.querySelectorAll(\"[data-control-id]\"))")}
+        }, refresh })`, context);
+    const existing = { revision: 1, items: [{ id: "__new__:1", pending: true }],
+        phases: [{ id: "specify", project: false }], statuses: {} };
+    const start = actions.start();
+    const eventRefresh = actions.refresh();
+    requests[0]({ revision: 0, items: [], phases: existing.phases });
+    await new Promise(setImmediate);
+    assert.equal(requests.length, 3);
+    requests[1](existing);
+    requests[2](existing);
+    await Promise.all([start, eventRefresh]);
+    assert.equal(creations, 0);
+    assert.equal(context.model.items[0].id, "__new__:1");
+});
+
+test("stale-revision recovery waits for an applied snapshot before retrying creation", async () => {
+    let attempts = 0, refreshes = 0;
+    const context = {
+        model: { revision: 0, items: [] },
+        api: async () => {
+            attempts++;
+            throw Object.assign(new Error("Stale revision"), { status: 409, code: "STALE_REVISION" });
+        },
+        refresh: async () => {
+            if (++refreshes === 1) return false;
+            context.model = { revision: 1, items: [{ id: "__new__:1", pending: true }] };
+            return true;
+        },
+    };
+    const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+        ${section("async function refreshCurrent()", "async function selectPhase(")}
+        retryRevision`, context);
+    assert.equal(await retry("/api/workflow/new", {}, () => !context.model.items.length), null);
+    assert.equal(refreshes, 2);
+    assert.equal(attempts, 1);
+});
+
 test("a persistent revision conflict asks for another attempt, not a manual refresh", async () => {
     const model = { revision: 3 };
     let attempts = 0, refreshes = 0;
@@ -221,14 +276,14 @@ test("a persistent revision conflict asks for another attempt, not a manual refr
             attempts++;
             throw Object.assign(new Error("Stale revision"), { status: 409, code: "STALE_REVISION" });
         },
-        refresh: async () => { model.revision++; refreshes++; },
+        refreshCurrent: async () => { model.revision++; refreshes++; },
     };
     const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
         retryRevision`, context);
     await assert.rejects(retry("/api/workflow/new", {}),
         /Canvas state is still changing. Try this action again./);
     assert.equal(attempts, 2);
-    assert.equal(refreshes, 1);
+    assert.equal(refreshes, 2);
 });
 
 test("non-revision conflicts keep their error without refreshing or replaying the action", async () => {
@@ -239,7 +294,7 @@ test("non-revision conflicts keep their error without refreshing or replaying th
             retryRevision`, {
             model: { revision: 3 },
             api: async () => { attempts++; throw conflict; },
-            refresh: async () => { refreshes++; },
+            refreshCurrent: async () => { refreshes++; },
         });
         await assert.rejects(retry("/api/workflow/delete", { itemId: "demo", confirmation: "demo" }),
             (error) => error === conflict);
@@ -259,7 +314,7 @@ test("a different conflict after a stale revision retry preserves its original e
                 { status: 409, code: "STALE_REVISION" });
             throw conflict;
         },
-        refresh: async () => { refreshes++; },
+        refreshCurrent: async () => { refreshes++; },
     });
     await assert.rejects(retry("/api/workflow/delete", { itemId: "demo", confirmation: "demo" }),
         (error) => error === conflict);

@@ -660,12 +660,14 @@ async function retryRevision(path, input, shouldRetry = () => true) {
         return await api(path, { ...input, revision: model.revision });
     } catch (error) {
         if (error.status !== 409 || error.code !== "STALE_REVISION") throw error;
-        await refresh();
+        await refreshCurrent();
         if (!shouldRetry()) return null;
         try {
             return await api(path, { ...input, revision: model.revision });
         } catch (retryError) {
             if (retryError.status === 409 && retryError.code === "STALE_REVISION") {
+                await refreshCurrent();
+                if (!shouldRetry()) return null;
                 throw new Error("Canvas state is still changing. Try this action again.");
             }
             throw retryError;
@@ -1021,7 +1023,7 @@ function filterWorkflowList() {
 async function refresh(reconcile = false) {
     const sequence = ++refreshSequence;
     const next = await api(reconcile ? "/api/refresh" : "/api/state", reconcile ? {} : undefined);
-    if (sequence !== refreshSequence) return;
+    if (sequence !== refreshSequence) return false;
     const previous = model;
     model = next;
     if (!workflowPage) renderSetup();
@@ -1064,6 +1066,10 @@ async function refresh(reconcile = false) {
             }
         }
     }
+    return sequence === refreshSequence;
+}
+async function refreshCurrent() {
+    while (!(await refresh())) {}
 }
 async function selectPhase(index) {
     if (index < 0 || index >= workflowPhases().length) return;
@@ -1499,7 +1505,7 @@ window.addEventListener("pagehide", () => {
     buttonMounts.forEach((instance) => instance.dispose());
     disposeFieldMounts(mountedPage);
 });
-await refresh().then(async () => {
+await refreshCurrent().then(async () => {
     if (!model.items.length && workflowPhases().length) await createWorkflow(true);
 }).catch((error) => message(error.message, "canvas-message", true));
 for (const root of document.querySelectorAll("[data-control-id]")) {
