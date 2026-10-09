@@ -230,7 +230,9 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .availability-note { margin-top: 2rem; }
 #page-error, #generation-error, #composition-error { color: var(--danger-color); border: 1px solid currentColor;
     border-radius: var(--radius-sm); padding: .75rem; margin-bottom: 1rem; overflow-wrap: anywhere; }
-#generation-note { color: var(--text-color-muted); margin-bottom: 1rem; }
+#generation-note { color: var(--text-color-default); background: var(--background-color-secondary);
+    border: 1px solid var(--warn-color); border-radius: var(--radius-sm); padding: 1rem;
+    margin-bottom: 1rem; font-weight: 600; overflow-wrap: anywhere; }
 #action-message { color: var(--success-color); margin-bottom: 1rem; }
 .page-diagnostic { border: 1px solid var(--danger-color); border-radius: var(--radius-sm);
     background: var(--background-color-elevated); padding: 1rem; overflow-wrap: anywhere; }

@@ -71,9 +71,10 @@ function updateGenerate() {
     generationNote.textContent = queuedCanvasId
         ? reason === "Canvas already exists; choose and save a different Canvas ID."
             && model?.values?.["canvas.id"] === queuedCanvasId
-            ? "Canvas generated. Restart the Copilot app to discover and open it. Close this Designer panel before restarting."
-            : "Generation queued. After your agent confirms the canvas was generated, close this Designer panel and restart the Copilot app to discover and open it. If generation fails, inspect the output before reopening Designer."
-        : expectedState ? reason : "";
+            ? "Canvas files validated. The agent is registering and opening the app. Editing is locked in this Designer panel; close it and reopen Designer to make more changes."
+            : "Generation queued. The agent will register and open the app automatically. Editing is locked in this Designer panel; close it and reopen Designer after the app opens. If generation fails, inspect the output before reopening."
+        : generating ? "Saving settings and preparing generation. Editing is temporarily locked."
+            : expectedState ? reason : "";
     generationNote.hidden = !generationNote.textContent;
     generationError.textContent = expectedState ? "" : reason;
     generationError.hidden = !generationError.textContent;
@@ -199,15 +200,17 @@ function updateSave() {
         && JSON.stringify(draft) === JSON.stringify(model.values)
         && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs)
         && JSON.stringify(draftBadges) === JSON.stringify(model.badges);
-    saveButton.disabled = model?.preview || saving || generating || activeUploads.size > 0 || !model
+    saveButton.disabled = model?.preview || saving || generating || !!queuedCanvasId
+        || activeUploads.size > 0 || !model
         || !model.pages.length || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
     if (noChanges) saveButton.setAttribute("aria-description", "No changes to save");
     else saveButton.removeAttribute("aria-description");
     saveButton.textContent = saving ? "Saving..." : "Save";
     saveButton.setAttribute("aria-busy", String(saving));
-    root.inert = saving || generating || activeUploads.size > 0;
-    for (const tab of tabs.children) tab.disabled = saving || generating || activeUploads.size > 0;
+    root.inert = saving || generating || !!queuedCanvasId || activeUploads.size > 0;
+    for (const tab of tabs.children) tab.disabled = saving || generating || !!queuedCanvasId
+        || activeUploads.size > 0;
     updateGenerate();
 }
 
@@ -224,7 +227,7 @@ async function persistSettings({ values, outputs, badges }) {
 }
 
 saveButton.addEventListener("click", async () => {
-    if (model?.preview || saving || generating || !model || !checkReady()) return;
+    if (model?.preview || saving || generating || queuedCanvasId || !model || !checkReady()) return;
     saving = true;
     messageBox.hidden = true;
     showError("");
@@ -485,6 +488,12 @@ async function checkConnection() {
         }
     } catch (error) {
         connectionStatus("lost");
+        if (generating || queuedCanvasId) {
+            const note = document.getElementById("generation-note");
+            note.textContent = "Designer connection ended during generation. The agent may be opening the generated app. Close this panel and reopen Designer to edit; if generation failed, inspect the agent's report.";
+            note.hidden = false;
+            return;
+        }
         const next = `Designer connection interrupted: ${error.message}. Unsaved edits remain in this panel.`;
         if (connectionError !== next && !errorBox.textContent) showError(next);
         connectionError = next;

@@ -198,15 +198,17 @@ installed Canvas Design generate command to create a new source-owned
 workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
-Once generation is queued, Generate stays disabled for this Designer panel,
-even after the generated app's `extension.mjs` entry point appears following
-syntax and render validation. Close Designer and restart the Copilot app to
-discover and open the new canvas. To generate another app, reopen Designer,
-choose a different Canvas ID, and Generate (which saves the new settings).
-An existing Canvas ID cannot be generated twice. Generation does not reload
-the provider or open the new canvas. A partial generation without an entry
-point remains queued in that panel; reopen Designer only after investigating
-the failure, without assuming the app was generated.
+Once generation is queued, editing and Generate stay disabled in that Designer
+panel, even after the generated app's `extension.mjs` entry point appears
+following syntax and render validation. The agent reloads extensions and opens
+the generated app automatically; this disconnects the original Designer panel.
+Close it and reopen Designer to make further changes. The edit lock and queued
+state belong only to that panel, not to subsequent Designer instances. To
+generate another app, choose a different Canvas ID in the reopened Designer
+and Generate (which saves the new settings). An existing Canvas ID cannot be
+generated twice. If generation fails before reload, inspect the partial output
+and reopen Designer only after investigating the failure, without assuming
+the app was opened.
 The queued-request guard is local to the running Designer provider. If the
 provider restarts during generation, inspect the generated output or wait for
 the original request to finish before retrying: the reopened panel cannot

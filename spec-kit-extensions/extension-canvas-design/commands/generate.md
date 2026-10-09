@@ -32,11 +32,25 @@ packages or run workflow phases.
    when checkout, target, workflow, and installed inventory checks pass.
    On failure, report the error unchanged and leave any partial target for
    inspection; do not create an alternative implementation or retry.
-4. After successful validation, report the generated target and any warnings.
-   Do not reload extensions or open the new canvas here: reloading replaces the
-   Designer provider and disconnects its panel. Tell the user to close Designer
-   and restart the Copilot app to discover and open the new canvas. On failure,
-   report the error unchanged; do not tell the user that the canvas is ready.
-   Do not run a workflow phase.
+4. After successful validation, call `extensions_reload` in this child session
+   to register the generated project extension. Reloading stops the Designer
+   provider; the Designer panel is intentionally not reopened automatically.
+   The panel's settings were saved and editing locked when Generate was clicked.
+   If reload fails, report the error and the generated target without claiming
+   the app opened.
+5. Call `extensions_manage` with `operation: "list"`, then `operation:
+   "inspect"` for the generated extension. Verify its entry-point path is
+   `<child-checkout>/.github/extensions/<canvas-id>/extension.mjs`. Require its
+   source to be this child project and its status to be ready; do not substitute
+   an extension from another session or provider with the same canvas ID.
+   Use its registered extension ID in `list_canvas_capabilities` for the frozen
+   canvas ID; reject a missing or mismatched canvas. Then call `open_canvas`
+   for that exact provider and canvas ID with a new instance ID
+   `generated-<requestId>`. Check the open result's canvas ID, extension ID,
+   and instance ID. Report an unavailable, incompatible, or failed open as a
+   failure; do not claim the app opened merely because files were generated.
+6. Report the generated target and any warnings, whether the app opened, and
+   that the user can close this Designer panel and reopen Designer manually
+   for another app. Do not reopen Designer or run a workflow phase.
 
 Generated canvases are not automatically updated when this extension changes later.

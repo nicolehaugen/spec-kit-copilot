@@ -747,8 +747,8 @@ test("Billing preset and built-in palette persist through Generate and render th
         await materializeDevSkills(project);
         const generatedCommand = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-generate", "SKILL.md"), "utf8");
-        expect(generatedCommand).toContain("Do not reload extensions or open the new canvas here");
-        expect(generatedCommand).toContain("restart the Copilot app");
+        expect(generatedCommand).toContain("call `extensions_reload`");
+        expect(generatedCommand).toContain("Do not reopen Designer");
         run("preset", "add", "--dev", fileURLToPath(billingRoot));
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
@@ -835,14 +835,13 @@ test("Billing preset and built-in palette persist through Generate and render th
         expect(config.appearance).toMatchObject({
             light: { accent: "#123aBc" }, dark: { accent: "#ABC123" },
         });
-        await page.getByRole("tab", { name: "Essentials" }).click();
-        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-second");
-        await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
-        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#settings-page")).toHaveJSProperty("inert", true);
+        await expect(page.getByRole("tab", { name: "Essentials" })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#conn-status")).toHaveText("Live");
         await expect(page.locator("#generation-error")).toBeHidden();
-        await expect(page.locator("#generation-note")).toContainText("restart the Copilot app");
+        await expect(page.locator("#generation-note")).toContainText("open the app automatically");
         await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(1);
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#conn-status")).not.toHaveText("Disconnected");
@@ -850,7 +849,14 @@ test("Billing preset and built-in palette persist through Generate and render th
             await loadResolvedDesignerPages(handoff, project, pages, templates)),
         { project, workspace, session: { send: async () => {} } });
         await page.goto(next.url);
+        await expect(page.locator("#settings-page")).toHaveJSProperty("inert", false);
+        await expect(page.getByRole("tab", { name: "Essentials" })).toBeEnabled();
+        await expect(page.locator("#generation-note")).toContainText("Canvas already exists");
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-second");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+        await expect(page.locator("#generation-note")).toBeHidden();
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#generation-note")).toContainText("Generation queued");
         await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(2);

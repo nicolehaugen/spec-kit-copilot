@@ -539,11 +539,11 @@ loopback HTTP server with open/close lifecycle handling. Generation does not cal
 in place. An existing target stops generation without overwriting it; a failure
 after creation leaves the partial target for inspection. Previously generated
 canvases are not updated. Designer saves settings before dispatching Generate,
-then keeps Generate disabled in that panel. Generation does not reload
-extensions or open the new canvas. The entry point is written only after
-syntax and render validation succeeds. Close Designer and restart the Copilot
-app to discover and open the generated canvas; reopen Designer with a different
-Canvas ID to generate another app.
+then locks editing and Generate only in that panel. The entry point is written
+only after syntax and render validation succeeds. The agent then reloads
+extensions and opens the newly registered project canvas automatically; it
+does not reopen Designer. Close the disconnected Designer panel and reopen
+Designer with a different Canvas ID to generate another app.
 
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.

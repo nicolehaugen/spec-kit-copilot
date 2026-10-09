@@ -154,16 +154,21 @@ test("Designer health check reports failed and restored connections without repl
     assert.ok(start >= 0 && end > start);
     const status = {};
     const errorBox = { textContent: "" };
+    const generationNote = { textContent: "", hidden: true };
     const draft = { "canvas.displayName": "Unsaved title" };
     let response = { ok: true, json: async () => ({ generationAvailable: true, generationError: null }) };
     let polls;
     let reloaded = false;
-    const check = runInNewContext(`${source.slice(start, end)}\ncheckConnection`, {
-        document: { getElementById: () => status },
+    const { checkConnection: check, setQueued } = runInNewContext(`${source.slice(start, end)}
+({ checkConnection, setQueued: (id) => { queuedCanvasId = id; } })`, {
+        document: { getElementById: (id) =>
+            id === "generation-note" ? generationNote : status },
         errorBox,
         token: "test",
         model: {},
         draft,
+        queuedCanvasId: null,
+        generating: false,
         fetch: async () => response,
         updateGenerate: () => {},
         AbortSignal,
@@ -188,6 +193,44 @@ test("Designer health check reports failed and restored connections without repl
     assert.equal(status.textContent, "Live");
     assert.equal(errorBox.textContent, "");
     assert.equal(reloaded, false);
+    setQueued("first-canvas");
+    response = { ok: false, status: 503 };
+    await check();
+    assert.equal(status.textContent, "Disconnected");
+    assert.equal(errorBox.textContent, "");
+    assert.match(generationNote.textContent, /connection ended during generation/i);
+});
+
+test("queued editing lock belongs to this panel, not a new Designer instance", () => {
+    const start = source.indexOf("function updateSave()");
+    const end = source.indexOf("async function persistSettings(", start);
+    const evaluate = (queuedCanvasId) => {
+        const saveButton = {
+            disabled: false, setAttribute: () => {}, removeAttribute: () => {},
+        };
+        const root = { inert: false };
+        const tabs = { children: [{ disabled: false }] };
+        const help = { title: "" };
+        const update = runInNewContext(`${source.slice(start, end)}\nupdateSave`, {
+            model: { preview: false, persisted: true, values: { "canvas.id": "first" },
+                outputs: {}, badges: [], pages: [{}] },
+            draft: { "canvas.id": "second" }, draftOutputs: {}, draftBadges: [],
+            saveButton, root, tabs, saving: false, generating: false,
+            queuedCanvasId, activeUploads: new Set(), outputPathsReady: () => true,
+            updateGenerate: () => {},
+            document: { getElementById: () => help },
+        });
+        update();
+        return { saveButton, root, tabs };
+    };
+    const queued = evaluate("first");
+    assert.equal(queued.saveButton.disabled, true);
+    assert.equal(queued.root.inert, true);
+    assert.equal(queued.tabs.children[0].disabled, true);
+    const newInstance = evaluate(null);
+    assert.equal(newInstance.saveButton.disabled, false);
+    assert.equal(newInstance.root.inert, false);
+    assert.equal(newInstance.tabs.children[0].disabled, false);
 });
 
 test("Generate stays disabled in the queued panel even after publication and a different saved ID", () => {
@@ -219,7 +262,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     assert.equal(generate.disabled, true);
     assert.equal(generationError.hidden, true);
     assert.equal(generationNote.hidden, false);
-    assert.match(generationNote.textContent, /restart the Copilot app/);
+    assert.match(generationNote.textContent, /agent will register and open the app automatically/);
     draft["canvas.id"] = "second-canvas";
     update();
     assert.equal(generate.disabled, true);
@@ -238,7 +281,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     model.generationError = "Canvas already exists; choose and save a different Canvas ID.";
     update();
     assert.equal(generationNote.hidden, false);
-    assert.match(generationNote.textContent, /Canvas generated.*Restart the Copilot app/);
+    assert.match(generationNote.textContent, /Canvas files validated.*agent is registering and opening the app/);
     assert.equal(generationError.hidden, true);
     model.generationError = "Canvas Design does not provide Generate in this session.";
     update();
