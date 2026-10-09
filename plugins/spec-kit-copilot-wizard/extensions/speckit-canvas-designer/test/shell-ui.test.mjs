@@ -3,9 +3,43 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { GENERATION_EXISTS, GENERATION_PENDING } from "../ui/generation-state.js";
+import { validateCanvasId, validateOutputStatusResponse,
+    validateOutputError } from "../ui/generated-output-state.js";
 
 const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
 const generationGuidance = "Opening continues in the child-session chat. You can close Designer now.";
+
+test("overlapping output polls return their own validated snapshot without replacing newer UI state", async () => {
+    const start = source.indexOf("async function refreshOutputStatus(");
+    const end = source.indexOf("function updateGenerate()", start);
+    let releaseFirst;
+    const context = {
+        outputCheck: 0, outputIdentity: "", outputStatus: "absent",
+        outputRequestId: null, draft: { "canvas.id": "first-canvas" },
+        token: "test", encodeURIComponent, AbortSignal,
+        validateCanvasId, validateOutputStatusResponse, validateOutputError,
+        updateOutputDisplay: () => {}, updateGenerate: () => {},
+        fetch: async (url) => {
+            const id = new URL(url, "http://localhost").searchParams.get("canvasId");
+            if (id === "first-canvas") return new Promise((resolve) => { releaseFirst = resolve; });
+            return { ok: true, json: async () => ({
+                status: "ready", target: ".github/extensions/second-canvas/",
+                requestId: "second-request",
+            }) };
+        },
+    };
+    const refresh = runInNewContext(`${source.slice(start, end)}\nrefreshOutputStatus`, context);
+    const first = refresh("first-canvas");
+    const second = await refresh("second-canvas");
+    assert.equal(second.requestId, "second-request");
+    releaseFirst({ ok: true, json: async () => ({
+        status: "ready", target: ".github/extensions/first-canvas/",
+        requestId: "first-request",
+    }) });
+    assert.equal((await first).requestId, "first-request");
+    assert.equal(context.outputIdentity, "second-canvas");
+    assert.equal(context.outputRequestId, "second-request");
+});
 
 test("Designer shows only one message bar across repeated errors and generation guidance", () => {
     const names = ["page-error", "generation-note", "generation-error",
@@ -139,7 +173,8 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
         GENERATION_EXISTS,
         generating: false, status: {}, messageBox: {}, checkReady: () => true,
         showError: () => {}, updateSave: () => {},
-        refreshOutputStatus: async () => {}, updateOutputDisplay: () => {},
+        refreshOutputStatus: async () => ({ status: "absent", requestId: null }),
+        updateOutputDisplay: () => {},
         setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
         showFieldError: (message) => { throw new Error(message); },
         persistSettings: async (input) => {
@@ -182,7 +217,8 @@ test("Generate does not dispatch or disable future attempts when the implicit sa
         outputStatus: "absent", requestedRequestId: null,
         checkReady: () => true, showError: () => {}, updateSave: () => {},
         setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
-        refreshOutputStatus: async () => {}, updateOutputDisplay: () => {},
+        refreshOutputStatus: async () => ({ status: "absent", requestId: null }),
+        updateOutputDisplay: () => {},
         showFieldError: (message) => { reported = message; },
         persistSettings: async () => { throw new Error("stale settings revision"); },
         fetch: () => { throw new Error("Generate must not be dispatched"); },
@@ -207,7 +243,7 @@ test("replacement uses the confirmed output identity even when status changes du
         outputStatus: "ready", outputRequestId: "original-request",
         generating: false, messageBox: {}, token: "test",
         checkReady: () => true, updateSave: () => {}, showError: () => {},
-        refreshOutputStatus: async () => {},
+        refreshOutputStatus: async () => ({ status: "ready", requestId: "original-request" }),
         confirmReplacement: async () => { context.outputRequestId = "newer-request"; return true; },
         persistSettings: async () => ({ revision: "model-1", settingsRevision: 1 }),
         fetch: async (_url, options) => {

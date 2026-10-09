@@ -67,7 +67,8 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
             (path === "/api/reveal-output" ? revealed : opened).push(action);
             await route.fulfill({ status: path === "/api/open-generated" ? 202 : 200,
                 json: { status: path === "/api/open-generated" ? "opening" : "revealed",
-                    target: `.github/extensions/${action.canvasId}/` } });
+                    target: path === "/api/reveal-output" && !requests.ready
+                        ? ".github/extensions/" : `.github/extensions/${action.canvasId}/` } });
         } else if (path === "/api/save") {
             const request = route.request().postDataJSON();
             saved.push(request);
@@ -96,6 +97,7 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
                 contentType: "text/javascript" });
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css"
             || path === "/ui/generation-state.js"
+            || path === "/ui/generated-output-state.js"
             || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js"
             || path === "/ui/control-adapter-contract.js"
             || path === "/ui/badges-control.js" || path === "/ui/badge-duplicates.js") {

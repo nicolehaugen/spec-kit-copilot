@@ -1,15 +1,8 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
+import { outputTarget, validateCanvasId } from "../ui/generated-output-state.js";
 
-const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
-const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
-const deviceName = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
-
-export function validateCanvasId(id) {
-    if (typeof id !== "string" || !idPattern.test(id) || reserved.has(id)
-        || deviceName.test(id)) throw new Error("Invalid generated Canvas ID");
-    return id;
-}
+export { validateCanvasId };
 
 export function validateOutputAction(input, { replace = false } = {}) {
     const keys = replace && input?.replaceExisting === true
@@ -43,16 +36,16 @@ export async function generatedOutput(project, id, handoffId) {
             throw new Error("Generated extension parent escapes the checkout");
         }
     } catch (error) {
-        if (error.code === "ENOENT") return { status: "absent", target: `.github/extensions/${id}/` };
+        if (error.code === "ENOENT") return { status: "absent", target: outputTarget(id) };
         throw error;
     }
     let folder;
     try { folder = await lstat(target); }
     catch (error) {
-        if (error.code === "ENOENT") return { status: "absent", target: `.github/extensions/${id}/` };
+        if (error.code === "ENOENT") return { status: "absent", target: outputTarget(id) };
         throw error;
     }
-    const result = { status: "foreign", target: `.github/extensions/${id}/` };
+    const result = { status: "foreign", target: outputTarget(id) };
     if (!folder.isDirectory() || await realpath(target) !== target) return result;
     try {
         const config = await regularJson(join(target, "canvas-config.json"));

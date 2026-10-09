@@ -2703,7 +2703,9 @@ test("output status, folder reveal and Open enforce the same generated identity"
     assert.deepEqual(await (await getStatus("my-canvas")).json(),
         { status: "absent", target: ".github/extensions/my-canvas/" });
     assert.equal((await action("/api/reveal-output", { canvasId: "../escape" })).status, 422);
-    assert.equal((await action("/api/reveal-output", { canvasId: "my-canvas" })).status, 200);
+    const parentReveal = await action("/api/reveal-output", { canvasId: "my-canvas" });
+    assert.equal(parentReveal.status, 200);
+    assert.deepEqual(await parentReveal.json(), { target: ".github/extensions/" });
     assert.equal(revealed[0], join(project, ".github", "extensions"));
     const missing = await action("/api/open-generated", { canvasId: "my-canvas" });
     assert.equal(missing.status, 422);

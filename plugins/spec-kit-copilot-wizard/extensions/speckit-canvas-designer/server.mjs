@@ -12,6 +12,8 @@ import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
     loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
 import { freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
 import { generatedOutput, validateOutputAction } from "./contracts/generated-output.mjs";
+import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse,
+    validateOutputError } from "./ui/generated-output-state.js";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -39,6 +41,7 @@ const ASSETS = {
     "/ui/styles.css": ["styles.css", "text/css"],
     "/ui/app.js": ["app.js", "text/javascript"],
     "/ui/generation-state.js": ["generation-state.js", "text/javascript"],
+    "/ui/generated-output-state.js": ["generated-output-state.js", "text/javascript"],
     "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
     "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
     "/ui/control-adapter-contract.js": ["control-adapter-contract.js", "text/javascript"],
@@ -179,11 +182,11 @@ export async function startShell(handoff = null, model = null,
                 const result = await generatedOutput(project,
                     url.searchParams.get("canvasId"), handoff.handoffId);
                 res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" })
-                    .end(JSON.stringify({ status: result.status, target: result.target,
-                        ...(result.requestId ? { requestId: result.requestId } : {}) }));
+                    .end(JSON.stringify(validateOutputStatusResponse(result,
+                        url.searchParams.get("canvasId"))));
             } catch (error) {
                 res.writeHead(error.code ? 500 : 422, { "Content-Type": "application/json; charset=utf-8" })
-                    .end(JSON.stringify({ error: error.message }));
+                    .end(JSON.stringify(validateOutputError({ error: error.message })));
             }
             return;
         }
@@ -215,7 +218,8 @@ export async function startShell(handoff = null, model = null,
                     }
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-open-generated skill with handoffId "${handoff.handoffId}", requestId "${output.requestId}" and canvasId "${input.canvasId}" in this child checkout. Reload extensions, verify and open only that generated project canvas. Do not regenerate files. Report success or the exact failure to the user in chat.` });
                     res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify({ status: "opening", target: output.target }));
+                        .end(JSON.stringify(validateOpenResponse(
+                            { status: "opening", target: output.target }, input.canvasId)));
                 } else {
                     const root = await realpath(project);
                     const github = join(root, ".github");
@@ -241,11 +245,13 @@ export async function startShell(handoff = null, model = null,
                     });
                     child.unref();
                     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify({ target: output.target }));
+                        .end(JSON.stringify(validateRevealResponse({
+                            target: output.status === "absent" ? ".github/extensions/" : output.target,
+                        }, input.canvasId)));
                 }
             } catch (error) {
                 res.writeHead(422, { "Content-Type": "application/json; charset=utf-8" })
-                    .end(JSON.stringify({ error: error.message }));
+                    .end(JSON.stringify(validateOutputError({ error: error.message })));
             }
             return;
         }

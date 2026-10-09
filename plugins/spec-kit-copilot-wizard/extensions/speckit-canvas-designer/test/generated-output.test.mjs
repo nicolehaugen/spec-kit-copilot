@@ -4,6 +4,54 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { generatedOutput, validateOutputAction } from "../contracts/generated-output.mjs";
+import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse,
+    validateOutputError } from "../ui/generated-output-state.js";
+
+test("generated output response contract accepts matching status, folder and Open exchanges", () => {
+    const id = "team-dashboard";
+    const target = ".github/extensions/team-dashboard/";
+    for (const status of ["absent", "foreign", "incomplete"]) {
+        assert.deepEqual(validateOutputStatusResponse({ status, target }, id), { status, target });
+    }
+    assert.deepEqual(validateOutputStatusResponse({ status: "ready", target, requestId: "request-1" }, id),
+        { status: "ready", target, requestId: "request-1" });
+    assert.deepEqual(validateRevealResponse({ target: ".github/extensions/" }, id),
+        { target: ".github/extensions/" });
+    assert.deepEqual(validateRevealResponse({ target }, id), { target });
+    assert.deepEqual(validateOpenResponse({ status: "opening", target }, id),
+        { status: "opening", target });
+    assert.deepEqual(validateOutputError({ error: "Cannot open canvas" }),
+        { error: "Cannot open canvas" });
+});
+
+test("generated output response contract rejects incompatible host responses", () => {
+    const id = "team-dashboard";
+    const target = ".github/extensions/team-dashboard/";
+    for (const response of [
+        { status: "queued", target },
+        { status: "ready", target },
+        { status: "ready", target, requestId: "../escape" },
+        { status: "ready", target, requestId: "request-1", extra: true },
+        { status: "absent", target, requestId: "request-1" },
+        { status: "ready", target: ".github/extensions/other/", requestId: "request-1" },
+    ]) {
+        assert.throws(() => validateOutputStatusResponse(response, id),
+            /Invalid generated output status/);
+    }
+    for (const response of [{ target: ".github/extensions/other/" }, { target, extra: true }]) {
+        assert.throws(() => validateRevealResponse(response, id),
+            /Invalid generated canvas folder response/);
+    }
+    for (const response of [{ status: "ready", target }, { status: "opening" },
+        { status: "opening", target: ".github/extensions/other/" }]) {
+        assert.throws(() => validateOpenResponse(response, id),
+            /Invalid generated canvas opening response/);
+    }
+    for (const response of [{}, { error: "" }, { error: "failure", status: 500 }]) {
+        assert.throws(() => validateOutputError(response),
+            /Invalid generated canvas error response/);
+    }
+});
 
 test("generated output contract validates IDs and action shapes", () => {
     assert.deepEqual(validateOutputAction({ canvasId: "team-dashboard" }), { canvasId: "team-dashboard" });

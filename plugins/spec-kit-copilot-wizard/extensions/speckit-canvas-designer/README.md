@@ -18,6 +18,10 @@ independently packaged and validates request integrity with its own
 The browser's matching mount, readiness, and draft-change rules live in
 `ui/control-adapter-contract.js`, served with the provider rather than loaded
 from a preset.
+The browser-safe `ui/generated-output-state.js` defines status, reveal, Open,
+and error response shapes shared by the server and browser. Reveal responds
+with the folder actually opened: the extensions parent before generation, or
+the verified canvas target once present.
 The browser and provider import the same `ui/generation-state.js` definitions
 for pending and duplicate-ID errors; the browser loads that asset through the
 authenticated shell. An unavailable Generate skill takes precedence over a

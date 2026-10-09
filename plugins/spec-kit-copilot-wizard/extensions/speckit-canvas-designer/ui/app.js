@@ -1,6 +1,9 @@
 const token = new URL(location.href).searchParams.get("token");
 const { GENERATION_PENDING, GENERATION_EXISTS } = await import(
     `/ui/generation-state.js?token=${encodeURIComponent(token)}`);
+const { validateCanvasId, validateOutputStatusResponse, validateRevealResponse,
+    validateOpenResponse, validateOutputError } = await import(
+    `/ui/generated-output-state.js?token=${encodeURIComponent(token)}`);
 let mountIdentity, mountOutputs, mountBadges, adapterContract;
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
@@ -97,29 +100,25 @@ function updateOutputDisplay() {
 
 async function refreshOutputStatus(id = requestedCanvasId ?? draft?.["canvas.id"]) {
     const check = ++outputCheck;
-    if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(id ?? "")) {
+    try { validateCanvasId(id); } catch {
         outputIdentity = "";
         outputStatus = "absent";
         updateOutputDisplay();
         updateGenerate();
-        return;
+        return { status: "absent", requestId: null };
     }
     const response = await fetch(`/api/output-status?token=${encodeURIComponent(token)}&canvasId=${encodeURIComponent(id)}`,
         { signal: AbortSignal.timeout(5000) });
     const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? `Output check failed (${response.status})`);
-    if (!["absent", "ready", "foreign", "incomplete"].includes(result.status)
-        || result.target !== `.github/extensions/${id}/`
-        || (result.requestId !== undefined
-            && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(result.requestId))) {
-        throw new Error("Invalid generated output status");
-    }
-    if (check !== outputCheck) return;
+    if (!response.ok) throw new Error(validateOutputError(result).error);
+    const validated = validateOutputStatusResponse(result, id);
+    if (check !== outputCheck) return validated;
     outputIdentity = id;
-    outputStatus = result.status;
-    outputRequestId = result.requestId ?? null;
+    outputStatus = validated.status;
+    outputRequestId = validated.requestId ?? null;
     updateOutputDisplay();
     updateGenerate();
+    return validated;
 }
 
 function updateGenerate() {
@@ -184,12 +183,12 @@ generate.addEventListener("click", async () => {
     showError("");
     try {
         const submittedId = draft["canvas.id"];
-        await refreshOutputStatus(submittedId);
-        if (outputStatus === "foreign" || outputStatus === "incomplete") {
+        const checked = await refreshOutputStatus(submittedId);
+        if (checked.status === "foreign" || checked.status === "incomplete") {
             throw new Error("Cannot replace this canvas folder. Inspect the target folder first.");
         }
-        const replaceExisting = outputStatus === "ready";
-        const priorRequestId = replaceExisting ? outputRequestId : null;
+        const replaceExisting = checked.status === "ready";
+        const priorRequestId = replaceExisting ? checked.requestId : null;
         if (replaceExisting && !await confirmReplacement(submittedId)) return;
         if (providers.length && !await confirmProviders(providers)) return;
         const values = structuredClone(draft);
@@ -244,10 +243,8 @@ openGenerated.addEventListener("click", async () => {
             body: JSON.stringify({ canvasId: id }),
         });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error ?? `Could not open canvas (${response.status})`);
-        if (result.status !== "opening" || result.target !== `.github/extensions/${id}/`) {
-            throw new Error("Invalid generated canvas opening response");
-        }
+        if (!response.ok) throw new Error(validateOutputError(result).error);
+        validateOpenResponse(result, id);
         openingRequested = true;
         setMessage(generationNote, generationGuidance);
     } catch (error) {
@@ -393,10 +390,8 @@ function renderPage(pageId, invalidFieldId) {
                     body: JSON.stringify({ canvasId: id }),
                 });
                 const result = await response.json();
-                if (!response.ok) throw new Error(result.error ?? `Could not open folder (${response.status})`);
-                if (result.target !== `.github/extensions/${id}/`) {
-                    throw new Error("Invalid generated canvas folder response");
-                }
+                if (!response.ok) throw new Error(validateOutputError(result).error);
+                validateRevealResponse(result, id);
             } catch (error) { showError(error.message); }
         });
         const folder = element("p", undefined, "generation-target");
