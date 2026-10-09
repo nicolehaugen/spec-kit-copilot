@@ -442,10 +442,11 @@ export function mount({ root, definition, state, actions }) {
             notice.hidden = !notice.textContent;
             find("view-constitution").hidden = !available;
             find("constitution-card").classList.toggle("constitution-ready", available);
-            find("constitution-status").textContent = available ? "Available"
+            find("constitution-status").textContent = available ? ""
                 : result?.artifactAvailability === "error" ? "Unavailable"
                     : result?.status === "Not run" ? "Needed before starting a workflow"
                         : result?.status ?? "Checking...";
+            find("constitution-status").hidden = available;
             const label = state.pendingLabel(phase) ?? (available ? "Update" : "Create constitution");
             find("run-constitution").textContent = label;
             find("send-constitution").textContent = state.pendingLabel(phase)

@@ -204,12 +204,14 @@ following syntax and render validation. The agent reloads extensions and opens
 the generated app automatically; this disconnects the original Designer panel.
 Restart Designer (close the panel and open Designer again) to make further
 changes. The edit lock and queued state belong only to that panel, not to
-subsequent Designer instances. To avoid suggesting a restart while generation
-is still running, the queued notice reports progress; the bordered
-informational notice gives restart guidance only after the connection drops.
-To generate another app, choose a different Canvas ID in the reopened Designer
-and Generate (which saves the new settings). An existing Canvas ID cannot be
-generated twice. If generation fails before reload, inspect the partial output
+subsequent Designer instances. The bordered informational notice shows one
+consistent instruction once Generate is accepted, including after the
+connection drops; no transient saving or publication messages replace it.
+Reopening starts with fresh template defaults rather than restoring the prior
+form values, so enter a new Canvas ID and Title before generating another app.
+The prior saved settings remain on disk as generation history and their revision
+is retained for the next Save. An existing Canvas ID cannot be generated twice.
+If generation fails before reload, inspect the partial output
 and reopen Designer only after investigating the failure, without assuming
 the app was opened.
 The queued-request guard is local to the running Designer provider. If the
@@ -234,7 +236,8 @@ pages; there is no page-reload control or persisted page snapshot. After a
 successful handoff launch, the provider saves its complete resolved open
 inventory in the Designer session's `speckit-canvas-designer/last-open.json`.
 Restarting Designer in that same session with no input restores the most recent
-successful handoff and revalidates its pages, templates, and saved settings.
+successful handoff and revalidates its pages and templates, but starts a fresh
+editable form rather than rehydrating saved values.
 An invalid saved inventory or missing handoff fails explicitly rather than
 opening a blank shell; an explicit launch can repair the saved inventory.
 Opening `speckit-canvas-designer` without input before any successful handoff

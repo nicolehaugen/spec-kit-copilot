@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 
 const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
+const generationGuidance = "Once the canvas app is generated, close and reopen Designer to continue editing.";
 
 test("Designer fixed-shell theme toggle follows preference, persists choice and remains accessible", async () => {
     const html = await readFile(new URL("../ui/index.html", import.meta.url), "utf8");
@@ -168,6 +169,7 @@ test("Designer health check reports failed and restored connections without repl
         model: {},
         draft,
         queuedCanvasId: null,
+        generationGuidance,
         generating: false,
         fetch: async () => response,
         updateGenerate: () => {},
@@ -200,8 +202,7 @@ test("Designer health check reports failed and restored connections without repl
     await check();
     assert.equal(status.textContent, "Disconnected");
     assert.equal(errorBox.textContent, "");
-    assert.match(generationNote.textContent, /connection ended during generation/i);
-    assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
+    assert.equal(generationNote.textContent, generationGuidance);
 });
 
 test("queued editing lock belongs to this panel, not a new Designer instance", () => {
@@ -254,19 +255,25 @@ test("Generate stays disabled in the queued panel even after publication and a d
         generationBlockers: [],
     };
     const draft = { "canvas.id": "first-canvas" };
-    const update = runInNewContext(`${source.slice(start, end)}\nupdateGenerate`, {
+    const context = {
         model, draft, draftOutputs: {}, generate, saving: false, generating: false,
-        queuedCanvasId: "first-canvas", activeUploads: new Set(),
+        queuedCanvasId: "first-canvas", generationGuidance, activeUploads: new Set(),
         required: ["canvas.id", "canvas.displayName"],
         document: { getElementById: (id) =>
             id === "generation-note" ? generationNote : generationError },
-    });
+    };
+    const update = runInNewContext(`${source.slice(start, end)}\nupdateGenerate`, context);
+    context.queuedCanvasId = null;
+    context.generating = true;
+    update();
+    assert.equal(generationNote.hidden, true);
+    context.queuedCanvasId = "first-canvas";
+    context.generating = false;
     update();
     assert.equal(generate.disabled, true);
     assert.equal(generationError.hidden, true);
     assert.equal(generationNote.hidden, false);
-    assert.match(generationNote.textContent, /agent will register and open the app automatically/);
-    assert.doesNotMatch(generationNote.textContent, /restart Designer/i);
+    assert.equal(generationNote.textContent, generationGuidance);
     draft["canvas.id"] = "second-canvas";
     update();
     assert.equal(generate.disabled, true);
@@ -277,6 +284,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     assert.equal(generate.disabled, true);
     assert.equal(generationNote.hidden, false);
     assert.equal(generationError.hidden, true);
+    assert.equal(generationNote.textContent, generationGuidance);
     draft["canvas.id"] = "first-canvas";
     update();
     assert.equal(generate.disabled, true);
@@ -285,8 +293,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     model.generationError = "Canvas already exists; choose and save a different Canvas ID.";
     update();
     assert.equal(generationNote.hidden, false);
-    assert.match(generationNote.textContent, /Canvas files validated.*agent is registering and opening the app/);
-    assert.doesNotMatch(generationNote.textContent, /restart Designer/i);
+    assert.equal(generationNote.textContent, generationGuidance);
     assert.equal(generationError.hidden, true);
     model.generationError = "Canvas Design does not provide Generate in this session.";
     update();

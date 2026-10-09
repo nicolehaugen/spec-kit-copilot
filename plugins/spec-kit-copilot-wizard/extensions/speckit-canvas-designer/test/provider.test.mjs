@@ -4591,9 +4591,20 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         const restoredUrl = new URL(restored.url);
         restoredUrl.pathname = "/api/state";
         const restoredState = await (await fetch(restoredUrl)).json();
-        assert.deepEqual(restoredState.values, savedValues);
+        assert.deepEqual(restoredState.values, initial.values);
         assert.equal(restoredState.settingsRevision, 1);
-        assert.equal(restoredState.persisted, true);
+        assert.equal(restoredState.persisted, false);
+        const freshValues = { ...restoredState.values, "canvas.id": "second-designer",
+            "canvas.displayName": "Second Designer" };
+        const freshSave = new URL(restored.url);
+        freshSave.pathname = "/api/save";
+        const nextSave = await fetch(freshSave, { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modelRevision: restoredState.revision,
+                revision: restoredState.settingsRevision, values: freshValues }) });
+        assert.equal(nextSave.status, 200);
+        assert.equal((await nextSave.json()).settingsRevision, 2);
+        assert.equal((await (await fetch(restoredUrl)).json()).values["canvas.id"], "second-designer");
 
         const started = new Promise((resolve) => {
             globalThis.__pauseDesignerShell = async (shell) => {

@@ -10,6 +10,7 @@ let badgeView;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queuedCanvasId = null;
+const generationGuidance = "Once the canvas app is generated, close and reopen Designer to continue editing.";
 const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
@@ -68,13 +69,8 @@ function updateGenerate() {
             : model?.generationError ?? "";
     const expectedState = reason === "Generation is already queued for this Designer panel"
         || reason === "Canvas already exists; choose and save a different Canvas ID.";
-    generationNote.textContent = queuedCanvasId
-        ? reason === "Canvas already exists; choose and save a different Canvas ID."
-            && model?.values?.["canvas.id"] === queuedCanvasId
-            ? "Canvas files validated. The agent is registering and opening the app. Editing is locked in this Designer panel."
-            : "Generation queued. The agent will register and open the app automatically. Editing is locked in this Designer panel. If generation fails, inspect the output."
-        : generating ? "Saving settings and preparing generation. Editing is temporarily locked."
-            : expectedState ? reason : "";
+    generationNote.textContent = queuedCanvasId ? generationGuidance
+        : generating ? "" : expectedState ? reason : "";
     generationNote.hidden = !generationNote.textContent;
     generationError.textContent = expectedState ? "" : reason;
     generationError.hidden = !generationError.textContent;
@@ -490,7 +486,7 @@ async function checkConnection() {
         connectionStatus("lost");
         if (generating || queuedCanvasId) {
             const note = document.getElementById("generation-note");
-            note.textContent = "Designer connection ended during generation. The agent may be opening the generated app. After it opens, restart Designer (close this panel and open Designer again) to edit; if generation failed, inspect the agent's report first.";
+            note.textContent = generationGuidance;
             note.hidden = false;
             return;
         }

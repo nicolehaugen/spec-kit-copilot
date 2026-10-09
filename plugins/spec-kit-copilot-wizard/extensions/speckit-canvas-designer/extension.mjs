@@ -5,7 +5,7 @@ import { readHandoff } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages } from "./pages.mjs";
 import { previewModel } from "./preview.mjs";
-import { loadDesignerSettings } from "./settings.mjs";
+import { freshDesignerSettings } from "./settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from "./contracts/host-open.mjs";
 import { loadLastOpen, saveLastOpen } from "./open-state.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
@@ -87,7 +87,7 @@ const session = await joinSession({
                     const project = await getCheckout();
                     await assertPageCommand(project);
                     model = await loadResolvedDesignerPages(handoff, project, pages, templates);
-                    model = await loadDesignerSettings(session.workspacePath, handoff, model);
+                    model = await freshDesignerSettings(session.workspacePath, handoff, model);
                 }
                 const next = await startShell(handoff, model, handoff
                     ? { project: await getCheckout(), workspace: session.workspacePath, session }

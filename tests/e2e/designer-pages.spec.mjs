@@ -11,7 +11,7 @@ import { addLoopbackSpecifyExtension, serveSpecifyPackages } from "./specify-pac
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
-import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
+import { freshDesignerSettings, loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
 import { verifyComposition } from "../../spec-kit-extensions/extension-canvas-design/scripts/verify-launch.mjs";
 
@@ -824,7 +824,8 @@ test("Billing preset and built-in palette persist through Generate and render th
         await expect(page.locator("#conn-status")).toHaveText("Live");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeHidden();
-        await expect(page.locator("#generation-note")).toContainText("Generation queued", { timeout: 15000 });
+        await expect(page.locator("#generation-note")).toContainText(
+            "Once the canvas app is generated", { timeout: 15000 });
         const [requestId] = await readdir(join(folder, "generations"));
         await materialize(project, workspace, handoff.handoffId, requestId);
         const config = JSON.parse(await readFile(join(project, ".github", "extensions",
@@ -841,25 +842,28 @@ test("Billing preset and built-in palette persist through Generate and render th
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#conn-status")).toHaveText("Live");
         await expect(page.locator("#generation-error")).toBeHidden();
-        await expect(page.locator("#generation-note")).toContainText("open the app automatically");
-        await expect(page.locator("#generation-note")).not.toContainText("restart Designer");
+        await expect(page.locator("#generation-note")).toHaveText(
+            "Once the canvas app is generated, close and reopen Designer to continue editing.");
         await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(1);
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#conn-status")).not.toHaveText("Disconnected");
-        next = await startShell(handoff, await loadDesignerSettings(workspace, handoff,
+        next = await startShell(handoff, await freshDesignerSettings(workspace, handoff,
             await loadResolvedDesignerPages(handoff, project, pages, templates)),
         { project, workspace, session: { send: async () => {} } });
         await page.goto(next.url);
         await expect(page.locator("#settings-page")).toHaveJSProperty("inert", false);
         await expect(page.getByRole("tab", { name: "Essentials" })).toBeEnabled();
-        await expect(page.locator("#generation-note")).toContainText("Canvas already exists");
+        await expect(page.getByRole("textbox", { name: "Canvas ID (required)" })).toHaveValue("");
+        await expect(page.getByRole("textbox", { name: "Title (required)" })).toHaveValue("");
+        await expect(page.locator("#generation-note")).toBeHidden();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-second");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
         await expect(page.locator("#generation-note")).toBeHidden();
         await page.getByRole("button", { name: "Generate", exact: true }).click();
-        await expect(page.locator("#generation-note")).toContainText("Generation queued");
+        await expect(page.locator("#generation-note")).toContainText("Once the canvas app is generated");
         await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(2);
         const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
             "extensions", "billing-canvas", "server.mjs")).href);
@@ -990,7 +994,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#conn-status")).toHaveText("Live");
-        await expect(page.locator("#generation-note")).toContainText("Generation queued");
+        await expect(page.locator("#generation-note")).toContainText("Once the canvas app is generated");
         const [requestId] = await readdir(join(folder, "generations"));
         await expect.poll(() => prompts.length).toBe(1);
         expect(prompts[0]).toContain(requestId);

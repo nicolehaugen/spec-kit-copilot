@@ -1129,7 +1129,8 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await mkdir(join(canvas.root, ".specify", "memory"), { recursive: true });
         await writeFile(join(canvas.root, ".specify", "memory", "constitution.md"), "# Constitution");
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#constitution-status")).toHaveText("Available");
+        await expect(page.locator("#constitution-status")).toBeHidden();
+        await expect(page.locator("#constitution-status")).toHaveText("");
         await expect(page.locator("#constitution-prerequisite")).toBeHidden();
         await expect(page.locator("#view-constitution")).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -813,12 +813,13 @@ function renderStatus() {
         const status = model.statuses[constitution().id];
         artifactAction("view-constitution", "constitution-artifact-status", status);
         const available = status?.artifactAvailability === "available";
-        const statusText = available ? "Available" : status?.artifactAvailability === "error"
+        const statusText = available ? "" : status?.artifactAvailability === "error"
             ? "Unavailable" : status?.status === "Not run" ? "Needed before starting a workflow"
                 : status?.status ?? "Checking...";
         const card = $("constitution-card");
         card.classList.toggle("constitution-ready", available);
         $("constitution-status").textContent = statusText;
+        $("constitution-status").hidden = available;
         $("run-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update" : "Create constitution");
         $("send-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update constitution" : "Create constitution");
         $("run-constitution").disabled = setupPending;
