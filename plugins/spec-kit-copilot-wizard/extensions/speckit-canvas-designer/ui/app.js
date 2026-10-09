@@ -5,12 +5,25 @@ const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
 const saveButton = document.getElementById("save-settings");
 const messageBox = document.getElementById("action-message");
+const generationNote = document.getElementById("generation-note");
+const generationError = document.getElementById("generation-error");
+const compositionError = document.getElementById("composition-error");
+const messageSlots = [errorBox, generationNote, generationError, compositionError, messageBox];
+function setMessage(slot, text) {
+    slot.textContent = text;
+    const ordered = messageBox.textContent.startsWith("Warning:")
+        ? [errorBox, messageBox, generationNote, generationError, compositionError]
+        : messageSlots;
+    const visible = ordered.find((item) => item.textContent);
+    for (const item of messageSlots) item.hidden = item !== visible;
+}
 let model, currentPage, draft, draftOutputs, draftBadges, saving = false;
 let badgeView;
 const generate = document.getElementById("generate-canvas");
 let generating = false;
 let queuedCanvasId = null;
-const generationGuidance = "Once the canvas app is generated, close and reopen Designer to continue editing.";
+const generationGuidance = "Canvas generation is underway. You can close the Designer now. To generate another canvas, reopen Designer after this one finishes generation.";
+const existingCanvasMessage = "Canvas already exists; choose and save a different Canvas ID.";
 const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
@@ -54,30 +67,26 @@ function outputPathsReady() {
 
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "designer-essentials");
-    const generationError = document.getElementById("generation-error");
-    const generationNote = document.getElementById("generation-note");
     const failed = model?.pages.find((page) => page.error);
     const missingIdentity = model && !failed && (!setup || setup.enabled === false
         || !required.every((field) => setup.fields?.some((item) => item.id === field)));
-    const reason = model?.preview ? "" : model?.generationError
+    const existingId = model?.generationError === existingCanvasMessage;
+    const reason = model?.preview ? "" : model?.generationError && !existingId
         ? model.generationError
         : failed
         ? `Cannot generate: ${failed.page} could not load. ${failed.error.reason}`
         : model?.generationBlockers?.length
             ? `Cannot generate: ${model.generationBlockers.join("; ")}`
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
-            : model?.generationError ?? "";
-    const expectedState = reason === "Generation is already queued for this Designer panel"
-        || reason === "Canvas already exists; choose and save a different Canvas ID.";
-    generationNote.textContent = queuedCanvasId ? generationGuidance
-        : generating ? "" : expectedState ? reason : "";
-    generationNote.hidden = !generationNote.textContent;
-    generationError.textContent = expectedState ? "" : reason;
-    generationError.hidden = !generationError.textContent;
+            : "";
+    const expectedState = reason === "Generation is already queued for this Designer panel";
+    setMessage(generationNote, queuedCanvasId ? generationGuidance
+        : generating ? "" : expectedState ? reason : "");
+    setMessage(generationError, expectedState ? "" : reason);
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
         || !!queuedCanvasId || !outputPathsReady()
         || !model?.handoffId
-        || !model.generationAvailable || !setup || !!failed || setup.enabled === false
+        || (!model.generationAvailable && !existingId) || !setup || !!failed || setup.enabled === false
         || missingIdentity || !!model?.generationBlockers?.length;
 }
 
@@ -97,10 +106,16 @@ function confirmProviders(providers) {
 
 generate.addEventListener("click", async () => {
     if (model?.preview || generate.disabled || !checkReady()) return;
+    if (model.generationError === existingCanvasMessage
+        && draft["canvas.id"] === model.values["canvas.id"]) {
+        showError(model.generationError);
+        return;
+    }
     const providers = model.templates.filter((item) => item.kind === "generated.computed-value-provider")
         .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
     updateSave();
+    setMessage(messageBox, "");
     showError("");
     try {
         if (providers.length && !await confirmProviders(providers)) return;
@@ -125,8 +140,7 @@ generate.addEventListener("click", async () => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);
         if (result.warnings?.length) {
-            messageBox.textContent = `Warning: ${result.warnings.join(" ")}`;
-            messageBox.hidden = false;
+            setMessage(messageBox, `Warning: ${result.warnings.join(" ")}`);
         }
         queuedCanvasId = submittedId;
     } catch (error) {
@@ -145,8 +159,7 @@ function element(tag, text, className) {
 }
 
 function showError(message) {
-    errorBox.textContent = message;
-    errorBox.hidden = !message;
+    setMessage(errorBox, message);
     if (message) errorBox.focus();
 }
 
@@ -225,13 +238,12 @@ async function persistSettings({ values, outputs, badges }) {
 saveButton.addEventListener("click", async () => {
     if (model?.preview || saving || generating || queuedCanvasId || !model || !checkReady()) return;
     saving = true;
-    messageBox.hidden = true;
+    setMessage(messageBox, "");
     showError("");
     updateSave();
     try {
         model = await persistSettings({ values: draft, outputs: draftOutputs, badges: draftBadges });
-        messageBox.textContent = "Settings saved.";
-        messageBox.hidden = false;
+        setMessage(messageBox, "Settings saved.");
     } catch (error) {
         showError(`Could not save settings: ${error.message}`);
     } finally {
@@ -307,7 +319,7 @@ function renderPage(pageId, invalidFieldId) {
         const handles = mountIdentity({ root: form, fields: identity, values: draft,
             invalidFieldId, onChange(id, value) {
                 draft[id] = value;
-                messageBox.hidden = true;
+                setMessage(messageBox, "");
                 showError("");
                 updateSave();
             } });
@@ -360,7 +372,7 @@ function renderPage(pageId, invalidFieldId) {
                         adapterContract.validateAdapterChange(value, rules, field.id);
                         draft[field.id] = value;
                         fieldError.hidden = true;
-                        messageBox.hidden = true;
+                        setMessage(messageBox, "");
                         showError("");
                         updateSave();
                         updateGenerate();
@@ -430,9 +442,7 @@ function applyState(next) {
             (model.phases ?? []).map((id) => [id, { outputs: [], view: null }])));
         draftBadges = structuredClone(model.badges ?? []);
         tabs.replaceChildren();
-        const compositionError = document.getElementById("composition-error");
-        compositionError.textContent = (model.compositionErrors ?? []).join("; ");
-        compositionError.hidden = !compositionError.textContent;
+        setMessage(compositionError, (model.compositionErrors ?? []).join("; "));
         for (const page of model.pages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,
                 `tab${page.error ? " tab-error" : ""}`);
@@ -485,17 +495,12 @@ async function checkConnection() {
     } catch (error) {
         connectionStatus("lost");
         if (generating || queuedCanvasId) {
-            const note = document.getElementById("generation-note");
-            note.textContent = generationGuidance;
-            note.hidden = false;
+            setMessage(generationNote, generationGuidance);
             return;
         }
         const next = `Designer connection interrupted: ${error.message}. Unsaved edits remain in this panel. If it does not reconnect, restart Designer (close this panel and open Designer again); copy any unsaved edits first.`;
-        const note = document.getElementById("generation-note");
-        if (note.textContent !== next || note.hidden) {
-            note.textContent = next;
-            note.hidden = false;
-        }
+        if (generationNote.textContent !== next || generationNote.hidden)
+            setMessage(generationNote, next);
         connectionError = next;
     }
 }

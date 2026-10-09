@@ -825,7 +825,7 @@ test("Billing preset and built-in palette persist through Generate and render th
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#generation-note")).toContainText(
-            "Once the canvas app is generated", { timeout: 15000 });
+            "Canvas generation is underway.", { timeout: 15000 });
         const [requestId] = await readdir(join(folder, "generations"));
         await materialize(project, workspace, handoff.handoffId, requestId);
         const config = JSON.parse(await readFile(join(project, ".github", "extensions",
@@ -843,7 +843,7 @@ test("Billing preset and built-in palette persist through Generate and render th
         await expect(page.locator("#conn-status")).toHaveText("Live");
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#generation-note")).toHaveText(
-            "Once the canvas app is generated, close and reopen Designer to continue editing.");
+            "Canvas generation is underway. You can close the Designer now. To generate another canvas, reopen Designer after this one finishes generation.");
         await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(1);
         await expect(page.locator("#generation-error")).toBeHidden();
         await expect(page.locator("#conn-status")).not.toHaveText("Disconnected");
@@ -857,13 +857,24 @@ test("Billing preset and built-in palette persist through Generate and render th
         await expect(page.getByRole("textbox", { name: "Title (required)" })).toHaveValue("");
         await expect(page.locator("#generation-note")).toBeHidden();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
-        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-second");
+        const canvasId = page.getByRole("textbox", { name: "Canvas ID (required)" });
+        await canvasId.fill("billing-canvas");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Again");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await expect(page.locator("#page-error")).toHaveText(
+            "Canvas already exists; choose and save a different Canvas ID.");
+        await expect(page.locator("main.app-body > p:not([hidden])")).toHaveCount(1);
+        await canvasId.fill("billing-second");
+        await expect(page.locator("#page-error")).toBeHidden();
+        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
         await expect(page.locator("#generation-note")).toBeHidden();
         await page.getByRole("button", { name: "Generate", exact: true }).click();
-        await expect(page.locator("#generation-note")).toContainText("Once the canvas app is generated");
+        await expect(page.locator("#generation-note")).toContainText("Canvas generation is underway.");
         await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(2);
         const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
             "extensions", "billing-canvas", "server.mjs")).href);
@@ -994,7 +1005,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#conn-status")).toHaveText("Live");
-        await expect(page.locator("#generation-note")).toContainText("Once the canvas app is generated");
+        await expect(page.locator("#generation-note")).toContainText("Canvas generation is underway.");
         const [requestId] = await readdir(join(folder, "generations"));
         await expect.poll(() => prompts.length).toBe(1);
         expect(prompts[0]).toContain(requestId);

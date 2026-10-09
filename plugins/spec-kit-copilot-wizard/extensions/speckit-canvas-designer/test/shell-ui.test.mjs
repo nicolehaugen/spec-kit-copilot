@@ -4,7 +4,42 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 
 const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
-const generationGuidance = "Once the canvas app is generated, close and reopen Designer to continue editing.";
+const generationGuidance = "Canvas generation is underway. You can close the Designer now. To generate another canvas, reopen Designer after this one finishes generation.";
+
+test("Designer shows only one message bar across repeated errors and generation guidance", () => {
+    const names = ["page-error", "generation-note", "generation-error",
+        "composition-error", "action-message"];
+    const slots = Object.fromEntries(names.map((name) =>
+        [name, { textContent: "", hidden: true }]));
+    const start = source.indexOf("const messageSlots = ");
+    const end = source.indexOf("let model,", start);
+    const setMessage = runInNewContext(`${source.slice(start, end)}\nsetMessage`, {
+        errorBox: slots["page-error"],
+        generationNote: slots["generation-note"],
+        generationError: slots["generation-error"],
+        compositionError: slots["composition-error"],
+        messageBox: slots["action-message"],
+    });
+    const visible = () => names.filter((name) => !slots[name].hidden);
+    const exists = "Canvas already exists; choose and save a different Canvas ID.";
+    setMessage(slots["generation-note"], exists);
+    setMessage(slots["page-error"], exists);
+    assert.deepEqual(visible(), ["page-error"]);
+    setMessage(slots["page-error"], "");
+    assert.deepEqual(visible(), ["generation-note"]);
+    setMessage(slots["generation-note"], generationGuidance);
+    setMessage(slots["action-message"], "Settings saved.");
+    assert.deepEqual(visible(), ["generation-note"]);
+    setMessage(slots["action-message"], "Warning: Check the generated page.");
+    assert.deepEqual(visible(), ["action-message"]);
+    setMessage(slots["action-message"], "");
+    setMessage(slots["generation-note"], "");
+    setMessage(slots["generation-error"], "Cannot generate.");
+    setMessage(slots["composition-error"], "Cannot generate.");
+    assert.deepEqual(visible(), ["generation-error"]);
+    setMessage(slots["generation-error"], "");
+    assert.deepEqual(visible(), ["composition-error"]);
+});
 
 test("Designer fixed-shell theme toggle follows preference, persists choice and remains accessible", async () => {
     const html = await readFile(new URL("../ui/index.html", import.meta.url), "utf8");
@@ -100,8 +135,10 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
         generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
         model: { preview: false, templates: [], revision: "model-1", settingsRevision: 0 },
         draft, draftOutputs: {}, draftBadges: [], queuedCanvasId: null, token: "test",
+        existingCanvasMessage: "Canvas already exists; choose and save a different Canvas ID.",
         generating: false, status: {}, messageBox: {}, checkReady: () => true,
         showError: () => {}, updateSave: () => {},
+        setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
         showFieldError: (message) => { throw new Error(message); },
         persistSettings: async (input) => {
             calls.push(["save", input.values["canvas.id"]]);
@@ -135,8 +172,10 @@ test("Generate does not dispatch or disable future attempts when the implicit sa
         generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
         model: { preview: false, templates: [], revision: "model-1", settingsRevision: 0 },
         draft: { "canvas.id": "first-canvas" }, draftOutputs: {}, draftBadges: [],
+        existingCanvasMessage: "Canvas already exists; choose and save a different Canvas ID.",
         queuedCanvasId: null, token: "test", generating: false, messageBox: {},
         checkReady: () => true, showError: () => {}, updateSave: () => {},
+        setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
         showFieldError: (message) => { reported = message; },
         persistSettings: async () => { throw new Error("stale settings revision"); },
         fetch: () => { throw new Error("Generate must not be dispatched"); },
@@ -165,6 +204,7 @@ test("Designer health check reports failed and restored connections without repl
         document: { getElementById: (id) =>
             id === "generation-note" ? generationNote : status },
         errorBox,
+        generationNote,
         token: "test",
         model: {},
         draft,
@@ -176,6 +216,7 @@ test("Designer health check reports failed and restored connections without repl
         AbortSignal,
         encodeURIComponent,
         showError: (message) => { errorBox.textContent = message; },
+        setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
         setInterval: (handler) => { polls = handler; return 1; },
         clearInterval: () => {},
         window: { addEventListener: () => {} },
@@ -256,8 +297,16 @@ test("Generate stays disabled in the queued panel even after publication and a d
     };
     const draft = { "canvas.id": "first-canvas" };
     const context = {
-        model, draft, draftOutputs: {}, generate, saving: false, generating: false,
+        model, draft, draftOutputs: {}, generate, generationNote, generationError,
+        saving: false, generating: false,
         queuedCanvasId: "first-canvas", generationGuidance, activeUploads: new Set(),
+        existingCanvasMessage: "Canvas already exists; choose and save a different Canvas ID.",
+        setMessage: (slot, text) => {
+            slot.textContent = text;
+            const selected = generationNote.textContent ? generationNote
+                : generationError.textContent ? generationError : null;
+            for (const item of [generationNote, generationError]) item.hidden = item !== selected;
+        },
         required: ["canvas.id", "canvas.displayName"],
         document: { getElementById: (id) =>
             id === "generation-note" ? generationNote : generationError },
@@ -298,5 +347,6 @@ test("Generate stays disabled in the queued panel even after publication and a d
     model.generationError = "Canvas Design does not provide Generate in this session.";
     update();
     assert.equal(generationNote.hidden, false);
-    assert.equal(generationError.hidden, false);
+    assert.equal(generationError.hidden, true);
+    assert.equal(generationError.textContent, model.generationError);
 });

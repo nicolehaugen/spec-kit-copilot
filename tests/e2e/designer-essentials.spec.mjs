@@ -158,7 +158,7 @@ test("computed provider approval cancels without sending and submits the approve
     expect(requests[0].approvedProviders).toEqual([approved]);
     await expect(generate).toBeDisabled();
     await expect(page.locator("#generation-note")).toHaveText(
-        "Once the canvas app is generated, close and reopen Designer to continue editing.");
+        "Canvas generation is underway. You can close the Designer now. To generate another canvas, reopen Designer after this one finishes generation.");
     await expect(page.locator("#generation-note")).toHaveCSS("border-top-style", "solid");
     await expect(page.locator("#generation-note")).toHaveCSS("border-top-color", "rgb(11, 110, 153)");
     await expect(page.locator("#generation-note")).toHaveCSS("padding-top", "12px");
