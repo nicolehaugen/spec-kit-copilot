@@ -42,6 +42,50 @@ test("overlapping output polls return their own validated snapshot without repla
     assert.equal(context.outputRequestId, "second-request");
 });
 
+test("superseded output-status failures and successes cannot change the current page error", async () => {
+    const start = source.indexOf("async function refreshOutputStatus(");
+    const end = source.indexOf("function updateGenerate()", start);
+    const statusStart = source.indexOf("async function checkOutputStatus(");
+    const statusEnd = source.indexOf("async function checkConnection(", statusStart);
+    const errorBox = { textContent: "" };
+    const pending = [];
+    const context = {
+        outputCheck: 0, outputIdentity: "", outputStatus: "absent",
+        outputRequestId: null, pendingReplacement: null,
+        draft: { "canvas.id": "new-canvas" }, token: "test",
+        validateCanvasId, validateOutputStatusResponse, validateOutputError,
+        updateOutputDisplay: () => {}, updateGenerate: () => {},
+        encodeURIComponent, AbortSignal, errorBox, outputStatusError: "",
+        setMessage: (slot, text) => { slot.textContent = text; },
+        fetch: (url) => new Promise((resolve) => {
+            pending.push({ id: new URL(url, "http://localhost").searchParams.get("canvasId"), resolve });
+        }),
+    };
+    const { checkOutputStatus } = runInNewContext(
+        `${source.slice(start, end)}\n${source.slice(statusStart, statusEnd)}\n({ checkOutputStatus })`, context);
+    const oldFailure = checkOutputStatus("old-canvas");
+    const current = checkOutputStatus("new-canvas");
+    pending[1].resolve({ ok: true, json: async () => ({
+        status: "absent", target: ".github/extensions/new-canvas/",
+    }) });
+    await current;
+    pending[0].resolve({ ok: false, json: async () => ({ error: "Old canvas failed" }) });
+    await oldFailure;
+    assert.equal(errorBox.textContent, "");
+    assert.equal(context.outputIdentity, "new-canvas");
+
+    const oldSuccess = checkOutputStatus("old-canvas");
+    const currentFailure = checkOutputStatus("new-canvas");
+    pending[3].resolve({ ok: false, json: async () => ({ error: "New canvas failed" }) });
+    await currentFailure;
+    assert.equal(errorBox.textContent, "New canvas failed");
+    pending[2].resolve({ ok: true, json: async () => ({
+        status: "absent", target: ".github/extensions/old-canvas/",
+    }) });
+    await oldSuccess;
+    assert.equal(errorBox.textContent, "New canvas failed");
+});
+
 test("Share offers the current folder only after its output is verified", () => {
     const start = source.indexOf("function outputPath(id)");
     const end = source.indexOf("async function refreshOutputStatus(", start);
@@ -468,18 +512,21 @@ test("output status failures keep the Designer live and clear only their own err
     const errorBox = { textContent: "" };
     const generationNote = { textContent: "" };
     let failure = new Error("Output status unavailable");
-    const { checkConnection: check } = runInNewContext(`${source.slice(start, end)}
-({ checkConnection })`, {
+    const context = {
         document: { getElementById: () => status }, errorBox, generationNote,
         token: "test", model: {}, draft: { "canvas.id": "first-canvas" },
         requestedCanvasId: "first-canvas", openingRequested: false, currentPage: "designer-generate",
+        outputCheck: 0,
         fetch: async () => ({ ok: true }), refreshOutputStatus: async () => {
+            context.outputCheck++;
             if (failure) throw failure;
         },
         updateGenerate: () => {}, setMessage: (slot, text) => { slot.textContent = text; },
         setInterval: () => 1, clearInterval: () => {}, window: { addEventListener: () => {} },
         AbortSignal, encodeURIComponent,
-    });
+    };
+    const { checkConnection: check } = runInNewContext(`${source.slice(start, end)}
+({ checkConnection })`, context);
     await check();
     assert.equal(status.textContent, "Live");
     assert.equal(errorBox.textContent, "Output status unavailable");

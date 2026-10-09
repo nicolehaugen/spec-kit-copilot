@@ -446,6 +446,52 @@ test("Outputs definition and handoff evidence remain intact while their tab is h
     }
 });
 
+test("a partial composition never selects the hidden Outputs page", async ({ page }) => {
+    const state = await model();
+    state.pages = state.pages.filter((entry) => entry.fixedControl === "designer.outputs");
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        await expect(page.getByRole("tab")).toHaveText(["Generate"]);
+        await expect(page.getByRole("heading", { name: "Create and open your canvas" })).toBeVisible();
+        await expect(page.locator(".output-section")).toHaveCount(0);
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+    } finally {
+        await shell.close();
+    }
+});
+
+test("a superseded Canvas ID status failure cannot overwrite the current page", async ({ page }) => {
+    const shell = await startPreparedShell(await model());
+    try {
+        await page.goto(shell.url);
+        let releaseOld;
+        let oldCompleted = false;
+        await page.route("**/api/output-status?*", async (route) => {
+            const id = new URL(route.request().url()).searchParams.get("canvasId");
+            if (id === "old-canvas") {
+                await new Promise((resolve) => { releaseOld = resolve; });
+                await route.fulfill({ status: 500, json: { error: "Old canvas failed" } });
+                oldCompleted = true;
+            } else {
+                await route.fulfill({ json: {
+                    status: "absent", target: `.github/extensions/${id}/`,
+                } });
+            }
+        });
+        await page.getByRole("textbox", { name: /Canvas ID/ }).fill("old-canvas");
+        await expect.poll(() => typeof releaseOld).toBe("function");
+        await page.getByRole("textbox", { name: /Canvas ID/ }).fill("new-canvas");
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#output-target")).toHaveText(".github/extensions/new-canvas/");
+        releaseOld();
+        await expect.poll(() => oldCompleted).toBe(true);
+        await expect(page.locator("#page-error")).toBeHidden();
+    } finally {
+        await shell.close();
+    }
+});
+
 test("Main page Logo upload explains rejection beside the picker and clears on replacement", async ({ page }) => {
     const state = await model();
     const { field } = JSON.parse(await readFile(new URL("main-page-logo.json", settingsRoot), "utf8"));

@@ -570,7 +570,7 @@ function renderPage(pageId, invalidFieldId) {
                 showError("");
                 updateSave();
                 if (id === "canvas.id") {
-                    void refreshOutputStatus(value).catch((error) => showError(error.message));
+                    void checkOutputStatus(value);
                 }
             } });
         for (const [id, handle] of handles) mounted.set(id, handle);
@@ -694,8 +694,8 @@ function applyState(next) {
         draftBadges = structuredClone(model.badges ?? []);
         tabs.replaceChildren();
         setMessage(compositionError, (model.compositionErrors ?? []).join("; "));
-        for (const page of model.pages) {
-            if (page.fixedControl === "designer.outputs") continue;
+        const visiblePages = model.pages.filter((page) => page.fixedControl !== "designer.outputs");
+        for (const page of visiblePages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,
                 `tab${page.error ? " tab-error" : ""}`);
             tab.type = "button";
@@ -714,10 +714,11 @@ function applyState(next) {
             tab.setAttribute("aria-controls", "settings-page");
             tabs.append(tab);
         }
-        const selected = model.pages.find((page) => page.page === currentPage)
-            ?? model.pages.find((page) => page.page === "designer-essentials")
-            ?? model.pages[0];
+        const selected = visiblePages.find((page) => page.page === currentPage)
+            ?? visiblePages.find((page) => page.page === "designer-essentials")
+            ?? visiblePages[0];
         if (selected) renderPage(selected.page);
+        else if (model.pages.length && !model.preview) renderPage("designer-generate");
         else {
             currentPage = null;
             root.setAttribute("aria-busy", "false");
@@ -739,12 +740,15 @@ function connectionStatus(state) {
     status.textContent = state === "live" ? "Live" : state === "connecting" ? "Connecting" : "Disconnected";
 }
 async function checkOutputStatus(id) {
+    const check = outputCheck + 1;
     try {
         await refreshOutputStatus(id);
+        if (check !== outputCheck) return;
         if (outputStatusError && errorBox.textContent === outputStatusError)
             setMessage(errorBox, "");
         outputStatusError = "";
     } catch (error) {
+        if (check !== outputCheck) return;
         if (!errorBox.textContent || errorBox.textContent === outputStatusError)
             setMessage(errorBox, error.message);
         outputStatusError = error.message;

@@ -217,7 +217,8 @@ The server requires the submitted snapshot to match that saved revision and
 freezes the saved values, outputs, and badges rather than trusting a second copy.
 The Designer stays editable while creation continues. An authenticated output
 status check verifies the matching config, provenance, and final entry point
-before reporting **Canvas files created.** A second click during submission is
+before reporting **Canvas files created.** Superseded status checks cannot replace
+the current Canvas ID's status or error. A second click during submission is
 blocked, but Generate can dispatch again while awaiting the child-session agent
 if its first attempt stalls. If an earlier non-replacement request publishes
 after a retry is accepted, its verified output remains openable even if the
@@ -265,7 +266,9 @@ A missing skill directs users to relaunch with the current Canvas Design release
 current local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
-no Canvas ID or Title values, so Generate remains unavailable. Tab changes display the in-memory model without re-resolving
+no Canvas ID or Title values, so Generate remains unavailable. When a partial
+non-preview composition has only the hidden Outputs definition, Designer selects
+the disabled Generate page instead of rendering Outputs without a tab. Tab changes display the in-memory model without re-resolving
 pages; there is no page-reload control or persisted page snapshot. After a
 successful handoff launch, the provider saves its complete resolved open
 inventory in the Designer session's `speckit-canvas-designer/last-open.json`.
