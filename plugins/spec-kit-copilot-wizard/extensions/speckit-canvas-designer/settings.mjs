@@ -114,6 +114,15 @@ export async function loadDesignerSettings(workspacePath, handoff, model, openFi
         settingsRevision: record?.revision ?? 0, persisted: Boolean(record) };
 }
 
+export async function freshDesignerSettings(workspacePath, handoff, model) {
+    const saved = await loadDesignerSettings(workspacePath, handoff, model);
+    const outputs = initialOutputs(handoff);
+    const badges = validateBadges(model.badges ?? [],
+        { ...model, phases: handoff.workflow.selectedPhases, outputs });
+    return { ...model, outputs, badges, settingsRevision: saved.settingsRevision,
+        persisted: false };
+}
+
 export async function saveDesignerSettings(workspacePath, handoff, model, request, openFile = open) {
     validateSaveRequest(request, model);
     const outputs = validateConfirmedOutputs(Object.hasOwn(request, "outputs")

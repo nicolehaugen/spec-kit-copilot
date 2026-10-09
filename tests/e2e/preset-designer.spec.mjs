@@ -23,7 +23,7 @@ test("Wizard-selected canvas-design test preset edits, saves and reopens its vis
             "Essentials", "Outputs", "Badges", "Appearance", "Test settings",
         ]);
         await expect(page.getByRole("tab")).toHaveText([
-            "Essentials", "Outputs", "Badges", "Appearance", "Test settings",
+            "Essentials", "Badges", "Appearance", "Test settings", "Generate",
         ]);
         await page.getByRole("tab", { name: "Test settings" }).click();
         const label = page.getByRole("textbox", { name: "Test label" });
@@ -67,7 +67,7 @@ test("Wizard-selected minimal Essentials preset opens a savable but generation-d
         ]);
         expect(journey.templates.map((entry) => entry.name))
             .not.toContain("generated-workflow-page-adapter");
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Appearance", "Generate"]);
         await expect(page.getByRole("textbox", { name: "Canvas ID (required)" })).toBeVisible();
         await expect(page.getByRole("textbox", { name: "Title (required)" })).toBeVisible();
         await expect(page.getByRole("textbox", { name: "Description" })).toHaveCount(0);
@@ -75,7 +75,9 @@ test("Wizard-selected minimal Essentials preset opens a savable but generation-d
             "generated-workflow-page-adapter");
         await expect(page.locator("#composition-error")).toContainText(
             "extension:extension-canvas-design");
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("minimal-canvas");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Minimal Canvas");
         await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -93,7 +95,8 @@ test("Wizard-selected minimal Essentials preset opens a savable but generation-d
             .toHaveValue("Minimal Canvas");
         await expect(page.locator("#composition-error")).toContainText(
             "generated-workflow-page-adapter");
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
     } finally {
         await journey.close();
     }

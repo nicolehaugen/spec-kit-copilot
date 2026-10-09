@@ -34,7 +34,8 @@ async function generate(page, journey, dispatched, id, {
     await page.getByRole("tab", { name: "Essentials" }).click();
     await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill(id);
     await page.getByRole("textbox", { name: "Title (required)" }).fill(`Test ${id}`);
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await page.getByRole("tab", { name: "Generate" }).click();
+    await page.locator("#generate-canvas").click();
     const approval = page.getByRole("dialog", { name: "Approve generated value providers" });
     if (await approval.isVisible()) {
         const provider = journey.templates.find((entry) =>
@@ -45,7 +46,7 @@ async function generate(page, journey, dispatched, id, {
         await expect(approval).toContainText(createHash("sha256").update(bytes).digest("hex"));
         await approval.getByRole("button", { name: "Approve and Generate" }).click();
     }
-    await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+    await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
     await expect.poll(() => dispatched.length).toBe(1);
     const folder = join(journey.workspace, "speckit-canvas-designer", "handoffs",
         journey.handoff.handoffId, "generations");
@@ -230,7 +231,7 @@ test("generated-only Overview is a navigable page without an extra Designer tab"
     ] });
     try {
         await expect(page.getByRole("tab")).toHaveText([
-            "Essentials", "Outputs", "Badges", "Appearance",
+            "Essentials", "Badges", "Appearance", "Generate",
         ]);
         const { config } = await generate(page, journey, dispatched, "preset-overview");
         expect(config.generatedPages).toContainEqual(expect.objectContaining({

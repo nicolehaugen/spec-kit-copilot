@@ -11,7 +11,7 @@ import { startPresetJourney } from "./preset-journey.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
-import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
+import { freshDesignerSettings, loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { previewModel } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/preview.mjs";
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
 
@@ -181,6 +181,11 @@ async function openDesigner(page) {
     return shell;
 }
 
+async function generateFromTab(page) {
+    await page.getByRole("tab", { name: "Generate" }).click();
+    await page.locator("#generate-canvas").click();
+}
+
 async function badgeState() {
     const state = await model();
     state.outputs = { specify: {
@@ -202,6 +207,10 @@ test("Badges editor persists a configured badge through the Designer save bounda
     try {
         await page.goto(shell.url);
         await page.getByRole("tab", { name: "Badges" }).click();
+        const badgeButtonStyle = await page.locator(".badge-add").evaluate((button) => {
+            const style = getComputedStyle(button);
+            return [style.backgroundColor, style.color, style.fontWeight, style.padding];
+        });
         await page.getByRole("button", { name: "+ Add badge" }).click();
         await page.getByRole("button", { name: "Work complete" }).click();
         await page.getByRole("button", { name: "Create badge" }).click();
@@ -223,6 +232,14 @@ test("Badges editor persists a configured badge through the Designer save bounda
         await page.reload();
         await page.getByRole("tab", { name: "Badges" }).click();
         await expect(page.locator(".badge-row")).toContainText("Complete");
+        await page.getByRole("tab", { name: "Generate" }).click();
+        for (const id of ["#generate-canvas", "#open-generated-canvas"]) {
+            const style = await page.locator(id).evaluate((button) => {
+                const computed = getComputedStyle(button);
+                return [computed.backgroundColor, computed.color, computed.fontWeight, computed.padding];
+            });
+            expect(style).toEqual(badgeButtonStyle);
+        }
     } finally {
         await shell.close();
     }
@@ -239,7 +256,8 @@ test("a failed badge adapter import leaves other Designer pages available", asyn
         await page.getByRole("button", { name: "Work complete" }).click();
         await expect(page.locator(".badge-editor")).toContainText("Could not load badge input control");
         await page.getByRole("tab", { name: "Essentials" }).click();
-        await expect(page.getByRole("tab", { name: "Outputs" })).toBeVisible();
+        await expect(page.getByRole("tab", { name: "Generate" })).toBeVisible();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveCount(0);
     } finally {
         await shell.close();
     }
@@ -272,7 +290,7 @@ test("empty and partial preset inventories keep Designer open with inline genera
     try {
         await page.goto(emptyShell.url);
         await expect(page.getByRole("heading", { name: "No Designer pages registered" })).toBeVisible();
-        await expect(page.getByRole("tab")).toHaveCount(0);
+        await expect(page.getByRole("tab")).toHaveText(["Generate"]);
         await expect(page.locator("#composition-error")).toContainText("Generated Workflow page is not registered");
         await expect(page.locator("#save-settings")).toBeDisabled();
         await expect(page.locator("#generate-canvas")).toBeDisabled();
@@ -289,9 +307,12 @@ test("empty and partial preset inventories keep Designer open with inline genera
             + " missing or unreferenced presentation adapter generated-workflow-page-adapter"];
         partialShell = await startPreparedShell(partial);
         await page.goto(partialShell.url);
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Appearance", "Generate"]);
         await expect(page.locator("#composition-error")).toContainText("generated-workflow-page-adapter");
         await expect(page.locator("#generation-error")).toContainText("generated-workflow-page-adapter");
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Partial designer");
         await expect(page.locator("#save-settings")).toBeEnabled();
         await page.locator("#save-settings").click();
@@ -302,7 +323,7 @@ test("empty and partial preset inventories keep Designer open with inline genera
     }
 });
 
-test("Outputs page keeps pipeline artifacts fixed and restores the viewer default after removing an addition", async ({ page }) => {
+test("Outputs definition and handoff evidence remain intact while their tab is hidden", async ({ page }) => {
     const state = await model();
     state.outputs = {
         constitution: { outputs: [".specify/memory/constitution.md"],
@@ -314,60 +335,71 @@ test("Outputs page keeps pipeline artifacts fixed and restores the viewer defaul
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.locator(".output-section")).toHaveCount(1);
-        await expect(page.getByRole("combobox", { name: "Phase" })).toHaveValue("specify");
-        await expect(page.getByRole("combobox", { name: "Phase" }).locator("option")).toHaveCount(2);
-        await expect(page.getByText("This list doesn’t change the artifacts that a pipeline creates.")).toBeVisible();
-        await expect(page.locator(".output-list").first().getByRole("radio")).toHaveCount(2);
-        await expect(page.locator(".output-list").first().getByRole("button", { name: "Remove" })).toHaveCount(0);
-        await expect(page.getByRole("radio", { name: "Open specs/<slug>/spec.md by default" })).toBeChecked();
-        await page.getByRole("textbox", { name: "Artifact path" }).fill("draft.txt");
-        await expect(page.getByRole("button", { name: "Add artifact" })).toBeDisabled();
-        await expect(page.locator("#artifact-path-error")).toContainText("Markdown");
-        for (const path of ["../outside.md", ".GitHub/private.md", "specs//bad.md",
-            "specs/<slug>/CON.md", "reports/<slug>/../bad.md"]) {
-            await page.getByRole("textbox", { name: "Artifact path" }).fill(path);
-            await expect(page.getByRole("button", { name: "Add artifact" })).toBeDisabled();
-            await expect(page.locator("#artifact-path-error")).toContainText("safe relative");
-        }
-        await expect(page.getByRole("textbox", { name: "Artifact path" }))
-            .toHaveAttribute("aria-describedby", "artifact-path-error artifact-path-hint");
-        await page.getByRole("textbox", { name: "Artifact path" }).fill("specs/<slug>/design-notes.md");
-        await page.getByRole("button", { name: "Add artifact" }).click();
-        await expect(page.locator(".output-list").last().getByRole("button", { name: "Remove" })).toHaveCount(1);
-        await page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" }).check();
-        await expect(page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" })).toBeChecked();
-        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
-        await page.getByRole("tab", { name: "Essentials" }).click();
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" })).toBeChecked();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveCount(0);
+        await expect(page.locator(".output-section")).toHaveCount(0);
+        const token = new URL(shell.url).searchParams.get("token");
+        const getState = async () => {
+            const response = await fetch(new URL(`/api/state?token=${token}`, shell.url));
+            expect(response.status).toBe(200);
+            return response.json();
+        };
+        const initial = await getState();
+        expect(initial.pages.find((entry) => entry.page === "designer-artifacts"))
+            .toMatchObject({ title: "Outputs" });
+        expect(initial.pipelineOutputs).toEqual(state.outputs);
+        expect(initial.pipelineOutputs.specify.view).toBe("specs/<slug>/spec.md");
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("output-default");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Output default");
         await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.getByText("Settings saved.")).toBeVisible();
-        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
         await page.reload();
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.getByRole("radio", { name: "Open specs/<slug>/design-notes.md by default" })).toBeChecked();
-        await page.getByRole("button", { name: "Remove specs/<slug>/design-notes.md" }).click();
-        await expect(page.getByRole("radio", { name: "Open specs/<slug>/spec.md by default" })).toBeChecked();
-        await expect(page.locator(".output-list").last().getByRole("button", { name: "Remove" })).toHaveCount(0);
-        await page.getByRole("combobox", { name: "Phase" }).selectOption("speckit.assess.intake");
-        await expect(page.getByText("No pipeline artifacts for this phase.")).toBeVisible();
-        await expect(page.getByText("will not have a View artifact button", { exact: false })).toBeVisible();
-        await page.getByRole("textbox", { name: "Artifact path" }).fill("specs/<slug>/assessment.md");
-        await page.getByRole("button", { name: "Add artifact" }).click();
-        await expect(page.getByRole("radio", { name: "Open specs/<slug>/assessment.md by default" })).toBeChecked();
-        await page.getByRole("button", { name: "Remove specs/<slug>/assessment.md" }).click();
-        await expect(page.getByText("will not have a View artifact button", { exact: false })).toBeVisible();
-        for (const name of ["first", "second"]) {
-            await page.getByRole("textbox", { name: "Artifact path" }).fill(`specs/<slug>/${name}.md`);
-            await page.getByRole("button", { name: "Add artifact" }).click();
-        }
-        await page.getByRole("radio", { name: "Open specs/<slug>/first.md by default" }).check();
-        await page.getByRole("button", { name: "Remove specs/<slug>/first.md" }).click();
-        await expect(page.getByRole("radio", { name: "Open specs/<slug>/second.md by default" })).toBeChecked();
-        await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.getByText("Settings saved.")).toBeVisible();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveCount(0);
+        expect((await getState()).pipelineOutputs).toEqual(state.outputs);
+    } finally {
+        await shell.close();
+    }
+});
+
+test("a partial composition never selects the hidden Outputs page", async ({ page }) => {
+    const state = await model();
+    state.pages = state.pages.filter((entry) => entry.fixedControl === "designer.outputs");
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        await expect(page.getByRole("tab")).toHaveText(["Generate"]);
+        await expect(page.getByRole("heading", { name: "Create and open your canvas" })).toBeVisible();
+        await expect(page.locator(".output-section")).toHaveCount(0);
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+    } finally {
+        await shell.close();
+    }
+});
+
+test("a superseded Canvas ID status failure cannot overwrite the current page", async ({ page }) => {
+    const shell = await startPreparedShell(await model());
+    try {
+        await page.goto(shell.url);
+        let releaseOld;
+        let oldCompleted = false;
+        await page.route("**/api/output-status?*", async (route) => {
+            const id = new URL(route.request().url()).searchParams.get("canvasId");
+            if (id === "old-canvas") {
+                await new Promise((resolve) => { releaseOld = resolve; });
+                await route.fulfill({ status: 500, json: { error: "Old canvas failed" } });
+                oldCompleted = true;
+            } else {
+                await route.fulfill({ json: {
+                    status: "absent", target: `.github/extensions/${id}/`,
+                } });
+            }
+        });
+        await page.getByRole("textbox", { name: /Canvas ID/ }).fill("old-canvas");
+        await expect.poll(() => typeof releaseOld).toBe("function");
+        await page.getByRole("textbox", { name: /Canvas ID/ }).fill("new-canvas");
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#output-target")).toHaveText(".github/extensions/new-canvas/");
+        releaseOld();
+        await expect.poll(() => oldCompleted).toBe(true);
+        await expect(page.locator("#page-error")).toBeHidden();
     } finally {
         await shell.close();
     }
@@ -469,7 +501,7 @@ test("an image adapter finishing after a tab switch mounts into the retained pag
         await importHeld;
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("retained-image");
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Retained image");
-        await page.getByRole("tab", { name: "Outputs" }).click();
+        await page.getByRole("tab", { name: "Generate" }).click();
         const imported = page.waitForResponse((response) =>
             response.url().includes("/adapters/designer-control-adapter-image.mjs")
                 && response.status() === 200);
@@ -478,7 +510,7 @@ test("an image adapter finishing after a tab switch mounts into the retained pag
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(page.getByRole("group", { name: field.label })
             .locator('input[type="file"]')).toBeVisible();
-        await page.getByRole("tab", { name: "Outputs" }).click();
+        await page.getByRole("tab", { name: "Generate" }).click();
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#action-message")).toHaveText("Settings saved.");
     } finally {
@@ -515,21 +547,20 @@ test("pending or failed image selection blocks actions until completion or cance
         await picker.setInputFiles({ name: "good.png", mimeType: "image/png", buffer: good });
         await page.waitForFunction(() => window.uploadStarted);
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        await expect(page.getByRole("tab", { name: "Outputs" })).toBeDisabled();
+        await expect(page.getByRole("tab", { name: "Generate" })).toBeDisabled();
         await expect(page.getByRole("tab", { name: "Essentials" })).toHaveAttribute("aria-selected", "true");
         await page.evaluate(() => window.releaseUpload());
         await expect(page.getByAltText("Header logo preview")).toBeVisible();
-        await expect(page.getByRole("tab", { name: "Outputs" })).toBeEnabled();
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveAttribute("aria-selected", "true");
+        await expect(page.getByRole("tab", { name: "Generate" })).toBeEnabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.getByRole("tab", { name: "Generate" })).toHaveAttribute("aria-selected", "true");
         await page.getByRole("tab", { name: "Essentials" }).click();
         await picker.setInputFiles({ name: "broken.png", mimeType: "image/png",
             buffer: Buffer.from("not a PNG") });
         await page.evaluate(() => window.releaseUpload());
         await expect(page.locator('[id="setting-field-canvas.logo-error"]'))
             .toContainText("Image bytes do not match");
-        await page.getByRole("tab", { name: "Outputs" }).click();
+        await page.getByRole("tab", { name: "Generate" }).click();
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#page-error")).toContainText("Header logo (canvas.logo) is still processing or needs attention");
         await expect(page.getByRole("tab", { name: "Essentials" }))
@@ -537,8 +568,8 @@ test("pending or failed image selection blocks actions until completion or cance
         await expect(page.locator('[id="setting-field-canvas.logo-error"]'))
             .toContainText("Image bytes do not match");
         await page.getByRole("button", { name: "Cancel upload" }).click();
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveAttribute("aria-selected", "true");
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.getByRole("tab", { name: "Generate" })).toHaveAttribute("aria-selected", "true");
     } finally {
         await shell.close();
     }
@@ -601,12 +632,13 @@ test("Designer CSP allows its own UI but blocks cross-origin adapter requests", 
 });
 
 test("Wizard-selected Billing preset persists through Designer and renders in the generated canvas", async ({ page }) => {
-    test.setTimeout(150_000);
+    test.setTimeout(240_000);
     const prompts = [];
     const journey = await startPresetJourney(page, {
         presetId: "copilot-billing-canvas-test", selectedPhases: ["specify"],
         onGenerate: async ({ prompt }) => { prompts.push(prompt); },
     });
+    let freshShell;
     try {
         const { workspace, project, handoff, pages, templates } = journey;
         expect(journey.composedSkill).toContain("- `canvas-settings-billing`");
@@ -632,7 +664,7 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         const light = page.getByRole("textbox", { name: "Light mode accent" });
         const dark = page.getByRole("textbox", { name: "Dark mode accent" });
         await light.fill("not-a-color");
-        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await generateFromTab(page);
         await expect(page.locator("#page-error")).toContainText(
             "Invalid Light mode accent (canvas.accentLight)");
         await light.fill("123aBc");
@@ -650,27 +682,64 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         await page.getByRole("tab", { name: "Appearance" }).click();
         await expect(page.getByRole("textbox", { name: "Light mode accent" })).toHaveValue("123aBc");
         await expect(page.getByRole("textbox", { name: "Dark mode accent" })).toHaveValue("#ABC123");
-        await page.getByRole("button", { name: "Generate", exact: true }).click();
-        await expect(page.locator("#conn-status")).toContainText("Generation queued:");
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        const [requestId] = await readdir(join(
-            handoffDirectory(workspace, handoff.handoffId), "generations"));
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await page.locator("#generate-canvas").click();
+        await expect(page.locator("#conn-status")).toHaveText("Live");
+        await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
+        await expect(page.locator("#open-generated-canvas")).toBeDisabled();
+        const folder = handoffDirectory(workspace, handoff.handoffId);
+        const [requestId] = await readdir(join(folder, "generations"));
         await expect.poll(() => prompts.length).toBe(1);
         expect(prompts[0]).toContain("speckit-extension-canvas-design-generate");
         expect(prompts[0]).toContain(requestId);
         await journey.generate(requestId);
-        const { config } = await journey.serveGenerated("billing-canvas", { token: "billing-token" });
+        const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+            "billing-canvas", "canvas-config.json"), "utf8"));
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
             label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } }]);
         expect(config.appearance).toMatchObject({
             light: { accent: "#123aBc" }, dark: { accent: "#ABC123" },
         });
+        await page.goto(journey.shell.url);
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#conn-status")).toHaveText("Live");
+        await expect(page.locator("#generation-error")).toBeHidden();
+        await expect(page.locator("#generation-status")).toContainText("Canvas files created");
+        await expect(page.locator("#generate-canvas")).toHaveText("Regenerate canvas");
+        await expect(page.locator("#generate-canvas")).toBeEnabled();
+        await expect(page.locator("#open-generated-canvas")).toBeEnabled();
+        await page.locator("#generate-canvas").click();
+        const confirm = page.getByRole("dialog", { name: "Replace generated canvas?" });
+        await expect(confirm).toBeVisible();
+        await confirm.getByRole("button", { name: "Cancel" }).click();
+        await expect(confirm).not.toBeVisible();
+        expect(await readdir(join(folder, "generations"))).toEqual([requestId]);
+        freshShell = await startShell(handoff, await freshDesignerSettings(workspace, handoff,
+            await loadResolvedDesignerPages(handoff, project, pages, templates)),
+        { project, workspace, session: { send: async ({ prompt }) => { prompts.push(prompt); } } });
+        await page.goto(freshShell.url);
+        await expect(page.getByRole("textbox", { name: "Canvas ID (required)" })).toHaveValue("");
+        await expect(page.getByRole("textbox", { name: "Title (required)" })).toHaveValue("");
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generation-status")).not.toContainText("Creating canvas files");
+        await page.getByRole("tab", { name: "Essentials" }).click();
+        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("billing-second");
+        await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#output-target")).toContainText(".github/extensions/billing-second/");
+        await page.locator("#generate-canvas").click();
+        await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
+        await expect.poll(() => prompts.length).toBe(2);
+        expect((await readdir(join(folder, "generations"))).length).toBe(2);
+        await journey.serveGenerated("billing-canvas", { token: "billing-token" });
         await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
         await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveCount(0);
     } finally {
+        await freshShell?.close();
         await journey.close();
     }
 });
@@ -773,8 +842,9 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         await page.goto(reopened.url);
         await expect(page.getByRole("radio",
             { name: "Impact medium, likelihood medium" })).toHaveAttribute("aria-checked", "true");
-        await page.getByRole("button", { name: "Generate", exact: true }).click();
-        await expect(page.locator("#conn-status")).toContainText("Generation queued:");
+        await generateFromTab(page);
+        await expect(page.locator("#conn-status")).toHaveText("Live");
+        await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
         const [requestId] = await readdir(join(folder, "generations"));
         await expect.poll(() => prompts.length).toBe(1);
         expect(prompts[0]).toContain(requestId);
@@ -786,7 +856,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         expect(request.schemaVersion).toBe(1);
         expect(request.handoffId).toBe(handoff.handoffId);
         expect(request.requestId).toBe(requestId);
-        expect(request.settingsRevision).toBe(1);
+        expect(request.settingsRevision).toBe(2);
         expect(requestBytes.length).toBeLessThanOrEqual(4 * 1024 * 1024);
         expect(integrity).toBe(createHash("sha256").update(JSON.stringify(payload)).digest("hex"));
         expect(request.values["risk.rating"]).toEqual({ impact: "medium", likelihood: "medium" });
@@ -834,7 +904,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         stale = await startShell(handoff, await load(), { project, workspace });
         await page.goto(stale.url);
         await page.waitForFunction(() => globalThis.controlCallbacks?.length === 1);
-        await page.getByRole("tab", { name: "Outputs" }).click();
+        await page.getByRole("tab", { name: "Generate" }).click();
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect.poll(() => page.evaluate(() => globalThis.controlCallbacks?.length)).toBe(1);
         await page.evaluate(() => {
@@ -913,7 +983,7 @@ async function openWithError(page, name) {
 test("Essentials keeps the Workflow header without a slug toggle", async ({ page }) => {
     const shell = await openDesigner(page);
     try {
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Badges", "Appearance"]);
+        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Badges", "Appearance", "Generate"]);
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         const title = page.getByRole("textbox", { name: "Title (required)" });
         await expect(page.getByRole("textbox")).toHaveCount(4);
@@ -928,16 +998,17 @@ test("Essentials keeps the Workflow header without a slug toggle", async ({ page
         await expect(page.getByRole("textbox", { name: "Description" })).toHaveAttribute("maxlength", "240");
         await expect(page.getByRole("textbox", { name: "Workflow header" })).toHaveAttribute("maxlength", "80");
         await id.fill("example-canvas");
-        for (const name of ["Outputs", "Appearance"]) {
+        for (const name of ["Appearance", "Generate"]) {
             await page.getByRole("tab", { name }).click();
-            if (name === "Outputs") await expect(page.getByRole("heading", { name: "Outputs" })).toBeVisible();
+            if (name === "Generate") await expect(page.locator("#output-target")).toBeVisible();
             else await expect(page.getByText("This template defines no fields.")).toBeVisible();
         }
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(id).toHaveValue("example-canvas");
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        await expect(page.getByRole("status")).toHaveText("Ready");
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        await expect(page.locator("#conn-status")).toHaveText("Live");
     } finally {
         await shell.close();
     }
@@ -993,11 +1064,14 @@ test("missing Generate skill explains why the action is disabled", async ({ page
         shell = await startShell(handoff, state, { project, workspace,
             session: { send: async () => {} } });
         await page.goto(shell.url);
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
         await expect(page.locator("#generation-error")).toHaveText(
             "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.");
+        await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("new-canvas");
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
         await expect(page.locator("#generation-error")).toBeVisible();
     } finally {
         await shell?.close();
@@ -1008,7 +1082,7 @@ test("missing Generate skill explains why the action is disabled", async ({ page
 test("failed optional page shows safe diagnostics while Essentials remains editable", async ({ page }) => {
     const shell = await openWithError(page, "designer-artifacts");
     try {
-        await expect(page.getByRole("status")).toHaveText("Pages need attention (1)");
+        await expect(page.locator("#conn-status")).toHaveText("Live");
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         await id.fill("my-canvas");
         await page.getByRole("tab", { name: "designer-artifacts (error)" }).click();
@@ -1019,7 +1093,8 @@ test("failed optional page shows safe diagnostics while Essentials remains edita
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(id).toHaveValue("my-canvas");
         await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
     } finally {
         await shell.close();
     }
@@ -1056,7 +1131,8 @@ test("Save keeps incomplete drafts, persists edits and reports stale revisions",
         await expect(page.locator("#save-help")).toHaveAttribute("title", "No changes to save");
         await expect(save).toHaveAttribute("aria-description", "No changes to save");
         expect(await save.evaluate((button) => getComputedStyle(button).cursor)).toBe("default");
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
 
         const reopenedModel = await loadDesignerSettings(workspace, handoff, await model());
         await prepareScalarAdapters(project, reopenedModel);
@@ -1091,9 +1167,9 @@ test("failed Essentials remains selected with no identity fields; other tabs wor
             .toHaveAttribute("aria-selected", "true");
         await expect(page.getByRole("heading", { name: "Could not load designer-essentials" })).toBeVisible();
         await expect(page.getByRole("textbox")).toHaveCount(0);
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.getByRole("heading", { name: "Outputs" })).toBeVisible();
-        await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await page.getByRole("tab", { name: "Generate" }).click();
+        await expect(page.locator("#generation-error")).toBeVisible();
+        await expect(page.locator("#generate-canvas")).toBeDisabled();
     } finally {
         await shell.close();
     }

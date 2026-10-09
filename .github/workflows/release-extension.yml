@@ -13,12 +13,14 @@ on:
     branches: [main]
     paths:
       - 'spec-kit-extensions/**'
+      - 'plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**'
       - '.github/workflows/release-extension.yml'
       - '.github/workflows/release-extension-trigger.yml'
   push:
     branches: [main]
     paths:
       - 'spec-kit-extensions/**'
+      - 'plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**'
       - '.github/workflows/release-extension.yml'
       - '.github/workflows/release-extension-trigger.yml'
     tags:
@@ -144,7 +146,7 @@ jobs:
           node --test plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/test/designer-launch.test.mjs
 
       - name: Test generated canvas and Designer provider
-        run: node --test spec-kit-extensions/tests/*.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
+        run: node --test spec-kit-extensions/tests/*.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/contracts.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/generated-output.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/open-state.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/shell-ui.test.mjs
 
       - name: Create extension ZIP
         env:
