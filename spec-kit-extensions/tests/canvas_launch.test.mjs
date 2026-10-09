@@ -119,6 +119,15 @@ test("composed verification resolves every name, rejects warnings and native scr
         "generated-setup-button-adapter": join(installed, "generated-host", "setup-button-control", "generated-setup-button-adapter.mjs"),
         "generated-setup-button": join(installed, "generated-host", "setup-button-control", "setup.json"),
         "badges-settings": join(installed, "designer-host", "badges-settings", "badge-types.json"),
+        "designer-badge-input-stock": join(installed, "designer-host",
+            "badge-input-controls", "stock", "control.json"),
+        "designer-badge-input-stock-adapter": join(installed, "designer-host",
+            "badge-input-controls", "stock", "designer.mjs"),
+        ...Object.fromEntries(["value-match", "artifact-current", "markdown-file-count",
+            "checklist-progress", "checklist-complete", "work-complete", "phase-run-complete",
+            "artifact-stale", "phase-artifact-complete"].map((id) =>
+            [`designer-badge-binding-${id}`, join(installed, "designer-host",
+                "badge-input-controls", "stock", "bindings", `${id}.json`)])),
         ...Object.fromEntries(["value-match", "artifact-current", "markdown-file-count", "checklist-progress",
             "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
             "phase-artifact-complete"].map((id) =>

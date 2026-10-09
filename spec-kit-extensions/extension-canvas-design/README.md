@@ -295,8 +295,16 @@ prerequisite's card. Workflow list and Workflow summary can be checked
 independently, each with its own editable text separate from the phase-card
 text. The summary counts matching **workflows**, including zero; it does not
 count files or phase runs.
-Constitution can provide badge evidence for workflow badges, but its separate
-project card and output are not phase-card or phase-output badge destinations.
+Constitution can provide badge evidence for workflow badges. Selecting Phase
+with Constitution evidence places a matching badge on its project-wide
+Constitution card, even before any workflow exists; a saved target may also
+place it beside the declared Constitution output. Project-card badges are
+evaluated once against project evidence, while Workflow summary still counts
+matching workflows, not the project card. The generated Workflow page owns
+the Constitution card (rather than the workflow phase control), so both the
+stock and adapted page render these project-level placements.
+Project card and output placements require every rule input to use Constitution
+evidence; use a workflow placement for inputs from Specify or later phases.
 Summary badges use their configured summary text, interpolating `{workflows}`
 with the aggregate count, including zero before any workflows exist. Older
 instances without `summaryText` retain the type title plus count; those without
@@ -321,7 +329,12 @@ enabled state. Its definitions also supply the selected types in generated
 canvases; a type must refer to a registered rule. Rules and their self-contained
 JavaScript adapters remain independently replaceable templates under
 `generated-host/badges/`; rule metadata declares typed evidence inputs and
-supported text placeholders. Saved badge instances refer to type IDs, so renaming
+supported text placeholders. Each rule's `adapter` names its registered
+`generated.badge-rule-adapter` evaluator; this is separate from the Designer
+input control's `adapter`. Preset rule definitions using the former `module`
+key must change to `adapter` before loading with this source; generated apps
+already on disk keep their bundled rule and runtime unchanged. Saved badge
+instances refer to type IDs, so renaming
 one requires updating existing instances before Generate. Generate
 freezes only selected definitions and adapters into the app so runtime never
 needs the design-time preset. Generated apps use bounded reads of declared
@@ -333,6 +346,41 @@ time to the latest run's start (or completion for older records without a start)
 Counts and freshness are best-effort; unreadable evidence
 produces a diagnostic rather than an invented exact result. A replacement
 phase adapter must declare badge support before phase-card placement is used.
+
+Designer input controls are separate from generated evaluators. Each registered
+`designer.badge-input-binding` maps one rule ID to a reusable
+`designer.badge-input-control` JSON definition (`id`, `adapter`, supported
+`inputTypes`). Its registered, self-contained `designer.badge-input-adapter`
+exports `controlId`, `contractVersion = 1`, and
+`mount({root, rule, inputs, phases, outputs, onChange})`. It renders inside the
+provided root. The identity and version must be direct literal `export const`
+declarations so Designer can check them without executing preset code in Node;
+the browser also checks the loaded adapter before mounting it. It reports the
+**complete** structured `inputs` object through
+`onChange`. The host passes detached snapshots of the rule, inputs, phases,
+and confirmed outputs; mutating them does not change host-owned state.
+Adapters must send a complete, JSON-safe replacement with declared input types
+and available phase/output selections after initializing defaults and after
+each edit. Empty selections may remain while the user finishes editing;
+`isReady()` must reject them before Create or Save changes. Invalid callback
+payloads are rejected without changing the draft. A failed adapter import is
+reported in its badge editor without preventing other Designer pages from
+loading. A failing readiness or validation callback blocks that badge's
+submission with an inline error; a
+failing disposal is reported without blocking navigation. The Designer
+validates saved input IDs, types, and confirmed outputs against the rule,
+regardless of what the adapter allows in the browser.
+The base extension binds its nine rules to `stock.badge-inputs`; a preset can
+register a custom JSON definition, adapter, and rule binding without editing
+the Badges tab. Add the three named templates to the composed
+`load-page` command with strategy `replace`; use the existing Specify template
+precedence for replacements. Missing controls or evaluators and disabled types
+do not fall back to other implementations. A rule with no enabled type needs
+no Designer binding, but any binding that remains must resolve its control and
+adapter. Saved badges still fail validation when their type or editor is
+unavailable. The binding and Designer adapter
+are **not** packaged in the generated app. The rule's `before` refers to
+another declared input, not to a package dependency.
 The generated Workflow page advertises its supported badge destinations
 (`workflow.list`, `workflow.summary`, `phase.card`, and `phase.output`) in
 `generated-host/workflow-page/workflow.json`. A preset can replace its
@@ -611,6 +659,24 @@ actions. Presets may replace both the Workflow page JSON and its adapter,
 declare a subset of supported badge destinations, and add slots; unsupported
 configured placements fail rather than disappearing. Existing generated apps
 with the older page definition keep their original presentation.
+When a configured badge targets the project Constitution card or output, the
+Workflow-page adapter must begin with the literal line
+`export const capabilities = ["workflow.badges.project.v1"];` and render
+`state.model.badges.project` at those destinations. This first-line declaration
+is checked as text at Generate and materialization; the browser adapter is
+not executed in Node to inspect its exports. Declaring
+`phase.card` or `phase.output` in `badgeDestinations` alone does not promise
+project badge rendering. Designer Generate and frozen materialization reject
+project placements when a replacement adapter lacks this capability; adapters
+that do not render project badges should omit it.
+The generated host validates this optional Workflow-page state before calling
+the adapter's `update`: `badges.project` is an array of rendered badges with
+string `id`, `text`, and `color`, optional string `phaseText`, and a `showIn`
+array. Each badge has either `targets` (nonempty array of `{ phase, output }`,
+with string `phase` and `output` either a string path or `null` for a card)
+or a legacy `phase` string with `phase-card` in `showIn`. Malformed project
+badge results cause an incompatible Workflow-page state error rather than
+being passed to a replacement adapter.
 The `generated-phase-control` definition places itself in
 `workflow.phases`, has `schemaVersion: 1`, `id: "workflow-phases"`, an `adapter` name (stock:
 `generated-phase-adapter`), and optional `viewLabels` keyed by selected phase ID,

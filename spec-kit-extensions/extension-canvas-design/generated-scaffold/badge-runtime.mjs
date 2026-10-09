@@ -4,7 +4,7 @@ import { Worker, isMainThread, parentPort, workerData } from "node:worker_thread
 import { confined, countMarkdownDirectory, readBoundedWithMetadata, readRegularFileMetadata,
     safePath } from "./files.mjs";
 
-const moduleId = /^[a-z][a-z0-9-]{0,79}$/;
+const adapterId = /^[a-z][a-z0-9-]{0,79}$/;
 const identifier = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const instanceId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -14,8 +14,8 @@ const inputTypes = new Set(["artifact", "artifact-set", "ordered-artifacts", "ph
 
 if (!isMainThread && workerData?.badgeEvaluation) {
     try {
-        const { module, hash, ruleId, inputs, evidence: data, workflowId } = workerData.badgeEvaluation;
-        const bytes = await readFile(new URL(`./badges/${module}.mjs`, import.meta.url));
+        const { adapter, hash, ruleId, inputs, evidence: data, workflowId } = workerData.badgeEvaluation;
+        const bytes = await readFile(new URL(`./badges/${adapter}.mjs`, import.meta.url));
         if (!bytes.length || bytes.length > 32 * 1024
             || createHash("sha256").update(bytes).digest("hex") !== hash)
             throw new Error("Packaged badge evaluator changed after startup");
@@ -55,6 +55,7 @@ function validArtifact(value) {
 export function validateBadges(config, phases = []) {
     if (config === undefined) return;
     const phaseIds = phases.map((phase) => typeof phase === "string" ? phase : phase.id);
+    const projectPhase = phases.find((phase) => typeof phase !== "string" && phase.project)?.id;
     const declared = ({ phase, output }) => {
         const step = phases.find((entry) => typeof entry !== "string" && entry.id === phase);
         return phaseIds.includes(phase) && typeof output === "string"
@@ -69,7 +70,8 @@ export function validateBadges(config, phases = []) {
     if (!unique(config.instances) || !unique(config.types) || !unique(config.rules))
         throw new Error("Duplicate generated badge ID");
     for (const rule of config.rules) {
-        if (!rule || !identifier.test(rule.id) || !moduleId.test(rule.module)
+        if (!rule || Object.hasOwn(rule, "module") || !identifier.test(rule.id)
+            || typeof rule.adapter !== "string" || !adapterId.test(rule.adapter)
             || !hashPattern.test(rule.hash) || typeof rule.label !== "string"
             || typeof rule.description !== "string" || !Array.isArray(rule.textPlaceholders)
             || rule.textPlaceholders.some((placeholder) => !identifier.test(
@@ -118,7 +120,6 @@ export function validateBadges(config, phases = []) {
             || (instance.targets === undefined
                 ? (instance.showIn.includes("phase-card")
                     ? !phaseIds.includes(instance.phase)
-                        || instance.phase.replace(/^speckit\./, "") === "constitution"
                     : instance.phase != null)
                 : instance.phase != null || instance.showIn.includes("phase-card")
                     || !Array.isArray(instance.targets) || instance.targets.length > 100
@@ -126,7 +127,6 @@ export function validateBadges(config, phases = []) {
                         JSON.stringify([target?.phase, target?.output]))).size !== instance.targets.length
                     || instance.targets.some((target) => !target
                         || !phaseIds.includes(target.phase)
-                        || target.phase.replace(/^speckit\./, "") === "constitution"
                         || (target.output !== null
                             && (!rule.inputs.some((input) =>
                                 input.type === "artifact" || input.type === "artifact-set")
@@ -174,28 +174,38 @@ export function validateBadges(config, phases = []) {
                     && instance.phase !== instance.inputs[rule.placementPhaseInput].phase)) {
             throw new Error("Invalid generated badge phase-card destination");
         }
+        if (projectPhase && (instance.targets?.some((target) => target.phase === projectPhase)
+            || instance.showIn.includes("phase-card") && instance.phase === projectPhase)
+            && rule.inputs.some(({ id, type: inputType }) => {
+                const value = instance.inputs[id];
+                return inputType !== "text" && (inputType === "phase" ? value !== projectPhase
+                    : Array.isArray(value) ? value.some((entry) => entry.phase !== projectPhase)
+                        : value.phase !== projectPhase);
+            })) {
+            throw new Error("Project badge placement requires project-level rule inputs");
+        }
     }
 }
 
 export async function verifyBadgeModules(badges) {
     const checked = new Map();
-    for (const { module, hash } of badges?.rules ?? []) {
-        if (checked.has(module)) {
-            if (checked.get(module) !== hash) throw new Error(`Conflicting frozen badge evaluator ${module}`);
+    for (const { adapter, hash } of badges?.rules ?? []) {
+        if (checked.has(adapter)) {
+            if (checked.get(adapter) !== hash) throw new Error(`Conflicting frozen badge evaluator ${adapter}`);
             continue;
         }
-        checked.set(module, hash);
-        const bytes = await readFile(new URL(`./badges/${module}.mjs`, import.meta.url));
+        checked.set(adapter, hash);
+        const bytes = await readFile(new URL(`./badges/${adapter}.mjs`, import.meta.url));
         if (!bytes.length || bytes.length > 32 * 1024
             || createHash("sha256").update(bytes).digest("hex") !== hash)
-            throw new Error(`Packaged badge evaluator ${module} differs from its frozen hash`);
+            throw new Error(`Packaged badge evaluator ${adapter} differs from its frozen hash`);
     }
 }
 
 function runRule(rule, inputs, evidence, workflowId) {
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL(import.meta.url), {
-            execArgv: [], workerData: { badgeEvaluation: { module: rule.module, hash: rule.hash,
+            execArgv: [], workerData: { badgeEvaluation: { adapter: rule.adapter, hash: rule.hash,
                 ruleId: rule.id, inputs, evidence, workflowId } },
             resourceLimits: { maxOldGenerationSizeMb: 48, maxYoungGenerationSizeMb: 16 },
         });
@@ -223,8 +233,11 @@ function text(template, values) {
 
 export async function evaluateBadges(badges, { cwd, workflows, phases, outputPath, runFor,
     log = () => {}, budgetMs = 4000 }) {
-    if (!badges?.instances?.length) return { items: {}, selected: [], summary: [], diagnostics: [] };
-    const result = { items: {}, selected: [], summary: [], diagnostics: [] };
+    if (!badges?.instances?.length) {
+        return { items: {}, selected: [], project: [], summary: [], diagnostics: [] };
+    }
+    const result = { items: {}, selected: [], project: [], summary: [], diagnostics: [] };
+    const projectPhase = phases.find((phase) => phase.project)?.id;
     const summaryById = new Map();
     for (const instance of badges.instances.filter((badge) => badge.showIn.includes("workflow-summary")
         && badges.types.find((type) => type.id === badge.type)?.enabled)) {
@@ -238,12 +251,21 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
     const deadline = performance.now() + (Number.isFinite(budgetMs)
         ? Math.min(4000, Math.max(0, budgetMs)) : 4000);
     let totalReads = 0;
-    for (const workflow of workflows) {
+    for (const { workflow, project } of [
+        ...(projectPhase ? [{ workflow: "project", project: true }] : []),
+        ...workflows.map((workflow) => ({ workflow, project: false })),
+    ]) {
         const cache = new Map();
         const artifactReads = new Map();
         const directoryReads = new Map();
         const rendered = [];
         for (const instance of badges.instances) {
+            if (project && !(instance.targets?.some(({ phase }) => phase === projectPhase)
+                || instance.showIn.includes("phase-card") && instance.phase === projectPhase)) continue;
+            if (!project && !instance.showIn.includes("workflow-list")
+                && !instance.showIn.includes("workflow-summary")
+                && !instance.targets?.some(({ phase }) => phase !== projectPhase)
+                && !(instance.showIn.includes("phase-card") && instance.phase !== projectPhase)) continue;
             if (performance.now() >= deadline) {
                 if (!result.diagnostics.length) {
                     const message = "Badge evaluation time limit reached; some badges were not evaluated. Refresh to retry.";
@@ -339,7 +361,7 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
                 if (!cache.has(key)) cache.set(key, await runRule(rule, instance.inputs, evidence, workflow));
                 const evaluated = cache.get(key);
                 const summary = summaryById.get(instance.id);
-                if (summary) summary.count += evaluated.summaryCount ?? Number(evaluated.match);
+                if (summary && !project) summary.count += evaluated.summaryCount ?? Number(evaluated.match);
                 if (evaluated.match) rendered.push({ id: instance.id, text: text(instance.text ?? type.defaultText,
                     evaluated.values ?? {}),
                     ...(instance.phaseText
@@ -358,7 +380,8 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
                 log(warning);
             }
         }
-        result.items[workflow] = rendered;
+        if (project) result.project = rendered;
+        else result.items[workflow] = rendered;
     }
     result.summary = result.summary.map(({ title, template, count, ...item }) =>
         ({ ...item, count, text: template ? text(template, { workflows: count })

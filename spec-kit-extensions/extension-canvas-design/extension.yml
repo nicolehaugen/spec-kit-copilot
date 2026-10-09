@@ -147,6 +147,30 @@ provides:
     - name: badge-rule-phase-artifact-complete-adapter
       file: generated-host/badges/adapters/phase-artifact-complete.mjs
 
+    # Designer-only badge editors: rule bindings do not travel into generated apps.
+    - name: designer-badge-input-stock
+      file: designer-host/badge-input-controls/stock/control.json
+    - name: designer-badge-input-stock-adapter
+      file: designer-host/badge-input-controls/stock/designer.mjs
+    - name: designer-badge-binding-value-match
+      file: designer-host/badge-input-controls/stock/bindings/value-match.json
+    - name: designer-badge-binding-artifact-current
+      file: designer-host/badge-input-controls/stock/bindings/artifact-current.json
+    - name: designer-badge-binding-artifact-stale
+      file: designer-host/badge-input-controls/stock/bindings/artifact-stale.json
+    - name: designer-badge-binding-markdown-file-count
+      file: designer-host/badge-input-controls/stock/bindings/markdown-file-count.json
+    - name: designer-badge-binding-checklist-progress
+      file: designer-host/badge-input-controls/stock/bindings/checklist-progress.json
+    - name: designer-badge-binding-checklist-complete
+      file: designer-host/badge-input-controls/stock/bindings/checklist-complete.json
+    - name: designer-badge-binding-work-complete
+      file: designer-host/badge-input-controls/stock/bindings/work-complete.json
+    - name: designer-badge-binding-phase-run-complete
+      file: designer-host/badge-input-controls/stock/bindings/phase-run-complete.json
+    - name: designer-badge-binding-phase-artifact-complete
+      file: designer-host/badge-input-controls/stock/bindings/phase-artifact-complete.json
+
     # Image control: define accepted image values, edit them in Designer, and render them in generated canvases.
     - name: shared-controls-image
       file: shared-controls/stock-image/control.json

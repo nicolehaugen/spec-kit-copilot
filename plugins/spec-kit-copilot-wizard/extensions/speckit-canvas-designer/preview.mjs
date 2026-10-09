@@ -61,5 +61,7 @@ export function previewModel() {
             description: "Add result badges for your configured phases and outputs.",
             fixedControl: "designer.badges", fields: [] }],
         phases, outputs, pipelineOutputs: outputs, badges: [], badgeTypes, badgeRules,
+        badgeInputControls: badgeRules.map((rule) => ({ rule: rule.id,
+            control: "preview.badge-inputs", adapter: "preview-badge-input" })),
         values: {}, constraints: {}, controls: [], adapters: {}, templates: [] };
 }

@@ -5,6 +5,19 @@ import { evaluate as artifactState } from "../extension-canvas-design/generated-
 import { evaluate as run } from "../extension-canvas-design/generated-host/badges/adapters/run.mjs";
 import { evaluate as phaseArtifactComplete } from
     "../extension-canvas-design/generated-host/badges/adapters/phase-artifact-complete.mjs";
+import { evaluate as testPhase } from "../../spec-kit-presets/copilot-badge-input-test/generated/evaluator.mjs";
+
+test("test preset evaluator decides matches from only its declared phase run", async () => {
+    const requested = [];
+    const evidence = { getRun: async (phase) => {
+        requested.push(phase);
+        return { status: "completed" };
+    } };
+    assert.deepEqual(await testPhase({ inputs: { phase: "plan" }, evidence }), { match: true });
+    assert.deepEqual(requested, ["plan"]);
+    evidence.getRun = async () => ({ status: "running" });
+    assert.deepEqual(await testPhase({ inputs: { phase: "plan" }, evidence }), { match: false });
+});
 
 test("value match searches literal text anywhere in one output without regard to case", async () => {
     const inputs = { artifact: { phase: "decide", output: "decision.md" },

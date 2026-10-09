@@ -23,6 +23,7 @@ FILES = {
     "extension.yml",
     "README.md",
     "ARCHITECTURE.md",
+    "BADGE-EXTENSIBILITY-PLAN.md",
     "commands/load-page.md",
     "commands/generate.md",
     "scripts/generate.mjs",
@@ -31,6 +32,8 @@ FILES = {
     "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
     "schemas/designer.badges-settings-definition.schema.json",
+    "schemas/designer.badge-input-control.schema.json",
+    "schemas/designer.badge-input-binding.schema.json",
     "schemas/generated.badge-rule-definition.schema.json",
     "schemas/generated.added-page-definition.schema.json",
     "schemas/generated.workflow-page-definition.schema.json",
@@ -50,6 +53,13 @@ FILES = {
       for mode in ("light", "dark")
       for color in ("accent", "background", "surface", "secondary", "text")),
     "designer-host/badges-settings/badge-types.json",
+    "designer-host/badge-input-controls/stock/control.json",
+    "designer-host/badge-input-controls/stock/designer.mjs",
+    *(f"designer-host/badge-input-controls/stock/bindings/{name}.json" for name in (
+        "value-match", "artifact-current", "artifact-stale", "markdown-file-count",
+        "checklist-progress", "checklist-complete", "work-complete",
+        "phase-run-complete", "phase-artifact-complete",
+    )),
     *(f"generated-host/badges/rules/{name}.json" for name in (
         "value-match", "artifact-current", "checklist-progress", "markdown-file-count",
         "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
@@ -164,6 +174,16 @@ class CanvasDesignPackageTests(unittest.TestCase):
                for name in ("content", "artifact-state", "run")]
             + [("badge-rule-phase-artifact-complete-adapter",
                 "generated-host/badges/adapters/phase-artifact-complete.mjs")]
+            + [("designer-badge-input-stock",
+                "designer-host/badge-input-controls/stock/control.json"),
+               ("designer-badge-input-stock-adapter",
+                "designer-host/badge-input-controls/stock/designer.mjs")]
+            + [(f"designer-badge-binding-{name}",
+                f"designer-host/badge-input-controls/stock/bindings/{name}.json")
+               for name in ("value-match", "artifact-current", "artifact-stale",
+                            "markdown-file-count", "checklist-progress",
+                            "checklist-complete", "work-complete", "phase-run-complete",
+                            "phase-artifact-complete")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
                for name, filename in [
@@ -265,7 +285,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
     def test_all_json_contract_schemas_and_fixtures(self):
         kinds = (
             "designer.tab-definition",
-            "designer.setting-definition", "generated.added-page-definition",
+            "designer.setting-definition", "designer.badge-input-control",
+            "designer.badge-input-binding", "generated.added-page-definition",
             "generated.workflow-page-definition",
             "shared.control-definition", "generated.value-definition",
         )
@@ -278,6 +299,12 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 + preset_tabs,
             "designer.setting-definition": list(PACKAGE.glob("designer-host/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
+            "designer.badge-input-control": list(PACKAGE.glob(
+                "designer-host/badge-input-controls/*/control.json"))
+                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/control.json")),
+            "designer.badge-input-binding": list(PACKAGE.glob(
+                "designer-host/badge-input-controls/*/bindings/*.json"))
+                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/binding.json")),
             "generated.added-page-definition": preset_generated_pages,
             "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow-page/workflow.json"],
             "shared.control-definition": list(PACKAGE.glob("shared-controls/*/control.json"))
@@ -285,6 +312,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
         }
         self.assertTrue(all(fixtures.values()))
+        preset_badge = EXTENSIONS.parent / "spec-kit-presets/copilot-badge-input-test/designer"
+        self.assertIn(preset_badge / "control.json", fixtures["designer.badge-input-control"])
+        self.assertIn(preset_badge / "binding.json", fixtures["designer.badge-input-binding"])
         for manifest_path in (EXTENSIONS.parent / "spec-kit-presets").glob("*/preset.yml"):
             manifest = yaml.safe_load(manifest_path.read_text("utf-8"))
             for template in manifest.get("provides", {}).get("templates", []):
@@ -333,6 +363,18 @@ class CanvasDesignPackageTests(unittest.TestCase):
         workflow_validator.validate({**workflow, "slots": [
             {"id": "workflow.phases"}, {"id": "workflow.summary"},
         ]})
+        badge_schema = json.loads((PACKAGE / "schemas/generated.badge-rule-definition.schema.json")
+                                  .read_text("utf-8"))
+        Draft202012Validator.check_schema(badge_schema)
+        badge_validator = Draft202012Validator(badge_schema)
+        for path in (PACKAGE / "generated-host/badges/rules").glob("*.json"):
+            definition = json.loads(path.read_text("utf-8"))
+            with self.subTest(badge_rule=path.name):
+                badge_validator.validate(definition)
+                with self.assertRaises(ValidationError):
+                    badge_validator.validate({**definition, "module": definition["adapter"]})
+        badge_validator.validate(json.loads((EXTENSIONS.parent
+            / "spec-kit-presets/copilot-badge-input-test/generated/rule.json").read_text("utf-8")))
         value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
         validator = Draft202012Validator(schemas["generated.value-definition"])

@@ -10,5 +10,5 @@
     }
   ],
   "textPlaceholders": [],
-  "module": "badge-rule-artifact-state-adapter"
+  "adapter": "badge-rule-artifact-state-adapter"
 }

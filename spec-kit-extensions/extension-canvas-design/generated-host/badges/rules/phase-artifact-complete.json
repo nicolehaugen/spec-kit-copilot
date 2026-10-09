@@ -20,5 +20,5 @@
     }
   ],
   "textPlaceholders": [],
-  "module": "badge-rule-phase-artifact-complete-adapter"
+  "adapter": "badge-rule-phase-artifact-complete-adapter"
 }

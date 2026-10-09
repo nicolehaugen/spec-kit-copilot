@@ -38,6 +38,42 @@ test("Designer settings preserve the saved revision and exact-key contract", () 
         values: record.values, extra: true }, model), /Invalid Designer save request/);
 });
 
+test("changed preset composition identifies affected badge dependencies without rewriting settings", () => {
+    const badge = { id: "saved-one", type: "custom", inputs: { phase: "plan" } };
+    const compatible = { id: "unaffected", type: "stable", inputs: { phase: "plan" } };
+    const record = { schemaVersion: 1, handoffId: "handoff-1", modelRevision: "old",
+        revision: 1, values: {}, badges: [badge, compatible] };
+    const handoff = { handoffId: "handoff-1" };
+    const model = { revision: "new", badgeTypes: [
+        { id: "custom", rule: "custom", enabled: false },
+        { id: "stable", rule: "stable", enabled: true },
+    ], badgeRules: [{ id: "stable", inputs: [{ id: "phase" }], adapter: "stable-evaluator" }],
+    badgeInputControls: [{ rule: "stable", control: "stable-control" }],
+    templates: [{ kind: "generated.badge-rule-adapter", name: "stable-evaluator" }] };
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        (error) => /saved-one \(disabled type custom\)/.test(error.message)
+            && !error.message.includes("unaffected"));
+    model.badgeTypes[0].enabled = true;
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        /saved-one \(missing rule custom\)/);
+    model.badgeRules.push({ id: "custom", inputs: [{ id: "artifact" }], adapter: "custom-evaluator" });
+    model.badgeInputControls.push({ rule: "custom", control: "custom-control" });
+    model.templates.push({ kind: "generated.badge-rule-adapter", name: "custom-evaluator" });
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        /saved-one \(changed inputs for rule custom\)/);
+    model.badgeRules[1].inputs = [{ id: "phase" }];
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        (error) => /Saved Designer settings do not match/.test(error.message)
+            && !error.message.includes("saved badges:"));
+    model.badgeRules[1].inputs = [{ id: "phase", type: "artifact" }];
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        /saved-one \(inputs incompatible with current rule custom\)/);
+    model.badgeRules[1].inputs = [{ id: "phase", type: "text" }];
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        (error) => /Saved Designer settings do not match/.test(error.message)
+            && !error.message.includes("saved badges:"));
+});
+
 test("Designer handoff and generation contracts include badges without accepting unrelated fields", () => {
     assert.equal(designerOpenInputSchema.properties.preview.type, "boolean");
     for (const kind of ["designer.badges-settings-definition",

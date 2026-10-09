@@ -23,6 +23,24 @@ export function validateWorkflowPageState(state) {
     if (state.model && state.model.userProvidesSlug !== state.phaseState.slugEditable) {
         throw new Error("Incompatible Workflow page state: slug settings disagree");
     }
+    const projectBadges = state.model?.badges?.project;
+    if (projectBadges !== undefined && (!Array.isArray(projectBadges)
+        || projectBadges.some((badge) => !badge || typeof badge !== "object"
+            || Array.isArray(badge) || typeof badge.id !== "string" || !badge.id
+            || typeof badge.text !== "string" || typeof badge.color !== "string"
+            || (badge.phaseText !== undefined && typeof badge.phaseText !== "string")
+            || !Array.isArray(badge.showIn) || badge.showIn.some((place) =>
+                !["workflow-list", "workflow-summary", "phase-card"].includes(place))
+            || (badge.targets === undefined
+                ? !badge.showIn.includes("phase-card") || typeof badge.phase !== "string"
+                    || !badge.phase
+                : !Array.isArray(badge.targets) || !badge.targets.length
+                    || badge.targets.some((target) => !target || typeof target !== "object"
+                        || Array.isArray(target) || typeof target.phase !== "string"
+                        || !target.phase || target.output !== null
+                            && (typeof target.output !== "string" || !target.output)))))) {
+        throw new Error("Incompatible Workflow page state: invalid project badge results");
+    }
     return state;
 }
 

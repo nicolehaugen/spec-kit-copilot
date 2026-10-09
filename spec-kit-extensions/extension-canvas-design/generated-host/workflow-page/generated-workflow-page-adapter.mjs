@@ -1,3 +1,4 @@
+export const capabilities = ["workflow.badges.project.v1"];
 export const pageId = "workflow";
 export const contractVersion = 1;
 
@@ -73,10 +74,16 @@ export function renderStockPage(root, definition) {
     </section>
     ${hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
         <div class="constitution-summary"><strong>Constitution</strong><span class="muted">
-            Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span></div>
+            Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span>
+            ${hasBadges && definition.badgeDestinations.includes("phase.card")
+                ? '<span id="constitution-badges" class="canvas-badges" aria-label="Constitution badges"></span>' : ""}
+        </div>
         <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p>
-            <p id="constitution-artifact-status" class="muted" role="status"></p></div>
+            <p id="constitution-artifact-status" class="muted" role="status"></p>
+        </div>
         <div class="constitution-actions">
+            ${hasBadges && definition.badgeDestinations.includes("phase.output")
+                ? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
             <button class="btn btn-secondary" id="view-constitution" type="button"
                 aria-describedby="constitution-artifact-status" hidden>View</button>
             <button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button>
@@ -143,7 +150,7 @@ export function mount({ root, definition, state, actions }) {
             : query ? `${shown} of ${rows.length} workflows match.` : "";
         notice.hidden = !notice.textContent;
     }
-    function badgeList(badges) {
+    function badgeList(badges, phaseText = false) {
         const group = document.createElement("span");
         group.className = "canvas-badges";
         for (const badge of badges) {
@@ -160,7 +167,7 @@ export function mount({ root, definition, state, actions }) {
                 label.style.color = (luminance + 0.05) / (0.005605 + 0.05)
                     >= 1.05 / (luminance + 0.05) ? "#111" : "#fff";
             }
-            label.textContent = badge.text;
+            label.textContent = phaseText ? badge.phaseText ?? badge.text : badge.text;
             group.append(label);
         }
         return group;
@@ -433,6 +440,16 @@ export function mount({ root, definition, state, actions }) {
     function status(model) {
         const phase = model.phases.find((entry) => entry.project);
         if (phase) {
+            if (model.badges?.project !== undefined && !Array.isArray(model.badges.project)) {
+                throw new Error("Invalid project badge results");
+            }
+            const projectBadges = model.badges?.project ?? [];
+            const forTarget = (output) => projectBadges.filter((badge) => badge.targets
+                ? badge.targets.some((target) => target.phase === phase.id && target.output === output)
+                : output === null && badge.showIn.includes("phase-card") && badge.phase === phase.id);
+            find("constitution-badges")?.replaceChildren(badgeList(forTarget(null), true));
+            find("constitution-output-badges")?.replaceChildren(badgeList(
+                forTarget(phase.output), true));
             const result = model.statuses[phase.id];
             const available = result?.artifactAvailability === "available";
             const notice = find("constitution-artifact-status");

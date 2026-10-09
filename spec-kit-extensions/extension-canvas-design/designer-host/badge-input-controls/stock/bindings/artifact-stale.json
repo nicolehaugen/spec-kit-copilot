@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../../schemas/designer.badge-input-binding.schema.json",
+  "schemaVersion": 1,
+  "id": "artifact-stale",
+  "rule": "artifact-stale",
+  "control": "stock.badge-inputs"
+}

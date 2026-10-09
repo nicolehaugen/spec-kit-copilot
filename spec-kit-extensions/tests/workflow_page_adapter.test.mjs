@@ -18,9 +18,24 @@ test("stock adapter owns setup, constitution, values, phase and contributed mark
     }
     assert.match(root.innerHTML, /data-workflow-slot="workflow.actions"/);
     assert.match(root.innerHTML, /data-badge-slot="workflow.list"/);
+    assert.match(root.innerHTML, /id="constitution-badges"/);
+    assert.doesNotMatch(root.innerHTML, /id="constitution-output-badges"/);
     assert.doesNotMatch(root.innerHTML, /data-badge-slot="workflow.summary"/);
     assert.match(root.innerHTML, /&lt;unsafe&gt;|&lt;script&gt;/);
     assert.doesNotMatch(root.innerHTML, /<script>/);
+});
+
+test("Constitution output badge is in the visible actions area of the Workflow page", () => {
+    const root = { innerHTML: "" };
+    renderStockPage(root, { canvas: { displayName: "Demo", workflowListName: "Workflows" },
+        readOnlyFields: [], textPlacements: [], generatedControls: [],
+        hasConstitution: true, hasBadges: true, badgeDestinations: ["phase.output"],
+        fieldSlots: [] });
+    assert.match(root.innerHTML,
+        /<div class="constitution-actions">\s*<span id="constitution-output-badges"/);
+    const details = root.innerHTML.match(/<div class="constitution-details">[\s\S]*?<\/div>/)?.[0];
+    assert.ok(details);
+    assert.doesNotMatch(details, /id="constitution-output-badges"/);
 });
 
 test("stock Workflow page mounts its phase control, updates collection and disposes", (t) => {
@@ -35,13 +50,16 @@ test("stock Workflow page mounts its phase control, updates collection and dispo
             querySelectorAll() { return []; },
             closest() { return this.field ??= { hidden: false }; },
             replaceChildren(...children) { this.children = children; },
+            append(...children) { this.children.push(...children); },
         });
         return elements.get(id);
     };
     const root = { querySelector: (selector) => element(selector.slice(1)),
         addEventListener() {}, removeEventListener() {} };
     const originalDocument = globalThis.document;
-    globalThis.document = { getElementById: element, activeElement: null };
+    globalThis.document = { getElementById: element, createElement: () => ({
+        dataset: {}, style: {}, children: [], append(...children) { this.children.push(...children); },
+    }), activeElement: null };
     t.after(() => { globalThis.document = originalDocument; });
     let disposed = false, updates = 0;
     const page = mount({ root, definition: { id: pageId },
@@ -63,6 +81,29 @@ test("stock Workflow page mounts its phase control, updates collection and dispo
     assert.equal(element("workflow-count").textContent, "(0)");
     assert.equal(element("workflow-empty").textContent, "No workflow phases are configured.");
     assert.equal(updates, 1);
+    const phase = { id: "speckit.constitution", project: true,
+        output: ".specify/memory/constitution.md" };
+    const badge = { id: "constitution", text: "Constitution ready",
+        phaseText: "Project ready", color: "purple", targets: [{
+            phase: phase.id, output: null,
+        }] };
+    const outputBadge = { ...badge, id: "constitution-output", targets: [{
+        phase: phase.id, output: phase.output,
+    }] };
+    page.update({ model: { showSetup: false, userProvidesSlug: false, items: [], selected: "__new__",
+        phases: [phase], badges: { project: [badge, outputBadge] }, constitutionReady: true,
+        statuses: { [phase.id]: { status: "Completed", artifactAvailability: "available" } },
+        valueFields: [], valueErrors: {} }, phaseState: {}, inputPending: false,
+    pendingLabel: () => null });
+    assert.equal(element("constitution-badges").children[0].children.length, 1);
+    assert.equal(element("constitution-badges").children[0].children[0].textContent, "Project ready");
+    assert.equal(element("constitution-output-badges").children[0].children.length, 1);
+    const invalid = { showSetup: false, userProvidesSlug: false, items: [], selected: "__new__",
+        phases: [phase], badges: { project: "invalid" }, constitutionReady: true,
+        statuses: { [phase.id]: { status: "Completed", artifactAvailability: "available" } },
+        valueFields: [], valueErrors: {} };
+    assert.throws(() => page.update({ model: invalid, phaseState: {}, inputPending: false,
+        pendingLabel: () => null }), /Invalid project badge results/);
     const project = { id: "constitution", project: true };
     const model = { showSetup: false, userProvidesSlug: false, items: [], selected: "__new__",
         phases: [project], badges: {}, constitutionReady: true,
@@ -204,4 +245,27 @@ test("Workflow page state requires a boolean slug setting and supports both mode
     assert.throws(() => validateWorkflowPageState({
         model: { userProvidesSlug: false }, phaseState: { slugEditable: true },
     }), /slug settings disagree/);
+});
+
+test("Workflow page contract validates project badges before a replacement adapter receives them", () => {
+    const received = [];
+    const replacement = { update(state) { received.push(state.model.badges.project); } };
+    const badge = { id: "constitution", text: "Ready", phaseText: "Project ready",
+        color: "purple", showIn: [], targets: [{ phase: "speckit.constitution", output: null },
+            { phase: "speckit.constitution", output: ".specify/memory/constitution.md" }] };
+    const legacy = { id: "legacy", text: "Ready", color: "theme",
+        showIn: ["phase-card"], phase: "speckit.constitution" };
+    const state = (project) => ({ phaseState: { slugEditable: false },
+        model: { userProvidesSlug: false, badges: { project } } });
+    replacement.update(validateWorkflowPageState(state([badge, legacy])));
+    replacement.update(validateWorkflowPageState(state([])));
+    assert.deepEqual(received, [[badge, legacy], []]);
+    for (const invalid of ["invalid", [null], [{ ...badge, text: null }],
+        [{ ...badge, color: null }], [{ ...badge, targets: [{ phase: "speckit.constitution" }] }],
+        [{ ...badge, targets: [{ phase: 42, output: null }] }],
+        [{ ...badge, targets: "invalid" }], [{ ...legacy, phase: undefined }]]) {
+        assert.throws(() => replacement.update(validateWorkflowPageState(state(invalid))),
+            /invalid project badge results/);
+    }
+    assert.equal(received.length, 2);
 });

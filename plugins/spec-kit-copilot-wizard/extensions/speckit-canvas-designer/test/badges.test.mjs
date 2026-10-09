@@ -149,7 +149,7 @@ test("badge validation checks identity, placeholders, color, placements, and cap
         /at most 100/);
 });
 
-test("Constitution evidence may feed workflow badges but has no phase or output destination", () => {
+test("Constitution evidence can target its project card or declared output", () => {
     const constitution = { phase: "speckit.constitution", output: ".specify/memory/constitution.md" };
     const withConstitution = { ...model, phases: [constitution.phase, ...model.phases],
         outputs: { ...model.outputs, [constitution.phase]: {
@@ -158,13 +158,41 @@ test("Constitution evidence may feed workflow badges but has no phase or output 
     const global = { ...artifact, inputs: { item: constitution },
         showIn: ["workflow-list"], phase: null };
     assert.deepEqual(validateBadges([global], withConstitution), [global]);
-    assert.throws(() => validateBadges([{ ...global, showIn: ["phase-card"],
-        phase: constitution.phase }], withConstitution), /phase-card destination/);
+    assert.deepEqual(validateBadges([{ ...global, showIn: ["phase-card"],
+        phase: constitution.phase }], withConstitution).length, 1);
     for (const output of [null, constitution.output]) {
-        assert.throws(() => validateBadges([{ ...global, targets: [{
+        assert.deepEqual(validateBadges([{ ...global, targets: [{
             phase: constitution.phase, output,
-        }] }], withConstitution), /phase\/output placement/);
+        }] }], withConstitution).length, 1);
+        assert.throws(() => validateBadges([{ ...artifact, showIn: ["workflow-list"],
+            phase: null, targets: [{ phase: constitution.phase, output }] }],
+        withConstitution), /project placement requires project-level rule inputs/);
     }
+    assert.throws(() => validateBadges([{ ...artifact, showIn: ["phase-card"],
+        phase: constitution.phase }], withConstitution),
+    /project placement requires project-level rule inputs/);
+    assert.deepEqual(validateBadges([artifact], withConstitution), [artifact]);
+    assert.throws(() => validateBadges([{ ...distinct, targets: [{
+        phase: constitution.phase, output: null,
+    }] }], withConstitution), /project placement requires project-level rule inputs/);
+    const phaseModel = { ...withConstitution,
+        badgeRules: [...withConstitution.badgeRules,
+            { id: "run", inputs: [{ id: "phase", type: "phase" }], textPlaceholders: [] }],
+        badgeTypes: [...withConstitution.badgeTypes,
+            { id: "run", rule: "run", enabled: true }] };
+    const phaseBadge = { ...global, type: "run", text: "Phase complete",
+        inputs: { phase: "specify" }, targets: [{ phase: constitution.phase, output: null }] };
+    assert.throws(() => validateBadges([phaseBadge], phaseModel),
+        /project placement requires project-level rule inputs/);
+    assert.deepEqual(validateBadges([{ ...phaseBadge, inputs: {
+        phase: constitution.phase,
+    } }], phaseModel).length, 1);
+    assert.deepEqual(validateBadges([{ ...phaseBadge, targets: [{
+        phase: "specify", output: null,
+    }] }], phaseModel).length, 1);
+    assert.throws(() => validateBadges([{ ...global, targets: [{
+        phase: constitution.phase, output: "undeclared.md",
+    }] }], withConstitution), /phase\/output placement/);
 });
 
 test("duplicate badges require matching text, inputs, and overlapping targets", () => {

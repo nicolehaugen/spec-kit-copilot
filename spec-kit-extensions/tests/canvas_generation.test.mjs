@@ -12,6 +12,8 @@ import { phaseContract } from "../extension-canvas-design/generated-scaffold/con
 import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
+import { validateBadges as validateDesignerBadges } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/badges.mjs";
+import { validateBadges as validateGeneratedBadges } from "../extension-canvas-design/generated-scaffold/badge-runtime.mjs";
 import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture, resolveFixtureFields } from "./designer_adapter_fixture.mjs";
@@ -41,6 +43,28 @@ const model = {
 const values = { "canvas.id": "my-workflow", "canvas.displayName": "My Workflow",
     "canvas.description": "A workflow", "canvas.workflowListName": "Workflows",
     "workflowSlug.userProvided": false };
+
+async function registerStockBadgeInput(selected, project, ruleId) {
+    const root = new URL("../extension-canvas-design/designer-host/badge-input-controls/stock/",
+        import.meta.url);
+    const assets = [
+        [`designer-badge-binding-${ruleId}`, "designer.badge-input-binding",
+            `bindings/${ruleId}.json`],
+        ["designer-badge-input-stock", "designer.badge-input-control", "control.json"],
+        ["designer-badge-input-stock-adapter", "designer.badge-input-adapter", "designer.mjs"],
+    ];
+    for (const [name, kind, source] of assets) {
+        const bytes = await readFile(new URL(source, root));
+        const path = join(project, ".specify", "templates", `${name}.${source.endsWith(".mjs")
+            ? "mjs" : "json"}`);
+        await writeFile(path, bytes);
+        selected.templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
+            strategy: "replace", path, hash: createHash("sha256").update(bytes).digest("hex") });
+    }
+    selected.badgeInputControls = [{ rule: ruleId, control: "stock.badge-inputs",
+        binding: assets[0][0], definition: assets[1][0], adapter: assets[2][0] }];
+}
+
 function stockMarkup(config) {
     const root = { innerHTML: "" };
     renderStockPage(root, {
@@ -280,6 +304,7 @@ test("selected badge definitions and evaluator are packaged without preset files
         schemaVersion: 1, ...settings.types[0] }];
     selected.badgeRules = [{ name: "badge-rule-value-match",
         ...JSON.parse(await readFile(new URL("rules/value-match.json", root), "utf8")) }];
+    await registerStockBadgeInput(selected, project, "value-match");
     const outputs = {
         constitution: { outputs: [".specify/memory/constitution.md"],
             view: ".specify/memory/constitution.md" },
@@ -381,8 +406,20 @@ test("selected badge definitions and evaluator are packaged without preset files
     const html = renderHtml(config);
     assert.match(stockMarkup(config), /data-badge-slot="workflow.list"/);
     assert.match(stockMarkup(config), /data-badge-slot="workflow.summary"/);
+    assert.match(stockMarkup(config), /id="constitution-badges"/);
+    assert.match(stockMarkup(config), /id="constitution-output-badges"/);
+    assert.match(stockMarkup(config),
+        /<div class="constitution-actions">\s*<span id="constitution-output-badges"/);
+    const legacyPage = { ...config.workflowPage };
+    delete legacyPage.pageAdapter;
+    delete legacyPage.pageAdapterHash;
+    delete legacyPage.badgeDestinations;
+    assert.match(renderHtml({ ...config, workflowPage: legacyPage }),
+        /<div class="constitution-actions">\s*<span id="constitution-output-badges"/);
+    assert.match(html, /&quot;hasConstitution&quot;:true/);
     assert.match(html, /data-badge-slots="[^"]*phase.card[^"]*phase.output/);
-    assert.equal(config.badges.rules[0].module, "badge-rule-content-adapter");
+    assert.equal(config.badges.rules[0].adapter, "badge-rule-content-adapter");
+    assert.equal(Object.hasOwn(config.badges.rules[0], "module"), false);
     assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content-adapter.mjs")),
         await readFile(new URL("adapters/content.mjs", root)));
     selected.badgeTypes[0].title = "Not in badges settings";
@@ -397,6 +434,15 @@ test("selected badge definitions and evaluator are packaged without preset files
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges }), /no declared Workflow or phase control slot/);
     selected.workflowPage.slots.push({ id: "workflow.summary" });
+    const projectBadge = { ...badges[0], inputs: { ...badges[0].inputs,
+        artifact: { phase: "constitution", output: ".specify/memory/constitution.md" } },
+    targets: [{ phase: "constitution", output: null }] };
+    const projectOutputBadge = { ...projectBadge, targets: [{
+        phase: "constitution", output: ".specify/memory/constitution.md",
+    }] };
+    const mixedBadge = { ...projectBadge, targets: [
+        ...projectBadge.targets, { phase: "plan", output: "specs/<slug>/plan.md" },
+    ] };
     const control = selected.templates.find((entry) => entry.name === "generated-phase-control");
     const originalControl = await readFile(control.path);
     const incompleteControl = JSON.parse(originalControl.toString("utf8"));
@@ -406,6 +452,11 @@ test("selected badge definitions and evaluator are packaged without preset files
     control.hash = createHash("sha256").update(bytes).digest("hex");
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges }), /no declared Workflow or phase control slot/);
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectOutputBadge] }));
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [mixedBadge] }),
+    /no declared Workflow or phase control slot/);
     await writeFile(control.path, originalControl);
     control.hash = createHash("sha256").update(originalControl).digest("hex");
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
@@ -425,6 +476,65 @@ test("selected badge definitions and evaluator are packaged without preset files
     adapter.hash = createHash("sha256").update(incompatible).digest("hex");
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges }), /does not support phase-card badges/);
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectBadge] }));
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectOutputBadge] }));
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [mixedBadge] }),
+    /does not support phase-card badges/);
+    await writeFile(adapter.path, original);
+    adapter.hash = createHash("sha256").update(original).digest("hex");
+    const pageAdapter = selected.templates.find((entry) =>
+        entry.kind === "generated.workflow-page-adapter");
+    const originalPage = await readFile(pageAdapter.path, "utf8");
+    const withoutProject = originalPage.replace(
+        'export const capabilities = ["workflow.badges.project.v1"];', "")
+        + '\nthrow new Error("Workflow page adapter ran in Node");\n';
+    assert.notEqual(withoutProject, originalPage);
+    await writeFile(pageAdapter.path, withoutProject);
+    pageAdapter.hash = createHash("sha256").update(withoutProject).digest("hex");
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectBadge] }),
+    /does not support project badges/);
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [badges[0]] }));
+    await writeFile(pageAdapter.path, originalPage);
+    pageAdapter.hash = createHash("sha256").update(originalPage).digest("hex");
+    const projectRequest = await freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "project-page-tamper" },
+        handoff, outputs, badges: [projectBadge] });
+    const projectPath = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", projectRequest.requestId, "request.json");
+    const tampered = JSON.parse(await readFile(projectPath, "utf8"));
+    tampered.workflowPage.assets[3].content = Buffer.from(withoutProject).toString("base64");
+    tampered.workflowPage.assets[3].hash = createHash("sha256").update(withoutProject).digest("hex");
+    const { integrity: _projectHash, ...projectPayload } = tampered;
+    tampered.integrity = createHash("sha256").update(JSON.stringify(projectPayload)).digest("hex");
+    await writeFile(projectPath, JSON.stringify(tampered));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId,
+        projectRequest.requestId), /Frozen Workflow page adapter does not support project badges/);
+    await assert.rejects(readdir(join(project, projectRequest.target)), { code: "ENOENT" });
+    tampered.workflowPage.assets[3].content = Buffer.from(originalPage).toString("base64");
+    tampered.workflowPage.assets[3].hash = createHash("sha256").update(originalPage).digest("hex");
+    tampered.badges.instances[0].inputs.artifact = {
+        phase: "specify", output: "specs/<slug>/spec.md",
+    };
+    const { integrity: _badgeHash, ...badgePayload } = tampered;
+    tampered.integrity = createHash("sha256").update(JSON.stringify(badgePayload)).digest("hex");
+    await writeFile(projectPath, JSON.stringify(tampered));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId,
+        projectRequest.requestId), /project placement with workflow rule inputs/);
+    await assert.rejects(readdir(join(project, projectRequest.target)), { code: "ENOENT" });
+    const browserOnly = `${originalPage}\nthrow new Error("Workflow page adapter ran in Node");\n`;
+    await writeFile(pageAdapter.path, browserOnly);
+    pageAdapter.hash = createHash("sha256").update(browserOnly).digest("hex");
+    const browserRequest = await freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "browser-only-page" },
+        handoff, outputs, badges: [projectBadge] });
+    await materialize(project, workspace, handoff.handoffId, browserRequest.requestId);
+    assert.match(await readFile(join(project, browserRequest.target, "pages",
+        "generated-workflow-page-adapter.mjs"), "utf8"), /Workflow page adapter ran in Node/);
 });
 
 test("Checklist complete freezes both confirmed outputs and rejects a reordered prerequisite", async (t) => {
@@ -454,6 +564,7 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
     selected.badgeTypes = [{ name: "badges-settings", sourceId: "extension:extension-canvas-design",
         schemaVersion: 1, ...settings.types.find((type) => type.id === "checklist-complete") }];
     selected.badgeRules = [{ name: "badge-rule-checklist-complete", ...definition }];
+    await registerStockBadgeInput(selected, project, "checklist-complete");
     const outputs = { constitution: { outputs: [".specify/memory/constitution.md"],
         view: ".specify/memory/constitution.md" },
     specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
@@ -462,11 +573,24 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
         inputs: { artifact: { phase: "plan", output: "specs/<slug>/plan.md" },
             prerequisite: { phase: "specify", output: "specs/<slug>/spec.md" } },
         text: "Checklist complete", color: "green", showIn: ["workflow-summary"], phase: null };
+    const outputTarget = { ...instance, id: "checklist-output",
+        targets: [{ phase: "plan", output: "specs/<slug>/plan.md" }] };
+    const multipleTargets = { ...instance, id: "checklist-multiple",
+        targets: [{ phase: "specify", output: null },
+            { phase: "specify", output: "specs/<slug>/spec.md" }] };
+    assert.deepEqual(validateDesignerBadges([outputTarget, multipleTargets],
+        { ...selected, phases: ["specify", "plan"], outputs }), [outputTarget, multipleTargets]);
     const frozen = await freezeGeneration({ project, workspace, model: selected, values,
-        handoff, outputs, badges: [instance] });
+        handoff, outputs, badges: [instance, outputTarget, multipleTargets] });
     await materialize(project, workspace, handoff.handoffId, frozen.requestId);
     const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.badges.instances[0].inputs, instance.inputs);
+    assert.deepEqual(config.badges.instances.slice(1).map(({ targets }) => targets),
+        [outputTarget.targets, multipleTargets.targets]);
+    validateGeneratedBadges(config.badges, [
+        { id: "specify", outputs: outputs.specify.outputs },
+        { id: "plan", outputs: outputs.plan.outputs },
+    ]);
     assert.deepEqual(config.badges.rules[0].inputs, definition.inputs);
     assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content-adapter.mjs")),
         await readFile(new URL("generated-host/badges/adapters/content.mjs", root)));
@@ -517,6 +641,7 @@ test("directory-scoped rule freezes with its output anchor and evaluator", async
     selected.badgeRules = [{ name: "badge-rule-markdown-file-count",
         ...JSON.parse(await readFile(new URL(
             "generated-host/badges/rules/markdown-file-count.json", root), "utf8")) }];
+    await registerStockBadgeInput(selected, project, "markdown-file-count");
     const output = "specs/<slug>/review/requirements.md";
     const outputs = { constitution: { outputs: [".specify/memory/constitution.md"],
         view: ".specify/memory/constitution.md" },

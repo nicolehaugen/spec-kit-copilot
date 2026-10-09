@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../schemas/designer.badge-input-control.schema.json",
+  "schemaVersion": 1,
+  "id": "stock.badge-inputs",
+  "adapter": "designer-badge-input-stock-adapter",
+  "inputTypes": ["artifact", "artifact-set", "ordered-artifacts", "phase", "text"]
+}
