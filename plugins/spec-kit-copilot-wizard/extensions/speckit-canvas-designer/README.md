@@ -197,9 +197,12 @@ workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
 Essentials is missing or invalid, any enabled page is invalid, or the Generate
 skill is not installed in the child checkout.
 Once generation is queued, the current panel waits for the generated app's
-`extension.mjs` entry point. To generate another app, choose a different Canvas
+`extension.mjs` entry point, written after syntax and render validation.
+To generate another app, choose a different Canvas
 ID and Save; Generate then becomes available again. An existing Canvas ID
-cannot be generated twice. A partial generation without an entry point remains
+cannot be generated twice. Successful generation does not reload the provider
+or open the new canvas; reload extensions later to register generated apps.
+A partial generation without an entry point remains
 queued in that panel; reopening Designer after investigating the failure
 restores the saved settings without claiming the app was generated.
 The queued-request guard is local to the running Designer provider. If the

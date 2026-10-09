@@ -408,8 +408,8 @@ request, the canvas target, and the Wizard handoff's workflow and installed
 inventory before writing files. It includes the hosted Canvas Design selection
 when recomputing the handoff fingerprint. If only the source fingerprint
 differs, the command returns a warning and attempts generation from the intact
-frozen request; the agent reports that warning when opening the generated
-canvas. Request or checkout integrity and workflow mismatches still stop it.
+frozen request; the agent reports that warning with the generated target.
+Request or checkout integrity and workflow mismatches still stop it.
 The generated `canvas-config.json` records the versions observed in the child
 checkout's Specify inventory at Generate; changed versions produce warnings
 without blocking. Unavailable package versions are marked `unverified` instead
@@ -538,7 +538,10 @@ loopback HTTP server with open/close lifecycle handling. Generation does not cal
 `create-canvas` or rewrite an SDK scaffold. It validates the completed extension
 in place. An existing target stops generation without overwriting it; a failure
 after creation leaves the partial target for inspection. Previously generated
-canvases are not updated.
+canvases are not updated. Generate does not reload extensions or open the new
+canvas, so Designer stays connected for another saved Canvas ID. The entry
+point is written only after syntax and render validation succeeds. Reload
+extensions explicitly when ready to register and open generated canvases.
 
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.

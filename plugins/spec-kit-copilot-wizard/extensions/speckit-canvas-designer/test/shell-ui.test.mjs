@@ -164,6 +164,7 @@ test("Generate remains disabled for the queued ID and enables for a different sa
     assert.ok(start >= 0 && end > start);
     const generate = { disabled: false };
     const generationError = { textContent: "", hidden: true };
+    const generationNote = { textContent: "", hidden: true };
     const model = {
         pages: [{ page: "designer-essentials", fields: [
             { id: "canvas.id" }, { id: "canvas.displayName" },
@@ -171,6 +172,7 @@ test("Generate remains disabled for the queued ID and enables for a different sa
         values: { "canvas.id": "first-canvas" },
         handoffId: "handoff-1",
         generationAvailable: false,
+        generationError: "Generation is already queued for this Designer panel",
         generationBlockers: [],
     };
     const draft = { "canvas.id": "first-canvas" };
@@ -178,18 +180,35 @@ test("Generate remains disabled for the queued ID and enables for a different sa
         model, draft, draftOutputs: {}, generate, saving: false, generating: false,
         queuedCanvasId: "first-canvas", activeUploads: new Set(),
         required: ["canvas.id", "canvas.displayName"],
-        document: { getElementById: () => generationError },
+        document: { getElementById: (id) =>
+            id === "generation-note" ? generationNote : generationError },
     });
     update();
     assert.equal(generate.disabled, true);
+    assert.equal(generationError.hidden, true);
+    assert.equal(generationNote.hidden, false);
+    assert.match(generationNote.textContent, /already queued/);
     draft["canvas.id"] = "second-canvas";
     update();
     assert.equal(generate.disabled, true);
     model.values["canvas.id"] = "second-canvas";
     model.generationAvailable = true;
+    model.generationError = null;
     update();
     assert.equal(generate.disabled, false);
+    assert.equal(generationNote.hidden, true);
+    assert.equal(generationError.hidden, true);
     draft["canvas.id"] = "first-canvas";
     update();
     assert.equal(generate.disabled, true);
+    model.values["canvas.id"] = "first-canvas";
+    model.generationAvailable = false;
+    model.generationError = "Canvas already exists; choose and save a different Canvas ID.";
+    update();
+    assert.equal(generationNote.hidden, false);
+    assert.equal(generationError.hidden, true);
+    model.generationError = "Canvas Design does not provide Generate in this session.";
+    update();
+    assert.equal(generationNote.hidden, true);
+    assert.equal(generationError.hidden, false);
 });

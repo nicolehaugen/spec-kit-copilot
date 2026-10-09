@@ -54,10 +54,11 @@ function outputPathsReady() {
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "designer-essentials");
     const generationError = document.getElementById("generation-error");
+    const generationNote = document.getElementById("generation-note");
     const failed = model?.pages.find((page) => page.error);
     const missingIdentity = model && !failed && (!setup || setup.enabled === false
         || !required.every((field) => setup.fields?.some((item) => item.id === field)));
-    generationError.textContent = model?.preview ? "" : model?.generationError
+    const reason = model?.preview ? "" : model?.generationError
         ? model.generationError
         : failed
         ? `Cannot generate: ${failed.page} could not load. ${failed.error.reason}`
@@ -65,6 +66,11 @@ function updateGenerate() {
             ? `Cannot generate: ${model.generationBlockers.join("; ")}`
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : model?.generationError ?? "";
+    const expectedState = reason === "Generation is already queued for this Designer panel"
+        || reason === "Canvas already exists; choose and save a different Canvas ID.";
+    generationNote.textContent = expectedState ? reason : "";
+    generationNote.hidden = !generationNote.textContent;
+    generationError.textContent = expectedState ? "" : reason;
     generationError.hidden = !generationError.textContent;
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
         || (queuedCanvasId && (draft?.["canvas.id"] === queuedCanvasId

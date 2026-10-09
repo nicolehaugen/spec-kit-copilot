@@ -745,6 +745,9 @@ test("Billing preset and built-in palette persist through Generate and render th
             "--script", process.platform === "win32" ? "ps" : "sh");
         run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
         await materializeDevSkills(project);
+        const generatedCommand = await readFile(join(project, ".github", "skills",
+            "speckit-extension-canvas-design-generate", "SKILL.md"), "utf8");
+        expect(generatedCommand).toContain("Do not reload extensions or open the new canvas here");
         run("preset", "add", "--dev", fileURLToPath(billingRoot));
         const command = await readFile(join(project, ".github", "skills",
             "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
@@ -819,6 +822,8 @@ test("Billing preset and built-in palette persist through Generate and render th
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#conn-status")).toContainText("Generation queued:");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+        await expect(page.locator("#generation-error")).toBeHidden();
+        await expect(page.locator("#generation-note")).toContainText("already queued", { timeout: 15000 });
         const [requestId] = await readdir(join(folder, "generations"));
         await materialize(project, workspace, handoff.handoffId, requestId);
         const config = JSON.parse(await readFile(join(project, ".github", "extensions",
@@ -834,6 +839,13 @@ test("Billing preset and built-in palette persist through Generate and render th
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+        await expect(page.locator("#conn-status")).toHaveText("Live");
+        await expect(page.locator("#generation-error")).toBeHidden();
+        await expect(page.locator("#generation-note")).toBeHidden();
+        await page.getByRole("button", { name: "Generate", exact: true }).click();
+        await expect.poll(async () => (await readdir(join(folder, "generations"))).length).toBe(2);
+        await expect(page.locator("#generation-error")).toBeHidden();
+        await expect(page.locator("#conn-status")).not.toHaveText("Disconnected");
         const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
             "extensions", "billing-canvas", "server.mjs")).href);
         generatedRoutes = createWorkflowRoutes(config, {

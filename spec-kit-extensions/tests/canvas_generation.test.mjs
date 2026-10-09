@@ -22,6 +22,24 @@ const entryTemplate = await readFile(new URL("../extension-canvas-design/generat
     import.meta.url), "utf8");
 const runtimeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/runtime.mjs",
     import.meta.url), "utf8");
+test("Generate command preserves the Designer provider until a later explicit reload", async () => {
+    const command = await readFile(new URL("../extension-canvas-design/commands/generate.md",
+        import.meta.url), "utf8");
+    assert.match(command, /After successful validation, report the generated target and any warnings/);
+    assert.match(command, /Do not reload extensions or open the new canvas here/);
+    assert.doesNotMatch(command, /call `extensions_reload`|open its canvas with a new instance ID/);
+});
+
+test("the entry point becomes visible only after generated syntax and rendering validate", async () => {
+    const source = await readFile(new URL("../extension-canvas-design/scripts/generate.mjs",
+        import.meta.url), "utf8");
+    const checked = source.indexOf('checkSyntax(join(target, "extension.mjs"), files.at(-1)[1])');
+    const rendered = source.indexOf('if (renderer.error || renderer.status !== 0)');
+    const published = source.indexOf('await writeFile(join(target, "extension.mjs"), files.at(-1)[1]');
+    assert.ok(checked > 0 && checked < rendered && rendered < published);
+    assert.equal(source.match(/writeFile\(join\(target, "extension\.mjs"\)/g)?.length, 1);
+});
+
 const model = {
     revision: "test-revision",
     settingsRevision: 0,

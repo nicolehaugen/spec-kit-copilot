@@ -1279,8 +1279,10 @@ function configuration(request) {
     return config;
 }
 
-function checkSyntax(path) {
-    const check = spawnSync("node", ["--check", path], { encoding: "utf8" });
+function checkSyntax(path, bytes) {
+    const check = bytes === undefined
+        ? spawnSync("node", ["--check", path], { encoding: "utf8" })
+        : spawnSync("node", ["--input-type=module", "--check"], { input: bytes, encoding: "utf8" });
     if (check.error || check.status !== 0) throw new Error(`Generated JavaScript failed validation: ${check.stderr || check.error}`);
 }
 
@@ -1537,15 +1539,16 @@ export async function materialize(project, workspace, handoffId, requestId) {
     await writeFile(join(target, "canvas-setup.json"), JSON.stringify({ values: request.values }), { flag: "wx" });
     await writeFile(join(target, "settings-provenance.json"),
         JSON.stringify({ requestId, handoffId, sourceFingerprint: request.sourceFingerprint }), { flag: "wx" });
-    await writeFile(join(target, "extension.mjs"), files.at(-1)[1], { flag: "wx" });
-    for (const file of [...featureFiles, "extension.mjs"]) {
+    for (const file of featureFiles) {
         if (file.endsWith(".mjs") || file.endsWith(".js")) checkSyntax(join(target, file));
     }
+    checkSyntax(join(target, "extension.mjs"), files.at(-1)[1]);
     const renderer = spawnSync("node", ["--input-type=module", "-e",
         "const m=await import(process.argv[1]);m.renderHtml(m.readConfig());",
         pathToFileURL(join(target, "server.mjs")).href],
     { encoding: "utf8" });
     if (renderer.error || renderer.status !== 0) throw new Error(`Workflow renderer failed: ${renderer.stderr || renderer.error}`);
+    await writeFile(join(target, "extension.mjs"), files.at(-1)[1], { flag: "wx" });
     return { target: request.target, canvasId: config.canvas.id, warnings };
 }
 
