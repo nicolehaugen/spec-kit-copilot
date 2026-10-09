@@ -387,6 +387,15 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         const locations = { "workflow-list": "workflow.list",
             "workflow-summary": "workflow.summary", "phase-card": "phase.card",
             "phase-output": "phase.output" };
+        const projectPhase = (phase) => typeof phase === "string"
+            && phase.replace(/^speckit\./, "") === "constitution";
+        const workflowCard = (badge) =>
+            badge.showIn?.includes("phase-card") && !projectPhase(badge.phase)
+            || badge.targets?.some((target) => target.output === null && !projectPhase(target.phase));
+        const workflowOutput = (badge) =>
+            badge.targets?.some((target) => target.output !== null && !projectPhase(target.phase));
+        const workflowTargets = (badge) =>
+            badge.targets?.some((target) => !projectPhase(target.phase));
         if (instances.some((badge) => badge.showIn?.some((placement) =>
             !destinations.has(locations[placement]))
             || badge.targets?.some((target) => !destinations.has(
@@ -397,11 +406,9 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             && !workflowSlots.has("workflow.list")
             || instances.some((badge) => badge.showIn?.includes("workflow-summary"))
                 && !workflowSlots.has("workflow.summary")
-            || instances.some((badge) => badge.showIn?.includes("phase-card")
-                || badge.targets?.some((target) => target.output === null))
+            || instances.some(workflowCard)
                 && !phaseControl.slots?.some((slot) => slot.id === "phase.card")
-            || instances.some((badge) => badge.showIn?.includes("phase-output")
-                || badge.targets?.some((target) => target.output !== null))
+            || instances.some(workflowOutput)
                 && !phaseControl.slots?.some((slot) => slot.id === "phase.output")) {
             throw new Error("Selected badge placement has no declared Workflow or phase control slot");
         }
@@ -499,14 +506,13 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             if (!entry) throw new Error(`Missing badge evaluator ${name}`);
             return asset(entry);
         }));
-        if (instances.some((instance) => instance.showIn?.includes("phase-card")
-            || instance.targets?.length)) {
+        if (instances.some((instance) => workflowCard(instance) || workflowOutput(instance))) {
             const module = await import(`data:text/javascript;base64,${workflowPage.assets[2].content}`);
             if (!Array.isArray(module.capabilities)
                 || !module.capabilities.includes("workflow.badges.v1")) {
                 throw new Error(`${adapter.name} does not support phase-card badges; use a badge-capable phase adapter or deselect Phase card`);
             }
-            if (instances.some((instance) => instance.targets?.length)
+            if (instances.some(workflowTargets)
                 && !module.capabilities.includes("workflow.badges.targets.v1")) {
                 throw new Error(`${adapter.name} does not support phase/output badge targets; use a target-capable phase adapter or deselect phase/output placements`);
             }

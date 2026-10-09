@@ -424,6 +424,12 @@ test("selected badge definitions and evaluator are packaged without preset files
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges }), /no declared Workflow or phase control slot/);
     selected.workflowPage.slots.push({ id: "workflow.summary" });
+    const projectBadge = { ...badges[0], inputs: { ...badges[0].inputs,
+        artifact: { phase: "constitution", output: ".specify/memory/constitution.md" } },
+    targets: [{ phase: "constitution", output: null }] };
+    const projectOutputBadge = { ...projectBadge, targets: [{
+        phase: "constitution", output: ".specify/memory/constitution.md",
+    }] };
     const control = selected.templates.find((entry) => entry.name === "generated-phase-control");
     const originalControl = await readFile(control.path);
     const incompleteControl = JSON.parse(originalControl.toString("utf8"));
@@ -433,6 +439,8 @@ test("selected badge definitions and evaluator are packaged without preset files
     control.hash = createHash("sha256").update(bytes).digest("hex");
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges }), /no declared Workflow or phase control slot/);
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectOutputBadge] }));
     await writeFile(control.path, originalControl);
     control.hash = createHash("sha256").update(originalControl).digest("hex");
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
@@ -452,6 +460,10 @@ test("selected badge definitions and evaluator are packaged without preset files
     adapter.hash = createHash("sha256").update(incompatible).digest("hex");
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges }), /does not support phase-card badges/);
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectBadge] }));
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectOutputBadge] }));
 });
 
 test("Checklist complete freezes both confirmed outputs and rejects a reordered prerequisite", async (t) => {
