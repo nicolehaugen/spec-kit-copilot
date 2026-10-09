@@ -370,10 +370,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
         ])
         page = json.loads((fixture / "designer/tabs/essentials.json").read_text("utf-8"))
         self.validator.validate(page)
-        self.assertEqual(page["fields"][0], self.pages[0]["fields"][0])
-        self.assertEqual([(field["id"], field["control"]) for field in page["fields"]],
-                         [("canvas.id", "stock.text"), ("canvas.displayName", "stock.text")])
-        self.assertEqual(page["slots"], self.pages[0]["slots"])
+        self.assertEqual({key: value for key, value in page.items() if key != "$schema"},
+                         {key: value for key, value in self.pages[0].items() if key != "$schema"})
         replaced = (fixture / "commands/load-page.md").read_text("utf-8")
         self.assertIn("designer-essentials", replaced)
         self.assertIn("## Canvas Design templates", replaced)
