@@ -1,5 +1,6 @@
 export const pageId = "workflow";
 export const contractVersion = 1;
+export const capabilities = ["workflow.badges.project.v1"];
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);

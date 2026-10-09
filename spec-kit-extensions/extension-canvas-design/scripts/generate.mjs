@@ -1378,6 +1378,18 @@ export async function materialize(project, workspace, handoffId, requestId) {
         }
     }
     const config = configuration({ ...request, installed: request.actualInstalled ?? request.installed });
+    if (config.workflowPage.pageAdapter && config.badges?.instances.some((badge) =>
+        badge.showIn.includes("phase-card")
+            && badge.phase?.replace(/^speckit\./, "") === "constitution"
+        || badge.targets?.some((target) =>
+            target.phase.replace(/^speckit\./, "") === "constitution"))) {
+        const { capabilities } = await import(
+            `data:text/javascript;base64,${request.workflowPage.assets[3].content}`);
+        if (!Array.isArray(capabilities)
+            || !capabilities.includes("workflow.badges.project.v1")) {
+            throw new Error("Frozen Workflow page adapter does not support project badges");
+        }
+    }
     if (!isDeepStrictEqual(request.runtimeSetup, handoff.workflow.runtimeSetup)) {
         throw new Error("Runtime setup recipe differs from the Wizard handoff");
     }

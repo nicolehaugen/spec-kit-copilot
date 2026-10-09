@@ -389,28 +389,41 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             "phase-output": "phase.output" };
         const projectPhase = (phase) => typeof phase === "string"
             && phase.replace(/^speckit\./, "") === "constitution";
-        const workflowCard = (badge) =>
-            badge.showIn?.includes("phase-card") && !projectPhase(badge.phase)
-            || badge.targets?.some((target) => target.output === null && !projectPhase(target.phase));
-        const workflowOutput = (badge) =>
-            badge.targets?.some((target) => target.output !== null && !projectPhase(target.phase));
-        const workflowTargets = (badge) =>
-            badge.targets?.some((target) => !projectPhase(target.phase));
-        if (instances.some((badge) => badge.showIn?.some((placement) =>
-            !destinations.has(locations[placement]))
-            || badge.targets?.some((target) => !destinations.has(
-                target.output === null ? "phase.card" : "phase.output")))) {
+        const requestedDestinations = new Set();
+        const phaseSlots = new Set();
+        let hasWorkflowTargets = false;
+        let hasProjectTargets = false;
+        for (const badge of instances) {
+            for (const place of badge.showIn ?? []) requestedDestinations.add(locations[place]);
+            if (badge.showIn?.includes("phase-card") && !projectPhase(badge.phase))
+                phaseSlots.add("phase.card");
+            else if (badge.showIn?.includes("phase-card") && projectPhase(badge.phase))
+                hasProjectTargets = true;
+            for (const target of badge.targets ?? []) {
+                const slot = target.output === null ? "phase.card" : "phase.output";
+                requestedDestinations.add(slot);
+                if (projectPhase(target.phase)) {
+                    hasProjectTargets = true;
+                    continue;
+                }
+                phaseSlots.add(slot);
+                hasWorkflowTargets = true;
+            }
+        }
+        if ([...requestedDestinations].some((id) => !destinations.has(id))) {
             throw new Error("Selected badge placement is unsupported by the Workflow page adapter");
         }
-        if (instances.some((badge) => badge.showIn?.includes("workflow-list"))
-            && !workflowSlots.has("workflow.list")
-            || instances.some((badge) => badge.showIn?.includes("workflow-summary"))
-                && !workflowSlots.has("workflow.summary")
-            || instances.some(workflowCard)
-                && !phaseControl.slots?.some((slot) => slot.id === "phase.card")
-            || instances.some(workflowOutput)
-                && !phaseControl.slots?.some((slot) => slot.id === "phase.output")) {
+        if ([...requestedDestinations].some((id) => id.startsWith("workflow.")
+            && !workflowSlots.has(id))
+            || [...phaseSlots].some((id) => !phaseControl.slots?.some((slot) => slot.id === id))) {
             throw new Error("Selected badge placement has no declared Workflow or phase control slot");
+        }
+        if (hasProjectTargets && workflowAdapter) {
+            const pageModule = await import(`data:text/javascript;base64,${workflowPage.assets[3].content}`);
+            if (!Array.isArray(pageModule.capabilities)
+                || !pageModule.capabilities.includes("workflow.badges.project.v1")) {
+                throw new Error(`${workflowAdapter.name} does not support project badges; use a project-badge-capable Workflow page adapter or remove the project placement`);
+            }
         }
         const types = [...new Set(instances.map((instance) => instance.type))].map((id) => {
             const type = model.badgeTypes?.find((item) => item.id === id && item.enabled);
@@ -506,13 +519,13 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             if (!entry) throw new Error(`Missing badge evaluator ${name}`);
             return asset(entry);
         }));
-        if (instances.some((instance) => workflowCard(instance) || workflowOutput(instance))) {
+        if (phaseSlots.size) {
             const module = await import(`data:text/javascript;base64,${workflowPage.assets[2].content}`);
             if (!Array.isArray(module.capabilities)
                 || !module.capabilities.includes("workflow.badges.v1")) {
                 throw new Error(`${adapter.name} does not support phase-card badges; use a badge-capable phase adapter or deselect Phase card`);
             }
-            if (instances.some(workflowTargets)
+            if (hasWorkflowTargets
                 && !module.capabilities.includes("workflow.badges.targets.v1")) {
                 throw new Error(`${adapter.name} does not support phase/output badge targets; use a target-capable phase adapter or deselect phase/output placements`);
             }

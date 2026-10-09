@@ -430,6 +430,9 @@ test("selected badge definitions and evaluator are packaged without preset files
     const projectOutputBadge = { ...projectBadge, targets: [{
         phase: "constitution", output: ".specify/memory/constitution.md",
     }] };
+    const mixedBadge = { ...projectBadge, targets: [
+        ...projectBadge.targets, { phase: "plan", output: "specs/<slug>/plan.md" },
+    ] };
     const control = selected.templates.find((entry) => entry.name === "generated-phase-control");
     const originalControl = await readFile(control.path);
     const incompleteControl = JSON.parse(originalControl.toString("utf8"));
@@ -441,6 +444,9 @@ test("selected badge definitions and evaluator are packaged without preset files
         handoff, outputs, badges }), /no declared Workflow or phase control slot/);
     await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
         values: alternateValues, handoff, outputs, badges: [projectOutputBadge] }));
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [mixedBadge] }),
+    /no declared Workflow or phase control slot/);
     await writeFile(control.path, originalControl);
     control.hash = createHash("sha256").update(originalControl).digest("hex");
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
@@ -464,6 +470,40 @@ test("selected badge definitions and evaluator are packaged without preset files
         values: alternateValues, handoff, outputs, badges: [projectBadge] }));
     await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
         values: alternateValues, handoff, outputs, badges: [projectOutputBadge] }));
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [mixedBadge] }),
+    /does not support phase-card badges/);
+    await writeFile(adapter.path, original);
+    adapter.hash = createHash("sha256").update(original).digest("hex");
+    const pageAdapter = selected.templates.find((entry) =>
+        entry.kind === "generated.workflow-page-adapter");
+    const originalPage = await readFile(pageAdapter.path, "utf8");
+    const withoutProject = originalPage.replace(
+        'export const capabilities = ["workflow.badges.project.v1"];', "");
+    assert.notEqual(withoutProject, originalPage);
+    await writeFile(pageAdapter.path, withoutProject);
+    pageAdapter.hash = createHash("sha256").update(withoutProject).digest("hex");
+    await assert.rejects(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [projectBadge] }),
+    /does not support project badges/);
+    await assert.doesNotReject(freezeGeneration({ project, workspace, model: selected,
+        values: alternateValues, handoff, outputs, badges: [badges[0]] }));
+    await writeFile(pageAdapter.path, originalPage);
+    pageAdapter.hash = createHash("sha256").update(originalPage).digest("hex");
+    const projectRequest = await freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "project-page-tamper" },
+        handoff, outputs, badges: [projectBadge] });
+    const projectPath = join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
+        "generations", projectRequest.requestId, "request.json");
+    const tampered = JSON.parse(await readFile(projectPath, "utf8"));
+    tampered.workflowPage.assets[3].content = Buffer.from(withoutProject).toString("base64");
+    tampered.workflowPage.assets[3].hash = createHash("sha256").update(withoutProject).digest("hex");
+    const { integrity: _projectHash, ...projectPayload } = tampered;
+    tampered.integrity = createHash("sha256").update(JSON.stringify(projectPayload)).digest("hex");
+    await writeFile(projectPath, JSON.stringify(tampered));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId,
+        projectRequest.requestId), /Frozen Workflow page adapter does not support project badges/);
+    await assert.rejects(readdir(join(project, projectRequest.target)), { code: "ENOENT" });
 });
 
 test("Checklist complete freezes both confirmed outputs and rejects a reordered prerequisite", async (t) => {

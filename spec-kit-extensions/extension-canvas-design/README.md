@@ -651,6 +651,13 @@ actions. Presets may replace both the Workflow page JSON and its adapter,
 declare a subset of supported badge destinations, and add slots; unsupported
 configured placements fail rather than disappearing. Existing generated apps
 with the older page definition keep their original presentation.
+When a configured badge targets the project Constitution card or output, the
+Workflow-page adapter must export `capabilities = ["workflow.badges.project.v1"]`
+and render `state.model.badges.project` at those destinations. Declaring
+`phase.card` or `phase.output` in `badgeDestinations` alone does not promise
+project badge rendering. Designer Generate and frozen materialization reject
+project placements when a replacement adapter lacks this capability; adapters
+that do not render project badges should omit it.
 The `generated-phase-control` definition places itself in
 `workflow.phases`, has `schemaVersion: 1`, `id: "workflow-phases"`, an `adapter` name (stock:
 `generated-phase-adapter`), and optional `viewLabels` keyed by selected phase ID,
