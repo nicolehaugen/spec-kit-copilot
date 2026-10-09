@@ -2587,9 +2587,25 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(frozen.canvas.description, "Newer settings");
     assert.equal(frozen.settingsRevision, 1);
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
+    const target = join(project, ".github", "extensions", "my-canvas");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ canvas: { id: "my-canvas" } }));
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: handoff.handoffId, requestId: generated.requestId }));
+    const replace = { ...generationRequest(saved.settingsRevision, newerValues),
+        replaceExisting: true, replaceRequestId: generated.requestId };
+    assert.equal((await post({ ...replace, replaceRequestId: "../escape" })).status, 422);
+    assert.equal((await post({ ...replace, replaceRequestId: undefined })).status, 422);
+    assert.equal((await post({ ...replace, replaceRequestId: "stale" })).status, 409);
+    assert.equal(prompts.length, 1);
+    const replaced = await post(replace);
+    assert.equal(replaced.status, 202, await replaced.text());
+    assert.match(prompts[1], new RegExp(`--replace-existing=${generated.requestId}`));
 });
 
-test("Generate accepts a different saved Canvas ID only after the first app entry point exists", async (t) => {
+test("Generate accepts another Canvas ID only after matching files and provenance exist", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
@@ -2615,13 +2631,19 @@ test("Generate accepts a different saved Canvas ID only after the first app entr
     const post = (values, revision = 0) => fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ modelRevision: model.revision, settingsRevision: revision, values }) });
-    assert.equal((await post(first)).status, 202);
+    const firstResult = await post(first);
+    assert.equal(firstResult.status, 202);
+    const { requestId } = await firstResult.json();
     assert.equal((await post(second)).status, 409);
     const target = join(project, ".github", "extensions", "first-canvas");
     await mkdir(target, { recursive: true });
     assert.equal((await post(second)).status, 409);
-    assert.equal((await (await fetch(stateUrl)).json()).generationAvailable, false);
+    assert.equal((await (await fetch(stateUrl)).json()).generationAvailable, true);
     await writeFile(join(target, "extension.mjs"), "export {};\n");
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ canvas: { id: "first-canvas" } }));
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: handoff.handoffId, requestId }));
     const duplicate = await post(first);
     assert.equal(duplicate.status, 409);
     assert.match((await duplicate.json()).error, /already exists/);
@@ -2635,6 +2657,83 @@ test("Generate accepts a different saved Canvas ID only after the first app entr
     assert.equal((await post(second, 1)).status, 202);
     assert.equal(prompts.length, 2);
     assert.equal((await post(second, 1)).status, 409);
+});
+
+test("output status, folder reveal and Open enforce the same generated identity", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
+    const revealed = [];
+    const prompts = [];
+    let dispatchFails = false;
+    const shell = await startShell(handoff, model, { project, workspace,
+        session: { send: async ({ prompt }) => {
+            if (dispatchFails) throw new Error("child session unavailable");
+            prompts.push(prompt);
+        } },
+        launchFolder: (_command, [path]) => {
+            revealed.push(path);
+            const child = { once(event, callback) {
+                if (event === "spawn") queueMicrotask(callback);
+                return child;
+            }, unref() {} };
+            return child;
+        } });
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    const getStatus = (id) => fetch(new URL(`/api/output-status?token=${url.searchParams.get("token")}&canvasId=${encodeURIComponent(id)}`, url));
+    const action = (path, body) => fetch(new URL(`${path}?token=${url.searchParams.get("token")}`, url), {
+        method: "POST", headers: { "Content-Type": "application/json", Origin: url.origin },
+        body: JSON.stringify(body),
+    });
+    assert.equal((await getStatus("../escape")).status, 422);
+    assert.deepEqual(await (await getStatus("my-canvas")).json(),
+        { status: "absent", target: ".github/extensions/my-canvas/" });
+    assert.equal((await action("/api/reveal-output", { canvasId: "../escape" })).status, 422);
+    assert.equal((await action("/api/reveal-output", { canvasId: "my-canvas" })).status, 200);
+    assert.equal(revealed[0], join(project, ".github", "extensions"));
+    const missing = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(missing.status, 422);
+    assert.match((await missing.json()).error, /Generate the canvas files first/);
+    const target = join(project, ".github", "extensions", "my-canvas");
+    await mkdir(target);
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    await writeFile(join(target, "canvas-config.json"), JSON.stringify({ canvas: { id: "my-canvas" } }));
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: "another", requestId: "request-1" }));
+    assert.equal((await (await getStatus("my-canvas")).json()).status, "foreign");
+    assert.equal((await action("/api/reveal-output", { canvasId: "my-canvas" })).status, 422);
+    assert.equal((await action("/api/open-generated", { canvasId: "my-canvas" })).status, 422);
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: handoff.handoffId, requestId: "request-1" }));
+    assert.deepEqual(await (await getStatus("my-canvas")).json(),
+        { status: "ready", target: ".github/extensions/my-canvas/", requestId: "request-1" });
+    assert.equal((await action("/api/reveal-output", { canvasId: "my-canvas" })).status, 200);
+    assert.equal(revealed[1], target);
+    const withoutSkill = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(withoutSkill.status, 422);
+    assert.match((await withoutSkill.json()).error, /does not provide Open/);
+    const openSkill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-open-generated", "SKILL.md");
+    await mkdir(dirname(openSkill), { recursive: true });
+    await writeFile(openSkill, "---\nname: speckit-extension-canvas-design-open-generated\n---\n");
+    dispatchFails = true;
+    const failed = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(failed.status, 422);
+    assert.match((await failed.json()).error, /child session unavailable/);
+    assert.equal(prompts.length, 0);
+    dispatchFails = false;
+    const opened = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(opened.status, 202);
+    assert.deepEqual(await opened.json(),
+        { status: "opening", target: ".github/extensions/my-canvas/" });
+    assert.match(prompts[0], /speckit-extension-canvas-design-open-generated skill/);
+    assert.match(prompts[0], /request-1/);
 });
 
 test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {

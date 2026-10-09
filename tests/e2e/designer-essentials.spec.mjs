@@ -45,10 +45,29 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
         values: Object.fromEntries(ids.map((id) => [id, values[id]])) };
     const requests = [];
     const saved = [];
+    const revealed = [];
+    const opened = [];
     await page.route("**/*", async (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === "/api/state") {
             await route.fulfill({ json: state });
+        } else if (path === "/api/output-status") {
+            const canvasId = new URL(route.request().url()).searchParams.get("canvasId");
+            await route.fulfill({ json: { status: requests.ready ? "ready" : "absent",
+                target: `.github/extensions/${canvasId}/`, ...(requests.ready
+                    ? { requestId: "test-generation" } : {}) } });
+        } else if (path === "/api/reveal-output" || path === "/api/open-generated") {
+            const action = route.request().postDataJSON();
+            if (path === "/api/open-generated" && !requests.ready) {
+                await route.fulfill({ status: 422, json: {
+                    error: "Cannot open canvas: target is absent. Generate the canvas files first.",
+                } });
+                return;
+            }
+            (path === "/api/reveal-output" ? revealed : opened).push(action);
+            await route.fulfill({ status: path === "/api/open-generated" ? 202 : 200,
+                json: { status: path === "/api/open-generated" ? "opening" : "revealed",
+                    target: `.github/extensions/${action.canvasId}/` } });
         } else if (path === "/api/save") {
             const request = route.request().postDataJSON();
             saved.push(request);
@@ -68,13 +87,15 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
                         ? "Cost code (billing.costCode)" : null;
             await route.fulfill(invalid
                 ? { status: 400, json: { error: `Invalid ${invalid}` } }
-                : { status: 202, json: { target: ".github/extensions/test/", warnings } });
+                : { status: 202, json: { target: `.github/extensions/${request.values["canvas.id"]}/`,
+                    requestId: "test-generation", warnings } });
         } else if (path === "/adapters/designer-control-adapter-text.mjs"
             || path === "/adapters/designer-control-adapter-checkbox.mjs") {
             const name = path.includes("checkbox") ? "stock-checkbox" : "stock-text";
             await route.fulfill({ body: await readFile(new URL(`shared-controls/${name}/designer.mjs`, extension)),
                 contentType: "text/javascript" });
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css"
+            || path === "/ui/generation-state.js"
             || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js"
             || path === "/ui/control-adapter-contract.js"
             || path === "/ui/badges-control.js" || path === "/ui/badge-duplicates.js") {
@@ -87,7 +108,14 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
     await page.goto("/?token=designer-essentials-test");
     await expect(page.getByRole("heading", { name: "Essentials" })).toBeVisible();
     requests.saved = saved;
+    requests.revealed = revealed;
+    requests.opened = opened;
     return requests;
+}
+
+async function generateFromTab(page) {
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    await page.locator("#generate-canvas").click();
 }
 
 const core = [{ id: "canvas.id", label: "Canvas ID" },
@@ -96,15 +124,16 @@ const stock = [{ id: "canvas.description", label: "Description" },
     { id: "canvas.workflowListName", label: "Workflow header" },
     { id: "workflowSlug.userProvided", label: "Allow custom slug", type: "boolean" }];
 
-test("Generate remains queued and displays installed-version warnings", async ({ page }) => {
+test("Generate remains creating files and displays installed-version warnings", async ({ page }) => {
     const warning = `presets ${subAgents.id}: Wizard version ${subAgents.version}, installed version unverified.`;
     const requests = await openDesigner(page, core, undefined,
         [warning]);
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("stock-canvas");
     await page.getByRole("textbox", { name: /Title/ }).fill("Stock Canvas");
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect(page.locator("#action-message"))
         .toContainText(`Warning: ${warning}`);
+    await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
     expect(requests).toHaveLength(1);
 });
 
@@ -115,16 +144,19 @@ test("a failed implicit Save leaves the draft editable and never dispatches Gene
     const rejectSave = (route) => route.fulfill({ status: 409,
         json: { error: "Designer settings changed elsewhere" } });
     await page.route("**/api/save?*", rejectSave);
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect(page.locator("#page-error")).toContainText(
         "Could not save settings: Designer settings changed elsewhere");
+    await page.getByRole("tab", { name: "Essentials" }).click();
     await expect(page.getByRole("textbox", { name: /Canvas ID/ })).toHaveValue("retry-canvas");
-    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeEnabled();
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    await expect(page.locator("#generate-canvas")).toBeEnabled();
     expect(requests).toHaveLength(0);
     await page.unroute("**/api/save?*", rejectSave);
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect.poll(() => requests.length).toBe(1);
-    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
+    await expect(page.locator("#generate-canvas")).toBeEnabled();
 });
 
 test("computed provider approval cancels without sending and submits the approved source and hash", async ({ page }) => {
@@ -138,7 +170,8 @@ test("computed provider approval cancels without sending and submits the approve
     ]);
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("provider-canvas");
     await page.getByRole("textbox", { name: /Title/ }).fill("Provider Canvas");
-    const generate = page.getByRole("button", { name: "Generate", exact: true });
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    const generate = page.locator("#generate-canvas");
     await generate.click();
     const dialog = page.getByRole("dialog", { name: "Approve generated value providers" });
     await expect(dialog).toBeVisible();
@@ -156,12 +189,9 @@ test("computed provider approval cancels without sending and submits the approve
     expect(requests.saved).toHaveLength(1);
     expect(requests.saved[0].values["canvas.id"]).toBe("provider-canvas");
     expect(requests[0].approvedProviders).toEqual([approved]);
-    await expect(generate).toBeDisabled();
-    await expect(page.locator("#generation-note")).toHaveText(
-        "Canvas generation is underway. You can close the Designer now. To generate another canvas, reopen Designer after this one finishes generation.");
-    await expect(page.locator("#generation-note")).toHaveCSS("border-top-style", "solid");
-    await expect(page.locator("#generation-note")).toHaveCSS("border-top-color", "rgb(11, 110, 153)");
-    await expect(page.locator("#generation-note")).toHaveCSS("padding-top", "12px");
+    await expect(generate).toBeEnabled();
+    await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
+    await expect(page.locator("#open-generated-canvas")).toBeEnabled();
     await expect(page.locator("#conn-status")).toHaveText("Live");
 });
 
@@ -171,14 +201,15 @@ test("stock Essentials keep five ordered controls and Generate submits all enabl
         "Canvas ID (required)", "Title (required)", "Description",
         "Workflow header", "Allow custom slug",
     ]);
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect(page.locator("#page-error")).toContainText("Invalid Canvas ID (canvas.id)");
+    await page.getByRole("tab", { name: "Essentials" }).click();
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("stock-canvas");
     await page.getByRole("textbox", { name: /Title/ }).fill("Stock Canvas");
     await page.getByRole("textbox", { name: "Description" }).fill("A description");
     await page.getByRole("textbox", { name: "Workflow header" }).fill("My workflows");
     await page.getByRole("checkbox", { name: "Allow custom slug" }).check();
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1].values).toEqual({
         "canvas.id": "stock-canvas", "canvas.displayName": "Stock Canvas",
@@ -192,7 +223,7 @@ test("minimal Essentials work, while an invalid additional page visibly blocks G
         title: "Billing", order: 20, error: { name: "canvas-settings-billing",
             path: "billing.json", reason: "Invalid Designer JSON" } });
     await expect(page.locator(".settings-field")).toHaveCount(2);
-    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
+    await expect(page.locator("#generate-canvas")).toBeDisabled();
     await expect(page.locator("#generation-error"))
         .toContainText("Cannot generate: canvas-settings-billing could not load. Invalid Designer JSON");
     await page.getByRole("tab", { name: /Billing/ }).click();
@@ -211,11 +242,11 @@ test("minimal Essentials submit only identity and invalid enabled Billing values
         input.value = "x".repeat(65);
         input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect(page.locator("#page-error")).toContainText("Invalid Cost code (billing.costCode)");
     expect(requests).toHaveLength(1);
     await page.getByRole("textbox", { name: "Cost code" }).fill("CC-481");
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect.poll(() => requests.length).toBe(2);
     expect(requests[1].values).toEqual({
         "canvas.id": "minimal-canvas", "canvas.displayName": "Minimal Canvas",
@@ -231,9 +262,98 @@ test("Generate focuses a field whose label contains parentheses", async ({ page 
     }));
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("risk-canvas");
     await page.getByRole("textbox", { name: /Title/ }).fill("Risk Canvas");
-    await page.getByRole("button", { name: "Generate", exact: true }).click();
+    await generateFromTab(page);
     await expect(page.getByRole("tab", { name: "Billing" })).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(".settings-field-error")).toBeVisible();
     await expect(page.locator(".settings-field")).toBeFocused();
     await expect(page.locator("#page-error")).toHaveText("Invalid Risk (high) (billing.costCode)");
+});
+
+test("Generate tab follows Canvas ID, then verifies files and offers guarded regeneration and Open", async ({ page }) => {
+    const requests = await openDesigner(page, core);
+    await expect(page.getByRole("tab", { name: "Outputs" })).toHaveCount(0);
+    await expect(page.getByRole("tab")).toHaveText(["Essentials", "Generate & Open"]);
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("first-canvas");
+    await page.getByRole("textbox", { name: /Title/ }).fill("First Canvas");
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    await expect(page.locator("#output-target")).toHaveText(".github\\extensions\\first-canvas\\");
+    await expect(page.locator("#share-project-path")).toHaveText(".github\\extensions\\first-canvas\\");
+    await expect(page.getByRole("heading", { name: "Share · Optional" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Personal extension" })).toBeVisible();
+    await expect(page.locator("#generation-status")).toHaveText("Not generated");
+    await expect(page.locator("#open-generated-canvas")).toBeEnabled();
+    await page.locator("#open-generated-canvas").click();
+    await expect(page.locator("#page-error")).toContainText("Generate the canvas files first");
+    await page.locator("#open-output-folder").click();
+    await expect.poll(() => requests.revealed).toEqual([{ canvasId: "first-canvas" }]);
+    await page.getByRole("tab", { name: "Essentials" }).click();
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("second-canvas");
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    await expect(page.locator("#output-target")).toHaveText(".github\\extensions\\second-canvas\\");
+    await page.locator("#generate-canvas").click();
+    await expect.poll(() => requests.length).toBe(1);
+    await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
+    await expect(page.locator("#open-generated-canvas")).toBeEnabled();
+    requests.ready = true;
+    await page.reload();
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    await expect(page.locator("#generation-status")).toContainText("Canvas files created");
+    await expect(page.locator("#generate-canvas")).toHaveText("Regenerate canvas");
+    await expect(page.locator("#generate-canvas")).toBeEnabled();
+    await expect(page.locator("#open-generated-canvas")).toBeEnabled();
+    await page.locator("#open-generated-canvas").click();
+    await expect.poll(() => requests.opened).toEqual([{ canvasId: "second-canvas" }]);
+    await expect(page.locator("#generation-note")).toContainText("child-session chat");
+    await page.locator("#generate-canvas").click();
+    const confirm = page.getByRole("dialog", { name: "Replace generated canvas?" });
+    await expect(confirm).toContainText("removes any manual edits");
+    await confirm.getByRole("button", { name: "Cancel" }).click();
+    expect(requests).toHaveLength(1);
+    await page.locator("#generate-canvas").click();
+    await confirm.getByRole("button", { name: "Replace all files" }).click();
+    await expect.poll(() => requests.length).toBe(2);
+    expect(requests[1].replaceExisting).toBe(true);
+});
+
+test("submission is briefly disabled and a failed Generate remains recoverable", async ({ page }) => {
+    const requests = await openDesigner(page, core);
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("retry-canvas");
+    await page.getByRole("textbox", { name: /Title/ }).fill("Retry Canvas");
+    let release;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    await page.route("**/api/generate?*", async (route) => {
+        await waiting;
+        await route.fulfill({ status: 503, json: { error: "Generation service unavailable" } });
+    });
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    await page.locator("#generate-canvas").click();
+    await expect(page.locator("#generate-canvas")).toHaveText("Submitting...");
+    await expect(page.locator("#generate-canvas")).toBeDisabled();
+    release();
+    await expect(page.locator("#page-error")).toContainText("Generation service unavailable");
+    await expect(page.locator("#generate-canvas")).toBeEnabled();
+    await expect(page.locator("#generation-status")).toHaveText("Not generated");
+    expect(requests).toHaveLength(0);
+    await page.unroute("**/api/generate?*");
+    await page.locator("#generate-canvas").click();
+    await expect.poll(() => requests.length).toBe(1);
+    await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
+});
+
+test("incompatible Open responses leave Designer usable and do not claim acceptance", async ({ page }) => {
+    const requests = await openDesigner(page, core);
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("ready-canvas");
+    requests.ready = true;
+    await page.getByRole("tab", { name: "Generate & Open" }).click();
+    const wrongProvider = (route) => route.fulfill({ status: 202,
+        json: { status: "opening", target: ".github/extensions/another-canvas/" } });
+    await page.route("**/api/open-generated?*", wrongProvider);
+    await page.locator("#open-generated-canvas").click();
+    await expect(page.locator("#page-error")).toHaveText("Invalid generated canvas opening response");
+    await expect(page.locator("#generation-note")).toBeHidden();
+    await expect(page.locator("#open-generated-canvas")).toBeEnabled();
+    await page.unroute("**/api/open-generated?*", wrongProvider);
+    await page.locator("#open-generated-canvas").click();
+    await expect(page.locator("#generation-note")).toContainText("child-session chat");
+    expect(requests.opened).toEqual([{ canvasId: "ready-canvas" }]);
 });

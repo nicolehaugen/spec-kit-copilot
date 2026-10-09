@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { readHandoff } from "./handoff.mjs";
@@ -9,7 +10,8 @@ import { GENERATION_EXISTS, GENERATION_PENDING, generationAvailability,
 import { readFrozenAsset } from "./pages.mjs";
 import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
     loadDesignerSettings, saveDesignerSettings } from "./settings.mjs";
-import { canvasOutputExists, freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
+import { freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
+import { generatedOutput, validateOutputAction } from "./contracts/generated-output.mjs";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -44,18 +46,20 @@ const ASSETS = {
     "/ui/badge-duplicates.js": ["badge-duplicates.js", "text/javascript"],
 };
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
+const OPEN_SKILL = "speckit-extension-canvas-design-open-generated";
 const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.";
 
-async function hasGenerateSkill(project) {
+async function hasProjectSkill(project, name) {
     try {
-        return (await stat(join(project, ".github", "skills", GENERATE_SKILL, "SKILL.md"))).isFile();
+        return (await stat(join(project, ".github", "skills", name, "SKILL.md"))).isFile();
     } catch (error) {
         if (error.code === "ENOENT") return false;
         throw error;
     }
 }
 
-export async function startShell(handoff = null, model = null, { project, workspace, session, preview = false } = {}) {
+export async function startShell(handoff = null, model = null,
+    { project, workspace, session, preview = false, launchFolder = spawn } = {}) {
     if (preview && (handoff || !model)) {
         throw new Error("Designer preview requires a sample model and no Wizard handoff");
     }
@@ -81,14 +85,13 @@ export async function startShell(handoff = null, model = null, { project, worksp
         }
     }
     const token = randomBytes(24).toString("hex");
-    const skillAvailable = project ? await hasGenerateSkill(project) : false;
+    const skillAvailable = project ? await hasProjectSkill(project, GENERATE_SKILL) : false;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? GENERATE_UNAVAILABLE : null;
     let queuedCanvasId = null;
+    let queuedRequestId = null;
     const state = async () => {
-        const pending = Boolean(queuedCanvasId && !await canvasOutputExists(project, queuedCanvasId, true));
-        const exists = await canvasOutputExists(project, model?.values?.["canvas.id"]);
-        const availability = generationAvailability(pending, exists);
+        const availability = generationAvailability(generating, false);
         return { ...model, badges: model?.badges ?? [],
             generationBlockers: model ? generationBlockers(model) : [],
             phases: handoff?.workflow.selectedPhases ?? model?.phases ?? [],
@@ -98,7 +101,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
             generationAvailable: !!handoff?.workflow?.installed && !!session?.send
                 && !!project && skillAvailable && availability.available
                 && generationBlockers(model).length === 0,
-            generationError: pending ? GENERATION_PENDING : generationError ?? availability.error };
+            generationError: generationError ?? availability.error };
     };
     let generating = false;
     const server = createServer(async (req, res) => {
@@ -121,7 +124,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
         res.setHeader("Content-Security-Policy",
             "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'");
         if (preview && req.method === "POST"
-            && ["/api/save", "/api/generate"].includes(url.pathname)) {
+            && ["/api/save", "/api/generate", "/api/reveal-output", "/api/open-generated"].includes(url.pathname)) {
             res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" })
                 .end(JSON.stringify({ error: "Preview cannot save settings or generate a canvas" }));
             return;
@@ -168,6 +171,81 @@ export async function startShell(handoff = null, model = null, { project, worksp
             }
             return;
         }
+        if (handoff && req.method === "GET" && url.pathname === "/api/output-status") {
+            try {
+                const result = await generatedOutput(project,
+                    url.searchParams.get("canvasId"), handoff.handoffId);
+                res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ status: result.status, target: result.target,
+                        ...(result.requestId ? { requestId: result.requestId } : {}) }));
+            } catch (error) {
+                res.writeHead(error.code ? 500 : 422, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ error: error.message }));
+            }
+            return;
+        }
+        if (handoff && req.method === "POST"
+            && ["/api/reveal-output", "/api/open-generated"].includes(url.pathname)) {
+            try {
+                if (req.headers.origin && req.headers.origin !== `http://127.0.0.1:${server.address().port}`) {
+                    throw new Error("Untrusted generated canvas request origin");
+                }
+                if (!req.headers["content-type"]?.startsWith("application/json")) {
+                    throw new Error("Expected JSON generated canvas action");
+                }
+                const chunks = [];
+                let size = 0;
+                for await (const chunk of req) {
+                    size += chunk.length;
+                    if (size > 1024) throw new Error("Generated canvas action exceeds 1 KiB");
+                    chunks.push(chunk);
+                }
+                const input = validateOutputAction(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+                const output = await generatedOutput(project, input.canvasId, handoff.handoffId);
+                if (url.pathname === "/api/open-generated") {
+                    if (output.status !== "ready") {
+                        throw new Error(`Cannot open canvas: target is ${output.status}. Generate the canvas files first.`);
+                    }
+                    if (!session?.send) throw new Error("Generated canvas opening is unavailable in this session");
+                    if (!await hasProjectSkill(project, OPEN_SKILL)) {
+                        throw new Error("Canvas Design does not provide Open in this child session. Install the current local Canvas Design source before opening.");
+                    }
+                    await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-open-generated skill with handoffId "${handoff.handoffId}", requestId "${output.requestId}" and canvasId "${input.canvasId}" in this child checkout. Reload extensions, verify and open only that generated project canvas. Do not regenerate files. Report success or the exact failure to the user in chat.` });
+                    res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
+                        .end(JSON.stringify({ status: "opening", target: output.target }));
+                } else {
+                    const root = await realpath(project);
+                    const github = join(root, ".github");
+                    await mkdir(github, { recursive: true });
+                    if (await realpath(github) !== github) {
+                        throw new Error("Generated extension folder escapes the checkout");
+                    }
+                    const parent = join(github, "extensions");
+                    await mkdir(parent, { recursive: true });
+                    if (await realpath(parent) !== parent) {
+                        throw new Error("Generated extension folder escapes the checkout");
+                    }
+                    if (output.status === "foreign") {
+                        throw new Error("Generated canvas folder is not safe to reveal");
+                    }
+                    const target = output.status === "absent" ? parent : join(parent, input.canvasId);
+                    const command = process.platform === "win32" ? "explorer.exe"
+                        : process.platform === "darwin" ? "open" : "xdg-open";
+                    const child = launchFolder(command, [target], { detached: true, stdio: "ignore" });
+                    await new Promise((resolve, reject) => {
+                        child.once("error", reject);
+                        child.once("spawn", resolve);
+                    });
+                    child.unref();
+                    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" })
+                        .end(JSON.stringify({ target: output.target }));
+                }
+            } catch (error) {
+                res.writeHead(422, { "Content-Type": "application/json; charset=utf-8" })
+                    .end(JSON.stringify({ error: error.message }));
+            }
+            return;
+        }
         if (handoff && req.method === "POST" && url.pathname === "/api/generate") {
             if (!session?.send || !project || !workspace) {
                 res.writeHead(503, { "Content-Type": "application/json; charset=utf-8" })
@@ -181,10 +259,15 @@ export async function startShell(handoff = null, model = null, { project, worksp
             }
             generating = true;
             try {
-                if (queuedCanvasId && !await canvasOutputExists(project, queuedCanvasId, true)) {
-                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify({ error: GENERATION_PENDING }));
-                    return;
+                if (queuedCanvasId) {
+                    const prior = await generatedOutput(project, queuedCanvasId, handoff.handoffId);
+                    if (prior.requestId !== queuedRequestId) {
+                        res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
+                            .end(JSON.stringify({ error: `${GENERATION_PENDING}. Check the child-session chat; if generation failed, close and reopen Designer before retrying.` }));
+                        return;
+                    }
+                    queuedCanvasId = null;
+                    queuedRequestId = null;
                 }
                 if (req.headers.origin && req.headers.origin !== `http://127.0.0.1:${server.address().port}`) {
                     throw new Error("Untrusted generation request origin");
@@ -203,14 +286,21 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
                 validateGenerateSubmission(input, model);
+                const output = await generatedOutput(project, input.values["canvas.id"], handoff.handoffId);
+                if (output.status !== "absent"
+                    && (output.status !== "ready" || input.replaceExisting !== true
+                        || input.replaceRequestId !== output.requestId)) {
+                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
+                        .end(JSON.stringify({ error: output.status === "ready"
+                            ? input.replaceExisting === true
+                                ? "Canvas changed since replacement was confirmed; review and confirm again."
+                                : GENERATION_EXISTS
+                            : `Cannot replace ${output.status} canvas output; inspect the target folder first.` }));
+                    return;
+                }
                 const current = await loadDesignerSettings(workspace, handoff, model);
                 if (input.settingsRevision !== current.settingsRevision) {
                     throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");
-                }
-                if (await canvasOutputExists(project, input.values["canvas.id"])) {
-                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify({ error: GENERATION_EXISTS }));
-                    return;
                 }
                 validateBadges(Object.hasOwn(input, "badges") ? input.badges : current.badges,
                     { ...current, phases: handoff.workflow.selectedPhases,
@@ -227,7 +317,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
                         await readFrozenAsset(item, specify);
                     }
                 }
-                if (!await hasGenerateSkill(project)) {
+                if (!await hasProjectSkill(project, GENERATE_SKILL)) {
                     res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
                         .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));
                     return;
@@ -245,13 +335,15 @@ export async function startShell(handoff = null, model = null, { project, worksp
                 const result = await freezeGeneration({ model: current, values: input.values,
                     outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs,
                     badges: Object.hasOwn(input, "badges") ? input.badges : current.badges,
-                    handoff, project, workspace, runtimeInventory, inventoryWarning });
+                    handoff, project, workspace, runtimeInventory, inventoryWarning,
+                    replaceExisting: input.replaceExisting === true });
                 try {
-                    await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report publication or the exact failure to the user.` });
+                    await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". ${input.replaceExisting === true ? `The user explicitly confirmed replacing the existing same-handoff canvas folder, including manual edits, with prior requestId "${input.replaceRequestId}"; pass --replace-existing=${input.replaceRequestId} to the generator and stop if the prior request changed.` : "Do not replace any existing target."} Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report file creation or the exact failure to the user; do not reload extensions or open the canvas.` });
                 } catch (cause) {
                     throw new Error(`Generation dispatch failed: ${cause.message}`, { cause });
                 }
                 queuedCanvasId = input.values["canvas.id"];
+                queuedRequestId = result.requestId;
                 res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify(result));
             } catch (error) {

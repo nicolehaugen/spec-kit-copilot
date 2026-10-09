@@ -8,7 +8,8 @@ The provider's `contracts/` directory names the Wizard handoff and open input
 (`wizard-handoff.mjs`, `host-open.mjs`), saved settings and save request
 (`designer-settings.mjs`), configured Badge instances (`badges.mjs`) and
 registered Badge definitions (`badge-definitions.mjs`), generation submission
-and frozen request writer (`generation-request.mjs`), Specify version inventory (`specify-inventory.mjs`),
+and frozen request writer (`generation-request.mjs`), generated output status and
+bounded folder/Open actions (`generated-output.mjs`), Specify version inventory (`specify-inventory.mjs`),
 control adapter exports (`control-adapter.mjs`), and contribution field/schema
 rules (`design-contributions.mjs`). The existing readers and handlers retain
 filesystem confinement, UI lifecycle, and revision conflicts. The generator is
@@ -117,15 +118,12 @@ phase navigation, while creating a workflow. It labels the workflow there.
 The generated workflow also collects a required Artifact folder name (slug)
 for the artifact directory. The slug previews the View target; the created
 directory, which may include a numeric prefix, remains authoritative.
-The **Outputs** tab (resolved template ID `designer-artifacts`) lets users select
-one phase at a time, except Constitution. Wizard-inferred pipeline artifacts are
-read-only; users may add or remove separate project-relative Markdown artifact
-links and choose which one opens with View artifact. Additions do not create
-files or change what the pipeline produces. Removing a selected addition restores
-the original inferred viewer default. If a phase has no pipeline artifacts or
-additions, the tab warns that its generated card will have no View artifact button.
-Constitution always opens `.specify/memory/constitution.md` and cannot be edited
-on this tab.
+The resolved **Outputs** definition (`designer-artifacts`) remains in the
+model and frozen generation data, but its tab is hidden in this MVP. Inferred
+pipeline artifacts and saved outputs are retained; Constitution still opens
+`.specify/memory/constitution.md`. The **Generate & Open** tab is fixed shell
+UI rather than a customizable contribution, so it does not register a JSON
+definition or adapter/renderer template pair.
 The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
@@ -141,7 +139,7 @@ no Designer color preview or contrast warning. The Designer connection pill
 reports Live when the current provider responds and Disconnected when a
 bounded health check fails; the check does not replace the panel or discard
 unsaved drafts. A transient interruption notice clears when the connection
-recovers, without clearing unrelated errors or queued-generation guidance.
+recovers, without clearing unrelated errors or accepted Open guidance.
 The 10-second liveness probe fetches a small authenticated
 stylesheet; every sixth probe also refreshes the full generation availability
 state. The server remains authoritative at Generate if availability changes
@@ -200,35 +198,30 @@ bytes before execution; this is not a sandbox for approved provider code.
 Runtime-editable values belong to the generated canvas shell, not to a
 particular workflow's drafts.
 Save rejects stale revisions and malformed draft shapes, but accepts incomplete
-field values and reports failures without discarding edits. Generate first saves
-the current settings using the same revision check; if that save fails it does
-not dispatch generation. Generate invokes the
-approved Designer adapter validator and freezes fields on every enabled page
-while requiring non-reserved Canvas ID and Title on Essentials, and dispatches the
-installed Canvas Design generate command to create a new source-owned
-workflow canvas. Generate is unavailable if the Wizard handoff is incomplete,
-Essentials is missing or invalid, any enabled page is invalid, or the Generate
-skill is not installed in the child checkout.
-Once generation is queued, editing and Generate stay disabled in that Designer
-panel, even after the generated app's `extension.mjs` entry point appears
-following syntax and render validation. The agent reloads extensions and opens
-the generated app automatically; this disconnects the original Designer panel.
-Restart Designer (close the panel and open Designer again) to make further
-changes. The edit lock and queued state belong only to that panel, not to
-subsequent Designer instances. The bordered informational notice shows one
-consistent instruction once Generate is accepted, including after the
-connection drops; no transient saving or publication messages replace it.
-Reopening starts with fresh template defaults rather than restoring the prior
-form values, so enter a new Canvas ID and Title before generating another app.
-The prior saved settings remain on disk as generation history and their revision
-is retained for the next Save. An existing Canvas ID cannot be generated twice.
-If generation fails before reload, inspect the partial output
-and reopen Designer only after investigating the failure, without assuming
-the app was opened.
-The queued-request guard is local to the running Designer provider. If the
-provider restarts during generation, inspect the generated output or wait for
-the original request to finish before retrying: the reopened panel cannot
-distinguish a still-running request from a failed one.
+field values and reports failures without discarding edits. **Generate canvas**
+first saves the current draft with the same revision check, validates all
+enabled fields, then freezes and dispatches a file-creation-only request to the
+child-session agent. A brief **Submitting...** lock ends when dispatch finishes;
+the Designer stays editable while creation continues. An authenticated output
+status check verifies the matching config, provenance, and final entry point
+before reporting **Canvas files created.** An in-flight request cannot be
+dispatched twice. If an agent attempt fails or remains uncertain, inspect the
+child-session chat; close and reopen Designer before retrying a stalled request.
+Reopening starts with template defaults while retaining the saved revision.
+Generation requires the installed Generate skill and a complete Wizard handoff.
+For a verified same-handoff target, **Regenerate canvas** confirms that all
+files, including manual edits, will be overwritten. The generator stages and
+validates replacement, then swaps directories with rollback; foreign or
+incomplete output is not replaceable. The **Open folder** action reveals
+`.github\extensions` until the target exists and that target afterward.
+**Open canvas** dispatches a separate child-session command to reload
+extensions, verify the exact project provider and open its canvas. A failed
+handoff leaves Designer usable. After acceptance, reload may disconnect the
+Designer panel, so the child chat reports success or failure and can retry
+opening existing files without regenerating; close Designer manually when
+prompted. There is no supported provider-initiated panel-close operation.
+Sharing remains optional instructions for a team project extension, a personal
+extension, or a plugin; no distribution happens automatically.
 At Generate, Designer checks the child checkout's Specify inventory for packages
 in the Wizard handoff and freezes their installed versions alongside the original
 Wizard snapshot. Unrelated installed packages do not affect version verification.

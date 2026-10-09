@@ -190,7 +190,7 @@ export function validBadgeEvidence(instance, rule, phaseIds, declared) {
 
 export async function freezeGeneration({ model, values, outputs = model.outputs, badges = model.badges,
     handoff, project, workspace,
-    runtimeInventory, inventoryWarning }) {
+    runtimeInventory, inventoryWarning, replaceExisting = false }) {
     const blockers = generationBlockers(model);
     if (blockers.length) throw new Error(`Cannot generate: ${blockers.join("; ")}`);
     const essentials = validateEssentials(model, values);
@@ -613,7 +613,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
-    if (await canvasOutputExists(checkout, essentials["canvas.id"])) {
+    if (!replaceExisting && await canvasOutputExists(checkout, essentials["canvas.id"])) {
         throw new Error(`Canvas already exists: ${target}`);
     }
     const actual = runtimeInventory === undefined ? undefined

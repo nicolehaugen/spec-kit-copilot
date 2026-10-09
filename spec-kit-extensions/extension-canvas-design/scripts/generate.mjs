@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validControlContract, validControlValue } from "../generated-scaffold/control-contract.mjs";
@@ -1326,7 +1326,103 @@ export async function readBoundedSessionFile(parent, name, limit, label, openFil
     }
 }
 
-export async function materialize(project, workspace, handoffId, requestId) {
+async function existingGeneratedCanvas(target, projectRoot, workspaceRoot, handoff, canvasId, files) {
+    const handoffId = handoff.handoffId;
+    const stat = await lstat(target);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Existing canvas is not a generated directory");
+    const readJson = async (name) => {
+        const path = join(target, name);
+        if (!(await lstat(path)).isFile()) throw new Error(`Incomplete generated canvas: ${name}`);
+        return JSON.parse(await readFile(path, "utf8"));
+    };
+    let provenance, config, previous, priorConfig;
+    try {
+        provenance = await readJson("settings-provenance.json");
+        config = await readJson("canvas-config.json");
+        await readJson("canvas-setup.json");
+        if (!provenance || Object.keys(provenance).sort().join() !== "handoffId,requestId,sourceFingerprint"
+            || provenance.handoffId !== handoffId || !requestPattern.test(provenance.requestId)
+            || !/^[a-f0-9]{64}$/.test(provenance.sourceFingerprint)
+            || config?.canvas?.id !== canvasId) throw new Error("Provenance does not match the canvas");
+        const oldGeneration = join(workspaceRoot, "speckit-canvas-designer", "handoffs",
+            handoffId, "generations", provenance.requestId);
+        if (await realpath(oldGeneration) !== oldGeneration) throw new Error("Prior request escapes its session");
+        previous = JSON.parse(await readBoundedSessionFile(oldGeneration, "request.json",
+            REQUEST_LIMIT, "Prior generation request"));
+        validateGenerationRequestIntegrity(previous, handoffId, provenance.requestId);
+        priorConfig = configuration({ ...previous,
+            installed: previous.actualInstalled ?? previous.installed });
+        if (previous.project !== projectRoot || previous.target !== `.github/extensions/${canvasId}/`
+            || previous.values?.["canvas.id"] !== canvasId
+            || previous.sourceFingerprint !== provenance.sourceFingerprint
+            || priorConfig.canvas.id !== canvasId
+            || !isDeepStrictEqual(previous.workflow.selectedPhases, handoff.workflow.selectedPhases)
+            || !isDeepStrictEqual(previous.installed, handoff.workflow.installed)
+            || !isDeepStrictEqual(previous.runtimeSetup, handoff.workflow.runtimeSetup)) {
+            throw new Error("Existing canvas differs from its frozen generation request");
+        }
+    } catch (error) {
+        throw new Error(`Existing canvas cannot be safely replaced: ${error.message}`);
+    }
+    const required = new Set(files.map(([name]) => name.replaceAll("/", sep)));
+    for (const name of ["canvas-config.json", "canvas-setup.json", "settings-provenance.json"]) required.add(name);
+    const add = (folder, filename) => required.add(`${folder}${sep}${filename}`);
+    for (const page of previous.generatedPages ?? []) {
+        add("pages", `${page.id}.json`);
+        add("pages", `${page.renderer}.mjs`);
+    }
+    for (const [name, asset] of [["workflow.json", previous.workflowPage.assets[0]],
+        ["phase-control.json", previous.workflowPage.assets[1]],
+        [`${priorConfig.workflowPage.adapter}.mjs`, previous.workflowPage.assets[2]],
+        [`${priorConfig.workflowPage.pageAdapter}.mjs`, previous.workflowPage.assets[3]]]) {
+        if (asset) add("pages", name);
+    }
+    for (const item of previous.fieldPlacements ?? []) add("pages", `${item.id}.json`);
+    for (const item of previous.controlAssets ?? []) for (const [index, asset] of item.assets.entries()) {
+        add("controls", `${asset.name}.${index === 0 ? "json" : "mjs"}`);
+    }
+    for (const item of [previous.generatedImageControl, previous.generatedTextControl].filter(Boolean)) {
+        for (const asset of item.assets) add("controls",
+            `${asset.name}.${asset.kind === "shared.control-definition" ? "json" : "mjs"}`);
+    }
+    for (const item of previous.valueSources ?? []) if (item.source.kind === "computed") {
+        add("providers", `${item.source.module}.mjs`);
+    }
+    for (const item of previous.generatedAssets ?? []) {
+        add("assets", imageFile(item));
+    }
+    for (const item of [...(previous.dialogDefinitions ?? []), ...(previous.phaseDialogBindings ?? [])]) {
+        for (const [index, asset] of item.assets.entries()) add("dialogs",
+            `${asset.name}.${index === 0 ? "json" : "mjs"}`);
+    }
+    for (const item of previous.buttonPlacements ?? []) {
+        add("buttons", `${item.assets[0].name}.json`);
+    }
+    for (const item of previous.buttonControls ?? []) {
+        for (const asset of item.assets) add("buttons",
+            `${asset.name}.${asset.kind === "generated.button-adapter" ? "mjs" : "json"}`);
+    }
+    for (const item of previous.badges?.adapters ?? []) add("badges", `${item.name}.mjs`);
+    const verify = async (directory) => {
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+            const path = join(directory, entry.name), key = relative(target, path);
+            if (entry.isSymbolicLink()) throw new Error(`Existing canvas contains a link: ${key}`);
+            if (entry.isDirectory()) await verify(path);
+            else if (!entry.isFile()) throw new Error(`Existing canvas contains a special file: ${key}`);
+            else required.delete(key);
+        }
+    };
+    await verify(target);
+    if (required.size) throw new Error(`Incomplete generated canvas: ${[...required][0]}`);
+    return { stat, requestId: provenance.requestId };
+}
+
+export async function materialize(project, workspace, handoffId, requestId, replaceExisting = false) {
+    const priorRequestId = typeof replaceExisting === "string"
+        ? /^--replace-existing=([A-Za-z0-9][A-Za-z0-9_-]{0,127})$/.exec(replaceExisting)?.[1]
+        : null;
+    if (priorRequestId) replaceExisting = true;
+    if (replaceExisting !== true && replaceExisting !== false) throw new Error("Invalid replaceExisting confirmation");
     if (!requestPattern.test(handoffId) || !requestPattern.test(requestId)) throw new Error("Invalid generation identifiers");
     const projectRoot = await realpath(project), workspaceRoot = await realpath(workspace);
     const generation = join(workspaceRoot, "speckit-canvas-designer", "handoffs", handoffId, "generations", requestId);
@@ -1469,8 +1565,8 @@ export async function materialize(project, workspace, handoffId, requestId) {
         }
         distinctControlFiles.set(file.filename, file.bytes);
     }
-    const target = join(projectRoot, ".github", "extensions", config.canvas.id);
-    if (!within(projectRoot, target) || request.target !== `.github/extensions/${config.canvas.id}/`) {
+    const output = join(projectRoot, ".github", "extensions", config.canvas.id);
+    if (!within(projectRoot, output) || request.target !== `.github/extensions/${config.canvas.id}/`) {
         throw new Error("Generation target is invalid");
     }
     const files = await Promise.all([...featureFiles, "extension.mjs"].map(async (file) =>
@@ -1485,12 +1581,22 @@ export async function materialize(project, workspace, handoffId, requestId) {
     if (await realpath(parent) !== parent) {
         throw new Error("Canvas extension directory escapes the checkout");
     }
+    let original;
     try {
-        await mkdir(target);
+        original = await lstat(output);
     } catch (error) {
-        if (error.code === "EEXIST") throw new Error(`Canvas extension already exists: ${target}`);
-        throw error;
+        if (error.code !== "ENOENT") throw error;
     }
+    if (original && !replaceExisting) throw new Error(`Canvas extension already exists: ${output}`);
+    if (original) {
+        const previous = await existingGeneratedCanvas(output, projectRoot, workspaceRoot,
+            handoff, config.canvas.id, files);
+        if (priorRequestId && priorRequestId !== previous.requestId) {
+            throw new Error("Canvas changed since replacement was confirmed");
+        }
+    }
+    const target = await mkdtemp(join(parent, `.${config.canvas.id}-stage-`));
+    try {
     await mkdir(join(target, "ui"));
     await mkdir(join(target, "contracts"));
     if (pageFiles.length) await mkdir(join(target, "pages"));
@@ -1549,7 +1655,69 @@ export async function materialize(project, workspace, handoffId, requestId) {
     { encoding: "utf8" });
     if (renderer.error || renderer.status !== 0) throw new Error(`Workflow renderer failed: ${renderer.stderr || renderer.error}`);
     await writeFile(join(target, "extension.mjs"), files.at(-1)[1], { flag: "wx" });
+    let current;
+    try { current = await lstat(output); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (original) {
+        if (!current || current.dev !== original.dev || current.ino !== original.ino
+            || !current.isDirectory() || current.isSymbolicLink()) {
+            throw new Error("Existing canvas changed during generation");
+        }
+        const previous = await existingGeneratedCanvas(output, projectRoot, workspaceRoot,
+            handoff, config.canvas.id, files);
+        if (priorRequestId && priorRequestId !== previous.requestId) {
+            throw new Error("Canvas changed since replacement was confirmed");
+        }
+        const backupDir = await mkdtemp(join(parent, `.${config.canvas.id}-backup-`));
+        const backup = join(backupDir, "previous");
+        let moved = false;
+        try {
+            await rename(output, backup);
+            moved = true;
+            const displaced = await lstat(backup);
+            if (displaced.dev !== original.dev || displaced.ino !== original.ino) {
+                throw new Error("Existing canvas changed during replacement");
+            }
+            // Windows can briefly retain handles from the renderer subprocess after exit.
+            for (let attempt = 0; ; attempt++) {
+                try { await rename(target, output); break; }
+                catch (error) {
+                    if (process.platform !== "win32" || error.code !== "EPERM" || attempt >= 5) throw error;
+                    await new Promise((done) => setTimeout(done, 100 * (attempt + 1)));
+                }
+            }
+        } catch (error) {
+            if (moved) {
+                try {
+                    const destination = await lstat(output).catch((readError) => {
+                        if (readError.code === "ENOENT") return null;
+                        throw readError;
+                    });
+                    if (destination) throw new Error("Replacement destination was occupied during rollback");
+                    await rename(backup, output);
+                }
+                catch (rollback) {
+                    throw new AggregateError([error, rollback],
+                        `Canvas replacement failed; prior output remains at ${backup}`);
+                }
+            }
+            throw error;
+        } finally {
+            // Retain the backup if a rollback failed.
+            if (await lstat(backup).then(() => false, (error) => error.code === "ENOENT")) {
+                await rm(backupDir, { recursive: true, force: true });
+            }
+        }
+        await rm(backupDir, { recursive: true, force: true });
+    } else {
+        try { await lstat(output); throw new Error(`Canvas extension already exists: ${output}`); }
+        catch (error) { if (error.code !== "ENOENT") throw error; }
+        await rename(target, output);
+    }
     return { target: request.target, canvasId: config.canvas.id, warnings };
+    } finally {
+        await rm(target, { recursive: true, force: true });
+    }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

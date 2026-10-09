@@ -13,7 +13,6 @@
         <div class="toolbar-actions">
             <button type="button" id="theme-toggle" class="theme-toggle" title="Toggle theme" aria-label="Toggle theme">&#9680;</button>
             <span id="save-help"><button type="button" id="save-settings" disabled>Save</button></span>
-            <button type="button" id="generate-canvas" class="primary" disabled>Generate</button>
             <span id="conn-status" class="conn conn-connecting" role="status">Connecting</span>
         </div>
         <nav class="tabs" role="tablist" aria-label="Designer pages"></nav>
@@ -25,6 +24,8 @@
         <p id="composition-error" role="alert" hidden></p>
         <p id="page-error" role="alert" tabindex="-1" hidden></p>
         <p id="action-message" role="status" hidden></p>
+        <button type="button" id="generate-canvas" class="primary" disabled hidden>Generate canvas</button>
+        <button type="button" id="open-generated-canvas" hidden>Open canvas</button>
         <section id="settings-page" role="tabpanel" aria-busy="true"><h1>Loading settings...</h1></section>
     </main>
     <dialog id="provider-approval" aria-labelledby="provider-approval-title">
@@ -34,6 +35,14 @@
         <form method="dialog">
             <button type="submit" value="cancel">Cancel</button>
             <button type="submit" value="approve" class="primary">Approve and Generate</button>
+        </form>
+    </dialog>
+    <dialog id="replace-canvas" aria-labelledby="replace-canvas-title">
+        <h2 id="replace-canvas-title">Replace generated canvas?</h2>
+        <p id="replace-canvas-description"></p>
+        <form method="dialog">
+            <button type="submit" value="cancel">Cancel</button>
+            <button type="submit" value="replace" class="primary">Replace all files</button>
         </form>
     </dialog>
 </body>

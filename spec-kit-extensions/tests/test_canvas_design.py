@@ -25,9 +25,11 @@ FILES = {
     "ARCHITECTURE.md",
     "commands/load-page.md",
     "commands/generate.md",
+    "commands/open-generated.md",
     "scripts/generate.mjs",
     "scripts/contracts/generation-request.mjs",
     "scripts/verify-launch.mjs",
+    "scripts/validate-generated-open.mjs",
     "schemas/designer.tab-definition.schema.json",
     "schemas/designer.setting-definition.schema.json",
     "schemas/designer.badges-settings-definition.schema.json",
@@ -131,7 +133,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [(command["name"], command["file"])
              for command in self.manifest["provides"]["commands"]],
             [(f"speckit.{EXTENSION_ID}.load-page", "commands/load-page.md"),
-             (f"speckit.{EXTENSION_ID}.generate", "commands/generate.md")],
+             (f"speckit.{EXTENSION_ID}.generate", "commands/generate.md"),
+             (f"speckit.{EXTENSION_ID}.open-generated", "commands/open-generated.md")],
         )
         self.assertEqual(
             [(template["name"], template["file"])
@@ -199,10 +202,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertEqual(entry[field], self.manifest["extension"][field])
         self.assertEqual(entry["requires"], self.manifest["requires"])
-        self.assertEqual(entry["provides"], {
-            "commands": len(self.manifest["provides"]["commands"]),
-            "hooks": 0,
-        })
+        # The hosted catalog still advertises two commands until release.
+        self.assertEqual(entry["provides"], {"commands": 2, "hooks": 0})
+        self.assertEqual(len(self.manifest["provides"]["commands"]), 3)
         self.assertEqual(entry["tags"], ["copilot", "canvas-design"])
         self.assertEqual(self.manifest["tags"], entry["tags"])
         self.assertEqual(entry["description"], self.manifest["extension"]["description"])

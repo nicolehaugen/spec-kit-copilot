@@ -13,18 +13,24 @@ const compositionError = document.getElementById("composition-error");
 const messageSlots = [errorBox, generationNote, generationError, compositionError, messageBox];
 function setMessage(slot, text) {
     slot.textContent = text;
-    const ordered = messageBox.textContent.startsWith("Warning:")
-        ? [errorBox, messageBox, generationNote, generationError, compositionError]
-        : messageSlots;
-    const visible = ordered.find((item) => item.textContent);
+    const visible = messageSlots.find((item) => item.textContent);
     for (const item of messageSlots) item.hidden = item !== visible;
 }
 let model, currentPage, draft, draftOutputs, draftBadges, saving = false;
 let badgeView;
 const generate = document.getElementById("generate-canvas");
+const openGenerated = document.getElementById("open-generated-canvas");
 let generating = false;
-let queuedCanvasId = null;
-const generationGuidance = "Canvas generation is underway. You can close the Designer now. To generate another canvas, reopen Designer after this one finishes generation.";
+let requestedCanvasId = null;
+let requestedRequestId = null;
+let opening = false;
+let requestedAt = 0;
+let openingRequested = false;
+let outputStatus = "absent";
+let outputIdentity = "";
+let outputRequestId = null;
+let outputCheck = 0;
+const generationGuidance = "Opening continues in the child-session chat. You can close Designer now.";
 const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
@@ -66,13 +72,62 @@ function outputPathsReady() {
         entry.outputs.every((path) => path.endsWith(".md")));
 }
 
+function outputPath(id) {
+    return `.github\\extensions\\${id || "<canvas-id>"}\\`;
+}
+
+function updateOutputDisplay() {
+    const id = draft?.["canvas.id"] ?? "";
+    const target = document.getElementById("output-target");
+    if (target) target.textContent = outputPath(id);
+    const team = document.getElementById("share-project-path");
+    if (team) team.textContent = outputPath(requestedCanvasId ?? id);
+    const status = document.getElementById("generation-status");
+    if (status) status.textContent = requestedCanvasId === id
+        && requestedRequestId && requestedRequestId !== outputRequestId
+        ? Date.now() - requestedAt < 120000 ? "Creating canvas files..."
+            : "Canvas creation is taking longer than expected. Check the child-session chat for progress or errors."
+        : outputIdentity === id && outputStatus === "ready"
+        ? "Canvas files created." : outputIdentity === id && outputStatus === "foreign"
+            ? "An unrelated canvas folder already exists at this location."
+            : outputIdentity === id && outputStatus === "incomplete"
+                ? "Canvas files are incomplete. Inspect the target folder before trying again."
+                : requestedCanvasId === id ? "Creating canvas files..." : "Not generated";
+}
+
+async function refreshOutputStatus(id = requestedCanvasId ?? draft?.["canvas.id"]) {
+    const check = ++outputCheck;
+    if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(id ?? "")) {
+        outputIdentity = "";
+        outputStatus = "absent";
+        updateOutputDisplay();
+        updateGenerate();
+        return;
+    }
+    const response = await fetch(`/api/output-status?token=${encodeURIComponent(token)}&canvasId=${encodeURIComponent(id)}`,
+        { signal: AbortSignal.timeout(5000) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `Output check failed (${response.status})`);
+    if (!["absent", "ready", "foreign", "incomplete"].includes(result.status)
+        || result.target !== `.github/extensions/${id}/`
+        || (result.requestId !== undefined
+            && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(result.requestId))) {
+        throw new Error("Invalid generated output status");
+    }
+    if (check !== outputCheck) return;
+    outputIdentity = id;
+    outputStatus = result.status;
+    outputRequestId = result.requestId ?? null;
+    updateOutputDisplay();
+    updateGenerate();
+}
+
 function updateGenerate() {
     const setup = model?.pages.find((page) => page.page === "designer-essentials");
     const failed = model?.pages.find((page) => page.error);
     const missingIdentity = model && !failed && (!setup || setup.enabled === false
         || !required.every((field) => setup.fields?.some((item) => item.id === field)));
-    const existingId = model?.generationError === GENERATION_EXISTS;
-    const reason = model?.preview ? "" : model?.generationError && !existingId
+    const reason = model?.preview ? "" : model?.generationError
         ? model.generationError
         : failed
         ? `Cannot generate: ${failed.page} could not load. ${failed.error.reason}`
@@ -81,14 +136,28 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : "";
     const expectedState = reason === GENERATION_PENDING;
-    setMessage(generationNote, queuedCanvasId ? generationGuidance
-        : generating ? "" : expectedState ? reason : "");
+    if (!requestedCanvasId && !generating)
+        setMessage(generationNote, expectedState ? reason : "");
     setMessage(generationError, expectedState ? "" : reason);
+    generate.textContent = generating ? "Submitting..." : outputIdentity === (draft?.["canvas.id"] ?? "")
+        && outputStatus === "ready" && (!requestedRequestId || requestedRequestId === outputRequestId)
+        ? "Regenerate canvas" : "Generate canvas";
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
-        || !!queuedCanvasId || !outputPathsReady()
+        || !outputPathsReady()
         || !model?.handoffId
-        || (!model.generationAvailable && !existingId) || !setup || !!failed || setup.enabled === false
+        || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity || !!model?.generationBlockers?.length;
+    updateOutputDisplay();
+}
+
+function confirmReplacement(id) {
+    const dialog = document.getElementById("replace-canvas");
+    document.getElementById("replace-canvas-description").textContent =
+        `Replace all files in ${outputPath(id)}? This removes any manual edits in the generated folder.`;
+    dialog.returnValue = "";
+    dialog.showModal();
+    return new Promise((resolve) => dialog.addEventListener("close",
+        () => resolve(dialog.returnValue === "replace"), { once: true }));
 }
 
 function confirmProviders(providers) {
@@ -107,11 +176,6 @@ function confirmProviders(providers) {
 
 generate.addEventListener("click", async () => {
     if (model?.preview || generate.disabled || !checkReady()) return;
-    if (model.generationError === GENERATION_EXISTS
-        && draft["canvas.id"] === model.values["canvas.id"]) {
-        showError(model.generationError);
-        return;
-    }
     const providers = model.templates.filter((item) => item.kind === "generated.computed-value-provider")
         .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
     generating = true;
@@ -119,11 +183,18 @@ generate.addEventListener("click", async () => {
     setMessage(messageBox, "");
     showError("");
     try {
+        const submittedId = draft["canvas.id"];
+        await refreshOutputStatus(submittedId);
+        if (outputStatus === "foreign" || outputStatus === "incomplete") {
+            throw new Error("Cannot replace this canvas folder. Inspect the target folder first.");
+        }
+        const replaceExisting = outputStatus === "ready";
+        const priorRequestId = replaceExisting ? outputRequestId : null;
+        if (replaceExisting && !await confirmReplacement(submittedId)) return;
         if (providers.length && !await confirmProviders(providers)) return;
         const values = structuredClone(draft);
         const outputs = structuredClone(draftOutputs);
         const badges = structuredClone(draftBadges);
-        const submittedId = values["canvas.id"];
         let saved;
         try {
             saved = await persistSettings({ values, outputs, badges });
@@ -136,19 +207,56 @@ generate.addEventListener("click", async () => {
             body: JSON.stringify({ modelRevision: saved.revision,
                 settingsRevision: saved.settingsRevision, values, outputs,
                 badges,
+                ...(replaceExisting ? { replaceExisting: true, replaceRequestId: priorRequestId } : {}),
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);
+        if (result.target !== `.github/extensions/${submittedId}/`
+            || typeof result.requestId !== "string"
+            || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(result.requestId)) {
+            throw new Error("Invalid generated canvas submission response");
+        }
         if (result.warnings?.length) {
             setMessage(messageBox, `Warning: ${result.warnings.join(" ")}`);
         }
-        queuedCanvasId = submittedId;
+        requestedCanvasId = submittedId;
+        requestedRequestId = result.requestId;
+        requestedAt = Date.now();
+        updateOutputDisplay();
     } catch (error) {
         showFieldError(error.message);
     } finally {
         generating = false;
         updateSave();
+    }
+});
+
+openGenerated.addEventListener("click", async () => {
+    if (model?.preview || !model?.handoffId || opening) return;
+    const id = draft?.["canvas.id"];
+    opening = true;
+    openGenerated.disabled = true;
+    showError("");
+    try {
+        const response = await fetch(`/api/open-generated?token=${encodeURIComponent(token)}`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ canvasId: id }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? `Could not open canvas (${response.status})`);
+        if (result.status !== "opening" || result.target !== `.github/extensions/${id}/`) {
+            throw new Error("Invalid generated canvas opening response");
+        }
+        openingRequested = true;
+        setMessage(generationNote, generationGuidance);
+    } catch (error) {
+        openingRequested = false;
+        setMessage(generationNote, "");
+        showError(error.message);
+    } finally {
+        opening = false;
+        openGenerated.disabled = false;
     }
 });
 
@@ -176,14 +284,16 @@ function showFieldError(message) {
     }));
     if (!page) return;
     if (page.page !== currentPage) renderPage(page.page, id);
-    else {
+    const focus = () => {
         const mount = [...root.querySelectorAll("[data-field-id]")]
             .find((item) => item.dataset.fieldId === id);
         if (mount) {
             mount.nextElementSibling.hidden = false;
             mount.parentElement.focus();
         }
-    }
+    };
+    if (saving || generating) queueMicrotask(focus);
+    else focus();
 }
 
 function checkReady() {
@@ -210,7 +320,7 @@ function updateSave() {
         && JSON.stringify(draft) === JSON.stringify(model.values)
         && JSON.stringify(draftOutputs) === JSON.stringify(model.outputs)
         && JSON.stringify(draftBadges) === JSON.stringify(model.badges);
-    saveButton.disabled = model?.preview || saving || generating || !!queuedCanvasId
+    saveButton.disabled = model?.preview || saving || generating
         || activeUploads.size > 0 || !model
         || !model.pages.length || noChanges || !outputPathsReady();
     document.getElementById("save-help").title = noChanges ? "No changes to save" : "";
@@ -218,8 +328,8 @@ function updateSave() {
     else saveButton.removeAttribute("aria-description");
     saveButton.textContent = saving ? "Saving..." : "Save";
     saveButton.setAttribute("aria-busy", String(saving));
-    root.inert = saving || generating || !!queuedCanvasId || activeUploads.size > 0;
-    for (const tab of tabs.children) tab.disabled = saving || generating || !!queuedCanvasId
+    root.inert = saving || generating || activeUploads.size > 0;
+    for (const tab of tabs.children) tab.disabled = saving || generating
         || activeUploads.size > 0;
     updateGenerate();
 }
@@ -237,7 +347,7 @@ async function persistSettings({ values, outputs, badges }) {
 }
 
 saveButton.addEventListener("click", async () => {
-    if (model?.preview || saving || generating || queuedCanvasId || !model || !checkReady()) return;
+    if (model?.preview || saving || generating || !model || !checkReady()) return;
     saving = true;
     setMessage(messageBox, "");
     showError("");
@@ -254,6 +364,75 @@ saveButton.addEventListener("click", async () => {
 });
 
 function renderPage(pageId, invalidFieldId) {
+    if (pageId === "designer-generate") {
+        if (currentPage && root.childNodes.length) pageViews.set(currentPage, [...root.childNodes]);
+        currentPage = pageId;
+        for (const tab of tabs.children) {
+            const active = tab.dataset.page === pageId;
+            tab.setAttribute("aria-selected", String(active));
+            tab.tabIndex = active ? 0 : -1;
+        }
+        root.setAttribute("aria-labelledby", `page-tab-${pageId}`);
+        const content = element("div", undefined, "generate-page");
+        content.append(element("h1", "Generate & Open"),
+            element("p", "Create the canvas from your saved settings, then open it here.", "muted"),
+            element("h2", "Generate"), element("p", "Canvas ID", "setting-label"),
+            element("p", draft?.["canvas.id"] ?? "", "generation-canvas-id"),
+            element("p", "Target folder", "setting-label"));
+        const target = element("code");
+        target.id = "output-target";
+        const folderLink = element("a", "Open folder");
+        folderLink.id = "open-output-folder";
+        folderLink.href = "#";
+        folderLink.addEventListener("click", async (event) => {
+            event.preventDefault();
+            const id = draft?.["canvas.id"];
+            try {
+                const response = await fetch(`/api/reveal-output?token=${encodeURIComponent(token)}`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ canvasId: id }),
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error ?? `Could not open folder (${response.status})`);
+                if (result.target !== `.github/extensions/${id}/`) {
+                    throw new Error("Invalid generated canvas folder response");
+                }
+            } catch (error) { showError(error.message); }
+        });
+        const folder = element("p", undefined, "generation-target");
+        folder.append(target, " ", folderLink);
+        const state = element("p");
+        state.id = "generation-status";
+        state.setAttribute("role", "status");
+        content.append(folder, element("p", "Status", "setting-label"), state, generate,
+            element("h2", "Open"),
+            element("p", "Register the generated canvas and open it in this session."),
+            openGenerated, element("h2", "Share · Optional"),
+            element("p", "Choose how you want to make this canvas available:"),
+            element("h3", "Team project extension"));
+        const projectCopy = element("p");
+        const sharePath = element("code");
+        sharePath.id = "share-project-path";
+        projectCopy.append("Commit ", sharePath, " to your repository.");
+        content.append(projectCopy,
+            element("p", "Teammates will get the canvas when they use that repository."),
+            element("h3", "Personal extension"),
+            element("p", "Copy the canvas to ~/.copilot/extensions/ to use it on this machine without committing it to the repository."),
+            element("h3", "Package as a plugin"));
+        const plugin = element("p");
+        const pluginLink = element("a", "About GitHub Copilot plugins");
+        pluginLink.href = "https://docs.github.com/en/copilot/concepts/agents/about-plugins";
+        pluginLink.rel = "noopener noreferrer";
+        pluginLink.target = "_blank";
+        plugin.append("For a separately installable, versioned distribution, see ", pluginLink, ".");
+        content.append(plugin);
+        generate.hidden = false;
+        openGenerated.hidden = false;
+        root.replaceChildren(content);
+        root.setAttribute("aria-busy", "false");
+        updateGenerate();
+        return true;
+    }
     const page = model.pages.find((entry) => entry.page === pageId);
     if (!page) throw new Error("Unknown Designer page");
     const renderRevision = model.revision;
@@ -323,6 +502,9 @@ function renderPage(pageId, invalidFieldId) {
                 setMessage(messageBox, "");
                 showError("");
                 updateSave();
+                if (id === "canvas.id") {
+                    void refreshOutputStatus(value).catch((error) => showError(error.message));
+                }
             } });
         for (const [id, handle] of handles) mounted.set(id, handle);
     }
@@ -445,11 +627,21 @@ function applyState(next) {
         tabs.replaceChildren();
         setMessage(compositionError, (model.compositionErrors ?? []).join("; "));
         for (const page of model.pages) {
+            if (page.fixedControl === "designer.outputs") continue;
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,
                 `tab${page.error ? " tab-error" : ""}`);
             tab.type = "button";
             tab.dataset.page = page.page;
             tab.id = `page-tab-${page.page}`;
+            tab.setAttribute("role", "tab");
+            tab.setAttribute("aria-controls", "settings-page");
+            tabs.append(tab);
+        }
+        if (!model.preview) {
+            const tab = element("button", "Generate & Open", "tab");
+            tab.type = "button";
+            tab.dataset.page = "designer-generate";
+            tab.id = "page-tab-designer-generate";
             tab.setAttribute("role", "tab");
             tab.setAttribute("aria-controls", "settings-page");
             tabs.append(tab);
@@ -494,6 +686,9 @@ async function checkConnection() {
                 model.generationError = latest.generationError;
                 updateGenerate();
             }
+            if (requestedCanvasId || currentPage === "designer-generate") {
+                await refreshOutputStatus(draft?.["canvas.id"]);
+            }
             connectionStatus("live");
             if (connectionError && generationNote.textContent === connectionError)
                 setMessage(generationNote, "");
@@ -501,7 +696,7 @@ async function checkConnection() {
         }
     } catch (error) {
         connectionStatus("lost");
-        if (generating || queuedCanvasId) {
+        if (openingRequested) {
             setMessage(generationNote, generationGuidance);
             return;
         }
@@ -534,6 +729,7 @@ try {
         }));
     applyState(initial);
     connectionStatus("live");
+    if (!initial.preview) await refreshOutputStatus(draft?.["canvas.id"]);
 } catch (error) {
     root.setAttribute("aria-busy", "false");
     root.replaceChildren(element("h1", "Settings unavailable"));

@@ -103,6 +103,18 @@ p { margin: 0; }
 .conn-live { color: var(--success-color); background: rgba(23, 140, 78, .12); }
 .conn-lost { color: var(--danger-color); background: rgba(199, 54, 46, .12); }
 .app-body { padding: 1.5rem; max-width: 920px; margin: 0 auto; }
+.generate-page { display: grid; justify-items: start; gap: .5rem; }
+.generate-page h2 { font-size: 18px; margin: 1.5rem 0 0; }
+.generate-page h3 { font-size: 15px; margin: .8rem 0 0; }
+.generate-page .setting-label { font-weight: 600; margin-top: .5rem; }
+.generate-page .generation-target { display: flex; gap: .65rem; flex-wrap: wrap; overflow-wrap: anywhere; }
+.generate-page a { color: var(--accent-color); }
+.generate-page button { min-height: 40px; padding: .5rem 1rem; margin-top: .5rem;
+    border: 1px solid var(--border-color-strong); border-radius: var(--radius-sm);
+    font: inherit; color: var(--text-color-default); background: var(--background-color-elevated); cursor: pointer; }
+.generate-page button.primary { color: var(--accent-contrast); background: var(--accent-color);
+    border-color: var(--accent-color); }
+.generate-page button:disabled { opacity: .55; cursor: not-allowed; }
 #settings-page h1 { font-size: 26px; margin-bottom: .5rem; }
 #settings-page > p { max-width: 68ch; margin-bottom: 1rem; }
 .settings-field { display: grid; gap: .35rem; margin-bottom: 1.1rem; max-width: 660px; }

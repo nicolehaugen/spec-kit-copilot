@@ -61,7 +61,7 @@ export async function loadLastOpen(workspace, openFile = open) {
     }
 }
 
-export async function saveLastOpen(workspace, input) {
+export async function saveLastOpen(workspace, input, openFile = open) {
     const record = { schemaVersion: 1, handoffId: input.handoffId,
         pages: input.pages, templates: input.templates };
     validateLastOpen(record);
@@ -73,7 +73,7 @@ export async function saveLastOpen(workspace, input) {
     const folder = dirname(path);
     const temporary = join(folder, `last-open-${randomUUID()}.tmp`);
     try {
-        const file = await open(temporary, "wx", 0o600);
+        const file = await openFile(temporary, "wx", 0o600);
         try {
             const [opened, current, actual] = await Promise.all([
                 file.stat(), lstat(temporary), realpath(folder),
@@ -84,6 +84,14 @@ export async function saveLastOpen(workspace, input) {
                 throw new Error("Designer open inventory escapes session artifacts");
             }
             await file.writeFile(bytes);
+            const [written, atPath, currentFolder] = await Promise.all([
+                file.stat(), lstat(temporary), realpath(folder),
+            ]);
+            if (currentFolder !== folder || !written.isFile() || !atPath.isFile()
+                || atPath.isSymbolicLink() || written.dev !== atPath.dev
+                || written.ino !== atPath.ino) {
+                throw new Error("Designer open inventory changed while saving");
+            }
         } finally {
             await file.close();
         }

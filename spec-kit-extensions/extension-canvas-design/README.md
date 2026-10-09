@@ -1,7 +1,7 @@
 # Canvas Design
 
-A Spec Kit extension that supplies settings pages, a page-loading command and
-an Essentials-driven workflow canvas generation command for the Copilot Designer.
+A Spec Kit extension that supplies settings pages, a page-loading command,
+and separate commands to generate and open workflow canvases for the Copilot Designer.
 
 ## What It Does
 
@@ -11,11 +11,14 @@ adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition, phase control definition with its required placement,
 and phase adapter, badge types and evaluator rules, plus the
 `speckit.extension-canvas-design.load-page` and
-`speckit.extension-canvas-design.generate` commands. The first resolves the
+`speckit.extension-canvas-design.generate`, and
+`speckit.extension-canvas-design.open-generated` commands. The first resolves the
 project's preset-composed pages and explicitly named contribution templates,
 then opens the Designer with the complete resolved set.
-The second writes a maintained SDK entry point and workflow modules into a new
-project extension directory, then validates the result in place.
+The second writes a maintained SDK entry point and workflow modules into a
+project extension directory, then validates the result in place; it does not
+reload extensions or open the app. The third reloads extensions in the child
+session, verifies the exact project provider and canvas, and opens that app.
 
 Replaceable templates are organized by host: `designer-host/` contains Designer
 tabs and settings, `generated-host/workflow-page/` contains the Workflow page,
@@ -68,7 +71,8 @@ The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 `designer-essentials` is the template ID used for preset resolution.
 Its required Canvas ID and Title are rendered by the fixed identity control,
 while optional text contributions use the registered `stock.text` adapter.
-The Outputs tab uses a separate fixed phase-artifacts control. The Designer
+The Outputs definition retains a separate fixed phase-artifacts control, but
+the Outputs tab is hidden in the current Designer UI. The Designer
 validates each supplied page without requiring every default tab to open;
 presets can still contribute to the `essentials.options` slot. An empty or
 partial composition opens with inline diagnostics, but Generate requires
@@ -176,7 +180,7 @@ Rerunning a completed or failed phase, or a phase with an available artifact,
 asks for overwrite confirmation as in the Wizard; in-flight retries do not.
 View output opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
-The Outputs tab shows one phase at a time, except Constitution. Wizard-inferred
+The hidden Outputs definition models one phase at a time, except Constitution. Wizard-inferred
 pipeline artifacts cannot be edited or removed; users can add and remove separate
 Markdown artifact links and choose the View artifact default. Adding a link does
 not create the file or change what the pipeline produces. Removing a selected
@@ -185,8 +189,8 @@ remaining link when there is no original default. The generated phase card shows
 links behind a count; View output is hidden when a phase has none. Running
 Specify creates the workflow. Constitution always
 opens `.specify/memory/constitution.md` and cannot
-be changed in the Designer. Existing header Save persists the viewer selections
-and additional links.
+be changed in the Designer. The existing Save preserves previously configured
+viewer selections and additional links even while Outputs is hidden.
 
 ## Generated app project setup
 
@@ -372,6 +376,10 @@ specify extension add extension-canvas-design --from https://github.com/nicoleha
 ```
 
 The ZIP must be published before either installation method can succeed.
+The current 0.1.19 catalog still advertises two commands; the hosted archive
+has not been verified to include `open-generated`. This worktree-only split is not ready
+for the default hosted Generate/Open path until a coordinated release is
+published and verified against the catalog-selected archive.
 For a new Copilot project, initialize it first:
 
 ```powershell
@@ -414,6 +422,21 @@ when recomputing the handoff fingerprint. If only the source fingerprint
 differs, the command returns a warning and attempts generation from the intact
 frozen request; the agent reports that warning with the generated target.
 Request or checkout integrity and workflow mismatches still stop it.
+Generate reports its target, canvas ID, request ID, warnings, and creation
+status in the child session chat, without reloading, inspecting, or opening
+the app. The separate Open action sends the same frozen handoff and request
+IDs to [open-generated](commands/open-generated.md). That command first checks
+the existing target and its provenance, then reloads extensions in the child
+session (which stops the Designer provider), verifies the exact running project
+provider with `scripts/validate-generated-open.mjs`, checks the canvas
+capabilities and opened instance, and reports success or the exact failure
+in chat. There is no in-panel retry after reload. After reset or clear it
+reloads before reopening the existing app, using its unique provenance
+when the frozen request file is no longer available; it does not regenerate
+or assume reset registered the provider. Generation accepts an optional
+`--replace-existing=<prior-request-id>` fifth argument only after the Designer server authorizes
+replacement for the same handoff and existing target's provenance; no
+replacement permission is stored in the frozen request.
 The generated `canvas-config.json` records the versions observed in the child
 checkout's Specify inventory at Generate; changed versions produce warnings
 without blocking. Unavailable package versions are marked `unverified` instead
@@ -539,15 +562,17 @@ and packaged workflow UI, theme, routes, and runtime modules into a new
 `.github/extensions/<canvas-id>/` directory, alongside the frozen configuration.
 The entry point uses `joinSession` and `createCanvas` to register actions and a
 loopback HTTP server with open/close lifecycle handling. Generation does not call
-`create-canvas` or rewrite an SDK scaffold. It validates the completed extension
-in place. An existing target stops generation without overwriting it; a failure
-after creation leaves the partial target for inspection. Previously generated
-canvases are not updated. Designer saves settings before dispatching Generate,
-then locks editing and Generate only in that panel. The entry point is written
-only after syntax and render validation succeeds. The agent then reloads
-extensions and opens the newly registered project canvas automatically; it
-does not reopen Designer. Close the disconnected Designer panel and reopen
-Designer with a different Canvas ID to generate another app.
+`create-canvas` or rewrite an SDK scaffold. It stages and validates the completed extension before moving it into place.
+An existing target stops generation unless the Designer confirms a recognizable
+same-handoff target and passes its prior request ID; confirmed regeneration
+replaces that folder, including manual edits, with rollback on failure.
+Designer saves settings before dispatching Generate, then restores editing
+after the bounded submission. The entry point is written only after syntax
+and render validation succeeds. Generate does not reload or open the canvas.
+The separate Open command reloads and checks the exact project provider before
+opening. Reload may disconnect Designer; the child-session chat reports the
+outcome and can retry Open without regenerating. The user closes Designer
+manually once the Open handoff is accepted.
 
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.

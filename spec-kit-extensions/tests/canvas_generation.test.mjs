@@ -22,17 +22,18 @@ const entryTemplate = await readFile(new URL("../extension-canvas-design/generat
     import.meta.url), "utf8");
 const runtimeSource = await readFile(new URL("../extension-canvas-design/generated-scaffold/runtime.mjs",
     import.meta.url), "utf8");
-test("Generate command reloads and opens only the validated project app", async () => {
+test("Generate command only materializes and reports its target", async () => {
     const command = await readFile(new URL("../extension-canvas-design/commands/generate.md",
         import.meta.url), "utf8");
-    assert.match(command, /After successful validation, call `extensions_reload`/);
-    assert.match(command, /Require its\s+source to be this child project and its status to be ready/);
-    assert.match(command, /call `open_canvas`\s+for that exact provider and canvas ID/);
-    assert.match(command, /generated-<requestId>/);
-    assert.match(command, /do not claim the app opened merely because files were generated/);
-    assert.match(command, /Do not reopen Designer/);
-    assert.ok(command.indexOf("generate.mjs") < command.indexOf("call `extensions_reload`"));
-    assert.ok(command.indexOf("call `extensions_reload`") < command.indexOf("`open_canvas`"));
+    assert.match(command, /scripts\/generate\.mjs/);
+    assert.match(command, /same frozen\s+handoff ID and request ID/);
+    assert.match(command, /Report the exact generated target, canvas ID, request ID, and any warnings/);
+    assert.match(command, /app was created but\s+\*\*not opened\*\*/);
+    assert.match(command, /speckit\.extension-canvas-design\.open-generated/);
+    assert.match(command, /Do not call `extensions_reload`,\s+`extensions_manage`, `list_canvas_capabilities`, or `open_canvas` here/);
+    assert.match(command, /--replace-existing/);
+    assert.match(command, /only when the\s+Designer server has validated replacement against this same handoff/);
+    assert.match(command, /replacement flag is not part of that frozen request/);
 });
 
 test("the entry point becomes visible only after generated syntax and rendering validate", async () => {

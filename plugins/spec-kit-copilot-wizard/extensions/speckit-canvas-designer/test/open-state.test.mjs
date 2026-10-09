@@ -73,6 +73,25 @@ test("saved open inventory rejects a different opened file even when its path is
     );
 });
 
+test("saved open inventory rejects a temporary file replaced after writing", async (t) => {
+    const workspace = await fixture(t);
+    await saveLastOpen(workspace, record);
+    const original = await readFile(inventory(workspace), "utf8");
+    await assert.rejects(saveLastOpen(workspace, record, async (path, flags, mode) => {
+        const file = await open(path, flags, mode);
+        return {
+            stat: () => file.stat(),
+            close: () => file.close(),
+            async writeFile(bytes) {
+                await file.writeFile(bytes);
+                await rename(path, `${path}.displaced`);
+                await writeFile(path, '{"replaced":true}');
+            },
+        };
+    }), /Designer open inventory changed while saving/);
+    assert.equal(await readFile(inventory(workspace), "utf8"), original);
+});
+
 test("saved open inventory rejects a parent replaced during open, including a missing file", async (t) => {
     const workspace = await fixture(t);
     const outside = await fixture(t);
