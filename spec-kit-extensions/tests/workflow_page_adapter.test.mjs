@@ -17,6 +17,8 @@ test("stock adapter owns setup, constitution, values, phase and contributed mark
     }
     assert.match(root.innerHTML, /data-workflow-slot="workflow.actions"/);
     assert.match(root.innerHTML, /data-badge-slot="workflow.list"/);
+    assert.match(root.innerHTML, /id="constitution-badges"/);
+    assert.doesNotMatch(root.innerHTML, /id="constitution-output-badges"/);
     assert.doesNotMatch(root.innerHTML, /data-badge-slot="workflow.summary"/);
     assert.match(root.innerHTML, /&lt;unsafe&gt;|&lt;script&gt;/);
     assert.doesNotMatch(root.innerHTML, /<script>/);
@@ -33,13 +35,16 @@ test("stock Workflow page mounts its phase control, updates collection and dispo
             querySelector() { return { hidden: false }; },
             querySelectorAll() { return []; },
             replaceChildren(...children) { this.children = children; },
+            append(...children) { this.children.push(...children); },
         });
         return elements.get(id);
     };
     const root = { querySelector: (selector) => element(selector.slice(1)),
         addEventListener() {}, removeEventListener() {} };
     const originalDocument = globalThis.document;
-    globalThis.document = { getElementById: element, activeElement: null };
+    globalThis.document = { getElementById: element, createElement: () => ({
+        dataset: {}, style: {}, children: [], append(...children) { this.children.push(...children); },
+    }), activeElement: null };
     t.after(() => { globalThis.document = originalDocument; });
     let disposed = false, updates = 0;
     const page = mount({ root, definition: { id: pageId },
@@ -61,6 +66,29 @@ test("stock Workflow page mounts its phase control, updates collection and dispo
     assert.equal(element("workflow-count").textContent, "(0)");
     assert.equal(element("workflow-empty").textContent, "No workflow phases are configured.");
     assert.equal(updates, 1);
+    const phase = { id: "speckit.constitution", project: true,
+        output: ".specify/memory/constitution.md" };
+    const badge = { id: "constitution", text: "Constitution ready",
+        phaseText: "Project ready", color: "purple", targets: [{
+            phase: phase.id, output: null,
+        }] };
+    const outputBadge = { ...badge, id: "constitution-output", targets: [{
+        phase: phase.id, output: phase.output,
+    }] };
+    page.update({ model: { showSetup: false, items: [], selected: "__new__",
+        phases: [phase], badges: { project: [badge, outputBadge] }, constitutionReady: true,
+        statuses: { [phase.id]: { status: "Completed", artifactAvailability: "available" } },
+        valueFields: [], valueErrors: {} }, phaseState: {}, inputPending: false,
+    pendingLabel: () => null });
+    assert.equal(element("constitution-badges").children[0].children.length, 1);
+    assert.equal(element("constitution-badges").children[0].children[0].textContent, "Project ready");
+    assert.equal(element("constitution-output-badges").children[0].children.length, 1);
+    const invalid = { showSetup: false, items: [], selected: "__new__",
+        phases: [phase], badges: { project: "invalid" }, constitutionReady: true,
+        statuses: { [phase.id]: { status: "Completed", artifactAvailability: "available" } },
+        valueFields: [], valueErrors: {} };
+    assert.throws(() => page.update({ model: invalid, phaseState: {}, inputPending: false,
+        pendingLabel: () => null }), /Invalid project badge results/);
     page.dispose();
     assert.equal(disposed, true);
     assert.equal(element("workflow-search").listener, null);

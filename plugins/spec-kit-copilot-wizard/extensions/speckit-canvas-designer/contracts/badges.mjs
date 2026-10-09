@@ -131,7 +131,6 @@ export function validateBadges(badges, model) {
             for (const target of badge.targets) {
                 if (!record(target) || !exactKeys(target, ["phase", "output"])
                     || !phases.has(target.phase)
-                    || target.phase.replace(/^speckit\./, "") === "constitution"
                     || (target.output !== null
                         && (!(rule.inputs ?? []).some((input) =>
                             input.type === "artifact" || input.type === "artifact-set")
@@ -144,7 +143,6 @@ export function validateBadges(badges, model) {
             }
         } else if (badge.showIn.includes("phase-card")
             ? !phases.has(badge.phase)
-                || badge.phase.replace(/^speckit\./, "") === "constitution"
             : badge.phase != null) fail("invalid phase-card destination");
         if (rule.placementPhaseInput
             && (badge.targets?.length

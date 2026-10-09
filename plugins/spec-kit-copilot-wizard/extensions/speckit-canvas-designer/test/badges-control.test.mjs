@@ -405,8 +405,8 @@ test("preset control initializes, edits, and reopens its own labeled phase input
         defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];
     const badgeRules = [{ id: "test-phase", inputs: [{ id: "phase", type: "phase" }] }];
     const badges = [];
-    const { root, cleanup } = setup({ badgeTypes, badgeRules, draftBadges: badges,
-        controlMount: mountPresetInputs });
+    const { root, cleanup } = setup({ phases: ["speckit.constitution", "specify", "plan"],
+        badgeTypes, badgeRules, draftBadges: badges, controlMount: mountPresetInputs });
     try {
         const editor = choose(root);
         const select = descendants(editor).find((node) => node.tagName === "select"
@@ -414,18 +414,24 @@ test("preset control initializes, edits, and reopens its own labeled phase input
         assert.ok(select);
         assert.ok(descendants(editor).some((node) => node.textContent.includes(
             "only after the selected phase")));
-        assert.equal(select.value, "specify");
+        assert.equal(select.value, "speckit.constitution");
+        const card = check(root, "badge-placements", "Phase");
+        card.checked = true;
+        card.events.change();
+        assert.equal(card.checked, true);
         submit(editor);
-        assert.equal(badges[0].inputs.phase, "specify");
+        assert.equal(badges[0].inputs.phase, "speckit.constitution");
+        assert.deepEqual(badges[0].targets, [{ phase: "speckit.constitution", output: null }]);
         root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
         const edited = root.querySelector(".badge-editor");
         const editSelect = descendants(edited).find((node) => node.tagName === "select"
             && node.attributes["aria-label"] === "Phase to confirm");
-        assert.equal(editSelect.value, "specify");
+        assert.equal(editSelect.value, "speckit.constitution");
         editSelect.value = "plan";
         editSelect.events.change();
         submit(edited);
         assert.equal(badges[0].inputs.phase, "plan");
+        assert.deepEqual(badges[0].targets, [{ phase: "plan", output: null }]);
         root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
         const reopened = root.querySelector(".badge-editor");
         assert.equal(descendants(reopened).find((node) => node.tagName === "select"
@@ -487,7 +493,7 @@ const checklistRule = { id: "checklist-complete", placementPhaseInput: "artifact
     { id: "prerequisite", type: "artifact", label: "Earlier output" },
 ] };
 
-test("Constitution evidence can make a workflow badge but cannot select a phase card", () => {
+test("Constitution evidence selects its project card and follows edited phases", () => {
     const phase = "speckit.constitution";
     const { root, draftBadges, cleanup } = setup({
         phases: [phase, "speckit.specify"],
@@ -507,9 +513,7 @@ test("Constitution evidence can make a workflow badge but cannot select a phase 
         const card = check(root, "badge-placements", "Phase");
         card.checked = true;
         card.events.change();
-        assert.equal(card.checked, false);
-        assert.match(root.querySelector(".settings-field-error").textContent,
-            /only for workflow phases/);
+        assert.equal(card.checked, true);
         evidence[1].checked = true;
         evidence[1].events.change();
         card.checked = true;
@@ -517,10 +521,10 @@ test("Constitution evidence can make a workflow badge but cannot select a phase 
         assert.equal(card.checked, true);
         evidence[0].checked = true;
         evidence[0].events.change();
-        assert.equal(card.checked, false);
+        assert.equal(card.checked, true);
         submit(editor);
         assert.equal(draftBadges[0].inputs.phase, phase);
-        assert.deepEqual(draftBadges[0].targets, []);
+        assert.deepEqual(draftBadges[0].targets, [{ phase, output: null }]);
     } finally { cleanup(); }
 });
 

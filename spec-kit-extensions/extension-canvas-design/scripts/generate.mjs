@@ -301,8 +301,7 @@ export function frozenBadges(badges, workflow) {
                 !["workflow-list", "workflow-summary", "phase-card"].includes(place))
             || (instance.targets === undefined
                 ? (instance.showIn.includes("phase-card")
-                    && (!workflow.selectedPhases.includes(instance.phase)
-                        || instance.phase.replace(/^speckit\./, "") === "constitution"))
+                    && !workflow.selectedPhases.includes(instance.phase))
                     || (!instance.showIn.includes("phase-card") && instance.phase != null)
                 : instance.phase != null || instance.showIn.includes("phase-card")
                     || !Array.isArray(instance.targets) || instance.targets.length > 100
@@ -310,7 +309,6 @@ export function frozenBadges(badges, workflow) {
                         JSON.stringify([target?.phase, target?.output]))).size !== instance.targets.length
                     || instance.targets.some((target) => !target
                         || !workflow.selectedPhases.includes(target.phase)
-                        || target.phase.replace(/^speckit\./, "") === "constitution"
                         || (target.output !== null
                             && (!rule.inputs.some((input) =>
                                 ["artifact", "artifact-set"].includes(input.type))

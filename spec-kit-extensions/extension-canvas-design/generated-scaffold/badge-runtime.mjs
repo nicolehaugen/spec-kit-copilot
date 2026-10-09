@@ -119,7 +119,6 @@ export function validateBadges(config, phases = []) {
             || (instance.targets === undefined
                 ? (instance.showIn.includes("phase-card")
                     ? !phaseIds.includes(instance.phase)
-                        || instance.phase.replace(/^speckit\./, "") === "constitution"
                     : instance.phase != null)
                 : instance.phase != null || instance.showIn.includes("phase-card")
                     || !Array.isArray(instance.targets) || instance.targets.length > 100
@@ -127,7 +126,6 @@ export function validateBadges(config, phases = []) {
                         JSON.stringify([target?.phase, target?.output]))).size !== instance.targets.length
                     || instance.targets.some((target) => !target
                         || !phaseIds.includes(target.phase)
-                        || target.phase.replace(/^speckit\./, "") === "constitution"
                         || (target.output !== null
                             && (!rule.inputs.some((input) =>
                                 input.type === "artifact" || input.type === "artifact-set")
@@ -224,8 +222,11 @@ function text(template, values) {
 
 export async function evaluateBadges(badges, { cwd, workflows, phases, outputPath, runFor,
     log = () => {}, budgetMs = 4000 }) {
-    if (!badges?.instances?.length) return { items: {}, selected: [], summary: [], diagnostics: [] };
-    const result = { items: {}, selected: [], summary: [], diagnostics: [] };
+    if (!badges?.instances?.length) {
+        return { items: {}, selected: [], project: [], summary: [], diagnostics: [] };
+    }
+    const result = { items: {}, selected: [], project: [], summary: [], diagnostics: [] };
+    const projectPhase = phases.find((phase) => phase.project)?.id;
     const summaryById = new Map();
     for (const instance of badges.instances.filter((badge) => badge.showIn.includes("workflow-summary")
         && badges.types.find((type) => type.id === badge.type)?.enabled)) {
@@ -239,12 +240,17 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
     const deadline = performance.now() + (Number.isFinite(budgetMs)
         ? Math.min(4000, Math.max(0, budgetMs)) : 4000);
     let totalReads = 0;
-    for (const workflow of workflows) {
+    for (const { workflow, project } of [
+        ...(projectPhase ? [{ workflow: "project", project: true }] : []),
+        ...workflows.map((workflow) => ({ workflow, project: false })),
+    ]) {
         const cache = new Map();
         const artifactReads = new Map();
         const directoryReads = new Map();
         const rendered = [];
         for (const instance of badges.instances) {
+            if (project && !(instance.targets?.some(({ phase }) => phase === projectPhase)
+                || instance.showIn.includes("phase-card") && instance.phase === projectPhase)) continue;
             if (performance.now() >= deadline) {
                 if (!result.diagnostics.length) {
                     const message = "Badge evaluation time limit reached; some badges were not evaluated. Refresh to retry.";
@@ -340,7 +346,7 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
                 if (!cache.has(key)) cache.set(key, await runRule(rule, instance.inputs, evidence, workflow));
                 const evaluated = cache.get(key);
                 const summary = summaryById.get(instance.id);
-                if (summary) summary.count += evaluated.summaryCount ?? Number(evaluated.match);
+                if (summary && !project) summary.count += evaluated.summaryCount ?? Number(evaluated.match);
                 if (evaluated.match) rendered.push({ id: instance.id, text: text(instance.text ?? type.defaultText,
                     evaluated.values ?? {}),
                     ...(instance.phaseText
@@ -359,7 +365,8 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
                 log(warning);
             }
         }
-        result.items[workflow] = rendered;
+        if (project) result.project = rendered;
+        else result.items[workflow] = rendered;
     }
     result.summary = result.summary.map(({ title, template, count, ...item }) =>
         ({ ...item, count, text: template ? text(template, { workflows: count })

@@ -7,7 +7,6 @@ const PLACES = [
     ["workflow-summary", "Workflow summary"],
 ];
 const COLORS = ["theme", "red", "green", "amber", "blue", "purple", "pink", "orange"];
-const supportsPhaseCard = (phase) => phase?.replace(/^speckit\./, "") !== "constitution";
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -406,7 +405,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 phasePlacement.checked = false;
                 phaseTextField.hidden = true;
                 delete pending.phaseText;
-                revealError("Phase cards are available only for workflow phases. Choose workflow-phase evidence.");
+                revealError("Choose phase evidence before selecting Phase placement.");
             }
             pending.targets = selected.map((phase) => ({ phase, output: null }));
             refreshLegacy();
@@ -491,7 +490,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         phasePlacement = element("input");
         phasePlacement.type = "checkbox";
         const phaseCardPhases = () => evidencePhases(rule, pending.inputs)
-            .filter((phase) => phases.includes(phase) && supportsPhaseCard(phase));
+            .filter((phase) => phases.includes(phase));
         const followsEvidence = () => {
             const selected = new Set(phaseCardPhases());
             return pending.targets.length === selected.size
@@ -516,7 +515,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         phasePlacement.addEventListener("change", () => {
             if (phasePlacement.checked && !phaseCardPhases().length) {
                 phasePlacement.checked = false;
-                revealError("Phase cards are available only for workflow phases. Choose workflow-phase evidence.");
+                revealError("Choose phase evidence before selecting Phase placement.");
             }
             pending.targets = phasePlacement.checked
                 ? phaseCardPhases().map((phase) => ({ phase, output: null })) : [];
@@ -534,7 +533,6 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const supportsArtifactTargets = rule.inputs?.some(({ type }) =>
             type === "artifact" || type === "artifact-set");
         const unavailableTarget = ({ phase, output }) => !phases.includes(phase)
-            || !supportsPhaseCard(phase)
             || (output !== null && (!supportsArtifactTargets
                 || !outputs[phase]?.outputs?.includes(output)));
         const legacy = element("div", undefined, "badge-legacy-placement");

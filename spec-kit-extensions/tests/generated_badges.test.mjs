@@ -20,6 +20,9 @@ for (const name of ["content", "artifact-state", "run"]) {
 }
 await cp(new URL("../extension-canvas-design/generated-host/badges/adapters/phase-artifact-complete.mjs",
     import.meta.url), join(generated, "badges", "badge-rule-phase-artifact-complete-adapter.mjs"));
+const presetEvaluator = new URL("../../spec-kit-presets/copilot-badge-input-test/generated/evaluator.mjs",
+    import.meta.url);
+await cp(presetEvaluator, join(generated, "badges", "badge-rule-test-phase-adapter.mjs"));
 const { evaluateBadges, validateBadges, verifyBadgeModules } =
     await import(pathToFileURL(join(generated, "badge-runtime.mjs")).href);
 const { createRuntime } = await import(pathToFileURL(join(generated, "runtime.mjs")).href);
@@ -63,7 +66,7 @@ test("generated rules require the adapter key rather than the former module key"
     }] }, ["tasks"]), /Invalid generated badge rule/);
 });
 
-test("generated runtime rejects Constitution card and output placements", () => {
+test("generated runtime validates Constitution card and declared output placements", () => {
     const constitution = { id: "speckit.constitution",
         outputs: [".specify/memory/constitution.md"] };
     const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }, constitution];
@@ -71,14 +74,67 @@ test("generated runtime rejects Constitution card and output placements", () => 
         phase: constitution.id, output: constitution.outputs[0],
     } }, showIn: ["workflow-list"], phase: null };
     assert.doesNotThrow(() => validateBadges({ ...badges, instances: [global] }, phases));
-    assert.throws(() => validateBadges({ ...badges, instances: [{
+    assert.doesNotThrow(() => validateBadges({ ...badges, instances: [{
         ...instance, phase: constitution.id,
-    }] }, phases), /Invalid generated badge instance/);
+    }] }, phases));
     for (const output of [null, constitution.outputs[0]]) {
-        assert.throws(() => validateBadges({ ...badges, instances: [{
+        assert.doesNotThrow(() => validateBadges({ ...badges, instances: [{
             ...global, targets: [{ phase: constitution.id, output }],
-        }] }, phases), /Invalid generated badge instance/);
+        }] }, phases));
     }
+    assert.throws(() => validateBadges({ ...badges, instances: [{
+        ...global, targets: [{ phase: constitution.id, output: "undeclared.md" }],
+    }] }, phases), /Invalid generated badge instance/);
+});
+
+test("project Constitution badges evaluate without workflows and do not count as workflow summary", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-constitution-badge-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    await mkdir(join(cwd, ".specify", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".specify", "memory", "constitution.md"), "- [x] adopted\n");
+    const phase = { id: "speckit.constitution", project: true,
+        outputs: [".specify/memory/constitution.md"] };
+    const projectBadge = { ...instance, inputs: { artifact: {
+        phase: phase.id, output: phase.outputs[0],
+    } }, targets: [{ phase: phase.id, output: null }],
+    showIn: ["workflow-list", "workflow-summary"], phase: null, phaseText: "Project ready" };
+    const config = { ...badges, instances: [projectBadge] };
+    const evaluate = (workflows) => evaluateBadges(config, { cwd, workflows,
+        phases: [phase], outputPath: async ({ output }) => output,
+        runFor: () => null });
+    const empty = await evaluate([]);
+    assert.deepEqual(empty.project.map(({ phaseText }) => phaseText), ["Project ready"],
+        JSON.stringify(empty.diagnostics));
+    assert.deepEqual(empty.items, {});
+    assert.equal(empty.summary[0].count, 0);
+    const existing = await evaluate(["specs/alpha"]);
+    assert.equal(existing.project.length, 1);
+    assert.equal(existing.summary[0].count, 1);
+    await rm(join(cwd, ".specify", "memory", "constitution.md"));
+    assert.deepEqual((await evaluate([])).project, []);
+});
+
+test("custom phase-run evaluator matches project Constitution without a workflow", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-project-run-badge-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const phase = { id: "speckit.constitution", project: true,
+        outputs: [".specify/memory/constitution.md"] };
+    const preset = { types: [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
+        description: "Test control", defaultText: "Phase confirmed", defaultColor: "purple",
+        enabled: true }],
+    rules: [{ id: "test-phase", label: "Phase confirmed", description: "Run completed",
+        inputs: [{ id: "phase", type: "phase" }], textPlaceholders: [],
+        adapter: "badge-rule-test-phase-adapter",
+        hash: createHash("sha256").update(await readFile(presetEvaluator)).digest("hex") }],
+    instances: [{ id: "confirmed", type: "test-phase", inputs: { phase: phase.id },
+        text: "Phase confirmed", color: "purple", showIn: ["phase-card"], phase: phase.id }] };
+    validateBadges(preset, [phase]);
+    await verifyBadgeModules(preset);
+    const evaluate = (status) => evaluateBadges(preset, { cwd, workflows: [],
+        phases: [phase], outputPath: async () => { throw new Error("No output input"); },
+        runFor: () => status && { status } });
+    assert.deepEqual((await evaluate("Completed")).project.map(({ text }) => text), ["Phase confirmed"]);
+    assert.deepEqual((await evaluate("Failed")).project, []);
 });
 const fileRule = { ...rule, id: "markdown-file-count",
     inputs: [{ id: "artifact", type: "artifact", scope: "directory" }],

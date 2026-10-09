@@ -810,7 +810,18 @@ function renderStatus() {
     const mobilePhaseSelect = $("mobile-phase-select");
     if (mobilePhaseSelect) mobilePhaseSelect.disabled = idle;
     if (constitution()) {
-        const status = model.statuses[constitution().id];
+        const projectPhase = constitution();
+        if (model.badges?.project !== undefined && !Array.isArray(model.badges.project)) {
+            throw new Error("Invalid project badge results");
+        }
+        const projectBadges = model.badges?.project ?? [];
+        const forTarget = (output) => projectBadges.filter((badge) => badge.targets
+            ? badge.targets.some((target) => target.phase === projectPhase.id && target.output === output)
+            : output === null && badge.showIn.includes("phase-card") && badge.phase === projectPhase.id);
+        $("constitution-badges")?.replaceChildren(badgeList(forTarget(null), true));
+        $("constitution-output-badges")?.replaceChildren(badgeList(
+            forTarget(projectPhase.output), true));
+        const status = model.statuses[projectPhase.id];
         artifactAction("view-constitution", "constitution-artifact-status", status);
         const available = status?.artifactAvailability === "available";
         const statusText = available ? "Available" : status?.artifactAvailability === "error"
@@ -973,7 +984,7 @@ function readableBadgeForeground(hex) {
     return (luminance + 0.05) / (0.005605 + 0.05) >= 1.05 / (luminance + 0.05)
         ? "#111" : "#fff";
 }
-function badgeList(badges) {
+function badgeList(badges, phaseText = false) {
     const group = document.createElement("span");
     group.className = "canvas-badges";
     for (const badge of badges) {
@@ -984,7 +995,7 @@ function badgeList(badges) {
             label.style.backgroundColor = badge.color;
             label.style.color = readableBadgeForeground(badge.color);
         }
-        label.textContent = badge.text;
+        label.textContent = phaseText ? badge.phaseText ?? badge.text : badge.text;
         group.append(label);
     }
     return group;

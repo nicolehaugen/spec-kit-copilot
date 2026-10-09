@@ -754,7 +754,7 @@ test("Designer badge save and reopen freezes registered assets into generated co
         "badge-rule-content-adapter.mjs")), Buffer.from(request.badges.adapters[0].content, "base64"));
 });
 
-test("Generate refuses saved Constitution badge destinations while permitting its evidence", async (t) => {
+test("Generate accepts Constitution card and declared output destinations", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
@@ -786,9 +786,12 @@ test("Generate refuses saved Constitution badge destinations while permitting it
         { ...global, targets: [{ phase: "constitution", output: null }] },
         { ...global, targets: [{ phase: "constitution", output: ".specify/memory/constitution.md" }] },
     ]) {
-        await assert.rejects(freezeGeneration({ ...options, badges: [badge] }),
-            /invalid or removed output, phase, text, or placement/);
+        await assert.doesNotReject(freezeGeneration({ ...options, badges: [badge] }));
     }
+    await assert.rejects(freezeGeneration({ ...options, badges: [{
+        ...global, targets: [{ phase: "constitution", output: "undeclared.md" }],
+    }] }),
+    /invalid or removed output, phase, text, or placement/);
 });
 
 async function stockTemplates(project) {

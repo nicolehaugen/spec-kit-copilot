@@ -404,6 +404,9 @@ test("selected badge definitions and evaluator are packaged without preset files
     const html = renderHtml(config);
     assert.match(stockMarkup(config), /data-badge-slot="workflow.list"/);
     assert.match(stockMarkup(config), /data-badge-slot="workflow.summary"/);
+    assert.match(stockMarkup(config), /id="constitution-badges"/);
+    assert.match(stockMarkup(config), /id="constitution-output-badges"/);
+    assert.match(html, /&quot;hasConstitution&quot;:true/);
     assert.match(html, /data-badge-slots="[^"]*phase.card[^"]*phase.output/);
     assert.equal(config.badges.rules[0].adapter, "badge-rule-content-adapter");
     assert.equal(Object.hasOwn(config.badges.rules[0], "module"), false);

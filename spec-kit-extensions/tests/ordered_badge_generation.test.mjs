@@ -85,7 +85,7 @@ test("malformed metadata rule references and ordered evidence are rejected", () 
     }
 });
 
-test("generator rejects Constitution placements while keeping global Constitution evidence", () => {
+test("generator permits Constitution card placement while honoring rule target constraints", () => {
     const constitution = { phase: "speckit.constitution", output: ".specify/memory/constitution.md" };
     const phases = { selectedPhases: [constitution.phase, ...workflow.selectedPhases],
         phaseArtifacts: { ...workflow.phaseArtifacts, [constitution.phase]: {
@@ -96,11 +96,16 @@ test("generator rejects Constitution placements while keeping global Constitutio
         showIn: ["workflow-list"], phase: null };
     assert.equal(frozenBadges(inventory(global), phases).instances[0].inputs.target.phase,
         constitution.phase);
-    assert.throws(() => frozenBadges(inventory({ ...global, showIn: ["phase-card"],
-        phase: constitution.phase, phaseText: "Ready" }), phases), /Invalid configured badge/);
-    for (const output of [null, constitution.output]) {
-        assert.throws(() => frozenBadges(inventory({ ...global, targets: [{
-            phase: constitution.phase, output,
-        }], phaseText: "Ready" }), phases), /Invalid configured badge/);
-    }
+    assert.equal(frozenBadges(inventory({ ...global, showIn: ["phase-card"],
+        phase: constitution.phase, phaseText: "Ready" }), phases).instances[0].phase,
+        constitution.phase);
+    assert.equal(frozenBadges(inventory({ ...global, targets: [{
+        phase: constitution.phase, output: null,
+    }], phaseText: "Ready" }), phases).instances[0].targets[0].output, null);
+    assert.throws(() => frozenBadges(inventory({ ...global, targets: [{
+        phase: constitution.phase, output: constitution.output,
+    }], phaseText: "Ready" }), phases), /Invalid configured badge/);
+    assert.throws(() => frozenBadges(inventory({ ...global, targets: [{
+        phase: constitution.phase, output: "undeclared.md",
+    }] }), phases), /Invalid configured badge/);
 });

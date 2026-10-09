@@ -722,8 +722,16 @@ export function renderHtml(config, token = "") {
             data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>
         <p id="generated-page-error" class="workflow-error" role="alert" hidden></p>` : "",
         constitution: hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
-            <div class="constitution-summary"><strong>Constitution</strong><span class="muted">Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span></div>
-            <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p><p id="constitution-artifact-status" class="muted" role="status"></p></div>
+            <div class="constitution-summary"><strong>Constitution</strong><span class="muted">Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span>
+            ${config.badges?.instances?.length
+                && (config.workflowPage.badgeDestinations ?? ["phase.card"]).includes("phase.card")
+                ? '<span id="constitution-badges" class="canvas-badges" aria-label="Constitution badges"></span>' : ""}
+            </div>
+            <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
+            ${config.badges?.instances?.length
+                && (config.workflowPage.badgeDestinations ?? ["phase.output"]).includes("phase.output")
+                ? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
+            </div>
             <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button></div>
         </section>` : "",
         pipeline: `<div id="workflow-pipeline" hidden data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
