@@ -67,24 +67,45 @@ test("generated rules require the adapter key rather than the former module key"
 });
 
 test("generated runtime validates Constitution card and declared output placements", () => {
-    const constitution = { id: "speckit.constitution",
+    const constitution = { id: "speckit.constitution", project: true,
         outputs: [".specify/memory/constitution.md"] };
     const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }, constitution];
     const global = { ...instance, inputs: { artifact: {
         phase: constitution.id, output: constitution.outputs[0],
     } }, showIn: ["workflow-list"], phase: null };
     assert.doesNotThrow(() => validateBadges({ ...badges, instances: [global] }, phases));
-    assert.doesNotThrow(() => validateBadges({ ...badges, instances: [{
+    assert.throws(() => validateBadges({ ...badges, instances: [{
         ...instance, phase: constitution.id,
-    }] }, phases));
+    }] }, phases), /Project badge placement requires project-level rule inputs/);
+    assert.doesNotThrow(() => validateBadges({ ...badges, instances: [instance] }, phases));
     for (const output of [null, constitution.outputs[0]]) {
         assert.doesNotThrow(() => validateBadges({ ...badges, instances: [{
             ...global, targets: [{ phase: constitution.id, output }],
         }] }, phases));
+        assert.throws(() => validateBadges({ ...badges, instances: [{
+            ...instance, showIn: ["workflow-list"], phase: null,
+            targets: [{ phase: constitution.id, output }],
+        }] }, phases), /Project badge placement requires project-level rule inputs/);
     }
     assert.throws(() => validateBadges({ ...badges, instances: [{
         ...global, targets: [{ phase: constitution.id, output: "undeclared.md" }],
     }] }, phases), /Invalid generated badge instance/);
+    assert.throws(() => validateBadges({ ...badges, instances: [{
+        ...instance, showIn: [], phase: null, targets: [
+            { phase: constitution.id, output: null }, { phase: "tasks", output: null },
+        ],
+    }] }, phases), /Project badge placement requires project-level rule inputs/);
+    const phaseRule = { ...rule, id: "phase-run-complete",
+        inputs: [{ id: "phase", type: "phase" }] };
+    const phaseType = { ...type, id: "phase-run-complete", rule: phaseRule.id };
+    const phaseBadge = { ...global, type: phaseType.id, inputs: { phase: "tasks" },
+        targets: [{ phase: constitution.id, output: null }] };
+    const phaseConfig = { instances: [phaseBadge], types: [phaseType], rules: [phaseRule] };
+    assert.throws(() => validateBadges(phaseConfig, phases),
+        /Project badge placement requires project-level rule inputs/);
+    assert.doesNotThrow(() => validateBadges({ ...phaseConfig, instances: [{
+        ...phaseBadge, inputs: { phase: constitution.id },
+    }] }, phases));
 });
 
 test("project Constitution badges evaluate without workflows and do not count as workflow summary", async (t) => {
@@ -134,8 +155,10 @@ test("project-only badges do not consume workflow evaluation, while mixed placem
         inputs: { artifact: { phase: projectPhase.id, output: projectPhase.outputs[1] } } };
     const mixedTarget = { ...workflowOnly, id: "mixed-target", showIn: [],
         targets: [{ phase: projectPhase.id, output: null }, { phase: "tasks", output: null }] };
-    const configured = { ...badges, instances: [projectOnly, workflowOnly, mixed, mixedTarget] };
+    const configured = { ...badges, instances: [projectOnly, workflowOnly, mixed] };
     const phases = [projectPhase, { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
+    assert.throws(() => validateBadges({ ...badges, instances: [mixedTarget] }, phases),
+        /Project badge placement requires project-level rule inputs/);
     validateBadges(configured, phases);
     const calls = [];
     const result = await evaluateBadges(configured, { cwd, workflows: ["alpha", "beta"], phases,
@@ -146,7 +169,7 @@ test("project-only badges do not consume workflow evaluation, while mixed placem
     assert.deepEqual(result.project.map(({ id }) => id), ["project-only", "mixed"]);
     for (const workflow of ["alpha", "beta"]) {
         assert.deepEqual(result.items[workflow].map(({ id }) => id),
-            ["workflow-only", "mixed", "mixed-target"]);
+            ["workflow-only", "mixed"]);
     }
     assert.deepEqual(calls.filter(([output]) => output === projectPhase.outputs[0]),
         [[projectPhase.outputs[0], "project"]]);

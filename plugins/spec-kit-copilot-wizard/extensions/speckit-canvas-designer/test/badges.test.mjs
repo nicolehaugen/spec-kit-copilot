@@ -164,7 +164,32 @@ test("Constitution evidence can target its project card or declared output", () 
         assert.deepEqual(validateBadges([{ ...global, targets: [{
             phase: constitution.phase, output,
         }] }], withConstitution).length, 1);
+        assert.throws(() => validateBadges([{ ...artifact, showIn: ["workflow-list"],
+            phase: null, targets: [{ phase: constitution.phase, output }] }],
+        withConstitution), /project placement requires project-level rule inputs/);
     }
+    assert.throws(() => validateBadges([{ ...artifact, showIn: ["phase-card"],
+        phase: constitution.phase }], withConstitution),
+    /project placement requires project-level rule inputs/);
+    assert.deepEqual(validateBadges([artifact], withConstitution), [artifact]);
+    assert.throws(() => validateBadges([{ ...distinct, targets: [{
+        phase: constitution.phase, output: null,
+    }] }], withConstitution), /project placement requires project-level rule inputs/);
+    const phaseModel = { ...withConstitution,
+        badgeRules: [...withConstitution.badgeRules,
+            { id: "run", inputs: [{ id: "phase", type: "phase" }], textPlaceholders: [] }],
+        badgeTypes: [...withConstitution.badgeTypes,
+            { id: "run", rule: "run", enabled: true }] };
+    const phaseBadge = { ...global, type: "run", text: "Phase complete",
+        inputs: { phase: "specify" }, targets: [{ phase: constitution.phase, output: null }] };
+    assert.throws(() => validateBadges([phaseBadge], phaseModel),
+        /project placement requires project-level rule inputs/);
+    assert.deepEqual(validateBadges([{ ...phaseBadge, inputs: {
+        phase: constitution.phase,
+    } }], phaseModel).length, 1);
+    assert.deepEqual(validateBadges([{ ...phaseBadge, targets: [{
+        phase: "specify", output: null,
+    }] }], phaseModel).length, 1);
     assert.throws(() => validateBadges([{ ...global, targets: [{
         phase: constitution.phase, output: "undeclared.md",
     }] }], withConstitution), /phase\/output placement/);

@@ -436,6 +436,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             return rule;
         });
         const phaseIds = handoff.workflow.selectedPhases;
+        const projectPhaseId = phaseIds.find((phase) => projectPhase(phase));
         const source = (artifact) => artifact && phaseIds.includes(artifact.phase)
             && typeof artifact.output === "string"
             && outputs?.[artifact.phase]?.outputs?.includes(artifact.output);
@@ -504,6 +505,17 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
                                     ["artifact", "artifact-set"].includes(input.type))
                                     || !source(target)))))) {
                 throw new Error(`Badge ${instance?.id ?? "unknown"} has an invalid or removed output, phase, text, or placement; edit it on the Badges page before Generate`);
+            }
+            if (projectPhaseId && (instance.targets?.some((target) => target.phase === projectPhaseId)
+                || instance.showIn.includes("phase-card") && instance.phase === projectPhaseId)
+                && rule.inputs.some(({ id, type: inputType }) => {
+                    const value = instance.inputs[id];
+                    return inputType !== "text" && (inputType === "phase"
+                        ? value !== projectPhaseId
+                        : Array.isArray(value) ? value.some((entry) => entry.phase !== projectPhaseId)
+                            : value.phase !== projectPhaseId);
+                })) {
+                throw new Error(`Badge ${instance.id} has a project placement with workflow rule inputs; choose project evidence or a workflow placement`);
             }
             ids.add(instance.id);
             const duplicate = findDuplicateBadge(instance, checked);

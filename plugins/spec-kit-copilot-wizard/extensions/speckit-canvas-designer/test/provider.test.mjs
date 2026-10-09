@@ -788,6 +788,35 @@ test("Generate accepts Constitution card and declared output destinations", asyn
     ]) {
         await assert.doesNotReject(freezeGeneration({ ...options, badges: [badge] }));
     }
+    const workflowEvidence = { ...global, inputs: {
+        artifact: { phase: "specify", output: "specs/<slug>/spec.md" },
+    } };
+    await assert.doesNotReject(freezeGeneration({ ...options, badges: [workflowEvidence] }));
+    for (const badge of [
+        { ...workflowEvidence, showIn: ["phase-card"], phase: "constitution" },
+        { ...workflowEvidence, targets: [{ phase: "constitution", output: null }] },
+        { ...workflowEvidence, targets: [{ phase: "constitution",
+            output: ".specify/memory/constitution.md" }] },
+        { ...workflowEvidence, targets: [
+            { phase: "constitution", output: null }, { phase: "specify", output: null },
+        ] },
+    ]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+            modelRevision: model.revision, revision: 0, values, outputs: model.outputs,
+            badges: [badge],
+        }), /project placement requires project-level rule inputs/);
+        await assert.rejects(freezeGeneration({ ...options, badges: [badge] }),
+            /project placement with workflow rule inputs/);
+    }
+    const phaseBadge = { ...global, type: "phase-run-complete",
+        inputs: { phase: "specify" }, text: "Phase run complete",
+        targets: [{ phase: "constitution", output: null }] };
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        modelRevision: model.revision, revision: 0, values, outputs: model.outputs,
+        badges: [phaseBadge],
+    }), /project placement requires project-level rule inputs/);
+    await assert.rejects(freezeGeneration({ ...options, badges: [phaseBadge] }),
+        /project placement with workflow rule inputs/);
     await assert.rejects(freezeGeneration({ ...options, badges: [{
         ...global, targets: [{ phase: "constitution", output: "undeclared.md" }],
     }] }),

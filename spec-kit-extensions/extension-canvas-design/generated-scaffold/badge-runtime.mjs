@@ -55,6 +55,7 @@ function validArtifact(value) {
 export function validateBadges(config, phases = []) {
     if (config === undefined) return;
     const phaseIds = phases.map((phase) => typeof phase === "string" ? phase : phase.id);
+    const projectPhase = phases.find((phase) => typeof phase !== "string" && phase.project)?.id;
     const declared = ({ phase, output }) => {
         const step = phases.find((entry) => typeof entry !== "string" && entry.id === phase);
         return phaseIds.includes(phase) && typeof output === "string"
@@ -172,6 +173,16 @@ export function validateBadges(config, phases = []) {
                 : instance.showIn.includes("phase-card")
                     && instance.phase !== instance.inputs[rule.placementPhaseInput].phase)) {
             throw new Error("Invalid generated badge phase-card destination");
+        }
+        if (projectPhase && (instance.targets?.some((target) => target.phase === projectPhase)
+            || instance.showIn.includes("phase-card") && instance.phase === projectPhase)
+            && rule.inputs.some(({ id, type: inputType }) => {
+                const value = instance.inputs[id];
+                return inputType !== "text" && (inputType === "phase" ? value !== projectPhase
+                    : Array.isArray(value) ? value.some((entry) => entry.phase !== projectPhase)
+                        : value.phase !== projectPhase);
+            })) {
+            throw new Error("Project badge placement requires project-level rule inputs");
         }
     }
 }

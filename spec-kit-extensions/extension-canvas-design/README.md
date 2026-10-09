@@ -303,6 +303,8 @@ evaluated once against project evidence, while Workflow summary still counts
 matching workflows, not the project card. The generated Workflow page owns
 the Constitution card (rather than the workflow phase control), so both the
 stock and adapted page render these project-level placements.
+Project card and output placements require every rule input to use Constitution
+evidence; use a workflow placement for inputs from Specify or later phases.
 Summary badges use their configured summary text, interpolating `{workflows}`
 with the aggregate count, including zero before any workflows exist. Older
 instances without `summaryText` retain the type title plus count; those without

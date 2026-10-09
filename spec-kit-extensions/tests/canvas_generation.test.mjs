@@ -505,6 +505,17 @@ test("selected badge definitions and evaluator are packaged without preset files
     await assert.rejects(materialize(project, workspace, handoff.handoffId,
         projectRequest.requestId), /Frozen Workflow page adapter does not support project badges/);
     await assert.rejects(readdir(join(project, projectRequest.target)), { code: "ENOENT" });
+    tampered.workflowPage.assets[3].content = Buffer.from(originalPage).toString("base64");
+    tampered.workflowPage.assets[3].hash = createHash("sha256").update(originalPage).digest("hex");
+    tampered.badges.instances[0].inputs.artifact = {
+        phase: "specify", output: "specs/<slug>/spec.md",
+    };
+    const { integrity: _badgeHash, ...badgePayload } = tampered;
+    tampered.integrity = createHash("sha256").update(JSON.stringify(badgePayload)).digest("hex");
+    await writeFile(projectPath, JSON.stringify(tampered));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId,
+        projectRequest.requestId), /project placement with workflow rule inputs/);
+    await assert.rejects(readdir(join(project, projectRequest.target)), { code: "ENOENT" });
     const browserOnly = `${originalPage}\nthrow new Error("Workflow page adapter ran in Node");\n`;
     await writeFile(pageAdapter.path, browserOnly);
     pageAdapter.hash = createHash("sha256").update(browserOnly).digest("hex");

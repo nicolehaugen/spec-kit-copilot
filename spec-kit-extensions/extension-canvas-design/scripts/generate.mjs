@@ -228,6 +228,8 @@ export function frozenBadges(badges, workflow) {
         }
     }
     const phaseOutputs = workflow.phaseArtifacts ?? {};
+    const projectPhase = workflow.selectedPhases.find((phase) =>
+        phase.replace(/^speckit\./, "") === "constitution");
     const declared = (source) => source && workflow.selectedPhases.includes(source.phase)
         && typeof source.output === "string"
         && phaseOutputs[source.phase]?.outputs?.includes(source.output);
@@ -314,6 +316,16 @@ export function frozenBadges(badges, workflow) {
                                 ["artifact", "artifact-set"].includes(input.type))
                                 || !declared(target)))))) {
             throw new Error(`Invalid configured badge: ${instance?.id ?? "unknown"}`);
+        }
+        if (projectPhase && (instance.targets?.some((target) => target.phase === projectPhase)
+            || instance.showIn.includes("phase-card") && instance.phase === projectPhase)
+            && rule.inputs.some(({ id, type: inputType }) => {
+                const value = instance.inputs[id];
+                return inputType !== "text" && (inputType === "phase" ? value !== projectPhase
+                    : Array.isArray(value) ? value.some((entry) => entry.phase !== projectPhase)
+                        : value.phase !== projectPhase);
+            })) {
+            throw new Error(`Badge ${instance.id} has a project placement with workflow rule inputs`);
         }
         ids.add(instance.id);
         const destinations = new Set(targets(instance).map(({ phase, output }) =>

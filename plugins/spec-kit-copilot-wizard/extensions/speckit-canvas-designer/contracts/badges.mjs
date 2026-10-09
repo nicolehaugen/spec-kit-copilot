@@ -12,6 +12,8 @@ export function validateBadges(badges, model) {
     const types = new Map((model.badgeTypes ?? []).map((type) => [type.id, type]));
     const rules = new Map((model.badgeRules ?? []).map((rule) => [rule.id, rule]));
     const phases = new Set(model.phases ?? []);
+    const projectPhase = [...phases].find((phase) =>
+        phase.replace(/^speckit\./, "") === "constitution");
     const outputs = model.outputs ?? {};
     const ids = new Set();
     const checked = [];
@@ -151,6 +153,16 @@ export function validateBadges(badges, model) {
                 : badge.showIn.includes("phase-card")
                     && badge.phase !== badge.inputs[rule.placementPhaseInput]?.phase)) {
             fail("Phase card must be on the output's target phase");
+        }
+        if (projectPhase && (badge.targets?.some((target) => target.phase === projectPhase)
+            || badge.showIn.includes("phase-card") && badge.phase === projectPhase)
+            && rule.inputs.some(({ id, type }) => {
+                const value = badge.inputs[id];
+                return type !== "text" && (type === "phase" ? value !== projectPhase
+                    : Array.isArray(value) ? value.some((entry) => entry.phase !== projectPhase)
+                        : value.phase !== projectPhase);
+            })) {
+            fail("project placement requires project-level rule inputs");
         }
         const validText = (value, placeholders) => typeof value === "string" && !!value.trim()
             && value.length <= 120 && !/[\x00-\x1f\x7f<>]/.test(value)
