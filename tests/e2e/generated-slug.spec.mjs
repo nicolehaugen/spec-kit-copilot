@@ -26,6 +26,20 @@ const workflowPage = { title, order, slots, badgeDestinations,
     placement: { page: "workflow", slot: "workflow.phases" }, viewLabels: {},
     controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter) };
 
+async function traceWorkflowCreation(page) {
+    await page.addInitScript(() => {
+        const original = window.fetch;
+        window.fetch = function (...args) {
+            if (String(args[0]).includes("/api/workflow/new"))
+                console.log("WORKFLOW_CREATE " + new Error().stack.replace(/\?token=[a-z0-9]+/gi, "?token=[redacted]"));
+            return original.apply(this, args);
+        };
+    });
+    page.on("console", (entry) => {
+        if (entry.text().startsWith("WORKFLOW_CREATE")) console.log(entry.text());
+    });
+}
+
 test("New workflow reports connecting before the first state refresh", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     let releaseState;
@@ -822,6 +836,7 @@ test("disabled custom slugs leave the artifact directory unresolved until Specif
 test("empty workflow list creates a numbered pending row without making a directory", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
+        await traceWorkflowCreation(page);
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-list")).toBeVisible();
         await expect(page.locator("#workflow-pipeline")).toBeVisible();
@@ -915,6 +930,7 @@ test("agent phase reply is reconciled from the fake session after a browser run"
 test("browser draft and in-flight run recover in a new host, while invalid run state is rejected", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify"]);
     try {
+        await traceWorkflowCreation(page);
         const skill = join(canvas.root, ".github", "skills", "speckit-specify");
         await mkdir(skill, { recursive: true });
         await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
