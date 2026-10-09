@@ -285,7 +285,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
     def test_all_json_contract_schemas_and_fixtures(self):
         kinds = (
             "designer.tab-definition",
-            "designer.setting-definition", "generated.added-page-definition",
+            "designer.setting-definition", "designer.badge-input-control",
+            "designer.badge-input-binding", "generated.added-page-definition",
             "generated.workflow-page-definition",
             "shared.control-definition", "generated.value-definition",
         )
@@ -298,6 +299,12 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 + preset_tabs,
             "designer.setting-definition": list(PACKAGE.glob("designer-host/essentials-settings/*.json"))
                 + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
+            "designer.badge-input-control": list(PACKAGE.glob(
+                "designer-host/badge-input-controls/*/control.json"))
+                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/control.json")),
+            "designer.badge-input-binding": list(PACKAGE.glob(
+                "designer-host/badge-input-controls/*/bindings/*.json"))
+                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/binding.json")),
             "generated.added-page-definition": preset_generated_pages,
             "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow-page/workflow.json"],
             "shared.control-definition": list(PACKAGE.glob("shared-controls/*/control.json"))
@@ -305,6 +312,9 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
         }
         self.assertTrue(all(fixtures.values()))
+        preset_badge = EXTENSIONS.parent / "spec-kit-presets/copilot-badge-input-test/designer"
+        self.assertIn(preset_badge / "control.json", fixtures["designer.badge-input-control"])
+        self.assertIn(preset_badge / "binding.json", fixtures["designer.badge-input-binding"])
         for manifest_path in (EXTENSIONS.parent / "spec-kit-presets").glob("*/preset.yml"):
             manifest = yaml.safe_load(manifest_path.read_text("utf-8"))
             for template in manifest.get("provides", {}).get("templates", []):
@@ -322,7 +332,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 doc = json.loads(path.read_text("utf-8"))
                 with self.subTest(kind=kind, path=str(path)):
                     validator.validate(doc)
-                    if path.is_relative_to(PACKAGE):
+                    if path.is_relative_to(PACKAGE) and kind != "designer.badge-input-binding":
                         self.assertEqual(doc["$schema"], os.path.relpath(
                             PACKAGE / "schemas" / f"{kind}.schema.json",
                             path.parent).replace("\\", "/"))

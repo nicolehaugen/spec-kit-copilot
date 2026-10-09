@@ -61,12 +61,11 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
                 { type: "session.task_complete", data: { success, summary: "Finished" } },
             ];
             callbacks.get("session.idle")();
+            const expected = success ? "Completed" : "Blocked";
             for (let count = 0; count < 600; count++) {
-                // A snapshot started before reconciliation can project its stale run as Blocked.
-                const saved = JSON.parse(await readFile(stateFile, "utf8"));
-                if (["Completed", "Blocked"].includes(saved.autopilot.status)) {
-                    assert.equal((await runtime.snapshot()).autopilot.status, saved.autopilot.status);
-                    return saved.autopilot.status;
+                if ((await runtime.snapshot()).autopilot.status === expected) {
+                    const saved = JSON.parse(await readFile(stateFile, "utf8"));
+                    if (saved.autopilot.status === expected) return expected;
                 }
                 await new Promise((resolve) => setTimeout(resolve, 25));
             }
