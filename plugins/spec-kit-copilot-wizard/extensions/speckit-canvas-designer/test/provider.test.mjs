@@ -434,6 +434,17 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
     const binding = templates.find((item) => item.name === "designer-badge-binding-value-match");
     await assert.rejects(load(templates.filter((item) => item !== binding)),
         /missing Designer badge input binding for value-match/);
+    const typeEntry = templates.find((item) => item.name === "badges-settings");
+    const typeBytes = await readFile(typeEntry.path, "utf8");
+    const disabledTypes = JSON.parse(typeBytes);
+    disabledTypes.types.find((item) => item.id === "value-match").enabled = false;
+    await writeFile(typeEntry.path, JSON.stringify(disabledTypes));
+    const withoutUnusedBinding = await load(templates.filter((item) => item !== binding));
+    assert.equal(withoutUnusedBinding.badgeInputControls.some((item) =>
+        item.rule === "value-match"), false);
+    assert.equal(withoutUnusedBinding.badgeTypes.find((item) =>
+        item.id === "value-match").enabled, false);
+    await writeFile(typeEntry.path, typeBytes);
     const control = templates.find((item) => item.name === "designer-badge-input-stock");
     await assert.rejects(load(templates.filter((item) => item !== control)),
         /missing Designer badge input control stock.badge-inputs/);

@@ -358,7 +358,10 @@ register a custom JSON definition, adapter, and rule binding without editing
 the Badges tab. Add the three named templates to the composed
 `load-page` command with strategy `replace`; use the existing Specify template
 precedence for replacements. Missing controls or evaluators and disabled types
-do not fall back to other implementations. The binding and Designer adapter
+do not fall back to other implementations. A rule with no enabled type needs
+no Designer binding, but any binding that remains must resolve its control and
+adapter. Saved badges still fail validation when their type or editor is
+unavailable. The binding and Designer adapter
 are **not** packaged in the generated app. The rule's `before` refers to
 another declared input, not to a package dependency.
 The generated Workflow page advertises its supported badge destinations

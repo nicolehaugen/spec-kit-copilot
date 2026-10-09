@@ -44,7 +44,11 @@ export function resolveBadgeInputControls(loaded, types, rules) {
     unique(bindings, "rule", "badge rule/control binding");
     unique(controls, "adapter", "badge input adapter assignment");
     const resolved = [];
-    for (const rule of rules) {
+    const requiredRules = new Set([
+        ...bindings.map((binding) => binding.document.rule),
+        ...types.filter((type) => type.document.enabled).map((type) => type.document.rule),
+    ]);
+    for (const rule of rules.filter((entry) => requiredRules.has(entry.document.id))) {
         const binding = bindings.find((item) => item.document.rule === rule.document.id);
         if (!binding) throw new Error(`${rule.name}: missing Designer badge input binding for ${rule.document.id}`);
         const control = controls.find((item) => item.document.id === binding.document.control);
@@ -75,7 +79,7 @@ export function resolveBadgeInputControls(loaded, types, rules) {
             throw new Error(`${adapter.name}: unreferenced Designer badge input adapter`);
         }
     }
-    for (const type of types) {
+    for (const type of types.filter((entry) => entry.document.enabled)) {
         if (!resolved.some((entry) => entry.rule === type.document.rule)) {
             throw new Error(`${type.name}: missing badge input control for ${type.document.rule}`);
         }
