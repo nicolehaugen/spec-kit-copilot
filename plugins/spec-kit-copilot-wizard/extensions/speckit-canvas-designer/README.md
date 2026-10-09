@@ -18,8 +18,8 @@ independently packaged and validates request integrity with its own
 The browser's matching mount, readiness, and draft-change rules live in
 `ui/control-adapter-contract.js`, served with the provider rather than loaded
 from a preset.
-The browser-safe `ui/generated-output-state.js` defines status, reveal, Open,
-and error response shapes shared by the server and browser. Reveal responds
+The browser-safe `ui/generated-output-state.js` defines status, reveal, Generate,
+Open, and error response shapes shared by the server and browser. Reveal responds
 with the folder actually opened: the extensions parent before generation, or
 the verified canvas target once present.
 The browser and provider import the same `ui/generation-state.js` definitions
@@ -209,9 +209,9 @@ enabled fields, then freezes and dispatches a file-creation-only request to the
 child-session agent. A brief **Submitting...** lock ends when dispatch finishes;
 the Designer stays editable while creation continues. An authenticated output
 status check verifies the matching config, provenance, and final entry point
-before reporting **Canvas files created.** An in-flight request cannot be
-dispatched twice. If an agent attempt fails or remains uncertain, inspect the
-child-session chat; close and reopen Designer before retrying a stalled request.
+before reporting **Canvas files created.** A second click during submission is
+blocked, but Generate can dispatch again while awaiting the child-session agent
+if its first attempt stalls. Inspect the child-session chat before retrying.
 Reopening starts with template defaults while retaining the saved revision.
 Generation requires both separate Generate and Open skills and a complete
 Wizard handoff; a hosted package with only the older combined Generate command

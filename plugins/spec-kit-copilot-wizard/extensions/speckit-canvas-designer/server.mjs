@@ -13,7 +13,7 @@ import { SAVE_REQUEST_LIMIT, SETTINGS_LIMIT, initialOutputs,
 import { freezeGeneration, generationBlockers, readCurrentInstalledVersions } from "./generation.mjs";
 import { generatedOutput, validateOutputAction } from "./contracts/generated-output.mjs";
 import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse,
-    validateOutputError } from "./ui/generated-output-state.js";
+    validateOutputError, validateGenerateResponse } from "./ui/generated-output-state.js";
 
 export function shellHtml() {
     return `<!doctype html>
@@ -113,8 +113,6 @@ export async function startShell(handoff = null, model = null,
     const skillAvailable = generateSkillAvailable && openSkillAvailable;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
         ? generateSkillAvailable ? SPLIT_UNAVAILABLE : GENERATE_UNAVAILABLE : null;
-    let queuedCanvasId = null;
-    let queuedRequestId = null;
     const state = async () => {
         const availability = generationAvailability(generating, false);
         return { ...model, badges: model?.badges ?? [],
@@ -287,16 +285,6 @@ export async function startShell(handoff = null, model = null,
             }
             generating = true;
             try {
-                if (queuedCanvasId) {
-                    const prior = await generatedOutput(project, queuedCanvasId, handoff.handoffId);
-                    if (prior.requestId !== queuedRequestId) {
-                        res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
-                            .end(JSON.stringify({ error: `${GENERATION_PENDING}. Check the child-session chat; if generation failed, close and reopen Designer before retrying.` }));
-                        return;
-                    }
-                    queuedCanvasId = null;
-                    queuedRequestId = null;
-                }
                 if (req.headers.origin && req.headers.origin !== `http://127.0.0.1:${server.address().port}`) {
                     throw new Error("Untrusted generation request origin");
                 }
@@ -362,18 +350,16 @@ export async function startShell(handoff = null, model = null,
                     runtimeInventory = { presets: [], extensions: [], bundles: [] };
                     inventoryWarning = `Could not read the installed Specify packages: ${error.message}. Generated package versions will be marked unverified.`;
                 }
-                const result = await freezeGeneration({ model: current, values: input.values,
+                const result = validateGenerateResponse(await freezeGeneration({ model: current, values: input.values,
                     outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs,
                     badges: Object.hasOwn(input, "badges") ? input.badges : current.badges,
                     handoff, project, workspace, runtimeInventory, inventoryWarning,
-                    replaceExisting: input.replaceExisting === true });
+                    replaceExisting: input.replaceExisting === true }), input.values["canvas.id"]);
                 try {
                     await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". ${input.replaceExisting === true ? `The user explicitly confirmed replacing the existing same-handoff canvas folder, including manual edits, with prior requestId "${input.replaceRequestId}"; pass --replace-existing=${input.replaceRequestId} to the generator and stop if the prior request changed.` : "Do not replace any existing target."} Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report file creation or the exact failure to the user; do not reload extensions or open the canvas.` });
                 } catch (cause) {
                     throw new Error(`Generation dispatch failed: ${cause.message}`, { cause });
                 }
-                queuedCanvasId = input.values["canvas.id"];
-                queuedRequestId = result.requestId;
                 res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify(result));
             } catch (error) {

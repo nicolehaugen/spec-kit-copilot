@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
+import { materialize, readBoundedSessionFile, renameDirectoryWithoutReplacement } from "../extension-canvas-design/scripts/generate.mjs";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture } from "./designer_adapter_fixture.mjs";
@@ -56,6 +56,22 @@ async function fixture(t) {
         materialize(project, workspace, handoff.handoffId, next.requestId, replaceExisting);
     return { project, workspace, sdk, first, next, regenerate };
 }
+
+test("directory publication refuses occupied empty targets without losing either directory", async (t) => {
+    const root = await mkdtemp(join(process.cwd(), ".guarded-publication-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const staged = join(root, "staged"), output = join(root, "canvas");
+    await mkdir(staged);
+    await writeFile(join(staged, "extension.mjs"), "export {};");
+    await mkdir(output);
+    await assert.rejects(renameDirectoryWithoutReplacement(staged, output),
+        /EEXIST|EPERM|EACCES/);
+    assert.deepEqual(await readdir(output), []);
+    assert.equal(await readFile(join(staged, "extension.mjs"), "utf8"), "export {};");
+    await rm(output, { recursive: true });
+    await renameDirectoryWithoutReplacement(staged, output);
+    assert.equal(await readFile(join(output, "extension.mjs"), "utf8"), "export {};");
+});
 
 test("replacement requires explicit confirmation and preserves the old app on cancellation", async (t) => {
     const { sdk, first, regenerate } = await fixture(t);

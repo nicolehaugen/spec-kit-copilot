@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { generatedOutput, readGeneratedJson, validateOutputAction } from "../contracts/generated-output.mjs";
-import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse,
+import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse, validateGenerateResponse,
     validateOutputError } from "../ui/generated-output-state.js";
 
 test("generated output response contract accepts matching status, folder and Open exchanges", () => {
@@ -20,6 +20,10 @@ test("generated output response contract accepts matching status, folder and Ope
     assert.deepEqual(validateRevealResponse({ target }, id), { target });
     assert.deepEqual(validateOpenResponse({ status: "opening", target }, id),
         { status: "opening", target });
+    assert.deepEqual(validateGenerateResponse({ target, requestId: "request-1" }, id),
+        { target, requestId: "request-1" });
+    assert.deepEqual(validateGenerateResponse({ target, requestId: "request_2", warnings: ["Version drift"] }, id),
+        { target, requestId: "request_2", warnings: ["Version drift"] });
     assert.deepEqual(validateOutputError({ error: "Cannot open canvas" }),
         { error: "Cannot open canvas" });
 });
@@ -46,6 +50,14 @@ test("generated output response contract rejects incompatible host responses", (
         { status: "opening", target: ".github/extensions/other/" }]) {
         assert.throws(() => validateOpenResponse(response, id),
             /Invalid generated canvas opening response/);
+    }
+    for (const response of [{ target }, { target, requestId: "../escape" },
+        { target: ".github/extensions/other/", requestId: "request-1" },
+        { target, requestId: "request-1", warnings: "Wrong type" },
+        { target, requestId: "request-1", warnings: [null] },
+        { target, requestId: "request-1", extra: true }]) {
+        assert.throws(() => validateGenerateResponse(response, id),
+            /Invalid generated canvas submission response/);
     }
     for (const response of [{}, { error: "" }, { error: "failure", status: 500 }]) {
         assert.throws(() => validateOutputError(response),

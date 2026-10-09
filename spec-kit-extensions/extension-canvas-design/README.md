@@ -620,7 +620,8 @@ loopback HTTP server with open/close lifecycle handling. Generation does not cal
 `create-canvas` or rewrite an SDK scaffold. It stages and validates the completed extension before moving it into place.
 An existing target stops generation unless the Designer confirms a recognizable
 same-handoff target and passes its prior request ID; confirmed regeneration
-replaces that folder, including manual edits, with rollback on failure.
+replaces that folder, including manual edits, with rollback on failure. Publishing
+and rollback refuse an occupied destination, including an empty directory.
 Designer saves settings before dispatching Generate, then restores editing
 after the bounded submission. The entry point is written only after syntax
 and render validation succeeds. Generate does not reload or open the canvas.

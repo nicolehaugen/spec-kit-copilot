@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validControlContract, validControlValue } from "../generated-scaffold/control-contract.mjs";
@@ -25,6 +25,36 @@ const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided", "setup.show"]);
+
+export async function renameDirectoryWithoutReplacement(source, destination) {
+    if (process.platform === "win32") {
+        await rename(source, destination);
+        return;
+    }
+    // POSIX rename replaces an existing empty directory; reserve the destination first.
+    await mkdir(destination);
+    const claim = await lstat(destination);
+    try {
+        const current = await lstat(destination);
+        if (current.dev !== claim.dev || current.ino !== claim.ino
+            || !current.isDirectory() || current.isSymbolicLink()) {
+            throw new Error("Canvas destination changed before publication");
+        }
+        await rename(source, destination);
+    } catch (error) {
+        const current = await lstat(destination).catch((readError) => {
+            if (readError.code === "ENOENT") return null;
+            throw readError;
+        });
+        if (current?.dev === claim.dev && current.ino === claim.ino) {
+            try { await rmdir(destination); }
+            catch (cleanup) {
+                throw new AggregateError([error, cleanup], "Canvas destination could not be released");
+            }
+        }
+        throw error;
+    }
+}
 
 function withoutSchema(document) {
     if (!document || typeof document !== "object" || Array.isArray(document)) return document;
@@ -1700,7 +1730,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
             }
             // Windows can briefly retain handles from the renderer subprocess after exit.
             for (let attempt = 0; ; attempt++) {
-                try { await rename(target, output); break; }
+                try { await renameDirectoryWithoutReplacement(target, output); break; }
                 catch (error) {
                     if (process.platform !== "win32" || error.code !== "EPERM" || attempt >= 5) throw error;
                     await new Promise((done) => setTimeout(done, 100 * (attempt + 1)));
@@ -1709,12 +1739,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         } catch (error) {
             if (moved) {
                 try {
-                    const destination = await lstat(output).catch((readError) => {
-                        if (readError.code === "ENOENT") return null;
-                        throw readError;
-                    });
-                    if (destination) throw new Error("Replacement destination was occupied during rollback");
-                    await rename(backup, output);
+                    await renameDirectoryWithoutReplacement(backup, output);
                 }
                 catch (rollback) {
                     throw new AggregateError([error, rollback],
@@ -1732,7 +1757,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
     } else {
         try { await lstat(output); throw new Error(`Canvas extension already exists: ${output}`); }
         catch (error) { if (error.code !== "ENOENT") throw error; }
-        await rename(target, output);
+        await renameDirectoryWithoutReplacement(target, output);
     }
     return { target: request.target, canvasId: config.canvas.id, warnings };
     } finally {

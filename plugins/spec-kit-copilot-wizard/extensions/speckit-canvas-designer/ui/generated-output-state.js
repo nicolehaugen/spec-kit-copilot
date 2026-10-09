@@ -47,6 +47,19 @@ export function validateOpenResponse(value, id) {
     return value;
 }
 
+export function validateGenerateResponse(value, id) {
+    if (!exactKeys(value, value?.warnings === undefined
+        ? ["target", "requestId"] : ["target", "requestId", "warnings"])
+        || value.target !== outputTarget(id)
+        || typeof value.requestId !== "string" || !requestPattern.test(value.requestId)
+        || (value.warnings !== undefined
+            && (!Array.isArray(value.warnings)
+                || value.warnings.some((warning) => typeof warning !== "string" || !warning.trim())))) {
+        throw new Error("Invalid generated canvas submission response");
+    }
+    return value;
+}
+
 export function validateOutputError(value) {
     if (!exactKeys(value, ["error"])
         || typeof value.error !== "string" || !value.error.trim()) {

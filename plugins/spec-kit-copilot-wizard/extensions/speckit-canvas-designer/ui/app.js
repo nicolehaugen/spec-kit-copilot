@@ -2,7 +2,7 @@ const token = new URL(location.href).searchParams.get("token");
 const { GENERATION_PENDING, GENERATION_EXISTS } = await import(
     `/ui/generation-state.js?token=${encodeURIComponent(token)}`);
 const { validateCanvasId, validateOutputStatusResponse, validateRevealResponse,
-    validateOpenResponse, validateOutputError } = await import(
+    validateOpenResponse, validateGenerateResponse, validateOutputError } = await import(
     `/ui/generated-output-state.js?token=${encodeURIComponent(token)}`);
 let mountIdentity, mountOutputs, mountBadges, adapterContract;
 const root = document.getElementById("settings-page");
@@ -145,7 +145,7 @@ function updateGenerate() {
         : missingIdentity ? "Cannot generate: Essentials must contain Canvas ID and Title."
             : "";
     const expectedState = reason === GENERATION_PENDING;
-    if (!requestedCanvasId && !generating)
+    if (!requestedCanvasId && !generating && !connectionError)
         setMessage(generationNote, expectedState ? reason : "");
     setMessage(generationError, expectedState ? "" : reason);
     generate.textContent = generating ? "Submitting..." : outputIdentity === (draft?.["canvas.id"] ?? "")
@@ -225,13 +225,9 @@ generate.addEventListener("click", async () => {
                 ...(replaceExisting ? { replaceExisting: true, replaceRequestId: priorRequestId } : {}),
                 ...(providers.length ? { approvedProviders: providers } : {}) }),
         });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error ?? `Generation failed (${response.status})`);
-        if (result.target !== `.github/extensions/${submittedId}/`
-            || typeof result.requestId !== "string"
-            || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(result.requestId)) {
-            throw new Error("Invalid generated canvas submission response");
-        }
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? `Generation failed (${response.status})`);
+        const result = validateGenerateResponse(body, submittedId);
         if (result.warnings?.length) {
             setMessage(messageBox, `Warning: ${result.warnings.join(" ")}`);
         }

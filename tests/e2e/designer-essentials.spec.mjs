@@ -126,6 +126,19 @@ const stock = [{ id: "canvas.description", label: "Description" },
     { id: "canvas.workflowListName", label: "Workflow header" },
     { id: "workflowSlug.userProvided", label: "Allow custom slug", type: "boolean" }];
 
+test("incompatible Generate response reports an error without recording a request", async ({ page }) => {
+    await openDesigner(page, core);
+    await page.route("**/api/generate?*", (route) => route.fulfill({ status: 202,
+        json: { target: ".github/extensions/broken-response/", requestId: "request-1",
+            warnings: "Wrong type" } }));
+    await page.getByRole("textbox", { name: /Canvas ID/ }).fill("broken-response");
+    await page.getByRole("textbox", { name: /Title/ }).fill("Broken response");
+    await generateFromTab(page);
+    await expect(page.locator("#page-error")).toHaveText("Invalid generated canvas submission response");
+    await expect(page.locator("#generation-status")).toHaveText("Not generated");
+    await expect(page.locator("#generate-canvas")).toBeEnabled();
+});
+
 test("Generate remains creating files and displays installed-version warnings", async ({ page }) => {
     const warning = `presets ${subAgents.id}: Wizard version ${subAgents.version}, installed version unverified.`;
     const requests = await openDesigner(page, core, undefined,

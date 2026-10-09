@@ -2866,7 +2866,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.match(prompts[1], new RegExp(`--replace-existing=${generated.requestId}`));
 });
 
-test("Generate accepts another Canvas ID only after matching files and provenance exist", async (t) => {
+test("Generate retries while a child request is pending and still protects existing output", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
@@ -2896,10 +2896,11 @@ test("Generate accepts another Canvas ID only after matching files and provenanc
     const firstResult = await post(first);
     assert.equal(firstResult.status, 202);
     const { requestId } = await firstResult.json();
-    assert.equal((await post(second)).status, 409);
+    assert.equal((await post(first)).status, 202);
+    assert.equal((await post(second)).status, 202);
     const target = join(project, ".github", "extensions", "first-canvas");
     await mkdir(target, { recursive: true });
-    assert.equal((await post(second)).status, 409);
+    assert.equal((await post(second)).status, 202);
     assert.equal((await (await fetch(stateUrl)).json()).generationAvailable, true);
     await writeFile(join(target, "extension.mjs"), "export {};\n");
     await writeFile(join(target, "canvas-config.json"),
@@ -2917,8 +2918,8 @@ test("Generate accepts another Canvas ID only after matching files and provenanc
     assert.equal(saved.status, 200);
     assert.equal((await saved.json()).generationAvailable, true);
     assert.equal((await post(second, 1)).status, 202);
-    assert.equal(prompts.length, 2);
-    assert.equal((await post(second, 1)).status, 409);
+    assert.equal((await post(second, 1)).status, 202);
+    assert.equal(prompts.length, 6);
 });
 
 test("output status, folder reveal and Open enforce the same generated identity", async (t) => {

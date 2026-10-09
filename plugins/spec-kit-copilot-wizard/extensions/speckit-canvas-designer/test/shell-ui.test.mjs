@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { GENERATION_EXISTS, GENERATION_PENDING } from "../ui/generation-state.js";
-import { validateCanvasId, validateOutputStatusResponse,
+import { validateCanvasId, validateOutputStatusResponse, validateGenerateResponse,
     validateOutputError } from "../ui/generated-output-state.js";
 
 const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
@@ -172,6 +172,7 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
         outputStatus: "absent", requestedRequestId: null,
         GENERATION_EXISTS,
         generating: false, status: {}, messageBox: {}, checkReady: () => true,
+        validateGenerateResponse,
         showError: () => {}, updateSave: () => {},
         refreshOutputStatus: async () => ({ status: "absent", requestId: null }),
         updateOutputDisplay: () => {},
@@ -420,7 +421,7 @@ test("Generate stays reachable after files are created and shows Regenerate", ()
     const draft = { "canvas.id": "first-canvas" };
     const context = {
         model, draft, draftOutputs: {}, generate, openGenerated, generationNote, generationError,
-        saving: false, generating: false, opening: false, openingRequested: false,
+        saving: false, generating: false, opening: false, openingRequested: false, connectionError: "",
         requestedCanvasId: "first-canvas", requestedRequestId: "request-1",
         outputIdentity: "first-canvas", outputStatus: "ready", outputRequestId: "request-1",
         activeUploads: new Set(), GENERATION_PENDING,
@@ -487,19 +488,25 @@ test("a missing Generate capability cannot be bypassed by changing an existing C
     const openGenerated = { disabled: false };
     const generationError = { textContent: "" };
     const generationNote = { textContent: "" };
-    const update = runInNewContext(`${source.slice(start, end)}
-updateGenerate`, {
+    const context = {
         model, draft, draftOutputs: {}, generate, openGenerated, generationNote, generationError,
-        saving: false, generating: false, opening: false, openingRequested: false, requestedCanvasId: null,
+        saving: false, generating: false, opening: false, openingRequested: false,
+        connectionError: "", requestedCanvasId: null,
         outputIdentity: "", outputStatus: "absent", requestedRequestId: null,
         outputRequestId: null, activeUploads: new Set(), GENERATION_PENDING,
         outputPathsReady: () => true, updateOutputDisplay: () => {}, updateOpenStatus: () => {},
         setMessage: (slot, text) => { slot.textContent = text; },
         required: ["canvas.id", "canvas.displayName"],
-    });
+    };
+    const update = runInNewContext(`${source.slice(start, end)}
+updateGenerate`, context);
     update();
     assert.equal(generate.disabled, true);
     assert.equal(generationError.textContent, unavailable);
+    context.connectionError = "Designer connection interrupted";
+    generationNote.textContent = context.connectionError;
+    update();
+    assert.equal(generationNote.textContent, context.connectionError);
     draft["canvas.id"] = "unique";
     update();
     assert.equal(generate.disabled, true);
