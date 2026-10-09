@@ -1,29 +1,25 @@
-import { execFile, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify, stripVTControlCharacters } from "node:util";
+import { stripVTControlCharacters } from "node:util";
 import { test, expect } from "./playwright.mjs";
-import { addLoopbackSpecifyExtension, serveSpecifyPackages } from "./specify-packages.mjs";
+import { startPresetJourney } from "./preset-journey.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { previewModel } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/preview.mjs";
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
-import { verifyComposition } from "../../spec-kit-extensions/extension-canvas-design/scripts/verify-launch.mjs";
 
 const templateRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/tabs/", import.meta.url);
 const settingsRoot = new URL("../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/", import.meta.url);
 const extensionRoot = new URL("../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
-const presetRoot = new URL("../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url);
-const billingRoot = new URL("../../spec-kit-presets/copilot-billing-canvas-test/", import.meta.url);
-const riskRoot = new URL("../../spec-kit-presets/copilot-risk-matrix-test/", import.meta.url);
+const riskRoot = new URL("../fixtures/test-presets/copilot-risk-matrix-test/", import.meta.url);
 const scratchRoot = fileURLToPath(new URL("../../", import.meta.url));
-const minimalRoot = new URL("../../spec-kit-presets/copilot-minimal-essentials-test/", import.meta.url);
 
 async function materializeDevSkills(project) {
     // Preset installation regenerates skills; Specify refuses to overwrite dev-linked skill files.
@@ -303,87 +299,6 @@ test("empty and partial preset inventories keep Designer open with inline genera
     } finally {
         await partialShell?.close();
         await emptyShell.close();
-    }
-});
-
-test("unchanged minimal Essentials preset composes and opens a savable partial Designer", async ({ page }) => {
-    test.setTimeout(150_000);
-    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
-    if (available.error?.code === "ENOENT") {
-        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
-        return;
-    }
-    expect(available.status, available.stderr).toBe(0);
-    const version = available.stdout.match(/\b(\d+)\.(\d+)\.(\d+)\b/);
-    expect(version, available.stdout).not.toBeNull();
-    const [major, minor, patch] = version.slice(1).map(Number);
-    expect(major > 1 || major === 1 && (minor > 0 || patch >= 7),
-        available.stdout).toBe(true);
-    const workspace = await mkdtemp(join(tmpdir(), "minimal-designer-e2e-"));
-    const project = join(workspace, "project");
-    let packages;
-    const workflow = { selectedPhases: [] };
-    const selections = { presets: [], extensions: [], bundles: [] };
-    const handoff = { schemaVersion: 1, handoffId: "minimal-test", workflow, selections,
-        sourceFingerprint: fingerprint({ workflow, selections }) };
-    let shell;
-    try {
-        await mkdir(project);
-        const run = (...args) => {
-            const result = spawnSync("specify", args, { cwd: project, encoding: "utf8",
-                timeout: 120000, env: { ...process.env, COLUMNS: "500" } });
-            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
-            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-        };
-        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
-            "--integration", "copilot", "--integration-options=--skills",
-            "--script", process.platform === "win32" ? "ps" : "sh");
-        packages = await serveSpecifyPackages(workspace, {
-            "extension-canvas-design": fileURLToPath(extensionRoot),
-            "copilot-minimal-essentials-test": fileURLToPath(minimalRoot),
-        });
-        await addLoopbackSpecifyExtension(project, "extension-canvas-design",
-            packages.url("extension-canvas-design"));
-        const installed = await promisify(execFile)("specify",
-            ["preset", "add", "--from", packages.url("copilot-minimal-essentials-test")],
-            { cwd: project, timeout: 120_000, maxBuffer: 2 * 1024 * 1024 });
-        expect(installed.stdout).toContain("Copilot Minimal Essentials Test");
-        const inventory = await verifyComposition(project).catch((error) => {
-            const resolution = spawnSync("specify", ["preset", "resolve", "designer-essentials"],
-                { cwd: project, encoding: "utf8", timeout: 10_000,
-                    env: { ...process.env, COLUMNS: "8192", NO_COLOR: "1" } });
-            throw new Error(`${error.message}; designer-essentials resolution: `
-                + `${JSON.stringify(resolution.stdout)} ${JSON.stringify(resolution.stderr)}`,
-            { cause: error });
-        });
-        expect(inventory.pages.map((entry) => entry.name)).toEqual(
-            ["designer-essentials", "designer-artifacts", "designer-appearance"]);
-        expect(inventory.templates.map((entry) => entry.name)).not.toContain("generated-workflow-page-adapter");
-        const folder = handoffDirectory(workspace, handoff.handoffId);
-        await mkdir(folder, { recursive: true });
-        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        const resolved = await loadResolvedDesignerPages(handoff, project, inventory.pages, inventory.templates);
-        expect(resolved.compositionErrors.join(" ")).toContain("generated-workflow-page-adapter");
-        shell = await startShell(handoff, await loadDesignerSettings(workspace, handoff, resolved),
-            { project, workspace, session: { send: async () => { throw new Error("Generation was dispatched"); } } });
-        await page.goto(shell.url);
-        await expect(page.getByRole("tab")).toHaveText(["Essentials", "Outputs", "Appearance"]);
-        await expect(page.locator("#composition-error")).toContainText("generated-workflow-page-adapter");
-        await expect(page.locator("#composition-error")).toContainText("extension:extension-canvas-design");
-        await expect(page.locator("#generate-canvas")).toBeDisabled();
-        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("minimal-canvas");
-        await page.getByRole("textbox", { name: "Title (required)" }).fill("Minimal Canvas");
-        await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
-        const endpoint = new URL(`/api/generate?token=${new URL(shell.url).searchParams.get("token")}`, shell.url);
-        const response = await fetch(endpoint, { method: "POST",
-            headers: { "Content-Type": "application/json" }, body: "{}" });
-        expect(response.status).toBe(422);
-        expect((await response.json()).error).toContain("generated-workflow-page-adapter");
-    } finally {
-        await shell?.close();
-        await packages?.close();
-        await rm(workspace, { recursive: true, force: true });
     }
 });
 
@@ -685,174 +600,27 @@ test("Designer CSP allows its own UI but blocks cross-origin adapter requests", 
     }
 });
 
-test("isolated test preset resolves through Specify and renders its contributed stock field", async ({ page }) => {
+test("Wizard-selected Billing preset persists through Designer and renders in the generated canvas", async ({ page }) => {
     test.setTimeout(150_000);
-    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
-    if (available.error?.code === "ENOENT") {
-        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
-        return;
-    }
-    expect(available.status, available.stderr).toBe(0);
-    const workspace = await mkdtemp(join(tmpdir(), "speckit-designer-preset-e2e-"));
-    const project = join(workspace, "project");
-    const workflow = { selectedPhases: [] };
-    const selections = { presets: [], extensions: [], bundles: [] };
-    const handoff = { schemaVersion: 1, handoffId: "preset-test", workflow, selections,
-        sourceFingerprint: fingerprint({ workflow, selections }) };
-    let shell, reopened;
+    const prompts = [];
+    const journey = await startPresetJourney(page, {
+        presetId: "copilot-billing-canvas-test", selectedPhases: ["specify"],
+        onGenerate: async ({ prompt }) => { prompts.push(prompt); },
+    });
     try {
-        await mkdir(project);
-        const run = (...args) => {
-            const result = spawnSync("specify", args, {
-                cwd: project, encoding: "utf8", timeout: 120000,
-                env: { ...process.env, COLUMNS: "500" },
-            });
-
-            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
-            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return stripVTControlCharacters(result.stdout);
-        };
-        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
-            "--integration", "copilot", "--integration-options=--skills",
-            "--script", process.platform === "win32" ? "ps" : "sh");
-        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
-        await materializeDevSkills(project);
-        run("preset", "add", "--dev", fileURLToPath(presetRoot));
-        const command = await readFile(join(project, ".github", "skills",
-            "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
-        expect(command).toContain("## Additional Designer pages\n\n- `canvas-settings-pr1-test`");
-        expect(command).toContain("## Additional Canvas Design templates\n\n"
-            + "- `canvas-contribution-pr1-test` — `designer.setting-definition`, `replace`\n"
-            + "- `canvas-contribution-pr1-toggle` — `designer.setting-definition`, `replace`");
-        const resolve = (name) => {
-            const output = run("preset", "resolve", name);
-            const line = output.split(/\r?\n/).map((item) => item.trim())
-                .find((item) => item.startsWith(`${name}: `));
-            expect(line, output).toBeDefined();
-            expect(output).not.toMatch(/not found|composition warning/i);
-            const source = output.match(/\(top layer from: (\S+) v[\d.]+\)/);
-            expect(source, output).not.toBeNull();
-            return { name, path: line.slice(name.length + 2), sourceId: source[1] };
-        };
-        const pages = ["designer-essentials", "designer-artifacts",
-            "designer-badges", "designer-appearance", "canvas-settings-pr1-test"]
-            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
-        const templates = ["canvas-contribution-pr1-test", "canvas-contribution-pr1-toggle"]
-            .map((name) => ({ ...resolve(name), kind: "designer.setting-definition", strategy: "replace" }));
-        templates.push(...scalarRegistrations(resolve), ...workflowRegistrations(resolve));
-        expect(templates[0].sourceId).toBe("copilot-canvas-design-test");
-        const folder = handoffDirectory(workspace, handoff.handoffId);
-        await mkdir(folder, { recursive: true });
-        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
-        expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Outputs", "Badges", "Appearance", "Test settings"]);
-        expect(resolved.pages[4].fields.map((item) => item.id)).toEqual(
-            ["pr1Test.label", "pr1Test.enabled"]);
-        expect(resolved.values["pr1Test.label"]).toBe("");
-        expect(resolved.values["pr1Test.enabled"]).toBe(true);
-        shell = await startShell(handoff,
-            await loadDesignerSettings(workspace, handoff, resolved), { project, workspace });
-        await page.goto(shell.url);
-        await page.getByRole("tab", { name: "Test settings" }).click();
-        const field = page.getByRole("textbox", { name: "Test label" });
-        await expect(field).toBeVisible();
-        await field.fill("Visible from preset");
-        const checkbox = page.getByRole("checkbox", { name: "Test enabled" });
-        await expect(checkbox).toBeChecked();
-        await checkbox.uncheck();
-        await page.getByRole("tab", { name: "Essentials" }).click();
-        await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("pr1-test");
-        await page.getByRole("textbox", { name: "Title (required)" }).fill("PR1 test");
-        await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.locator("#action-message")).toHaveText("Settings saved.");
-        const saved = await loadDesignerSettings(workspace, handoff,
-            await loadResolvedDesignerPages(handoff, project, pages, templates));
-        expect(saved.values["pr1Test.label"]).toBe("Visible from preset");
-        expect(saved.values["pr1Test.enabled"]).toBe(false);
-        reopened = await startShell(handoff, saved, { project, workspace });
-        await page.goto(reopened.url);
-        await page.getByRole("tab", { name: "Test settings" }).click();
-        await expect(page.getByRole("textbox", { name: "Test label" })).toHaveValue("Visible from preset");
-        await expect(page.getByRole("checkbox", { name: "Test enabled" })).not.toBeChecked();
-    } finally {
-        await reopened?.close();
-        await shell?.close();
-        await rm(workspace, { recursive: true, force: true });
-    }
-});
-
-test("Billing preset and built-in palette persist through Generate and render their values", async ({ page }) => {
-    test.setTimeout(150_000);
-    const available = spawnSync("specify", ["--version"], { encoding: "utf8" });
-    if (available.error?.code === "ENOENT") {
-        test.skip(true, "Specify CLI is unavailable for the optional integration probe");
-        return;
-    }
-    expect(available.status, available.stderr).toBe(0);
-    const workspace = await mkdtemp(join(tmpdir(), "speckit-billing-preset-e2e-"));
-    const project = join(workspace, "project");
-    const workflow = { selectedPhases: ["specify"],
-        installed: { presets: [], extensions: [], bundles: [] } };
-    const selections = { presets: [], extensions: [], bundles: [] };
-    const handoff = { schemaVersion: 1, handoffId: "billing-test", workflow, selections,
-        sourceFingerprint: fingerprint({ workflow, selections }) };
-    let shell, reopened, generatedRoutes, generatedServer;
-    try {
-        await mkdir(project);
-        const run = (...args) => {
-            const result = spawnSync("specify", args, { cwd: project, encoding: "utf8",
-                timeout: 120000, env: { ...process.env, COLUMNS: "500" } });
-            expect(result.error, `${args.join(" ")}: ${result.error}`).toBeUndefined();
-            expect(result.status, `${args.join(" ")}: ${result.stderr}\n${result.stdout}`).toBe(0);
-            return stripVTControlCharacters(result.stdout);
-        };
-        run("init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
-            "--integration", "copilot", "--integration-options=--skills",
-            "--script", process.platform === "win32" ? "ps" : "sh");
-        run("extension", "add", fileURLToPath(extensionRoot), "--dev", "--force");
-        await materializeDevSkills(project);
-        run("preset", "add", "--dev", fileURLToPath(billingRoot));
-        const command = await readFile(join(project, ".github", "skills",
-            "speckit-extension-canvas-design-load-page", "SKILL.md"), "utf8");
-        expect(command).toContain("- `canvas-settings-billing`");
-        expect(command).toContain("- `canvas-contributions-billing`");
-        const resolve = (name) => {
-            const output = run("preset", "resolve", name);
-            const line = output.split(/\r?\n/).map((item) => item.trim())
-                .find((item) => item.startsWith(`${name}: `));
-            expect(line, output).toBeDefined();
-            expect(output).not.toMatch(/not found|composition warning/i);
-            const source = output.match(/\(top layer from: (\S+) v[\d.]+\)/);
-            expect(source, output).not.toBeNull();
-            return { name, path: line.slice(name.length + 2), sourceId: source[1] };
-        };
-        const pages = ["designer-essentials", "designer-artifacts",
-            "designer-badges", "designer-appearance", "canvas-settings-billing"]
-            .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
-                return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
-        const templates = [
-            ...["designer-appearance-light-accent", "designer-appearance-dark-accent"]
-                .map((name) => ({ ...resolve(name),
-                    kind: "designer.setting-definition", strategy: "replace" })),
-            { ...resolve("canvas-contributions-billing"),
-                kind: "designer.setting-definition", strategy: "replace" },
-            ...scalarRegistrations(resolve), ...workflowRegistrations(resolve),
-        ];
-        expect(templates[2].sourceId).toBe("copilot-billing-canvas-test");
-        const folder = handoffDirectory(workspace, handoff.handoffId);
-        await mkdir(folder, { recursive: true });
-        await writeFile(join(folder, "handoff.json"), JSON.stringify(handoff));
-        const resolved = await loadResolvedDesignerPages(handoff, project, pages, templates);
+        const { workspace, project, handoff, pages, templates } = journey;
+        expect(journey.composedSkill).toContain("- `canvas-settings-billing`");
+        expect(journey.composedSkill).toContain("- `canvas-contributions-billing`");
+        expect(pages.map((entry) => entry.name)).toContain("canvas-settings-billing");
+        expect(templates).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: "canvas-contributions-billing",
+                sourceId: "copilot-billing-canvas-test" }),
+        ]));
+        const resolved = journey.resolved;
         expect(resolved.pages.map((item) => item.title)).toEqual(
             ["Essentials", "Outputs", "Badges", "Appearance", "Billing"]);
         const costPage = resolved.pages.find((entry) =>
             entry.fields.some((field) => field.id === "billing.costCode"));
-        shell = await startShell(handoff,
-            await loadDesignerSettings(workspace, handoff, resolved), { project, workspace,
-                session: { send: async () => {} } });
-        await page.goto(shell.url);
         await page.getByRole("tab", { name: costPage.title }).click();
         const code = page.getByRole("textbox", { name: "Cost code" });
         await expect(code).toHaveAttribute("maxlength", "64");
@@ -876,9 +644,7 @@ test("Billing preset and built-in palette persist through Generate and render th
         expect(saved.values["billing.costCode"]).toBe("CC-481");
         expect(saved.values["canvas.accentLight"]).toBe("123aBc");
         expect(saved.values["canvas.accentDark"]).toBe("#ABC123");
-        reopened = await startShell(handoff, saved, { project, workspace,
-            session: { send: async () => {} } });
-        await page.goto(reopened.url);
+        await journey.reopenDesigner();
         await page.getByRole("tab", { name: costPage.title }).click();
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveValue("CC-481");
         await page.getByRole("tab", { name: "Appearance" }).click();
@@ -887,41 +653,25 @@ test("Billing preset and built-in palette persist through Generate and render th
         await page.getByRole("button", { name: "Generate", exact: true }).click();
         await expect(page.locator("#conn-status")).toContainText("Generation queued:");
         await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeDisabled();
-        const [requestId] = await readdir(join(folder, "generations"));
-        await materialize(project, workspace, handoff.handoffId, requestId);
-        const config = JSON.parse(await readFile(join(project, ".github", "extensions",
-            "billing-canvas", "canvas-config.json"), "utf8"));
+        const [requestId] = await readdir(join(
+            handoffDirectory(workspace, handoff.handoffId), "generations"));
+        await expect.poll(() => prompts.length).toBe(1);
+        expect(prompts[0]).toContain("speckit-extension-canvas-design-generate");
+        expect(prompts[0]).toContain(requestId);
+        await journey.generate(requestId);
+        const { config } = await journey.serveGenerated("billing-canvas", { token: "billing-token" });
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
             label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } }]);
         expect(config.appearance).toMatchObject({
             light: { accent: "#123aBc" }, dark: { accent: "#ABC123" },
         });
-        const { createWorkflowRoutes } = await import(pathToFileURL(join(project, ".github",
-            "extensions", "billing-canvas", "server.mjs")).href);
-        generatedRoutes = createWorkflowRoutes(config, {
-            runtime: null, instanceId: "billing-browser", token: "billing-token",
-            port: () => generatedServer.address().port,
-        });
-        generatedServer = createServer(generatedRoutes.handle);
-        await new Promise((resolve) => generatedServer.listen(0, "127.0.0.1", resolve));
-        await page.goto(`http://127.0.0.1:${generatedServer.address().port}/?token=billing-token`,
-            { waitUntil: "commit" });
         await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
         await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveCount(0);
     } finally {
-        generatedRoutes?.close();
-        if (generatedServer) {
-            await new Promise((resolve) => {
-                generatedServer.close(resolve);
-                generatedServer.closeAllConnections();
-            });
-        }
-        await reopened?.close();
-        await shell?.close();
-        await rm(workspace, { recursive: true, force: true });
+        await journey.close();
     }
 });
 

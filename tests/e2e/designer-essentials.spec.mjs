@@ -99,7 +99,7 @@ test("Generate remains queued and displays installed-version warnings", async ({
 
 test("computed provider approval cancels without sending and submits the approved source and hash", async ({ page }) => {
     const provider = await readFile(new URL(
-        "../../spec-kit-presets/copilot-canvas-values-test/values/workflow.mjs", import.meta.url));
+        "../fixtures/test-presets/copilot-canvas-values-test/values/workflow.mjs", import.meta.url));
     const approved = { name: "canvas-value-workflow-provider",
         sourceId: "copilot-canvas-values-test",
         hash: createHash("sha256").update(provider).digest("hex") };

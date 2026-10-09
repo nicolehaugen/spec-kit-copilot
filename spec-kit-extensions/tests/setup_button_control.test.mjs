@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as setup from "../extension-canvas-design/generated-host/setup-button-control/generated-setup-button-adapter.mjs";
-import * as trigger from "../../spec-kit-presets/copilot-dialog-buttons-test/generated/dialog-trigger-adapter.mjs";
+import * as trigger from "../../tests/fixtures/test-presets/copilot-dialog-buttons-test/generated/dialog-trigger-adapter.mjs";
 
 function buttonRoot() {
     const root = {

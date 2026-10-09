@@ -80,19 +80,22 @@ runs the CLI.
 
 ## Spec Kit presets (`spec-kit-presets/`) — keep the plumbing boundary
 
-`spec-kit-presets/` holds **Copilot-specific Spec Kit presets** — this repo is their
-canonical, sole home. Guard the boundary so contributors never conflate the two
-toolchains:
+`spec-kit-presets/` holds **shipping Copilot-specific Spec Kit presets** — this
+repo is their canonical home. Test-only presets live outside that shipping
+directory in `tests/fixtures/test-presets/`. Guard the boundary so contributors
+never conflate the two toolchains:
 
 - **Two different consumers.** Copilot plumbing (`plugin.json`, `skills/`, `plugins/`,
   `.github/plugin/marketplace.json`) is consumed by the **`copilot plugin`** CLI/App.
   Presets are consumed by the **`specify` CLI** (`specify preset add`). They are *not*
   Copilot plugins, skills, canvases, or marketplace entries.
-- **Isolate, don't scatter.** All preset content — including its `catalog.json` — lives
-  **inside** `spec-kit-presets/`. Do **not** put a preset `catalog.json` at the repo
-  root, and do not mix it up with the Copilot marketplace manifest at
-  `.github/plugin/marketplace.json`. Keep the boundary note in
-  `spec-kit-presets/README.md`.
+- **Isolate, don't scatter.** All **shipping** preset content — including its
+  `catalog.json` — lives inside `spec-kit-presets/`. Keep `copilot-*-test`
+  fixtures beside their tests in `tests/fixtures/test-presets/`; each needs a
+  Playwright test installing from that path with `specify preset add --dev`.
+  Do **not** put a preset `catalog.json` at the repo root, and do not mix it up
+  with the Copilot marketplace manifest at `.github/plugin/marketplace.json`.
+  Keep the boundary note in `spec-kit-presets/README.md`.
 - **Naming convention: `copilot-<scope>[-<behavior>]`.** Preset ids (directory,
   `preset.yml` `id`, `catalog.json` key) carry a short **`copilot-`** prefix marking
   them Copilot-specific (e.g. `copilot-sub-agents`, `copilot-assess-ask-questions`),

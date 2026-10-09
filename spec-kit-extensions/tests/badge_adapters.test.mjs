@@ -5,7 +5,7 @@ import { evaluate as artifactState } from "../extension-canvas-design/generated-
 import { evaluate as run } from "../extension-canvas-design/generated-host/badges/adapters/run.mjs";
 import { evaluate as phaseArtifactComplete } from
     "../extension-canvas-design/generated-host/badges/adapters/phase-artifact-complete.mjs";
-import { evaluate as testPhase } from "../../spec-kit-presets/copilot-badge-input-test/generated/evaluator.mjs";
+import { evaluate as testPhase } from "../../tests/fixtures/test-presets/copilot-badge-input-test/generated/evaluator.mjs";
 
 test("test preset evaluator decides matches from only its declared phase run", async () => {
     const requested = [];
