@@ -2832,25 +2832,40 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal((await post(generationRequest("stale", values))).status, 422);
     assert.equal((await post(generationRequest(0, {
         ...values, "canvas.id": "../outside",
-    }))).status, 422);
+    }))).status, 409);
     assert.equal((await post(generationRequest(0, values),
         new URL("/api/generate?token=wrong", url))).status, 404);
     assert.equal(prompts.length, 0);
+    const unsaved = await post(generationRequest(0, values));
+    assert.equal(unsaved.status, 409);
+    assert.match((await unsaved.json()).error, /Save the current settings/);
+    const newerValues = { ...values, "canvas.description": "Newer settings" };
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { revision: 0, modelRevision: model.revision, values: newerValues });
+    assert.equal(saved.settingsRevision, 1);
     await rm(generateSkill);
-    const unavailable = await post(generationRequest(0, values));
+    const unavailable = await post(generationRequest(saved.settingsRevision, newerValues));
     assert.equal(unavailable.status, 409);
     assert.match((await unavailable.json()).error, /Launch a new Designer session with a compatible Canvas Design extension/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const newerValues = { ...values, "canvas.description": "Newer settings" };
-    const saved = await saveDesignerSettings(workspace, handoff, model,
-        { revision: 0, modelRevision: model.revision, values: newerValues });
-    assert.equal(saved.settingsRevision, 1);
     const stale = await post(generationRequest(0, values));
     assert.equal(stale.status, 409);
     assert.match((await stale.json()).error, /settings changed elsewhere/);
+    assert.equal(prompts.length, 0);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
+    for (const changed of [
+        generationRequest(saved.settingsRevision, { ...newerValues, "canvas.id": "unsaved-id" }),
+        { ...generationRequest(saved.settingsRevision, newerValues), outputs: {} },
+        { ...generationRequest(saved.settingsRevision, newerValues), badges: [{ id: "unsaved" }] },
+    ]) {
+        const mismatch = await post(changed);
+        assert.equal(mismatch.status, 409);
+        assert.match((await mismatch.json()).error, /Save the current settings/);
+    }
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -2885,8 +2900,10 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await waitFor(() => prompts.length === 2);
     assert.match(prompts[1], new RegExp(`--replace-existing=${generated.requestId}`));
     dispatchFails = true;
-    const failedDispatch = await post(generationRequest(saved.settingsRevision,
-        { ...newerValues, "canvas.id": "another-canvas" }));
+    const another = { ...newerValues, "canvas.id": "another-canvas" };
+    const next = await saveDesignerSettings(workspace, handoff, model,
+        { revision: saved.settingsRevision, modelRevision: model.revision, values: another });
+    const failedDispatch = await post(generationRequest(next.settingsRevision, another));
     assert.equal(failedDispatch.status, 202);
     await waitFor(() => dispatchErrors.length === 1);
     assert.match(dispatchErrors[0].message, /Generate dispatch failed: generation channel unavailable/);
@@ -2920,14 +2937,15 @@ test("Generate retries while a child request is pending and still protects exist
     const post = (values, revision = 0) => fetch(generateUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ modelRevision: model.revision, settingsRevision: revision, values }) });
-    const firstResult = await post(first);
+    const initial = await saveDesignerSettings(workspace, handoff, model,
+        { modelRevision: model.revision, revision: 0, values: first });
+    const firstResult = await post(first, initial.settingsRevision);
     assert.equal(firstResult.status, 202);
     const { requestId } = await firstResult.json();
-    assert.equal((await post(first)).status, 202);
-    assert.equal((await post(second)).status, 202);
+    assert.equal((await post(first, initial.settingsRevision)).status, 202);
+    assert.equal((await post(second, initial.settingsRevision)).status, 409);
     const target = join(project, ".github", "extensions", "first-canvas");
     await mkdir(target, { recursive: true });
-    assert.equal((await post(second)).status, 202);
     assert.equal((await (await fetch(stateUrl)).json()).generationAvailable, true);
     await writeFile(join(target, "extension.mjs"), "export {};\n");
     await writeFile(join(target, "canvas-config.json"),
@@ -2935,19 +2953,20 @@ test("Generate retries while a child request is pending and still protects exist
     await writeFile(join(target, "settings-provenance.json"),
         JSON.stringify({ handoffId: handoff.handoffId, requestId,
             sourceFingerprint: handoff.sourceFingerprint }));
-    const duplicate = await post(first);
+    const duplicate = await post(first, initial.settingsRevision);
     assert.equal(duplicate.status, 409);
     assert.match((await duplicate.json()).error, /already exists/);
     const saveUrl = new URL(shell.url);
     saveUrl.pathname = "/api/save";
     const saved = await fetch(saveUrl, { method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modelRevision: model.revision, revision: 0, values: second }) });
+        body: JSON.stringify({ modelRevision: model.revision,
+            revision: initial.settingsRevision, values: second }) });
     assert.equal(saved.status, 200);
     assert.equal((await saved.json()).generationAvailable, true);
-    assert.equal((await post(second, 1)).status, 202);
-    assert.equal((await post(second, 1)).status, 202);
-    await waitFor(() => prompts.length === 6);
+    assert.equal((await post(second, 2)).status, 202);
+    assert.equal((await post(second, 2)).status, 202);
+    await waitFor(() => prompts.length === 4);
 });
 
 test("output status, folder reveal and Open enforce the same generated identity", async (t) => {
@@ -4032,13 +4051,15 @@ test("named value sources freeze typed values and run from a portable canvas wit
     const shell = await startShell(handoff, overridden, { project, workspace,
         session: { send: async ({ prompt }) => prompts.push(prompt) } });
     t.after(() => shell.close());
+    const saved = await saveDesignerSettings(workspace, handoff, overridden,
+        { modelRevision: overridden.revision, revision: 0, values: selected });
     const endpoint = new URL(shell.url);
     endpoint.pathname = "/api/generate";
     const post = (approvedProviders) => fetch(endpoint, {
         method: "POST", headers: { "Content-Type": "application/json",
             Origin: endpoint.origin },
         body: JSON.stringify({ modelRevision: overridden.revision,
-            settingsRevision: 0, values: selected,
+            settingsRevision: saved.settingsRevision, values: selected,
             ...(approvedProviders === undefined ? {} : { approvedProviders }) }),
     });
     const approval = overridden.templates.filter((item) => item.kind === "generated.computed-value-provider")

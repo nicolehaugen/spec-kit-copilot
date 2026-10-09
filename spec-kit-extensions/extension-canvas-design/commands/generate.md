@@ -38,8 +38,9 @@ packages or run workflow phases. Creation does not register or open the app.
    Source-fingerprint differences and installed-version drift are reported in
    the command's `warnings` output; report them to the user, but proceed with the intact frozen request
    when checkout, target, workflow, and installed inventory checks pass.
-   On failure, report the error unchanged and leave any partial target for
-   inspection; do not create an alternative implementation or retry.
+   On failure, report the error unchanged. Staging is removed and any prior
+   published output is preserved; if rollback itself fails, report the backup
+   path from the error for inspection. Do not create an alternative implementation or retry.
 4. Report the exact generated target, canvas ID, request ID, and any warnings
    or error in the child session chat. On success say the app was created but
    **not opened**; the separate Open action runs

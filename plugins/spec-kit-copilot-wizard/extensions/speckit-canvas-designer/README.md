@@ -213,6 +213,8 @@ enabled fields, then freezes and dispatches a file-creation-only request to the
 child-session agent. A brief **Submitting...** lock ends when the request is
 acknowledged, before the child agent begins; later dispatch failures are
 reported in the session log, not the already-sent HTTP response.
+The server requires the submitted snapshot to match that saved revision and
+freezes the saved values, outputs, and badges rather than trusting a second copy.
 The Designer stays editable while creation continues. An authenticated output
 status check verifies the matching config, provenance, and final entry point
 before reporting **Canvas files created.** A second click during submission is
@@ -241,7 +243,9 @@ and opens its canvas. Reopen Designer to continue editing after registration;
 the child chat reports success or failure and can retry opening existing files
 without regenerating. There is no supported provider-initiated panel-close operation.
 Sharing remains optional instructions for a team project extension, a personal
-extension, or a plugin; no distribution happens automatically.
+extension, or a plugin; no distribution happens automatically. After editing
+the Canvas ID, the Share path still refers to the last submitted ID until the
+new ID is generated, and the page labels that distinction.
 At Generate, Designer checks the child checkout's Specify inventory for packages
 in the Wizard handoff and freezes their installed versions alongside the original
 Wizard snapshot. Unrelated installed packages do not affect version verification.

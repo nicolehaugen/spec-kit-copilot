@@ -95,6 +95,12 @@ function updateOutputDisplay() {
     if (target) target.textContent = outputPath(id);
     const team = document.getElementById("share-project-path");
     if (team) team.textContent = outputPath(requestedCanvasId ?? id);
+    const shareNote = document.getElementById("share-target-note");
+    if (shareNote) {
+        shareNote.hidden = !requestedCanvasId || requestedCanvasId === id;
+        shareNote.textContent = shareNote.hidden ? ""
+            : "This is the last submitted Canvas ID, not the current draft. Generate the current ID before sharing it.";
+    }
     const status = document.getElementById("generation-status");
     if (status) status.textContent = requestedCanvasId === id
         && requestedRequestId && requestedRequestId !== outputRequestId
@@ -446,8 +452,12 @@ function renderPage(pageId, invalidFieldId) {
         const projectCopy = element("p");
         const sharePath = element("code");
         sharePath.id = "share-project-path";
-        projectCopy.append("Commit ", sharePath, " to your repository.");
+        projectCopy.append("Once generated, commit ", sharePath, " to your repository.");
+        const shareNote = element("p");
+        shareNote.id = "share-target-note";
+        shareNote.hidden = true;
         share.append(projectCopy,
+            shareNote,
             element("p", "Teammates will get the canvas when they use that repository."),
             element("h3", "Personal extension"),
             element("p", "Copy the canvas to ~/.copilot/extensions/ to use it on this machine without committing it to the repository."),
@@ -715,7 +725,7 @@ const status = document.getElementById("conn-status");
 let connectionError = "";
 let outputStatusError = "";
 let healthChecks = 0;
-let availabilityCheck = 0;
+let connectionCheck = 0;
 function connectionStatus(state) {
     status.className = `conn conn-${state}`;
     status.textContent = state === "live" ? "Live" : state === "connecting" ? "Connecting" : "Disconnected";
@@ -733,9 +743,9 @@ async function checkOutputStatus(id) {
     }
 }
 async function checkConnection(forceAvailability = false) {
+    const checkId = ++connectionCheck;
     try {
         const refreshAvailability = model && (forceAvailability || ++healthChecks % 6 === 0);
-        const check = refreshAvailability ? ++availabilityCheck : 0;
         const response = await fetch(
             `${refreshAvailability ? "/api/state" : "/ui/styles.css"}?token=${encodeURIComponent(token)}`,
             { signal: AbortSignal.timeout(5000) });
@@ -743,16 +753,16 @@ async function checkConnection(forceAvailability = false) {
         if (model) {
             if (refreshAvailability) {
                 const latest = await response.json();
+                if (checkId !== connectionCheck) return;
                 if (typeof latest?.generationAvailable !== "boolean"
                     || (latest.generationError !== null && typeof latest.generationError !== "string")) {
                     throw new Error("Designer connection check returned invalid generation state");
                 }
-                if (check === availabilityCheck) {
-                    model.generationAvailable = latest.generationAvailable;
-                    model.generationError = latest.generationError;
-                    updateGenerate();
-                }
+                model.generationAvailable = latest.generationAvailable;
+                model.generationError = latest.generationError;
+                updateGenerate();
             }
+            if (checkId !== connectionCheck) return;
             connectionStatus("live");
             if (connectionError && generationNote.textContent === connectionError)
                 setMessage(generationNote, "");
@@ -761,6 +771,7 @@ async function checkConnection(forceAvailability = false) {
                 await checkOutputStatus(draft?.["canvas.id"]);
         }
     } catch (error) {
+        if (checkId !== connectionCheck) return;
         connectionStatus("lost");
         if (openingRequested) {
             return;

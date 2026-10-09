@@ -41,6 +41,28 @@ test("overlapping output polls return their own validated snapshot without repla
     assert.equal(context.outputRequestId, "second-request");
 });
 
+test("Share identifies the last submitted folder when Canvas ID changes", () => {
+    const start = source.indexOf("function outputPath(id)");
+    const end = source.indexOf("async function refreshOutputStatus(", start);
+    const elements = new Map(["output-target", "share-project-path", "share-target-note",
+        "generation-status"].map((id) => [id, { textContent: "" }]));
+    const context = {
+        document: { getElementById: (id) => elements.get(id) },
+        draft: { "canvas.id": "new-id" }, requestedCanvasId: "old-id",
+        requestedRequestId: null, outputRequestId: null, outputIdentity: "",
+        outputStatus: "absent",
+    };
+    const update = runInNewContext(`${source.slice(start, end)}
+updateOutputDisplay`, context);
+    update();
+    assert.equal(elements.get("output-target").textContent, ".github/extensions/new-id/");
+    assert.equal(elements.get("share-project-path").textContent, ".github/extensions/old-id/");
+    assert.match(elements.get("share-target-note").textContent, /last submitted Canvas ID/);
+    context.draft["canvas.id"] = "old-id";
+    update();
+    assert.equal(elements.get("share-target-note").textContent, "");
+});
+
 test("Designer shows only one message bar across repeated errors and generation guidance", () => {
     const names = ["page-error", "generation-note", "generation-error",
         "composition-error", "action-message"];
@@ -470,6 +492,43 @@ test("submission refresh supersedes an older pending availability poll", async (
     assert.equal(model.generationAvailable, true);
     assert.equal(model.generationError, null);
     assert.equal(status.textContent, "Live");
+});
+
+test("stale health-check results cannot overwrite the latest connection state", async () => {
+    const start = source.indexOf('const status = document.getElementById("conn-status");');
+    const end = source.lastIndexOf("try {", source.indexOf("    [{ mountIdentity", start));
+    const status = {};
+    const generationNote = { textContent: "", hidden: true };
+    let release;
+    let nextResponse = { ok: true };
+    const { checkConnection } = runInNewContext(`${source.slice(start, end)}
+({ checkConnection })`, {
+        document: { getElementById: () => status },
+        errorBox: {}, generationNote, token: "test", model: {},
+        requestedCanvasId: null, openingRequested: false, currentPage: "designer-essentials",
+        fetch: () => nextResponse === null
+            ? new Promise((resolve) => { release = resolve; }) : Promise.resolve(nextResponse),
+        refreshOutputStatus: async () => {}, updateGenerate: () => {},
+        setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
+        setInterval: () => 1, clearInterval: () => {},
+        window: { addEventListener: () => {} }, AbortSignal, encodeURIComponent,
+    });
+    nextResponse = null;
+    const olderFailure = checkConnection();
+    nextResponse = { ok: true };
+    await checkConnection();
+    release({ ok: false, status: 503 });
+    await olderFailure;
+    assert.equal(status.textContent, "Live");
+    assert.equal(generationNote.textContent, "");
+    nextResponse = null;
+    const olderSuccess = checkConnection();
+    nextResponse = { ok: false, status: 503 };
+    await checkConnection();
+    release({ ok: true });
+    await olderSuccess;
+    assert.equal(status.textContent, "Disconnected");
+    assert.match(generationNote.textContent, /connection interrupted/);
 });
 
 test("Generate locks editing only during submission, not for an agent turn", () => {

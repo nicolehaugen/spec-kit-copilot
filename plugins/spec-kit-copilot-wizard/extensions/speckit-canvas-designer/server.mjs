@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { readHandoff } from "./handoff.mjs";
 import { validateBadges } from "./contracts/badges.mjs";
 import { GENERATION_EXISTS, GENERATION_PENDING, generationAvailability,
@@ -319,7 +320,23 @@ export async function startShell(handoff = null, model = null,
                 }
                 const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
                 validateGenerateSubmission(input, model);
-                const output = await generatedOutput(project, input.values["canvas.id"], handoff.handoffId);
+                const currentGenerateSkill = await hasProjectSkill(project, GENERATE_SKILL);
+                if (!currentGenerateSkill || !await hasProjectSkill(project, OPEN_SKILL)) {
+                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
+                        .end(JSON.stringify({ error: currentGenerateSkill ? SPLIT_UNAVAILABLE
+                            : GENERATE_UNAVAILABLE }));
+                    return;
+                }
+                const current = await loadDesignerSettings(workspace, handoff, model);
+                if (input.settingsRevision !== current.settingsRevision) {
+                    throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");
+                }
+                if (!current.persisted || !isDeepStrictEqual(input.values, current.values)
+                    || (Object.hasOwn(input, "outputs") && !isDeepStrictEqual(input.outputs, current.outputs))
+                    || (Object.hasOwn(input, "badges") && !isDeepStrictEqual(input.badges, current.badges))) {
+                    throw new Error("Designer settings changed elsewhere. Save the current settings before generating.");
+                }
+                const output = await generatedOutput(project, current.values["canvas.id"], handoff.handoffId);
                 if (output.status !== "absent"
                     && (output.status !== "ready" || input.replaceExisting !== true
                         || input.replaceRequestId !== output.requestId)) {
@@ -331,13 +348,7 @@ export async function startShell(handoff = null, model = null,
                             : `Cannot replace ${output.status} canvas output; inspect the target folder first.` }));
                     return;
                 }
-                const current = await loadDesignerSettings(workspace, handoff, model);
-                if (input.settingsRevision !== current.settingsRevision) {
-                    throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before generating.");
-                }
-                validateBadges(Object.hasOwn(input, "badges") ? input.badges : current.badges,
-                    { ...current, phases: handoff.workflow.selectedPhases,
-                        outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs });
+                validateBadges(current.badges, { ...current, phases: handoff.workflow.selectedPhases });
                 const providers = (model.templates ?? []).filter((item) => item.kind === "generated.computed-value-provider")
                     .map(({ name, sourceId, hash }) => ({ name, sourceId, hash }));
                 if (providers.length) {
@@ -350,13 +361,6 @@ export async function startShell(handoff = null, model = null,
                         await readFrozenAsset(item, specify);
                     }
                 }
-                const currentGenerateSkill = await hasProjectSkill(project, GENERATE_SKILL);
-                if (!currentGenerateSkill || !await hasProjectSkill(project, OPEN_SKILL)) {
-                    res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify({ error: currentGenerateSkill ? SPLIT_UNAVAILABLE
-                            : GENERATE_UNAVAILABLE }));
-                    return;
-                }
                 let runtimeInventory, inventoryWarning;
                 try {
                     const observed = await readCurrentInstalledVersions(project, handoff.workflow.installed);
@@ -367,11 +371,10 @@ export async function startShell(handoff = null, model = null,
                     runtimeInventory = { presets: [], extensions: [], bundles: [] };
                     inventoryWarning = `Could not read the installed Specify packages: ${error.message}. Generated package versions will be marked unverified.`;
                 }
-                const result = validateGenerateResponse(await freezeGeneration({ model: current, values: input.values,
-                    outputs: Object.hasOwn(input, "outputs") ? input.outputs : current.outputs,
-                    badges: Object.hasOwn(input, "badges") ? input.badges : current.badges,
+                const result = validateGenerateResponse(await freezeGeneration({ model: current, values: current.values,
+                    outputs: current.outputs, badges: current.badges,
                     handoff, project, workspace, runtimeInventory, inventoryWarning,
-                    replaceExisting: input.replaceExisting === true }), input.values["canvas.id"]);
+                    replaceExisting: input.replaceExisting === true }), current.values["canvas.id"]);
                 queueChildPrompt(res, session,
                     `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". ${input.replaceExisting === true ? `The user explicitly confirmed replacing the existing same-handoff canvas folder, including manual edits, with prior requestId "${input.replaceRequestId}"; pass --replace-existing=${input.replaceRequestId} to the generator and stop if the prior request changed.` : "Do not replace any existing target."} Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report file creation or the exact failure to the user; do not reload extensions or open the canvas.`,
                     "Generate");
