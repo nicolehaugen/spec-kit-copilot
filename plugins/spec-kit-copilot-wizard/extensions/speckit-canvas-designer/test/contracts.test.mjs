@@ -65,6 +65,13 @@ test("changed preset composition identifies affected badge dependencies without 
     assert.throws(() => validateSavedSettings(record, handoff, model),
         (error) => /Saved Designer settings do not match/.test(error.message)
             && !error.message.includes("saved badges:"));
+    model.badgeRules[1].inputs = [{ id: "phase", type: "artifact" }];
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        /saved-one \(inputs incompatible with current rule custom\)/);
+    model.badgeRules[1].inputs = [{ id: "phase", type: "text" }];
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        (error) => /Saved Designer settings do not match/.test(error.message)
+            && !error.message.includes("saved badges:"));
 });
 
 test("Designer handoff and generation contracts include badges without accepting unrelated fields", () => {

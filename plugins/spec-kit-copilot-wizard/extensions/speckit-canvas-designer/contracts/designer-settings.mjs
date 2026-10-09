@@ -2,6 +2,20 @@ import { isWindowsDeviceName } from "./host-open.mjs";
 
 export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
+const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+function matchesRuleInputShape(value, type) {
+    if (type === "phase" || type === "text") return typeof value === "string";
+    if (type === "artifact") return record(value)
+        && typeof value.phase === "string" && typeof value.output === "string";
+    if (type === "artifact-set") return Array.isArray(value) && value.length > 0
+        && value.every((entry) => record(entry) && typeof entry.phase === "string"
+            && Array.isArray(entry.outputs));
+    if (type === "ordered-artifacts") return Array.isArray(value)
+        && value.every((entry) => record(entry) && typeof entry.phase === "string"
+            && typeof entry.output === "string");
+    return true;
+}
 
 export function validateValues(values, constraints) {
     if (!values || typeof values !== "object" || Array.isArray(values)
@@ -47,7 +61,10 @@ export function validateSavedSettings(record, handoff, model) {
                                             || Array.isArray(badge.inputs)
                                             || Object.keys(badge.inputs).sort().join()
                                                 !== (rule.inputs ?? []).map((input) => input.id).sort().join()
-                                            ? `changed inputs for rule ${rule.id}` : null;
+                                            ? `changed inputs for rule ${rule.id}`
+                                            : rule.inputs?.some(({ id, type: inputType }) =>
+                                                !matchesRuleInputShape(badge.inputs[id], inputType))
+                                                ? `inputs incompatible with current rule ${rule.id}` : null;
                     return problem ? `${badge.id} (${problem})` : null;
                 }).filter(Boolean) : [];
         throw new Error("Saved Designer settings do not match the current handoff or pages"
