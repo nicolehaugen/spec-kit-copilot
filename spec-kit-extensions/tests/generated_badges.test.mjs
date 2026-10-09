@@ -114,6 +114,48 @@ test("project Constitution badges evaluate without workflows and do not count as
     assert.deepEqual((await evaluate([])).project, []);
 });
 
+test("project-only badges do not consume workflow evaluation, while mixed placements do", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-project-only-badge-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    await mkdir(join(cwd, ".specify", "memory"), { recursive: true });
+    await writeFile(join(cwd, ".specify", "memory", "constitution.md"), "- [x] adopted\n");
+    await writeFile(join(cwd, ".specify", "memory", "other.md"), "- [x] adopted\n");
+    for (const workflow of ["alpha", "beta"]) {
+        await mkdir(join(cwd, "specs", workflow), { recursive: true });
+        await writeFile(join(cwd, "specs", workflow, "tasks.md"), "- [x] done\n");
+    }
+    const projectPhase = { id: "speckit.constitution", project: true,
+        outputs: [".specify/memory/constitution.md", ".specify/memory/other.md"] };
+    const projectOnly = { ...instance, id: "project-only",
+        inputs: { artifact: { phase: projectPhase.id, output: projectPhase.outputs[0] } },
+        showIn: [], phase: null, targets: [{ phase: projectPhase.id, output: null }] };
+    const workflowOnly = { ...instance, id: "workflow-only", showIn: ["workflow-list"], phase: null };
+    const mixed = { ...projectOnly, id: "mixed", showIn: ["workflow-summary"],
+        inputs: { artifact: { phase: projectPhase.id, output: projectPhase.outputs[1] } } };
+    const mixedTarget = { ...workflowOnly, id: "mixed-target", showIn: [],
+        targets: [{ phase: projectPhase.id, output: null }, { phase: "tasks", output: null }] };
+    const configured = { ...badges, instances: [projectOnly, workflowOnly, mixed, mixedTarget] };
+    const phases = [projectPhase, { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
+    validateBadges(configured, phases);
+    const calls = [];
+    const result = await evaluateBadges(configured, { cwd, workflows: ["alpha", "beta"], phases,
+        outputPath: async ({ phase, output }, workflow) => {
+            calls.push([output, workflow]);
+            return phase === projectPhase.id ? output : `specs/${workflow}/tasks.md`;
+        }, runFor: () => null });
+    assert.deepEqual(result.project.map(({ id }) => id), ["project-only", "mixed"]);
+    for (const workflow of ["alpha", "beta"]) {
+        assert.deepEqual(result.items[workflow].map(({ id }) => id),
+            ["workflow-only", "mixed", "mixed-target"]);
+    }
+    assert.deepEqual(calls.filter(([output]) => output === projectPhase.outputs[0]),
+        [[projectPhase.outputs[0], "project"]]);
+    assert.deepEqual(calls.filter(([output]) => output === projectPhase.outputs[1]),
+        ["project", "alpha", "beta"].map((workflow) => [projectPhase.outputs[1], workflow]));
+    assert.equal(result.summary[0].count, 2);
+    assert.deepEqual(result.diagnostics, []);
+});
+
 test("custom phase-run evaluator matches project Constitution without a workflow", async (t) => {
     const cwd = await mkdtemp(join(process.cwd(), ".generated-project-run-badge-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));

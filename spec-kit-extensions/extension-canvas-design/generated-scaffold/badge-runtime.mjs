@@ -251,6 +251,10 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
         for (const instance of badges.instances) {
             if (project && !(instance.targets?.some(({ phase }) => phase === projectPhase)
                 || instance.showIn.includes("phase-card") && instance.phase === projectPhase)) continue;
+            if (!project && !instance.showIn.includes("workflow-list")
+                && !instance.showIn.includes("workflow-summary")
+                && !instance.targets?.some(({ phase }) => phase !== projectPhase)
+                && !(instance.showIn.includes("phase-card") && instance.phase !== projectPhase)) continue;
             if (performance.now() >= deadline) {
                 if (!result.diagnostics.length) {
                     const message = "Badge evaluation time limit reached; some badges were not evaluated. Refresh to retry.";
