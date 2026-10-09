@@ -1576,9 +1576,12 @@ test("Essentials contributes a default-off custom slug option", async () => {
     assert.deepEqual(page.fields.map((entry) => entry.id), ["canvas.id", "canvas.displayName"]);
     const heading = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/essentials-settings/workflow-heading.json", import.meta.url)));
     const slug = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/essentials-settings/custom-slug.json", import.meta.url)));
+    const setup = JSON.parse(await readFile(new URL("../extension-canvas-design/designer-host/essentials-settings/show-setup.json", import.meta.url)));
     assert.equal(slug.field.id, "workflowSlug.userProvided");
     assert.equal(slug.field.default, false);
     assert.equal(heading.field.label, "Workflow header");
+    assert.match(setup.field.description, /review and approve installation/);
+    assert.match(setup.field.description, /When off, nothing is installed automatically/);
 });
 
 test("legacy result state stays on disk but is not evaluated or shown", async (t) => {
