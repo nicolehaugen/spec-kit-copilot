@@ -55,5 +55,9 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
         input.type === "text" ? !!value[input.id]?.trim()
             : input.type === "phase" ? phases.includes(value[input.id])
                 : input.type === "artifact" ? outputs[value[input.id]?.phase]?.outputs
-                    ?.includes(value[input.id]?.output) : false) };
+                    ?.includes(value[input.id]?.output) : false)
+        && (rule.id !== "checklist-complete"
+            || phases.indexOf(value.prerequisite.phase) < phases.indexOf(value.artifact.phase)
+                && value.prerequisite.output.toLowerCase()
+                    !== value.artifact.output.toLowerCase()) };
 }

@@ -48,7 +48,7 @@ export function previewModel() {
         { id: "checklist-complete", description: "Check all checklist items and confirm the output is at least as recent as an earlier output.",
             inputs: [{ id: "artifact", type: "artifact", label: "Checklist output" },
                 { id: "prerequisite", type: "artifact", label: "Earlier output" }],
-            textPlaceholders: [] },
+            placementPhaseInput: "artifact", textPlaceholders: [] },
         { id: "work-complete", description: "Check an output and a completed phase.",
             inputs: [...artifact, { id: "phase", type: "phase" }], textPlaceholders: [] },
         { id: "phase-run-complete", description: "Check the selected phase's latest run.",

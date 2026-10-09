@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mountBadges } from "../ui/badges-control.js";
+import { previewModel } from "../preview.mjs";
+import { mount as mountPreviewInputs } from "../ui/preview-badge-input.js";
 import { mount as mountStockInputs, controlId, contractVersion } from
     "../../../../../spec-kit-extensions/extension-canvas-design/designer-host/badge-input-controls/stock/designer.mjs";
 import { mount as mountPresetInputs } from
@@ -22,6 +24,7 @@ class Node {
     addEventListener(name, handler) { this.events[name] = handler; }
     setAttribute(name, value) { this.attributes[name] = value; }
     focus() { this.focused = true; }
+    contains(node) { return descendants(this).includes(node); }
     querySelector(selector) {
         return descendants(this).find((node) => node.className.split(" ").includes(selector.slice(1)));
     }
@@ -225,6 +228,75 @@ test("host rejects non-JSON-safe and invalid rule inputs before updating the bad
         submit(editor);
         assert.deepEqual(draftBadges[0].inputs, valid);
         assert.doesNotThrow(() => JSON.stringify(draftBadges));
+    } finally { cleanup(); }
+});
+
+test("bubbled control events preserve invalid-input errors but host edits clear them", () => {
+    let update;
+    let input;
+    const { root, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ root: controlRoot, onChange }) {
+            update = onChange;
+            input = document.createElement("input");
+            controlRoot.append(input);
+            return { isReady: () => true };
+        },
+    });
+    try {
+        const editor = choose(root);
+        const alert = descendants(editor).find((node) => node.attributes.role === "alert");
+        update({ phase: "unavailable" });
+        editor.events.change({ target: input });
+        assert.match(alert.textContent, /available evidence/);
+        assert.equal(alert.hidden, false);
+        update({ phase: "plan" });
+        assert.equal(alert.hidden, true);
+        update({ phase: "unavailable" });
+        editor.events.input({ target: editor.querySelector(".badge-preview") });
+        assert.equal(alert.hidden, true);
+    } finally { cleanup(); }
+});
+
+test("preview checklist uses its output phase and requires a distinct earlier prerequisite", () => {
+    const model = previewModel();
+    const checklist = model.badgeRules.find((rule) => rule.id === "checklist-complete");
+    assert.equal(checklist.placementPhaseInput, "artifact");
+    const { root, draftBadges, cleanup } = setup({
+        phases: model.phases, outputs: model.outputs, badgeTypes: model.badgeTypes,
+        badgeRules: model.badgeRules, controlMount: mountPreviewInputs,
+    });
+    try {
+        const editor = choose(root, model.badgeTypes.findIndex((type) =>
+            type.id === "checklist-complete"));
+        const fields = () => descendants(editor.querySelector(".badge-input-controls"))
+            .filter((node) => node.tagName === "select");
+        const chooseArtifact = (field, phase, output) => {
+            field.value = JSON.stringify({ phase, output });
+            field.events.change();
+        };
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[0], "specify", "specs/<slug>/spec.md");
+        chooseArtifact(fields()[1], "specify", "specs/<slug>/spec.md");
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[1], "plan", "specs/<slug>/plan.md");
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[0], "clarify", "specs/<slug>/spec.md");
+        chooseArtifact(fields()[1], "specify", "specs/<slug>/spec.md");
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[0], "plan", "specs/<slug>/plan.md");
+        const phaseCard = check(root, "badge-placements", "Phase");
+        phaseCard.checked = true;
+        phaseCard.events.change();
+        submit(editor);
+        assert.equal(draftBadges.length, 1);
+        assert.deepEqual(draftBadges[0].targets, [{ phase: "plan", output: null }]);
     } finally { cleanup(); }
 });
 

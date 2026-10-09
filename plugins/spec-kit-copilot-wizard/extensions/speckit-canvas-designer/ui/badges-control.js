@@ -368,8 +368,12 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             duplicateTarget = null;
             if (message) error.focus?.();
         };
-        editor.addEventListener("input", () => revealError(""));
-        editor.addEventListener("change", () => revealError(""));
+        const controlRoot = element("div", undefined, "badge-input-controls");
+        const clearHostError = (event) => {
+            if (!controlRoot.contains(event.target)) revealError("");
+        };
+        editor.addEventListener("input", clearHostError);
+        editor.addEventListener("change", clearHostError);
         const previewField = element("div", undefined, "badge-preview-field");
         previewField.append(element("span", "Preview (example)"), preview);
         const colorGroup = element("div", undefined, "badge-input-group");
@@ -407,7 +411,6 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             pending.targets = selected.map((phase) => ({ phase, output: null }));
             refreshLegacy();
         };
-        const controlRoot = element("div", undefined, "badge-input-controls");
         editor.append(controlRoot);
         let control;
         const inputIds = (rule.inputs ?? []).map(({ id }) => id).sort().join();
