@@ -33,7 +33,16 @@ let outputStatus = "absent";
 let outputIdentity = "";
 let outputRequestId = null;
 let outputCheck = 0;
-const generationGuidance = "Opening continues in the child-session chat. You can close Designer now.";
+const generationGuidance = "Opening requested. Check the child-session chat. If you want to keep using Designer in this session, reopen it after the canvas opens.";
+function updateOpenStatus() {
+    const status = document.getElementById("open-status");
+    if (status) status.textContent = opening || openingRequested ? generationGuidance
+        : outputIdentity === draft?.["canvas.id"] && outputStatus === "ready"
+            && (requestedCanvasId !== draft?.["canvas.id"]
+                || !requestedRequestId || requestedRequestId === outputRequestId)
+                ? "Ready to open. Opening will disconnect Designer. If you want to keep using Designer in this session, reopen it after the canvas opens."
+                : "Generate the canvas first.";
+}
 const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
@@ -88,14 +97,14 @@ function updateOutputDisplay() {
     const status = document.getElementById("generation-status");
     if (status) status.textContent = requestedCanvasId === id
         && requestedRequestId && requestedRequestId !== outputRequestId
-        ? Date.now() - requestedAt < 120000 ? "Creating canvas files..."
+        ? Date.now() - requestedAt < 120000 ? "Creating canvas files."
             : "Canvas creation is taking longer than expected. Check the child-session chat for progress or errors."
         : outputIdentity === id && outputStatus === "ready"
         ? "Canvas files created." : outputIdentity === id && outputStatus === "foreign"
             ? "An unrelated canvas folder already exists at this location."
             : outputIdentity === id && outputStatus === "incomplete"
                 ? "Canvas files are incomplete. Inspect the target folder before trying again."
-                : requestedCanvasId === id ? "Creating canvas files..." : "Not generated";
+                : requestedCanvasId === id ? "Creating canvas files." : "Not generated";
 }
 
 async function refreshOutputStatus(id = requestedCanvasId ?? draft?.["canvas.id"]) {
@@ -142,10 +151,16 @@ function updateGenerate() {
         && outputStatus === "ready" && (!requestedRequestId || requestedRequestId === outputRequestId)
         ? "Regenerate canvas" : "Generate canvas";
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
+        || opening || openingRequested
         || !outputPathsReady()
         || !model?.handoffId
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity || !!model?.generationBlockers?.length;
+    openGenerated.disabled = model?.preview || !model?.handoffId || opening || openingRequested
+        || generating || outputIdentity !== draft?.["canvas.id"] || outputStatus !== "ready"
+        || requestedCanvasId === draft?.["canvas.id"]
+            && !!requestedRequestId && requestedRequestId !== outputRequestId;
+    updateOpenStatus();
     updateOutputDisplay();
 }
 
@@ -232,12 +247,13 @@ generate.addEventListener("click", async () => {
 });
 
 openGenerated.addEventListener("click", async () => {
-    if (model?.preview || !model?.handoffId || opening) return;
+    if (openGenerated.disabled || model?.preview || !model?.handoffId || openingRequested) return;
     const id = draft?.["canvas.id"];
     opening = true;
-    openGenerated.disabled = true;
+    updateGenerate();
     showError("");
     try {
+        await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
         const response = await fetch(`/api/open-generated?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ canvasId: id }),
@@ -246,14 +262,12 @@ openGenerated.addEventListener("click", async () => {
         if (!response.ok) throw new Error(validateOutputError(result).error);
         validateOpenResponse(result, id);
         openingRequested = true;
-        setMessage(generationNote, generationGuidance);
     } catch (error) {
         openingRequested = false;
-        setMessage(generationNote, "");
         showError(error.message);
     } finally {
         opening = false;
-        openGenerated.disabled = false;
+        updateGenerate();
     }
 });
 
@@ -371,16 +385,24 @@ function renderPage(pageId, invalidFieldId) {
         }
         root.setAttribute("aria-labelledby", `page-tab-${pageId}`);
         const content = element("div", undefined, "generate-page");
-        content.append(element("h1", "Generate & Open"),
-            element("p", "Create the canvas from your saved settings, then open it here.", "muted"),
-            element("h2", "Generate"), element("p", "Canvas ID", "setting-label"),
+        const intro = element("div", undefined, "generate-intro");
+        intro.append(element("h1", "Create and open your canvas"),
+            element("p", "Create the canvas from your saved settings, then open it here.", "muted"));
+        const generateStep = element("section", undefined, "generate-step");
+        generateStep.setAttribute("aria-labelledby", "generate-step-title");
+        const generateTitle = element("h2", "Generate");
+        generateTitle.id = "generate-step-title";
+        generateTitle.prepend(element("span", "1", "step-index"));
+        generateTitle.firstChild.setAttribute("aria-hidden", "true");
+        generateStep.append(generateTitle, element("p", "Canvas ID", "setting-label"),
             element("p", draft?.["canvas.id"] ?? "", "generation-canvas-id"),
             element("p", "Target folder", "setting-label"));
         const target = element("code");
         target.id = "output-target";
-        const folderLink = element("a", "Open folder");
+        const folderLink = element("a");
         folderLink.id = "open-output-folder";
         folderLink.href = "#";
+        folderLink.append(target);
         folderLink.addEventListener("click", async (event) => {
             event.preventDefault();
             const id = draft?.["canvas.id"];
@@ -395,21 +417,39 @@ function renderPage(pageId, invalidFieldId) {
             } catch (error) { showError(error.message); }
         });
         const folder = element("p", undefined, "generation-target");
-        folder.append(target, " ", folderLink);
+        folder.append(folderLink);
         const state = element("p");
         state.id = "generation-status";
         state.setAttribute("role", "status");
-        content.append(folder, element("p", "Status", "setting-label"), state, generate,
-            element("h2", "Open"),
-            element("p", "Register the generated canvas and open it in this session."),
-            openGenerated, element("h2", "Share · Optional"),
+        generateStep.append(folder, element("p", "Status", "setting-label"), state, generate);
+        const openStep = element("section", undefined, "generate-step");
+        openStep.setAttribute("aria-labelledby", "open-step-title");
+        const openTitle = element("h2", "Open");
+        openTitle.id = "open-step-title";
+        openTitle.prepend(element("span", "2", "step-index"));
+        openTitle.firstChild.setAttribute("aria-hidden", "true");
+        openGenerated.classList.add("primary");
+        const openStatus = element("p");
+        openStatus.id = "open-status";
+        openStatus.setAttribute("role", "status");
+        openStep.append(openTitle,
+            element("p", "Open your generated canvas in this session."),
+            element("p", "Status", "setting-label"), openStatus,
+            openGenerated);
+        const share = element("section", undefined, "generate-step generate-share");
+        share.setAttribute("aria-labelledby", "generate-share-title");
+        const shareTitle = element("h2", "Share · Optional");
+        shareTitle.id = "generate-share-title";
+        shareTitle.prepend(element("span", "3", "step-index"));
+        shareTitle.firstChild.setAttribute("aria-hidden", "true");
+        share.append(shareTitle,
             element("p", "Choose how you want to make this canvas available:"),
             element("h3", "Team project extension"));
         const projectCopy = element("p");
         const sharePath = element("code");
         sharePath.id = "share-project-path";
         projectCopy.append("Commit ", sharePath, " to your repository.");
-        content.append(projectCopy,
+        share.append(projectCopy,
             element("p", "Teammates will get the canvas when they use that repository."),
             element("h3", "Personal extension"),
             element("p", "Copy the canvas to ~/.copilot/extensions/ to use it on this machine without committing it to the repository."),
@@ -420,16 +460,20 @@ function renderPage(pageId, invalidFieldId) {
         pluginLink.rel = "noopener noreferrer";
         pluginLink.target = "_blank";
         plugin.append("For a separately installable, versioned distribution, see ", pluginLink, ".");
-        content.append(plugin);
+        share.append(plugin);
+        content.append(intro, generateStep, openStep, share);
         generate.hidden = false;
         openGenerated.hidden = false;
         root.replaceChildren(content);
+        updateOpenStatus();
         root.setAttribute("aria-busy", "false");
         updateGenerate();
         return true;
     }
     const page = model.pages.find((entry) => entry.page === pageId);
     if (!page) throw new Error("Unknown Designer page");
+    generate.hidden = true;
+    openGenerated.hidden = true;
     const renderRevision = model.revision;
     if (currentPage && root.childNodes.length) {
         pageViews.set(currentPage, [...root.childNodes]);
@@ -614,7 +658,8 @@ function applyState(next) {
         root.replaceChildren();
         document.getElementById("preview-banner").hidden = !model.preview;
         document.getElementById("save-help").hidden = !!model.preview;
-        generate.hidden = !!model.preview;
+        generate.hidden = true;
+        openGenerated.hidden = true;
         draft = structuredClone(model.values);
         draftOutputs = structuredClone(model.outputs ?? Object.fromEntries(
             (model.phases ?? []).map((id) => [id, { outputs: [], view: null }])));
@@ -633,7 +678,7 @@ function applyState(next) {
             tabs.append(tab);
         }
         if (!model.preview) {
-            const tab = element("button", "Generate & Open", "tab");
+            const tab = element("button", "Generate", "tab");
             tab.type = "button";
             tab.dataset.page = "designer-generate";
             tab.id = "page-tab-designer-generate";
@@ -692,7 +737,6 @@ async function checkConnection() {
     } catch (error) {
         connectionStatus("lost");
         if (openingRequested) {
-            setMessage(generationNote, generationGuidance);
             return;
         }
         const next = `Designer connection interrupted: ${error.message}. Unsaved edits remain in this panel. If it does not reconnect, restart Designer (close this panel and open Designer again); copy any unsaved edits first.`;

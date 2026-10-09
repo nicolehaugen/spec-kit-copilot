@@ -7,7 +7,7 @@ import { validateCanvasId, validateOutputStatusResponse,
     validateOutputError } from "../ui/generated-output-state.js";
 
 const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
-const generationGuidance = "Opening continues in the child-session chat. You can close Designer now.";
+const generationGuidance = "Opening requested. Check the child-session chat. If you want to keep using Designer in this session, reopen it after the canvas opens.";
 
 test("overlapping output polls return their own validated snapshot without replacing newer UI state", async () => {
     const start = source.indexOf("async function refreshOutputStatus(");
@@ -321,13 +321,13 @@ test("Designer health check reports failed and restored connections without repl
     await check();
     assert.equal(status.textContent, "Disconnected");
     assert.equal(errorBox.textContent, "Unrelated field error");
-    assert.equal(generationNote.textContent, generationGuidance);
+    assert.equal(generationNote.textContent, "");
     response = { ok: true, json: async () => ({
         generationAvailable: false, generationError: GENERATION_PENDING,
     }) };
     await check();
     assert.equal(status.textContent, "Live");
-    assert.equal(generationNote.textContent, generationGuidance);
+    assert.equal(generationNote.textContent, "");
 });
 
 test("health checks use a small authenticated asset, but periodically refresh generation availability", async () => {
@@ -404,6 +404,7 @@ test("Generate stays reachable after files are created and shows Regenerate", ()
     const end = source.indexOf("function confirmReplacement(", start);
     assert.ok(start >= 0 && end > start);
     const generate = { disabled: false };
+    const openGenerated = { disabled: false };
     const generationError = { textContent: "", hidden: true };
     const generationNote = { textContent: "", hidden: true };
     const model = {
@@ -418,12 +419,12 @@ test("Generate stays reachable after files are created and shows Regenerate", ()
     };
     const draft = { "canvas.id": "first-canvas" };
     const context = {
-        model, draft, draftOutputs: {}, generate, generationNote, generationError,
-        saving: false, generating: false,
+        model, draft, draftOutputs: {}, generate, openGenerated, generationNote, generationError,
+        saving: false, generating: false, opening: false, openingRequested: false,
         requestedCanvasId: "first-canvas", requestedRequestId: "request-1",
         outputIdentity: "first-canvas", outputStatus: "ready", outputRequestId: "request-1",
         activeUploads: new Set(), GENERATION_PENDING,
-        outputPathsReady: () => true, updateOutputDisplay: () => {},
+        outputPathsReady: () => true, updateOutputDisplay: () => {}, updateOpenStatus: () => {},
         setMessage: (slot, text) => {
             slot.textContent = text;
             const selected = generationNote.textContent ? generationNote
@@ -441,11 +442,27 @@ test("Generate stays reachable after files are created and shows Regenerate", ()
     update();
     assert.equal(generate.disabled, false);
     assert.equal(generate.textContent, "Regenerate canvas");
+    assert.equal(openGenerated.disabled, false);
     assert.equal(generationError.hidden, true);
+    context.requestedRequestId = "new-request";
+    update();
+    assert.equal(openGenerated.disabled, true);
+    context.requestedCanvasId = "other-canvas";
+    update();
+    assert.equal(openGenerated.disabled, false);
+    context.requestedCanvasId = "first-canvas";
+    context.requestedRequestId = "request-1";
     draft["canvas.id"] = "second-canvas";
     update();
     assert.equal(generate.disabled, false);
+    assert.equal(openGenerated.disabled, true);
     assert.equal(generate.textContent, "Generate canvas");
+    draft["canvas.id"] = "first-canvas";
+    context.openingRequested = true;
+    update();
+    assert.equal(generate.disabled, true);
+    assert.equal(openGenerated.disabled, true);
+    context.openingRequested = false;
     model.generationAvailable = false;
     model.generationError = "Canvas Design does not provide Generate in this session.";
     update();
@@ -467,15 +484,16 @@ test("a missing Generate capability cannot be bypassed by changing an existing C
     };
     const draft = { "canvas.id": "existing" };
     const generate = { disabled: false };
+    const openGenerated = { disabled: false };
     const generationError = { textContent: "" };
     const generationNote = { textContent: "" };
     const update = runInNewContext(`${source.slice(start, end)}
 updateGenerate`, {
-        model, draft, draftOutputs: {}, generate, generationNote, generationError,
-        saving: false, generating: false, requestedCanvasId: null,
+        model, draft, draftOutputs: {}, generate, openGenerated, generationNote, generationError,
+        saving: false, generating: false, opening: false, openingRequested: false, requestedCanvasId: null,
         outputIdentity: "", outputStatus: "absent", requestedRequestId: null,
         outputRequestId: null, activeUploads: new Set(), GENERATION_PENDING,
-        outputPathsReady: () => true, updateOutputDisplay: () => {},
+        outputPathsReady: () => true, updateOutputDisplay: () => {}, updateOpenStatus: () => {},
         setMessage: (slot, text) => { slot.textContent = text; },
         required: ["canvas.id", "canvas.displayName"],
     });

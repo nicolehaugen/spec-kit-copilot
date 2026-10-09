@@ -103,18 +103,63 @@ p { margin: 0; }
 .conn-live { color: var(--success-color); background: rgba(23, 140, 78, .12); }
 .conn-lost { color: var(--danger-color); background: rgba(199, 54, 46, .12); }
 .app-body { padding: 1.5rem; max-width: 920px; margin: 0 auto; }
-.generate-page { display: grid; justify-items: start; gap: .5rem; }
-.generate-page h2 { font-size: 18px; margin: 1.5rem 0 0; }
-.generate-page h3 { font-size: 15px; margin: .8rem 0 0; }
-.generate-page .setting-label { font-weight: 600; margin-top: .5rem; }
+.generate-page { display: grid; gap: 1.5rem; }
+.generate-intro { display: grid; gap: .25rem; }
+.generate-step { display: grid; justify-items: start; gap: .4rem; padding: 1.25rem;
+    border: 1px solid var(--border-color-default); border-radius: var(--radius-md);
+    background: var(--background-color-elevated); }
+.generate-step h2 { display: flex; align-items: center; gap: .65rem;
+    font-size: 18px; margin: 0 0 .6rem; }
+.step-index { display: inline-flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--background-color-secondary); color: var(--text-color-default);
+    font-size: 14px; }
+.generate-share { gap: .4rem; }
+.generate-share h3 { font-size: 15px; margin: .8rem 0 0; }
+.generate-page .setting-label { font-weight: 600; margin-top: .6rem; }
 .generate-page .generation-target { display: flex; gap: .65rem; flex-wrap: wrap; overflow-wrap: anywhere; }
+.generate-page code { overflow-wrap: anywhere; }
 .generate-page a { color: var(--accent-color); }
-.generate-page button { min-height: 40px; padding: .5rem 1rem; margin-top: .5rem;
+.generate-page button { min-height: 40px; padding: .4rem .75rem; margin-top: .6rem;
     border: 1px solid var(--border-color-strong); border-radius: var(--radius-sm);
     font: inherit; color: var(--text-color-default); background: var(--background-color-elevated); cursor: pointer; }
 .generate-page button.primary { color: var(--accent-contrast); background: var(--accent-color);
-    border-color: var(--accent-color); }
+    border-color: var(--accent-color); font-weight: 600; }
 .generate-page button:disabled { opacity: .55; cursor: not-allowed; }
+.designer-dialog {
+    width: min(560px, calc(100% - 32px));
+    max-height: calc(100vh - 48px);
+    padding: 0;
+    overflow: auto;
+    border: 1px solid var(--border-color-default);
+    border-radius: var(--radius-md);
+    background: var(--background-color-elevated);
+    color: var(--text-color-default);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, .2);
+    font: inherit;
+}
+.designer-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+.designer-dialog-head { padding: 14px 18px 10px; border-bottom: 1px solid var(--border-color-default); }
+.designer-dialog-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.designer-dialog-body { padding: 14px 18px; font-size: 13px; overflow-wrap: anywhere; }
+.designer-dialog-body dl { margin: 12px 0 0; }
+.designer-dialog-body dd { margin: 0 0 8px 12px; }
+.designer-dialog-foot {
+    display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px;
+    border-top: 1px solid var(--border-color-default);
+    background: var(--background-color-default);
+}
+.designer-dialog-foot button {
+    min-height: 36px; padding: .5rem 1rem; border: 1px solid var(--border-color-default);
+    border-radius: var(--radius-sm); background: var(--background-color-elevated);
+    color: var(--text-color-default); font: inherit; font-size: 14px; cursor: pointer;
+}
+.designer-dialog-foot button.primary {
+    border-color: var(--accent-color); background: var(--accent-color);
+    color: var(--accent-contrast); font-weight: 600;
+}
+.designer-dialog-foot button:not(.primary):hover { border-color: var(--border-color-strong); }
+.designer-dialog-foot button.primary:hover { filter: brightness(.95); }
 #settings-page h1 { font-size: 26px; margin-bottom: .5rem; }
 #settings-page > p { max-width: 68ch; margin-bottom: 1rem; }
 .settings-field { display: grid; gap: .35rem; margin-bottom: 1.1rem; max-width: 660px; }

@@ -125,7 +125,7 @@ directory, which may include a numeric prefix, remains authoritative.
 The resolved **Outputs** definition (`designer-artifacts`) remains in the
 model and frozen generation data, but its tab is hidden in this MVP. Inferred
 pipeline artifacts and saved outputs are retained; Constitution still opens
-`.specify/memory/constitution.md`. The **Generate & Open** tab is fixed shell
+`.specify/memory/constitution.md`. The **Generate** tab is fixed shell
 UI rather than a customizable contribution, so it does not register a JSON
 definition or adapter/renderer template pair.
 The existing header Save persists confirmed outputs with the other bounded,
@@ -218,14 +218,17 @@ is blocked rather than silently reloading Designer.
 For a verified same-handoff target, **Regenerate canvas** confirms that all
 files, including manual edits, will be overwritten. The generator stages and
 validates replacement, then swaps directories with rollback; foreign or
-incomplete output is not replaceable. The **Open folder** action reveals
-`.github\extensions` until the target exists and that target afterward.
-**Open canvas** dispatches a separate child-session command to reload
-extensions, verify the exact project provider and open its canvas. A failed
-handoff leaves Designer usable. After acceptance, reload may disconnect the
-Designer panel, so the child chat reports success or failure and can retry
-opening existing files without regenerating; close Designer manually when
-prompted. There is no supported provider-initiated panel-close operation.
+incomplete output is not replaceable. The target-folder path is a link that
+reveals `.github\extensions` until the generated folder exists, and reveals
+the generated folder afterward.
+**Open canvas** is available only after the generated files are verified.
+Before dispatch, the Open step warns that registration disconnects Designer
+and shows the child-chat guidance. Generate and Open stay disabled after the
+opening request is accepted; an error before acceptance restores them. The
+child-session command reloads extensions, verifies the exact project provider,
+and opens its canvas. Reopen Designer to continue editing after registration;
+the child chat reports success or failure and can retry opening existing files
+without regenerating. There is no supported provider-initiated panel-close operation.
 Sharing remains optional instructions for a team project extension, a personal
 extension, or a plugin; no distribution happens automatically.
 At Generate, Designer checks the child checkout's Specify inventory for packages

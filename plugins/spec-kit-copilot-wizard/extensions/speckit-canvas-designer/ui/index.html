@@ -28,19 +28,21 @@
         <button type="button" id="open-generated-canvas" hidden>Open canvas</button>
         <section id="settings-page" role="tabpanel" aria-busy="true"><h1>Loading settings...</h1></section>
     </main>
-    <dialog id="provider-approval" aria-labelledby="provider-approval-title">
-        <h2 id="provider-approval-title">Approve generated value providers</h2>
-        <p>These JavaScript modules will run locally with your user privileges. Confirm the resolved source and SHA-256 of each module before packaging it.</p>
-        <dl id="provider-approval-list"></dl>
-        <form method="dialog">
+    <dialog id="provider-approval" class="designer-dialog" aria-labelledby="provider-approval-title">
+        <header class="designer-dialog-head"><h2 id="provider-approval-title">Approve generated value providers</h2></header>
+        <div class="designer-dialog-body">
+            <p>These JavaScript modules will run locally with your user privileges. Confirm the resolved source and SHA-256 of each module before packaging it.</p>
+            <dl id="provider-approval-list"></dl>
+        </div>
+        <form method="dialog" class="designer-dialog-foot">
             <button type="submit" value="cancel">Cancel</button>
             <button type="submit" value="approve" class="primary">Approve and Generate</button>
         </form>
     </dialog>
-    <dialog id="replace-canvas" aria-labelledby="replace-canvas-title">
-        <h2 id="replace-canvas-title">Replace generated canvas?</h2>
-        <p id="replace-canvas-description"></p>
-        <form method="dialog">
+    <dialog id="replace-canvas" class="designer-dialog" aria-labelledby="replace-canvas-title">
+        <header class="designer-dialog-head"><h2 id="replace-canvas-title">Replace generated canvas?</h2></header>
+        <div class="designer-dialog-body"><p id="replace-canvas-description"></p></div>
+        <form method="dialog" class="designer-dialog-foot">
             <button type="submit" value="cancel">Cancel</button>
             <button type="submit" value="replace" class="primary">Replace all files</button>
         </form>
