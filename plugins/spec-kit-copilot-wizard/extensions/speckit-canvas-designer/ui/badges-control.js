@@ -80,7 +80,10 @@ function evidencePhases(rule, inputs) {
     for (const descriptor of rule.inputs ?? []) {
         const value = inputs[descriptor.id];
         if (descriptor.type === "phase" && value) selected.add(value);
-        else if (descriptor.type === "artifact" && value?.phase) selected.add(value.phase);
+        else if (descriptor.type === "artifact" && value?.phase
+            && !(rule.id === "checklist-complete" && descriptor.id === "prerequisite")) {
+            selected.add(value.phase);
+        }
         else if (descriptor.type === "artifact-set") {
             for (const entry of value ?? []) if (entry.outputs?.length) selected.add(entry.phase);
         }

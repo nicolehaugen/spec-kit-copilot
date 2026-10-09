@@ -263,7 +263,7 @@ test("bubbled control events preserve invalid-input errors but host edits clear 
 test("preview checklist uses its output phase and requires a distinct earlier prerequisite", () => {
     const model = previewModel();
     const checklist = model.badgeRules.find((rule) => rule.id === "checklist-complete");
-    assert.equal(checklist.placementPhaseInput, "artifact");
+    assert.equal(checklist.placementPhaseInput, undefined);
     const { root, draftBadges, cleanup } = setup({
         phases: model.phases, outputs: model.outputs, badgeTypes: model.badgeTypes,
         badgeRules: model.badgeRules, controlMount: mountPreviewInputs,
@@ -291,6 +291,7 @@ test("preview checklist uses its output phase and requires a distinct earlier pr
         submit(editor);
         assert.equal(draftBadges.length, 0);
         chooseArtifact(fields()[0], "plan", "specs/<slug>/plan.md");
+        chooseArtifact(fields()[1], "constitution", ".specify/memory/constitution.md");
         const phaseCard = check(root, "badge-placements", "Phase");
         phaseCard.checked = true;
         phaseCard.events.change();
