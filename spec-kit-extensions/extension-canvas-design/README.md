@@ -81,6 +81,8 @@ generated presentation. Authors may set `"required": true` on a text field
 in a page or a field contribution to reject empty or whitespace-only values.
 The shared Designer adapter shows the field's syntax guidance; Generate verifies
 the constraint independently. Omitted `required` preserves optional text.
+Essentials field help comes from each JSON definition's `description`; stock text
+and checkbox adapters display it below the corresponding control.
 Allow custom artifact directory slug is a stock-checkbox Designer setting with no generated visual
 adapter; its frozen boolean controls the generated workflow shell. When enabled,
 a user may enter an optional Artifact directory slug to preview the target;

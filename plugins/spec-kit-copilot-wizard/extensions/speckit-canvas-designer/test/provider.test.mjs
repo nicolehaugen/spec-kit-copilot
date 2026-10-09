@@ -882,6 +882,39 @@ test("stock image picker announces its format hint and upload error", async (t) 
     assert.equal(input.getAttribute("aria-describedby"), `${hint.id} ${error.id}`);
 });
 
+test("stock checkboxes display their JSON help below the label", async (t) => {
+    const previousDocument = globalThis.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const element = () => ({
+        children: [], attributes: new Map(), events: {},
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        getAttribute(name) { return this.attributes.get(name); },
+        addEventListener(name, callback) { this.events[name] = callback; },
+        replaceChildren(...children) { this.children = children; },
+    });
+    globalThis.document = { createElement: element };
+    const { mount } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/shared-controls/stock-checkbox/designer.mjs",
+        import.meta.url));
+    const source = new URL("../../../../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/",
+        import.meta.url);
+    for (const file of ["custom-slug.json", "show-setup.json"]) {
+        const { field } = JSON.parse(await readFile(new URL(file, source), "utf8"));
+        const root = element();
+        let nextValue;
+        mount({ root, field: { ...field, validation: { type: "boolean" } },
+            value: false, onChange: (value) => { nextValue = value; } });
+        const [input, label, hint] = root.children;
+        assert.equal(label.textContent, field.label);
+        assert.equal(hint.className, "settings-hint");
+        assert.equal(hint.textContent, field.description);
+        assert.equal(input.getAttribute("aria-describedby"), hint.id);
+        input.checked = true;
+        input.events.input();
+        assert.equal(nextValue, true);
+    }
+});
+
 test("Designer tabs remain navigable when a field adapter is not ready", async () => {
     const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
     const start = source.indexOf('tabs.addEventListener("click"');
@@ -1403,6 +1436,7 @@ test("stock contributions retain the optional slug setting and minimal replaced 
     const { project, entries } = await projectFixture(t, workspace);
     const templates = await stockTemplates(project);
     const full = await loadResolvedDesignerPages(handoff, project, entries, templates);
+    assert.equal(full.pages[0].description, "Configure settings for your generated canvas app.");
     assert.deepEqual(full.pages[0].fields.map(({ id, label }) => [id, label]), [
         ["canvas.id", "Canvas ID"], ["canvas.displayName", "Title"],
         ["canvas.description", "Description"], ["canvas.workflowListName", "Workflow header"],
