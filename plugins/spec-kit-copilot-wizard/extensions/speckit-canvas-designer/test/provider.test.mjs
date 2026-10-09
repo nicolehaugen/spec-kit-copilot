@@ -2948,7 +2948,7 @@ test("sample-only preview renders badges without a handoff and rejects writes", 
     assert.ok(state.badgeTypes.some((type) => type.id === "value-match"));
     assert.equal(state.badgeInputControls.length, state.badgeRules.length);
     assert.equal(state.badgeRules.find((rule) => rule.id === "checklist-complete")
-        .placementPhaseInput, "artifact");
+        .placementPhaseInput, undefined);
     const stock = await fetch(new URL(
         `/adapters/preview-badge-input.mjs?token=${url.searchParams.get("token")}`, url));
     assert.equal(stock.status, 200);
