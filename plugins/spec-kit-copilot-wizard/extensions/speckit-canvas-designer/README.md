@@ -203,9 +203,11 @@ panel, even after the generated app's `extension.mjs` entry point appears
 following syntax and render validation. The agent reloads extensions and opens
 the generated app automatically; this disconnects the original Designer panel.
 Restart Designer (close the panel and open Designer again) to make further
-changes. The edit lock and queued
-state belong only to that panel, not to subsequent Designer instances. To
-generate another app, choose a different Canvas ID in the reopened Designer
+changes. The edit lock and queued state belong only to that panel, not to
+subsequent Designer instances. To avoid suggesting a restart while generation
+is still running, the queued notice reports progress; the bordered
+informational notice gives restart guidance only after the connection drops.
+To generate another app, choose a different Canvas ID in the reopened Designer
 and Generate (which saves the new settings). An existing Canvas ID cannot be
 generated twice. If generation fails before reload, inspect the partial output
 and reopen Designer only after investigating the failure, without assuming

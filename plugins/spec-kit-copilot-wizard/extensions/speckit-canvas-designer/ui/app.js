@@ -71,8 +71,8 @@ function updateGenerate() {
     generationNote.textContent = queuedCanvasId
         ? reason === "Canvas already exists; choose and save a different Canvas ID."
             && model?.values?.["canvas.id"] === queuedCanvasId
-            ? "Canvas files validated. The agent is registering and opening the app. This Designer panel is locked. After the app opens, restart Designer (close this panel and open Designer again) to make more changes."
-            : "Generation queued. The agent will register and open the app automatically. This Designer panel is locked. After the app opens, restart Designer (close this panel and open Designer again) to make more changes. If generation fails, inspect the output before restarting Designer."
+            ? "Canvas files validated. The agent is registering and opening the app. Editing is locked in this Designer panel."
+            : "Generation queued. The agent will register and open the app automatically. Editing is locked in this Designer panel. If generation fails, inspect the output."
         : generating ? "Saving settings and preparing generation. Editing is temporarily locked."
             : expectedState ? reason : "";
     generationNote.hidden = !generationNote.textContent;
@@ -494,8 +494,12 @@ async function checkConnection() {
             note.hidden = false;
             return;
         }
-        const next = `Designer connection interrupted: ${error.message}. Unsaved edits remain in this panel.`;
-        if (connectionError !== next && !errorBox.textContent) showError(next);
+        const next = `Designer connection interrupted: ${error.message}. Unsaved edits remain in this panel. If it does not reconnect, restart Designer (close this panel and open Designer again); copy any unsaved edits first.`;
+        const note = document.getElementById("generation-note");
+        if (note.textContent !== next || note.hidden) {
+            note.textContent = next;
+            note.hidden = false;
+        }
         connectionError = next;
     }
 }

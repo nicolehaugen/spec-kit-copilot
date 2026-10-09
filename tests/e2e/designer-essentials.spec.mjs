@@ -159,6 +159,8 @@ test("computed provider approval cancels without sending and submits the approve
     await expect(generate).toBeDisabled();
     await expect(page.locator("#generation-note")).toContainText("open the app automatically");
     await expect(page.locator("#generation-note")).toHaveCSS("border-top-style", "solid");
+    await expect(page.locator("#generation-note")).toHaveCSS("border-top-color", "rgb(11, 110, 153)");
+    await expect(page.locator("#generation-note")).toHaveCSS("padding-top", "12px");
     await expect(page.locator("#conn-status")).toHaveText("Live");
 });
 

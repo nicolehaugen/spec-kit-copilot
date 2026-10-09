@@ -186,7 +186,9 @@ test("Designer health check reports failed and restored connections without repl
     polls();
     await check();
     assert.equal(status.textContent, "Disconnected");
-    assert.match(errorBox.textContent, /connection interrupted.*503.*Unsaved edits remain/);
+    assert.equal(errorBox.textContent, "");
+    assert.match(generationNote.textContent, /connection interrupted.*503.*Unsaved edits remain/);
+    assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
     assert.equal(draft["canvas.displayName"], "Unsaved title");
     response = { ok: true, json: async () => ({ generationAvailable: true, generationError: null }) };
     await check();
@@ -199,6 +201,7 @@ test("Designer health check reports failed and restored connections without repl
     assert.equal(status.textContent, "Disconnected");
     assert.equal(errorBox.textContent, "");
     assert.match(generationNote.textContent, /connection ended during generation/i);
+    assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
 });
 
 test("queued editing lock belongs to this panel, not a new Designer instance", () => {
@@ -263,7 +266,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     assert.equal(generationError.hidden, true);
     assert.equal(generationNote.hidden, false);
     assert.match(generationNote.textContent, /agent will register and open the app automatically/);
-    assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
+    assert.doesNotMatch(generationNote.textContent, /restart Designer/i);
     draft["canvas.id"] = "second-canvas";
     update();
     assert.equal(generate.disabled, true);
@@ -283,7 +286,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     update();
     assert.equal(generationNote.hidden, false);
     assert.match(generationNote.textContent, /Canvas files validated.*agent is registering and opening the app/);
-    assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
+    assert.doesNotMatch(generationNote.textContent, /restart Designer/i);
     assert.equal(generationError.hidden, true);
     model.generationError = "Canvas Design does not provide Generate in this session.";
     update();
