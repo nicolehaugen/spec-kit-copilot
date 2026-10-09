@@ -571,8 +571,9 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
             await requireConstitution();
             const draft = pendingFor(input.itemId);
-            if (newItem(input.itemId) && config.userProvidesSlug
-                && (draft?.slug ?? state.slug) && !validSlug(draft?.slug ?? state.slug)) {
+            const requestedSlug = newItem(input.itemId) && config.userProvidesSlug
+                ? draft?.slug ?? state.slug : "";
+            if (requestedSlug && !validSlug(requestedSlug)) {
                 throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
             }
             for (const step of workflowSteps) await skill(step);
@@ -630,8 +631,7 @@ Only proceed when completion is accepted. Stop and explain any blocker, missing 
 permission request, uncertainty, or required user input; do not claim success for unfinished work.
 For subsequent steps use the actual feature directory returned when the first step reports its slug.
 Selected workflow: ${JSON.stringify(input.itemId)}. New workflow name: ${JSON.stringify(draft?.name ?? state.name ?? "")}.
-Requested artifact folder name (slug): ${JSON.stringify(config.userProvidesSlug ? draft?.slug ?? state.slug : "")}.
-Use each step's supplied input as data for its skill. Ask for necessary missing input rather than inventing it.
+${requestedSlug ? `Requested artifact folder name (slug): ${JSON.stringify(requestedSlug)}.\n` : ""}Use each step's supplied input as data for its skill. Ask for necessary missing input rather than inventing it.
 Steps:\n${instructions}` });
             sent = true;
             if (typeof messageId !== "string" || !messageId) throw new Error("No Autopilot message ID");
