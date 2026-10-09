@@ -16,11 +16,13 @@ const scalarAdapters = new Map();
 const mounted = new Map();
 const pageViews = new Map();
 const themeKey = "speckit-designer.theme";
+const colorPreference = window.matchMedia?.("(prefers-color-scheme: dark)");
+let selectedTheme = null;
 
 function currentTheme() {
     const explicit = document.documentElement.getAttribute("data-theme");
     if (explicit === "dark" || explicit === "light") return explicit;
-    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return colorPreference?.matches ? "dark" : "light";
 }
 
 function applyTheme(theme) {
@@ -31,11 +33,15 @@ function applyTheme(theme) {
     button.title = button.getAttribute("aria-label");
 }
 
-let storedTheme = null;
-try { storedTheme = localStorage.getItem(themeKey); } catch { /* storage may be unavailable */ }
-applyTheme(storedTheme === "dark" || storedTheme === "light" ? storedTheme : currentTheme());
+try { selectedTheme = localStorage.getItem(themeKey); } catch { /* storage may be unavailable */ }
+if (selectedTheme !== "dark" && selectedTheme !== "light") selectedTheme = null;
+applyTheme(selectedTheme ?? (colorPreference?.matches ? "dark" : "light"));
+colorPreference?.addEventListener?.("change", (event) => {
+    if (!selectedTheme) applyTheme(event.matches ? "dark" : "light");
+});
 document.getElementById("theme-toggle").addEventListener("click", () => {
     const next = currentTheme() === "dark" ? "light" : "dark";
+    selectedTheme = next;
     applyTheme(next);
     try { localStorage.setItem(themeKey, next); } catch { /* storage may be unavailable */ }
 });
@@ -91,7 +97,8 @@ generate.addEventListener("click", async () => {
     showError("");
     try {
         if (providers.length && !await confirmProviders(providers)) return;
-        const values = draft;
+        const values = structuredClone(draft);
+        const submittedId = values["canvas.id"];
         const response = await fetch(`/api/generate?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ modelRevision: model.revision,
@@ -106,7 +113,7 @@ generate.addEventListener("click", async () => {
             messageBox.textContent = `Warning: ${result.warnings.join(" ")}`;
             messageBox.hidden = false;
         }
-        queuedCanvasId = values["canvas.id"];
+        queuedCanvasId = submittedId;
     } catch (error) {
         showFieldError(error.message);
     } finally {

@@ -30,23 +30,90 @@ test("Designer fixed-shell theme toggle follows preference, persists choice and 
         getElementById: () => button,
     };
     let saved = null;
+    let prefersDark = true;
+    let onColorChange;
+    const preference = { get matches() { return prefersDark; },
+        addEventListener: (_name, handler) => { onColorChange = handler; } };
     const localStorage = {
         getItem: () => saved,
         setItem: (_key, value) => { saved = value; },
     };
     const run = () => runInNewContext(source.slice(start, end), {
-        document, window: { matchMedia: () => ({ matches: true }) }, localStorage,
+        document, window: { matchMedia: () => preference }, localStorage,
     });
     run();
     assert.equal(theme, "dark");
     assert.equal(attributes.get("aria-label"), "Switch to light theme");
-    click();
+    prefersDark = false;
+    onColorChange({ matches: false });
     assert.equal(theme, "light");
-    assert.equal(saved, "light");
-    assert.equal(button.title, "Switch to dark theme");
+    click();
+    assert.equal(theme, "dark");
+    assert.equal(saved, "dark");
+    assert.equal(button.title, "Switch to light theme");
+    onColorChange({ matches: true });
+    onColorChange({ matches: false });
+    assert.equal(theme, "dark");
     theme = null;
     run();
-    assert.equal(theme, "light");
+    assert.equal(theme, "dark");
+});
+
+test("dark badge text and accent buttons meet small-text contrast", async () => {
+    const css = await readFile(new URL("../ui/styles.css", import.meta.url), "utf8");
+    const dark = css.match(/\[data-theme="dark"\]\s*\{([^}]+)\}/)?.[1];
+    assert.ok(dark);
+    const systemDark = css.match(/@media \(prefers-color-scheme: dark\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{([^}]+)\}/)?.[1];
+    assert.ok(systemDark);
+    const value = (name) => dark.match(new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`))?.[1];
+    const luminance = (hex) => {
+        const channels = hex.slice(1).match(/../g).map((part) => {
+            const channel = Number.parseInt(part, 16) / 255;
+            return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+        });
+        return channels.reduce((sum, channel, index) => sum + channel * [.2126, .7152, .0722][index], 0);
+    };
+    const contrast = (foreground, background) => {
+        const [lighter, darker] = [luminance(foreground), luminance(background)]
+            .sort((a, b) => b - a);
+        return (lighter + .05) / (darker + .05);
+    };
+    for (const color of ["purple", "pink", "orange"]) {
+        assert.ok(contrast(value(`badge-${color}`), value("background-color-secondary")) >= 4.5, color);
+        assert.match(css, new RegExp(`\\.badge-preview\\[data-color="${color}"\\] \\{ color: var\\(--badge-${color}\\)`));
+        assert.match(systemDark, new RegExp(`--badge-${color}:\\s*${value(`badge-${color}`)}`, "i"));
+    }
+    assert.ok(contrast(value("accent-contrast"), value("accent-color")) >= 4.5);
+    assert.match(css, /\.badge-toolbar > \.badge-add[^}]+color: var\(--accent-contrast\)/);
+    assert.match(css, /\.badge-editor \.badge-actions button:first-child[^}]+color: var\(--accent-contrast\)/);
+});
+
+test("Generate remembers the submitted ID when the draft changes during dispatch", async () => {
+    const start = source.indexOf('generate.addEventListener("click"');
+    const end = source.indexOf("function element(", start);
+    assert.ok(start >= 0 && end > start);
+    const draft = { "canvas.id": "first-canvas" };
+    let click, release, submitted;
+    const context = {
+        generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
+        model: { preview: false, templates: [], revision: "model-1", settingsRevision: 0 },
+        draft, draftOutputs: {}, draftBadges: [], queuedCanvasId: null, token: "test",
+        generating: false, status: {}, messageBox: {}, checkReady: () => true,
+        showError: () => {}, updateGenerate: () => {},
+        showFieldError: (message) => { throw new Error(message); },
+        fetch: (_url, options) => {
+            submitted = JSON.parse(options.body).values["canvas.id"];
+            return new Promise((resolve) => { release = resolve; });
+        },
+        structuredClone, encodeURIComponent,
+    };
+    runInNewContext(source.slice(start, end), context);
+    const request = click();
+    assert.equal(submitted, "first-canvas");
+    draft["canvas.id"] = "second-canvas";
+    release({ ok: true, json: async () => ({ target: ".github/extensions/first-canvas/" }) });
+    await request;
+    assert.equal(context.queuedCanvasId, "first-canvas");
 });
 
 test("Designer health check reports failed and restored connections without replacing drafts", async () => {

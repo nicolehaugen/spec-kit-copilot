@@ -202,6 +202,10 @@ ID and Save; Generate then becomes available again. An existing Canvas ID
 cannot be generated twice. A partial generation without an entry point remains
 queued in that panel; reopening Designer after investigating the failure
 restores the saved settings without claiming the app was generated.
+The queued-request guard is local to the running Designer provider. If the
+provider restarts during generation, inspect the generated output or wait for
+the original request to finish before retrying: the reopened panel cannot
+distinguish a still-running request from a failed one.
 At Generate, Designer checks the child checkout's Specify inventory for packages
 in the Wizard handoff and freezes their installed versions alongside the original
 Wizard snapshot. Unrelated installed packages do not affect version verification.
