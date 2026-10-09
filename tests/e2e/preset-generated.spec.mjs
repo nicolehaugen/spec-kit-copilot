@@ -255,7 +255,9 @@ test("canvas values render typed fields while processing-only value stays on its
         ["canvas-generated-values-renderer", "generated.added-page-renderer"],
     ] });
     try {
-        const { request, config } = await generate(page, journey, dispatched, "preset-values");
+        const { request, config } = await generate(page, journey, dispatched, "preset-values", {
+            workflowEvidence: true,
+        });
         expect(request.valueSources).toContainEqual(expect.objectContaining({
             id: "demo.workflow", source: expect.objectContaining({
                 module: "canvas-value-workflow-provider",
@@ -269,6 +271,10 @@ test("canvas values render typed fields while processing-only value stays on its
         await expect(values.locator('[data-field-id="demo.heading"]')).toHaveText("Sample heading");
         await expect(values.locator('[data-edit-value="demo.note"] input')).toHaveValue("Initial note");
         await expect(values.getByText("private hint")).toHaveCount(0);
+        await expect(values.locator('[data-field-id="demo.workflow"]')).toHaveCount(0);
+        await page.getByRole("button", { name: "preset-feature", exact: true }).click();
+        await expect(values.locator('[data-field-id="demo.workflow"]'))
+            .toHaveText("preset-feature (preset-feature)");
         await page.locator('[data-canvas-page="canvas-generated-values"]').click();
         await expect(page.locator("#generated-page")).toHaveText("private hint");
     } finally { await closeJourney(journey); }
