@@ -80,10 +80,10 @@ export function renderStockPage(root, definition) {
         </div>
         <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p>
             <p id="constitution-artifact-status" class="muted" role="status"></p>
-            ${hasBadges && definition.badgeDestinations.includes("phase.output")
-                ? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
         </div>
         <div class="constitution-actions">
+            ${hasBadges && definition.badgeDestinations.includes("phase.output")
+                ? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
             <button class="btn btn-secondary" id="view-constitution" type="button"
                 aria-describedby="constitution-artifact-status" hidden>View</button>
             <button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button>

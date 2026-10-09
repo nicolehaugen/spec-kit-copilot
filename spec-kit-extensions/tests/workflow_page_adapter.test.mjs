@@ -25,6 +25,19 @@ test("stock adapter owns setup, constitution, values, phase and contributed mark
     assert.doesNotMatch(root.innerHTML, /<script>/);
 });
 
+test("Constitution output badge is in the visible actions area of the Workflow page", () => {
+    const root = { innerHTML: "" };
+    renderStockPage(root, { canvas: { displayName: "Demo", workflowListName: "Workflows" },
+        readOnlyFields: [], textPlacements: [], generatedControls: [],
+        hasConstitution: true, hasBadges: true, badgeDestinations: ["phase.output"],
+        fieldSlots: [] });
+    assert.match(root.innerHTML,
+        /<div class="constitution-actions">\s*<span id="constitution-output-badges"/);
+    const details = root.innerHTML.match(/<div class="constitution-details">[\s\S]*?<\/div>/)?.[0];
+    assert.ok(details);
+    assert.doesNotMatch(details, /id="constitution-output-badges"/);
+});
+
 test("stock Workflow page mounts its phase control, updates collection and disposes", (t) => {
     const elements = new Map();
     const element = (id) => {

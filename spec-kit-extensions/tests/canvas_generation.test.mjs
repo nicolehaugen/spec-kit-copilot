@@ -408,6 +408,14 @@ test("selected badge definitions and evaluator are packaged without preset files
     assert.match(stockMarkup(config), /data-badge-slot="workflow.summary"/);
     assert.match(stockMarkup(config), /id="constitution-badges"/);
     assert.match(stockMarkup(config), /id="constitution-output-badges"/);
+    assert.match(stockMarkup(config),
+        /<div class="constitution-actions">\s*<span id="constitution-output-badges"/);
+    const legacyPage = { ...config.workflowPage };
+    delete legacyPage.pageAdapter;
+    delete legacyPage.pageAdapterHash;
+    delete legacyPage.badgeDestinations;
+    assert.match(renderHtml({ ...config, workflowPage: legacyPage }),
+        /<div class="constitution-actions">\s*<span id="constitution-output-badges"/);
     assert.match(html, /&quot;hasConstitution&quot;:true/);
     assert.match(html, /data-badge-slots="[^"]*phase.card[^"]*phase.output/);
     assert.equal(config.badges.rules[0].adapter, "badge-rule-content-adapter");
