@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { generatedOutput, validateOutputAction } from "../contracts/generated-output.mjs";
+import { generatedOutput, readGeneratedJson, validateOutputAction } from "../contracts/generated-output.mjs";
 import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse,
     validateOutputError } from "../ui/generated-output-state.js";
 
@@ -80,6 +80,7 @@ test("generated output distinguishes absent, foreign, incomplete and ready targe
     assert.deepEqual(await generatedOutput(project, "team-dashboard", "handoff-1"), {
         status: "ready", target: ".github/extensions/team-dashboard/", requestId: "request-1",
     });
+
     assert.equal((await generatedOutput(project, "team-dashboard", "other")).status, "foreign");
     await rm(target, { recursive: true });
     try {
@@ -89,5 +90,23 @@ test("generated output distinguishes absent, foreign, incomplete and ready targe
         t.diagnostic("Windows symlink creation is not permitted; link assertion skipped");
         return;
     }
+    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
+});
+
+test("generated metadata reads reject replaced entries and oversized files", async (t) => {
+    const project = await mkdtemp(join(tmpdir(), "designer-output-race-"));
+    t.after(() => rm(project, { recursive: true, force: true }));
+    const target = join(project, ".github", "extensions", "team-dashboard");
+    await mkdir(target, { recursive: true });
+    const path = join(target, "canvas-config.json");
+    await writeFile(path, JSON.stringify({ canvas: { id: "team-dashboard" } }));
+    await assert.rejects(readGeneratedJson(target, "canvas-config.json", async (file, flags) => {
+        const descriptor = await open(file, flags);
+        await rename(path, `${path}.prior`);
+        await writeFile(path, JSON.stringify({ canvas: { id: "team-dashboard" } }));
+        return descriptor;
+    }), /metadata changed during read/);
+    await writeFile(path, "x".repeat(1024 * 1024 + 1));
+    assert.equal(await readGeneratedJson(target, "canvas-config.json"), null);
     assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
 });

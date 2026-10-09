@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { materialize } from "../extension-canvas-design/scripts/generate.mjs";
+import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture } from "./designer_adapter_fixture.mjs";
@@ -105,6 +105,8 @@ test("replacement rejects forged provenance, unrelated canvas identity and incom
         },
         async (sdk) => rm(join(sdk, "extension.mjs")),
         async (sdk) => rm(join(sdk, "pages", "workflow.json")),
+        async (sdk) => writeFile(join(sdk, "settings-provenance.json"),
+            "x".repeat(4 * 1024 * 1024 + 1)),
     ]) {
         const { sdk, regenerate } = await fixture(t);
         await corrupt(sdk);
@@ -112,6 +114,19 @@ test("replacement rejects forged provenance, unrelated canvas identity and incom
         await assert.rejects(regenerate(true), /cannot be safely replaced|Incomplete/);
         assert.deepEqual(await readdir(sdk), before);
     }
+});
+
+test("replacement metadata reader rejects an entry swapped after opening", async (t) => {
+    const { sdk } = await fixture(t);
+    const path = join(sdk, "settings-provenance.json");
+    await assert.rejects(readBoundedSessionFile(sdk, "settings-provenance.json",
+        4 * 1024 * 1024, "Existing generated settings-provenance.json",
+        async (file, flags) => {
+            const descriptor = await open(file, flags);
+            await rename(path, `${path}.prior`);
+            await writeFile(path, '{"forged":true}');
+            return descriptor;
+        }), /bounded regular session file/);
 });
 
 test("replacement refuses symlinked canvas and symlinked contents", async (t) => {

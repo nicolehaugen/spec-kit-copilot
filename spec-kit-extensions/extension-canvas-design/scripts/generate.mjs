@@ -1331,9 +1331,9 @@ async function existingGeneratedCanvas(target, projectRoot, workspaceRoot, hando
     const stat = await lstat(target);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("Existing canvas is not a generated directory");
     const readJson = async (name) => {
-        const path = join(target, name);
-        if (!(await lstat(path)).isFile()) throw new Error(`Incomplete generated canvas: ${name}`);
-        return JSON.parse(await readFile(path, "utf8"));
+        const bytes = await readBoundedSessionFile(target, name, REQUEST_LIMIT,
+            `Existing generated ${name}`);
+        return JSON.parse(bytes);
     };
     let provenance, config, previous, priorConfig;
     try {

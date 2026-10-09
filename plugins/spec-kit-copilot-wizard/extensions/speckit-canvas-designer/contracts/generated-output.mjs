@@ -1,4 +1,5 @@
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { outputTarget, validateCanvasId } from "../ui/generated-output-state.js";
 
@@ -15,15 +16,47 @@ export function validateOutputAction(input, { replace = false } = {}) {
     return input;
 }
 
-async function regularJson(path) {
-    let info;
-    try { info = await lstat(path); }
+const METADATA_LIMIT = 1024 * 1024;
+
+export async function readGeneratedJson(parent, name, openFile = open, expectedParent = null) {
+    const path = join(parent, name);
+    const before = await lstat(parent);
+    if (!before.isDirectory() || (expectedParent
+        && (before.dev !== expectedParent.dev || before.ino !== expectedParent.ino))) {
+        throw new Error("Generated canvas metadata parent changed during read");
+    }
+    let file;
+    try {
+        file = await openFile(path, constants.O_RDONLY
+            | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    }
     catch (error) {
         if (error.code === "ENOENT") return null;
         throw error;
     }
-    if (!info.isFile() || info.size > 1024 * 1024) return null;
-    return JSON.parse(await readFile(path, "utf8"));
+    try {
+        const [opened, atPath, actualParent, parentStat] = await Promise.all([
+            file.stat(), lstat(path), realpath(parent), lstat(parent),
+        ]);
+        if (actualParent !== parent || !parentStat.isDirectory()
+            || before.dev !== parentStat.dev || before.ino !== parentStat.ino || !opened.isFile()
+            || !atPath.isFile() || atPath.isSymbolicLink()
+            || opened.dev !== atPath.dev || opened.ino !== atPath.ino) {
+            throw new Error("Generated canvas metadata changed during read");
+        }
+        if (opened.size > METADATA_LIMIT) return null;
+        const bytes = Buffer.alloc(METADATA_LIMIT + 1);
+        let length = 0;
+        while (length < bytes.length) {
+            const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
+            if (!bytesRead) break;
+            length += bytesRead;
+        }
+        if (length > METADATA_LIMIT) return null;
+        return JSON.parse(bytes.toString("utf8", 0, length));
+    } finally {
+        await file.close();
+    }
 }
 
 export async function generatedOutput(project, id, handoffId) {
@@ -48,8 +81,8 @@ export async function generatedOutput(project, id, handoffId) {
     const result = { status: "foreign", target: outputTarget(id) };
     if (!folder.isDirectory() || await realpath(target) !== target) return result;
     try {
-        const config = await regularJson(join(target, "canvas-config.json"));
-        const provenance = await regularJson(join(target, "settings-provenance.json"));
+        const config = await readGeneratedJson(target, "canvas-config.json", open, folder);
+        const provenance = await readGeneratedJson(target, "settings-provenance.json", open, folder);
         if (config?.canvas?.id !== id || provenance?.handoffId !== handoffId
             || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(provenance.requestId)) return result;
         const entry = await lstat(join(target, "extension.mjs"));
