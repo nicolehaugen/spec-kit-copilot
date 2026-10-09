@@ -62,6 +62,20 @@ async function hasProjectSkill(project, name) {
     }
 }
 
+function queueChildPrompt(response, session, prompt, action) {
+    response.once("finish", () => setImmediate(() => {
+        void Promise.resolve().then(() => session.send({ prompt })).catch(async (error) => {
+            const message = `Canvas Designer ${action} dispatch failed: ${error.message}`;
+            if (!session.log) {
+                console.error(message);
+                return;
+            }
+            try { await session.log(message, { level: "error" }); }
+            catch (logError) { console.error(message, logError); }
+        });
+    }));
+}
+
 export async function startShell(handoff = null, model = null,
     { project, workspace, session, preview = false, launchFolder = spawn } = {}) {
     if (preview && (handoff || !model)) {
@@ -233,10 +247,13 @@ export async function startShell(handoff = null, model = null,
                     if (!await hasProjectSkill(project, OPEN_SKILL)) {
                         throw new Error("Canvas Design does not provide Open in this child session. Install the current local Canvas Design source before opening.");
                     }
-                    await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-open-generated skill with handoffId "${handoff.handoffId}", requestId "${output.requestId}" and canvasId "${input.canvasId}" in this child checkout. Reload extensions, verify and open only that generated project canvas. Do not regenerate files. Report success or the exact failure to the user in chat.` });
+                    const accepted = validateOpenResponse(
+                        { status: "opening", target: output.target }, input.canvasId);
+                    queueChildPrompt(res, session,
+                        `Invoke the installed speckit-extension-canvas-design-open-generated skill with handoffId "${handoff.handoffId}", requestId "${output.requestId}" and canvasId "${input.canvasId}" in this child checkout. Reload extensions, verify and open only that generated project canvas. Do not regenerate files. Report success or the exact failure to the user in chat.`,
+                        "Open");
                     res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify(validateOpenResponse(
-                            { status: "opening", target: output.target }, input.canvasId)));
+                        .end(JSON.stringify(accepted));
                 } else {
                     const root = await realpath(project);
                     const github = join(root, ".github");
@@ -355,16 +372,13 @@ export async function startShell(handoff = null, model = null,
                     badges: Object.hasOwn(input, "badges") ? input.badges : current.badges,
                     handoff, project, workspace, runtimeInventory, inventoryWarning,
                     replaceExisting: input.replaceExisting === true }), input.values["canvas.id"]);
-                try {
-                    await session.send({ prompt: `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". ${input.replaceExisting === true ? `The user explicitly confirmed replacing the existing same-handoff canvas folder, including manual edits, with prior requestId "${input.replaceRequestId}"; pass --replace-existing=${input.replaceRequestId} to the generator and stop if the prior request changed.` : "Do not replace any existing target."} Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report file creation or the exact failure to the user; do not reload extensions or open the canvas.` });
-                } catch (cause) {
-                    throw new Error(`Generation dispatch failed: ${cause.message}`, { cause });
-                }
+                queueChildPrompt(res, session,
+                    `Invoke the installed speckit-extension-canvas-design-generate skill with handoffId "${handoff.handoffId}" and requestId "${result.requestId}". ${input.replaceExisting === true ? `The user explicitly confirmed replacing the existing same-handoff canvas folder, including manual edits, with prior requestId "${input.replaceRequestId}"; pass --replace-existing=${input.replaceRequestId} to the generator and stop if the prior request changed.` : "Do not replace any existing target."} Follow its entire composed command. The prepared request is immutable; do not change settings or substitute another checkout. Report file creation or the exact failure to the user; do not reload extensions or open the canvas.`,
+                    "Generate");
                 res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify(result));
             } catch (error) {
-                const status = error.code ? 500 : error.message.startsWith("Generation dispatch failed:") ? 503
-                    : error.message.startsWith("Designer settings changed elsewhere.")
+                const status = error.code ? 500 : error.message.startsWith("Designer settings changed elsewhere.")
                         || error.message.startsWith("Canvas already exists:") ? 409 : 422;
                 res.writeHead(status, { "Content-Type": "application/json; charset=utf-8" })
                     .end(JSON.stringify({ error: error.message }));

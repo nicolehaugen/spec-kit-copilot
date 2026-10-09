@@ -43,6 +43,7 @@ test("open-generated command validates existing provenance before reload and exa
     assert.match(command, /A present\s+but invalid request is an error/);
     assert.match(command, /Do not fill in a\s+missing result ID/);
     assert.match(command, /do not\s+regenerate/);
+    assert.ok(command.includes("[A-Za-z0-9][A-Za-z0-9_-]{0,127}"));
     assert.ok(command.indexOf("settings-provenance.json") < command.indexOf("Call `extensions_reload`"));
     assert.ok(command.indexOf("Call `extensions_reload`") < command.indexOf("Call `extensions_manage`"));
     assert.ok(command.indexOf("provider` mode") < command.indexOf("list_canvas_capabilities"));
@@ -64,6 +65,10 @@ test("generated registration validator accepts the project provider, its canvas 
         assert.equal(response.status, 0, response.stderr);
         assert.deepEqual(JSON.parse(response.stdout), wanted);
     }
+    assert.equal(validateGeneratedOpen({ ...opened, instanceId: "generated-request_2" },
+        checkout, canvasId, "request_2").instanceId, "generated-request_2");
+    assert.equal(validateGeneratedProvider(list, inspect(), checkout, canvasId, "request_2").instanceId,
+        "generated-request_2");
 });
 
 test("generated registration rejects missing, duplicate, user-owned, wrong-path and failed providers", () => {
@@ -115,5 +120,7 @@ test("generated registration fails closed on malformed tool input and invalid ex
     assert.throws(() => validateGeneratedProvider(list, inspect(), checkout, "../other", requestId),
         /invalid checkout, canvas ID or request ID/);
     assert.throws(() => validateGeneratedProvider(list, inspect(), checkout, canvasId, "../other"),
+        /invalid checkout, canvas ID or request ID/);
+    assert.throws(() => validateGeneratedProvider(list, inspect(), checkout, canvasId, "a".repeat(129)),
         /invalid checkout, canvas ID or request ID/);
 });

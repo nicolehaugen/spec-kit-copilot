@@ -6,6 +6,7 @@ import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import {
@@ -30,6 +31,13 @@ async function installOpenSkill(project) {
         "speckit-extension-canvas-design-open-generated", "SKILL.md");
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, "---\nname: speckit-extension-canvas-design-open-generated\n---\n");
+}
+async function waitFor(check) {
+    const deadline = Date.now() + 2000;
+    while (!check()) {
+        if (Date.now() > deadline) assert.fail("Timed out waiting for child dispatch");
+        await delay(10);
+    }
 }
 test("generation availability contract rejects incompatible flags and prioritizes queued work", () => {
     assert.deepEqual(generationAvailability(false, false), { available: true, error: null });
@@ -2794,8 +2802,16 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries, templates));
     const prompts = [];
+    const dispatchErrors = [];
+    let dispatchFails = false;
     const shell = await startShell(handoff, model, { project, workspace,
-        session: { send: async (value) => prompts.push(value.prompt) } });
+        session: {
+            send: async (value) => {
+                if (dispatchFails) throw new Error("generation channel unavailable");
+                prompts.push(value.prompt);
+            },
+            log: async (message, options) => dispatchErrors.push({ message, options }),
+        } });
     t.after(() => shell.close());
     const url = new URL(shell.url);
     const endpoint = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
@@ -2841,6 +2857,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(response.status, 202);
     const generated = await response.json();
     assert.equal(generated.target, ".github/extensions/my-canvas/");
+    await waitFor(() => prompts.length === 1);
     assert.match(prompts[0], /speckit-extension-canvas-design-generate skill/);
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", generated.requestId, "request.json")));
@@ -2863,7 +2880,15 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(prompts.length, 1);
     const replaced = await post(replace);
     assert.equal(replaced.status, 202, await replaced.text());
+    await waitFor(() => prompts.length === 2);
     assert.match(prompts[1], new RegExp(`--replace-existing=${generated.requestId}`));
+    dispatchFails = true;
+    const failedDispatch = await post(generationRequest(saved.settingsRevision,
+        { ...newerValues, "canvas.id": "another-canvas" }));
+    assert.equal(failedDispatch.status, 202);
+    await waitFor(() => dispatchErrors.length === 1);
+    assert.match(dispatchErrors[0].message, /Generate dispatch failed: generation channel unavailable/);
+    assert.deepEqual(dispatchErrors[0].options, { level: "error" });
 });
 
 test("Generate retries while a child request is pending and still protects existing output", async (t) => {
@@ -2919,7 +2944,7 @@ test("Generate retries while a child request is pending and still protects exist
     assert.equal((await saved.json()).generationAvailable, true);
     assert.equal((await post(second, 1)).status, 202);
     assert.equal((await post(second, 1)).status, 202);
-    assert.equal(prompts.length, 6);
+    await waitFor(() => prompts.length === 6);
 });
 
 test("output status, folder reveal and Open enforce the same generated identity", async (t) => {
@@ -2933,12 +2958,19 @@ test("output status, folder reveal and Open enforce the same generated identity"
         await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
     const revealed = [];
     const prompts = [];
+    const dispatchErrors = [];
     let dispatchFails = false;
+    let blockSend = false;
+    let resolveSend;
     const shell = await startShell(handoff, model, { project, workspace,
-        session: { send: async ({ prompt }) => {
-            if (dispatchFails) throw new Error("child session unavailable");
-            prompts.push(prompt);
-        } },
+        session: {
+            send: async ({ prompt }) => {
+                if (dispatchFails) throw new Error("child session unavailable");
+                prompts.push(prompt);
+                if (blockSend) await new Promise((resolve) => { resolveSend = resolve; });
+            },
+            log: async (message, options) => dispatchErrors.push({ message, options }),
+        },
         launchFolder: (_command, [path]) => {
             revealed.push(path);
             const child = { once(event, callback) {
@@ -2989,16 +3021,23 @@ test("output status, folder reveal and Open enforce the same generated identity"
     await writeFile(openSkill, "---\nname: speckit-extension-canvas-design-open-generated\n---\n");
     dispatchFails = true;
     const failed = await action("/api/open-generated", { canvasId: "my-canvas" });
-    assert.equal(failed.status, 422);
-    assert.match((await failed.json()).error, /child session unavailable/);
+    assert.equal(failed.status, 202);
+    assert.deepEqual(await failed.json(),
+        { status: "opening", target: ".github/extensions/my-canvas/" });
+    await waitFor(() => dispatchErrors.length === 1);
+    assert.match(dispatchErrors[0].message, /Open dispatch failed: child session unavailable/);
+    assert.deepEqual(dispatchErrors[0].options, { level: "error" });
     assert.equal(prompts.length, 0);
     dispatchFails = false;
+    blockSend = true;
     const opened = await action("/api/open-generated", { canvasId: "my-canvas" });
     assert.equal(opened.status, 202);
     assert.deepEqual(await opened.json(),
         { status: "opening", target: ".github/extensions/my-canvas/" });
+    await waitFor(() => prompts.length === 1 && resolveSend);
     assert.match(prompts[0], /speckit-extension-canvas-design-open-generated skill/);
     assert.match(prompts[0], /request-1/);
+    resolveSend();
 });
 
 test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
@@ -3037,7 +3076,7 @@ test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
     const response = await fetch(url, { method: "POST",
         headers: { "Content-Type": "application/json" }, body });
     assert.equal(response.status, 202);
-    assert.equal(prompts.length, 1);
+    await waitFor(() => prompts.length === 1);
     const { requestId } = await response.json();
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", requestId, "request.json")));
@@ -4007,7 +4046,7 @@ test("named value sources freeze typed values and run from a portable canvas wit
     assert.match((await changedApproval.json()).error, /changed since Designer opened/);
     await writeFile(provider.path, originalProvider);
     assert.equal((await post(approval)).status, 202);
-    assert.equal(prompts.length, 1);
+    await waitFor(() => prompts.length === 1);
     const prepared = await freezeGeneration({ model, values: selected, handoff, project, workspace });
     await writeFile(provider.path, `${originalProvider}\n// changed after freeze`);
     await assert.rejects(freezeGeneration({ model, values: selected, handoff, project, workspace }),

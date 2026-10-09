@@ -59,7 +59,7 @@ export async function readGeneratedJson(parent, name, openFile = open, expectedP
     }
 }
 
-export async function generatedOutput(project, id, handoffId) {
+export async function generatedOutput(project, id, handoffId, readJson = readGeneratedJson) {
     validateCanvasId(id);
     const root = await realpath(project);
     const parent = join(root, ".github", "extensions");
@@ -81,11 +81,15 @@ export async function generatedOutput(project, id, handoffId) {
     const result = { status: "foreign", target: outputTarget(id) };
     if (!folder.isDirectory() || await realpath(target) !== target) return result;
     try {
-        const config = await readGeneratedJson(target, "canvas-config.json", open, folder);
-        const provenance = await readGeneratedJson(target, "settings-provenance.json", open, folder);
+        const config = await readJson(target, "canvas-config.json", open, folder);
+        const provenance = await readJson(target, "settings-provenance.json", open, folder);
         if (config?.canvas?.id !== id || provenance?.handoffId !== handoffId
             || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(provenance.requestId)) return result;
         const entry = await lstat(join(target, "extension.mjs"));
+        const current = await lstat(target);
+        if (!current.isDirectory() || current.isSymbolicLink()
+            || current.dev !== folder.dev || current.ino !== folder.ino
+            || await realpath(target) !== target) return result;
         return entry.isFile() ? { ...result, status: "ready", requestId: provenance.requestId }
             : { ...result, status: "incomplete" };
     } catch (error) {

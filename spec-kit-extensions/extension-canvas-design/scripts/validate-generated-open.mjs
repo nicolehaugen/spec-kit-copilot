@@ -12,7 +12,7 @@ function field(text, label) {
 function expected(checkout, canvasId, requestId) {
     if (typeof checkout !== "string" || !isAbsolute(checkout)
         || !/^[a-z0-9][a-z0-9-]*$/.test(canvasId)
-        || !/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(requestId)) {
+        || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(requestId)) {
         fail("invalid checkout, canvas ID or request ID.");
     }
     return { extensionId: `project:${canvasId}`, canvasId,

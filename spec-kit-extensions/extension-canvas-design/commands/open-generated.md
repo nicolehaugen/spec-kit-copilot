@@ -13,8 +13,8 @@ session does not prove that the project provider is registered.
 ## Steps
 
 1. Obtain this session's absolute child checkout and `session.workspacePath`
-   from session metadata. Accept only bounded alphanumeric/hyphen handoff and
-   request IDs. If the frozen request at
+   from session metadata. Accept handoff and request IDs only when they match
+   `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`. If the frozen request at
    `<session.workspacePath>/speckit-canvas-designer/handoffs/<handoffId>/generations/<requestId>/request.json`
    remains available, read it with a bounded read, verify its SHA-256 integrity
    and matching IDs with `scripts/contracts/generation-request.mjs`, and require

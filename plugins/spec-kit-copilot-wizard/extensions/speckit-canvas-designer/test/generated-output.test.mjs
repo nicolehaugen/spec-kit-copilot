@@ -122,3 +122,25 @@ test("generated metadata reads reject replaced entries and oversized files", asy
     assert.equal(await readGeneratedJson(target, "canvas-config.json"), null);
     assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
 });
+
+test("generated output rejects a target replaced between provenance and entry lookup", async (t) => {
+    const project = await mkdtemp(join(tmpdir(), "designer-output-replace-"));
+    t.after(() => rm(project, { recursive: true, force: true }));
+    const target = join(project, ".github", "extensions", "team-dashboard");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "canvas-config.json"), JSON.stringify({ canvas: { id: "team-dashboard" } }));
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: "handoff-1", requestId: "request-1" }));
+    await writeFile(join(target, "extension.mjs"), "export {};");
+    const status = await generatedOutput(project, "team-dashboard", "handoff-1",
+        async (...args) => {
+            const data = await readGeneratedJson(...args);
+            if (args[1] === "settings-provenance.json") {
+                await rename(target, `${target}.prior`);
+                await mkdir(target);
+                await writeFile(join(target, "extension.mjs"), "export {};");
+            }
+            return data;
+        });
+    assert.deepEqual(status, { status: "foreign", target: ".github/extensions/team-dashboard/" });
+});
