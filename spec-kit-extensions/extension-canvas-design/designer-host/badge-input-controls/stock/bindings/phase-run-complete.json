@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "phase-run-complete",
+  "rule": "phase-run-complete",
+  "control": "stock.badge-inputs"
+}

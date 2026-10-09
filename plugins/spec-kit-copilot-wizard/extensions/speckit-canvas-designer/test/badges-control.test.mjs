@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mountBadges } from "../ui/badges-control.js";
+import { mount as mountStockInputs, controlId, contractVersion } from
+    "../../../../../spec-kit-extensions/extension-canvas-design/designer-host/badge-input-controls/stock/designer.mjs";
+import { mount as mountPresetInputs } from
+    "../../../../../spec-kit-presets/copilot-badge-input-test/designer/adapter.mjs";
 
 class Node {
     constructor(tagName) {
@@ -35,13 +39,14 @@ function setup({ phases = ["specify", "plan"], outputs = {
     defaultColor: "amber", enabled: true }], badgeRules = [{
     id: "count", description: "Count distinct selected artifacts",
     textPlaceholders: ["count"], inputs: [{ id: "artifacts", type: "artifact-set" }],
-}], draftBadges = [] } = {}) {
+}], draftBadges = [], controlMount = mountStockInputs } = {}) {
     const previous = globalThis.document;
     globalThis.document = { createElement: (tag) => new Node(tag) };
     const root = new Node("div");
     let changes = 0;
     const view = mountBadges({ root, page: { title: "Badges", description: "Add result badges" },
-        phases, outputs, badgeTypes, badgeRules, draftBadges, onChange() { changes++; } });
+        phases, outputs, badgeTypes, badgeRules, draftBadges, controlMount,
+        onChange() { changes++; } });
     return { root, view, draftBadges, changes: () => changes,
         cleanup: () => { globalThis.document = previous; } };
 }
@@ -75,6 +80,74 @@ function placementText(root, name) {
 
 function submit(editor) { editor.events.submit({ preventDefault() {} }); }
 
+test("stock input adapter exposes its contract and host requires an injected control", () => {
+    assert.equal(controlId, "stock.badge-inputs");
+    assert.equal(contractVersion, 1);
+    const { root, draftBadges, changes, cleanup } = setup({ controlMount: null });
+    try {
+        const editor = choose(root);
+        assert.ok(descendants(editor).some((node) => node.textContent
+            === "Badge input controls are unavailable."));
+        submit(editor);
+        assert.equal(changes(), 0);
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /input controls are unavailable/);
+    } finally { cleanup(); }
+});
+
+test("host accepts a custom input control without rendering rule-specific inputs", () => {
+    let disposed = 0;
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ root: controlRoot, inputs, onChange }) {
+            inputs.phase = "specify";
+            const choice = document.createElement("output");
+            choice.addEventListener("click", () => onChange({ phase: "plan" }));
+            controlRoot.append(choice);
+            return { isReady: () => true,
+                dispose() { disposed++; } };
+        },
+    });
+
+    try {
+        const editor = choose(root);
+        assert.equal(descendants(editor).filter((node) => node.tagName === "output").length, 1);
+        assert.equal(root.querySelector(".badge-phase-list"), undefined);
+        descendants(editor).find((node) => node.tagName === "output").events.click();
+        submit(editor);
+        assert.equal(disposed, 1);
+        assert.equal(draftBadges[0].inputs.phase, "plan");
+    } finally { cleanup(); }
+});
+
+test("preset control edits and reopens its own labeled phase input", () => {
+    const badgeTypes = [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
+        defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];
+    const badgeRules = [{ id: "test-phase", inputs: [{ id: "phase", type: "phase" }] }];
+    const badges = [];
+    const { root, cleanup } = setup({ badgeTypes, badgeRules, draftBadges: badges,
+        controlMount: mountPresetInputs });
+    try {
+        const editor = choose(root);
+        const select = descendants(editor).find((node) => node.tagName === "select"
+            && node.attributes["aria-label"] === "Phase to confirm");
+        assert.ok(select);
+        assert.ok(descendants(editor).some((node) => node.textContent.includes(
+            "only after the selected phase")));
+        select.value = "plan";
+        select.events.change();
+        submit(editor);
+        assert.equal(badges[0].inputs.phase, "plan");
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        const reopened = root.querySelector(".badge-editor");
+        assert.equal(descendants(reopened).find((node) => node.tagName === "select"
+            && node.attributes["aria-label"] === "Phase to confirm").value, "plan");
+    } finally { cleanup(); }
+});
+
 test("refreshing confirmed outputs updates cached choices without losing the badge editor", () => {
     const outputs = { specify: { outputs: ["spec.md"], view: "spec.md" } };
     const { root, view, draftBadges, cleanup } = setup({ phases: ["specify"], outputs });
@@ -106,7 +179,8 @@ test("refreshing confirmed outputs updates cached choices without losing the bad
 const checklistType = { id: "checklist-complete", rule: "checklist-complete",
     title: "Checklist complete", defaultText: "Checklist complete",
     defaultColor: "green", enabled: true };
-const checklistRule = { id: "checklist-complete", textPlaceholders: [], inputs: [
+const checklistRule = { id: "checklist-complete", placementPhaseInput: "artifact",
+    textPlaceholders: [], inputs: [
     { id: "artifact", type: "artifact", label: "Checklist output" },
     { id: "prerequisite", type: "artifact", label: "Earlier output" },
 ] };

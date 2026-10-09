@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "artifact-current",
+  "rule": "artifact-current",
+  "control": "stock.badge-inputs"
+}

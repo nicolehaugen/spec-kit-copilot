@@ -11,6 +11,8 @@ import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invoca
 import { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
 import { RULES, resolvedField, checkSchema } from "./contracts/design-contributions.mjs";
 import { validateBadgeText, validateBadgeSettings, validateBadgeRule } from "./contracts/badge-definitions.mjs";
+import { validateBadgeInputBinding, validateBadgeInputControl,
+    resolveBadgeInputControls } from "./contracts/badge-input-control.mjs";
 export { validateBadgeRule } from "./contracts/badge-definitions.mjs";
 
 export { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
@@ -651,7 +653,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 "generated.phase-control-definition",
                 "generated.phase-control-adapter",
                 "designer.badges-settings-definition", "generated.badge-rule-definition",
-                "generated.badge-rule-adapter",
+                "generated.badge-rule-adapter", "designer.badge-input-control",
+                "designer.badge-input-binding", "designer.badge-input-adapter",
                 "generated.field-placement",
                 "shared.control-definition", "designer.control-adapter", "generated.control-adapter",
                 "generated.value-definition", "generated.computed-value-provider",
@@ -666,7 +669,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             "generated.workflow-page-adapter",
             "designer.control-adapter", "generated.control-adapter",
             "generated.computed-value-provider", "generated.dialog-adapter",
-            "generated.button-adapter", "generated.badge-rule-adapter"].includes(item.kind);
+            "generated.button-adapter", "generated.badge-rule-adapter",
+            "designer.badge-input-adapter"].includes(item.kind);
         const expected = executable ? ".mjs" : ".json";
         if (!inside(specify, path) || extension !== expected) {
             throw new Error(`${item.name}: ${item.kind} must be a ${expected} replace-only template inside .specify`);
@@ -733,6 +737,12 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
             } else if (item.kind === "generated.badge-rule-definition") {
                 validateBadgeRule(document, item.name);
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: badge rule exceeds 32 KiB`);
+            } else if (item.kind === "designer.badge-input-control") {
+                validateBadgeInputControl(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: badge input control exceeds 32 KiB`);
+            } else if (item.kind === "designer.badge-input-binding") {
+                validateBadgeInputBinding(document, item.name);
+                if (bytes > 32 * 1024) throw new Error(`${item.name}: badge input binding exceeds 32 KiB`);
             } else {
                 if (bytes > 32 * 1024) throw new Error(`${item.name}: executable module exceeds 32 KiB`);
                 const { init, parse } = await import("es-module-lexer/minimal");
@@ -786,6 +796,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                 if (item.kind === "generated.badge-rule-adapter"
                     && !exports.some((entry) => entry.n === "contractVersion")) {
                     throw new Error(`${item.name}: badge adapter is missing contractVersion export`);
+                }
+                if (item.kind === "designer.badge-input-adapter"
+                    && (!exports.some((entry) => entry.n === "contractVersion")
+                        || !exports.some((entry) => entry.n === "controlId"))) {
+                    throw new Error(`${item.name}: Designer badge input adapter is missing contractVersion or controlId export`);
                 }
                 if (item.kind === "generated.computed-value-provider") {
                     const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:(?:async\s+)?function|const)\s+provideValue\b/g)];
@@ -851,13 +866,31 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         validateBadgeText(entry.document.defaultText, rule.document.textPlaceholders, entry.name);
     }
     for (const entry of badgeRules) {
-        if (!badgeAdapters.some((item) => item.name === entry.document.module)) {
-            throw new Error(`${entry.name}: missing registered badge adapter ${entry.document.module}`);
+        if (!badgeAdapters.some((item) => item.name === entry.document.adapter)) {
+            throw new Error(`${entry.name}: missing registered badge adapter ${entry.document.adapter}`);
         }
     }
     for (const entry of badgeAdapters) {
-        if (!badgeRules.some((item) => item.document.module === entry.name)) {
+        if (!badgeRules.some((item) => item.document.adapter === entry.name)) {
             throw new Error(`${entry.name}: unreferenced badge adapter`);
+        }
+    }
+    const badgeInputControls = resolveBadgeInputControls(loaded, badgeTypes, badgeRules);
+    for (const binding of badgeInputControls.filter((item, index) =>
+        badgeInputControls.findIndex((other) => other.adapter === item.adapter) === index)) {
+        const entry = loaded.find((item) => item.name === binding.adapter
+            && item.kind === "designer.badge-input-adapter");
+        const bytes = await readFrozenAsset(entry, specify);
+        let module;
+        try {
+            module = await import(`data:text/javascript;base64,${bytes.toString("base64")}`);
+        } catch (error) {
+            throw new Error(`${entry.name}: Designer badge input adapter could not load: ${error.message}`,
+                { cause: error });
+        }
+        if (module.controlId !== binding.control || module.contractVersion !== 1
+            || typeof module.mount !== "function") {
+            throw new Error(`${entry.name}: incompatible Designer badge input adapter for ${binding.rule}`);
         }
     }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
@@ -1153,7 +1186,8 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         }
         sections.set(section.id, section.title);
     }
-    return { loaded, ordered, controls, placementControls, invalidPlacements, compositionErrors };
+    return { loaded, ordered, controls, placementControls, invalidPlacements,
+        badgeInputControls, compositionErrors };
 }
 
 async function context(project) {
@@ -1256,7 +1290,8 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
         if (size > MODEL_LIMIT - 8192) throw new Error("Designer page model exceeds its size limit");
     }
     const { fieldOrigins, ...model } = buildModel(entries, schema);
-    const { loaded, ordered, controls, placementControls, invalidPlacements, compositionErrors } = await loadTemplates(
+    const { loaded, ordered, controls, placementControls, invalidPlacements,
+        badgeInputControls, compositionErrors } = await loadTemplates(
         templates, model.pages, names, fieldOrigins, specify, MODEL_LIMIT - size - 8192, inventory);
     model.contributions = ordered.map(({ name, sourceId, document }) =>
         ({ name, sourceId, ...document }));
@@ -1298,6 +1333,7 @@ export async function loadResolvedDesignerPages(handoff, project, input, templat
             document.types.map((type) => ({ name, sourceId, schemaVersion: 1, ...type })));
     model.badgeRules = loaded.filter((entry) => entry.kind === "generated.badge-rule-definition")
         .map(({ name, sourceId, document }) => ({ name, sourceId, ...document }));
+    model.badgeInputControls = badgeInputControls;
     model.controls = controls.map(({ name, document }) => ({ ...document, template: name }));
     model.adapters = Object.fromEntries(controls.map(({ document }) =>
         [document.id, document.adapters.designer]));

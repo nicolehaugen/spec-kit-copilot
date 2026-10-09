@@ -16,7 +16,9 @@ export function validateBadges(badges, model) {
     const ids = new Set();
     const checked = [];
     for (const [index, badge] of badges.entries()) {
-        const fail = (reason) => { throw new Error(`Invalid Designer badge ${index + 1}: ${reason}`); };
+        const fail = (reason) => { throw new Error(`Invalid Designer badge ${index + 1}`
+            + `${typeof badge?.id === "string" && /^[a-z0-9-]{1,80}$/.test(badge.id)
+                ? ` (${badge.id})` : ""}: ${reason}`); };
         if (!record(badge) || !exactKeys(badge,
             ["id", "type", "inputs", "text", "color", "showIn",
                 ...(Object.hasOwn(badge, "phaseText") ? ["phaseText"] : []),
@@ -30,7 +32,18 @@ export function validateBadges(badges, model) {
         ids.add(badge.id);
         const type = types.get(badge.type);
         const rule = rules.get(type?.rule);
-        if (!type || !type.enabled || !rule) fail("unknown or disabled badge type");
+        if (!type) fail(`missing badge type ${badge.type}`);
+        if (!type.enabled) fail(`disabled badge type ${badge.type}`);
+        if (!rule) fail(`missing badge rule ${type.rule} required by type ${badge.type}`);
+        if (model.templates && !model.templates.some((item) =>
+            item.kind === "generated.badge-rule-adapter"
+                && item.name === rule.adapter)) {
+            fail(`missing generated evaluator ${rule.adapter} required by rule ${rule.id}`);
+        }
+        if (model.badgeInputControls
+            && !model.badgeInputControls.some((item) => item.rule === rule.id)) {
+            fail(`missing Designer input control for rule ${rule.id}`);
+        }
         if (!record(badge.inputs) || !exactKeys(badge.inputs, (rule.inputs ?? []).map(({ id }) => id))) {
             fail("unexpected or missing rule inputs");
         }

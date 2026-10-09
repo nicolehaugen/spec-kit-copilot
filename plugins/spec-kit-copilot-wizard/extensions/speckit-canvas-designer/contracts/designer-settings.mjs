@@ -26,6 +26,34 @@ export function validateValues(values, constraints) {
 }
 
 export function validateSavedSettings(record, handoff, model) {
+    if (record?.modelRevision !== undefined && record.modelRevision !== model.revision
+        && record?.handoffId === handoff.handoffId) {
+        const affected = Array.isArray(record.badges)
+            ? record.badges.filter((badge) => typeof badge?.id === "string"
+                && /^[a-z0-9-]{1,80}$/.test(badge.id))
+                .slice(0, 100).map((badge) => {
+                    const type = model.badgeTypes?.find((item) => item.id === badge.type);
+                    const rule = model.badgeRules?.find((item) => item.id === type?.rule);
+                    const binding = model.badgeInputControls?.find((item) => item.rule === rule?.id);
+                    const problem = !type ? `missing type ${badge.type}`
+                        : !type.enabled ? `disabled type ${type.id}`
+                            : !rule ? `missing rule ${type.rule}`
+                                : !binding ? `missing control for rule ${rule.id}`
+                                    : model.templates && !model.templates.some((item) =>
+                                        item.kind === "generated.badge-rule-adapter"
+                                            && item.name === rule.adapter)
+                                        ? `missing evaluator ${rule.adapter}`
+                                        : !badge.inputs || typeof badge.inputs !== "object"
+                                            || Array.isArray(badge.inputs)
+                                            || Object.keys(badge.inputs).sort().join()
+                                                !== (rule.inputs ?? []).map((input) => input.id).sort().join()
+                                            ? `changed inputs for rule ${rule.id}` : null;
+                    return problem ? `${badge.id} (${problem})` : badge.id;
+                }) : [];
+        throw new Error("Saved Designer settings do not match the current handoff or pages"
+            + (affected.length ? `; saved badges: ${affected.join(", ")}` : "")
+            + ". Restore the previous preset composition or recreate incompatible settings explicitly.");
+    }
     if (!record || typeof record !== "object" || Array.isArray(record)
         || Object.keys(record).sort().join() !== [
             "handoffId", "modelRevision", "revision", "schemaVersion", "values",

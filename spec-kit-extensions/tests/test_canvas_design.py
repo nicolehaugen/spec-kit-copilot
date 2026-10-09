@@ -332,6 +332,18 @@ class CanvasDesignPackageTests(unittest.TestCase):
         workflow_validator.validate({**workflow, "slots": [
             {"id": "workflow.phases"}, {"id": "workflow.summary"},
         ]})
+        badge_schema = json.loads((PACKAGE / "schemas/generated.badge-rule-definition.schema.json")
+                                  .read_text("utf-8"))
+        Draft202012Validator.check_schema(badge_schema)
+        badge_validator = Draft202012Validator(badge_schema)
+        for path in (PACKAGE / "generated-host/badges/rules").glob("*.json"):
+            definition = json.loads(path.read_text("utf-8"))
+            with self.subTest(badge_rule=path.name):
+                badge_validator.validate(definition)
+                with self.assertRaises(ValidationError):
+                    badge_validator.validate({**definition, "module": definition["adapter"]})
+        badge_validator.validate(json.loads((EXTENSIONS.parent
+            / "spec-kit-presets/copilot-badge-input-test/generated/rule.json").read_text("utf-8")))
         value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
         validator = Draft202012Validator(schemas["generated.value-definition"])

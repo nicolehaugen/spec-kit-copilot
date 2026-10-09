@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "phase-artifact-complete",
+  "rule": "phase-artifact-complete",
+  "control": "stock.badge-inputs"
+}

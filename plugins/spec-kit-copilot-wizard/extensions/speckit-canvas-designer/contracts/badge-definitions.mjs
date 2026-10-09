@@ -49,10 +49,10 @@ export function validateBadgeSettings(value, name) {
 
 export function validateBadgeRule(value, name) {
     if (!record(value) || !keys(value, ["schemaVersion", "id", "label", "description",
-        "inputs", "textPlaceholders", "module",
+        "inputs", "textPlaceholders", "adapter",
         ...(Object.hasOwn(value, "placementPhaseInput") ? ["placementPhaseInput"] : [])])
         || value.schemaVersion !== 1 || typeof value.id !== "string" || !BADGE_ID.test(value.id)
-        || typeof value.module !== "string" || !BADGE_ID.test(value.module)
+        || typeof value.adapter !== "string" || !BADGE_ID.test(value.adapter)
         || typeof value.label !== "string" || !value.label.trim() || value.label.length > 120
         || typeof value.description !== "string" || !value.description.trim()
         || value.description.length > 1000

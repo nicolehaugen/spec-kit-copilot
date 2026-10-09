@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "markdown-file-count",
+  "rule": "markdown-file-count",
+  "control": "stock.badge-inputs"
+}

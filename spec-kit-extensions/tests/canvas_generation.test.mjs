@@ -41,6 +41,28 @@ const model = {
 const values = { "canvas.id": "my-workflow", "canvas.displayName": "My Workflow",
     "canvas.description": "A workflow", "canvas.workflowListName": "Workflows",
     "workflowSlug.userProvided": false };
+
+async function registerStockBadgeInput(selected, project, ruleId) {
+    const root = new URL("../extension-canvas-design/designer-host/badge-input-controls/stock/",
+        import.meta.url);
+    const assets = [
+        [`designer-badge-binding-${ruleId}`, "designer.badge-input-binding",
+            `bindings/${ruleId}.json`],
+        ["designer-badge-input-stock", "designer.badge-input-control", "control.json"],
+        ["designer-badge-input-stock-adapter", "designer.badge-input-adapter", "designer.mjs"],
+    ];
+    for (const [name, kind, source] of assets) {
+        const bytes = await readFile(new URL(source, root));
+        const path = join(project, ".specify", "templates", `${name}.${source.endsWith(".mjs")
+            ? "mjs" : "json"}`);
+        await writeFile(path, bytes);
+        selected.templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
+            strategy: "replace", path, hash: createHash("sha256").update(bytes).digest("hex") });
+    }
+    selected.badgeInputControls = [{ rule: ruleId, control: "stock.badge-inputs",
+        binding: assets[0][0], definition: assets[1][0], adapter: assets[2][0] }];
+}
+
 function stockMarkup(config) {
     const root = { innerHTML: "" };
     renderStockPage(root, {
@@ -280,6 +302,7 @@ test("selected badge definitions and evaluator are packaged without preset files
         schemaVersion: 1, ...settings.types[0] }];
     selected.badgeRules = [{ name: "badge-rule-value-match",
         ...JSON.parse(await readFile(new URL("rules/value-match.json", root), "utf8")) }];
+    await registerStockBadgeInput(selected, project, "value-match");
     const outputs = {
         constitution: { outputs: [".specify/memory/constitution.md"],
             view: ".specify/memory/constitution.md" },
@@ -382,7 +405,8 @@ test("selected badge definitions and evaluator are packaged without preset files
     assert.match(stockMarkup(config), /data-badge-slot="workflow.list"/);
     assert.match(stockMarkup(config), /data-badge-slot="workflow.summary"/);
     assert.match(html, /data-badge-slots="[^"]*phase.card[^"]*phase.output/);
-    assert.equal(config.badges.rules[0].module, "badge-rule-content-adapter");
+    assert.equal(config.badges.rules[0].adapter, "badge-rule-content-adapter");
+    assert.equal(Object.hasOwn(config.badges.rules[0], "module"), false);
     assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content-adapter.mjs")),
         await readFile(new URL("adapters/content.mjs", root)));
     selected.badgeTypes[0].title = "Not in badges settings";
@@ -454,6 +478,7 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
     selected.badgeTypes = [{ name: "badges-settings", sourceId: "extension:extension-canvas-design",
         schemaVersion: 1, ...settings.types.find((type) => type.id === "checklist-complete") }];
     selected.badgeRules = [{ name: "badge-rule-checklist-complete", ...definition }];
+    await registerStockBadgeInput(selected, project, "checklist-complete");
     const outputs = { constitution: { outputs: [".specify/memory/constitution.md"],
         view: ".specify/memory/constitution.md" },
     specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
@@ -517,6 +542,7 @@ test("directory-scoped rule freezes with its output anchor and evaluator", async
     selected.badgeRules = [{ name: "badge-rule-markdown-file-count",
         ...JSON.parse(await readFile(new URL(
             "generated-host/badges/rules/markdown-file-count.json", root), "utf8")) }];
+    await registerStockBadgeInput(selected, project, "markdown-file-count");
     const output = "specs/<slug>/review/requirements.md";
     const outputs = { constitution: { outputs: [".specify/memory/constitution.md"],
         view: ".specify/memory/constitution.md" },

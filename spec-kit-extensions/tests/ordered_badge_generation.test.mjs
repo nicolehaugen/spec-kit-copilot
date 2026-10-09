@@ -17,7 +17,7 @@ const rule = {
     description: "Ordered metadata evidence", placementPhaseInput: "target",
     inputs: [{ id: "target", type: "artifact", scope: "metadata" },
         { id: "prerequisites", type: "ordered-artifacts", scope: "metadata", before: "target" }],
-    textPlaceholders: [], module: "badge-rule-phase-artifact-complete-adapter",
+    textPlaceholders: [], adapter: "badge-rule-phase-artifact-complete-adapter",
 };
 const type = { id: "phase-artifact-complete", title: "Phase artifact complete",
     description: "Ordered output freshness", rule: rule.id,
@@ -37,7 +37,7 @@ const inventory = (badge = instance, definition = rule) => ({
     types: [{ name: "badges-settings", sourceId: "test-preset", schemaVersion: 1, ...type }],
     rules: [{ name: "phase-artifact-definition", sourceId: "test-preset", ...definition,
         assets: [asset("phase-artifact-definition", "generated.badge-rule-definition", definition)] }],
-    adapters: [asset(definition.module, "generated.badge-rule-adapter",
+    adapters: [asset(definition.adapter, "generated.badge-rule-adapter",
         "export const contractVersion = 1; export function evaluate() {}")],
 });
 const declared = (entry) => Boolean(entry && workflow.phaseArtifacts[entry.phase]
@@ -48,6 +48,8 @@ test("ordered metadata evidence and target placement survive Designer and genera
     assert.equal(validBadgeEvidence(instance, rule, workflow.selectedPhases, declared), true);
     const frozen = frozenBadges(inventory(), workflow);
     assert.equal(frozen.rules[0].placementPhaseInput, "target");
+    assert.equal(frozen.rules[0].adapter, rule.adapter);
+    assert.equal(Object.hasOwn(frozen.rules[0], "module"), false);
     assert.deepEqual(frozen.rules[0].inputs, rule.inputs);
     assert.deepEqual(frozen.instances[0].inputs.prerequisites, [earlier]);
     const targetOnly = { ...instance, inputs: { target: earlier, prerequisites: [] }, phase: "specify" };
@@ -56,6 +58,11 @@ test("ordered metadata evidence and target placement survive Designer and genera
 });
 
 test("malformed metadata rule references and ordered evidence are rejected", () => {
+    const { adapter, ...legacyRule } = rule;
+    assert.throws(() => validateBadgeRule({ ...legacyRule, module: adapter },
+        "phase-artifact-definition"), /invalid badge rule definition/);
+    assert.throws(() => frozenBadges(inventory(instance, { ...rule, module: adapter }), workflow),
+        /Frozen generated.badge-rule-definition differs/);
     for (const malformed of [
         { ...rule, placementPhaseInput: "prerequisites" },
         { ...rule, inputs: [{ ...rule.inputs[0], scope: "directory" }, rule.inputs[1]] },

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "value-match",
+  "rule": "value-match",
+  "control": "stock.badge-inputs"
+}

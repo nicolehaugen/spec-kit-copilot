@@ -38,6 +38,24 @@ test("Designer settings preserve the saved revision and exact-key contract", () 
         values: record.values, extra: true }, model), /Invalid Designer save request/);
 });
 
+test("changed preset composition identifies affected badge dependencies without rewriting settings", () => {
+    const badge = { id: "saved-one", type: "custom", inputs: { phase: "plan" } };
+    const record = { schemaVersion: 1, handoffId: "handoff-1", modelRevision: "old",
+        revision: 1, values: {}, badges: [badge] };
+    const handoff = { handoffId: "handoff-1" };
+    const model = { revision: "new", badgeTypes: [{ id: "custom", rule: "custom", enabled: false }] };
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        /saved-one \(disabled type custom\)/);
+    model.badgeTypes[0].enabled = true;
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        /saved-one \(missing rule custom\)/);
+    model.badgeRules = [{ id: "custom", inputs: [{ id: "artifact" }], adapter: "custom-evaluator" }];
+    model.badgeInputControls = [{ rule: "custom", control: "custom-control" }];
+    model.templates = [{ kind: "generated.badge-rule-adapter", name: "custom-evaluator" }];
+    assert.throws(() => validateSavedSettings(record, handoff, model),
+        /saved-one \(changed inputs for rule custom\)/);
+});
+
 test("Designer handoff and generation contracts include badges without accepting unrelated fields", () => {
     assert.equal(designerOpenInputSchema.properties.preview.type, "boolean");
     for (const kind of ["designer.badges-settings-definition",

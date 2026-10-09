@@ -181,9 +181,9 @@ export function frozenBadges(badges, workflow) {
     });
     const resolvedRules = rules.map((rule) => {
         const { parsed } = definition(rule, "generated.badge-rule-definition",
-            ["schemaVersion", "id", "label", "description", "inputs", "textPlaceholders", "module",
+            ["schemaVersion", "id", "label", "description", "inputs", "textPlaceholders", "adapter",
                 ...(rule.placementPhaseInput === undefined ? [] : ["placementPhaseInput"])]);
-        if (parsed.schemaVersion !== 1 || !name.test(parsed.module) || !adapterMap.has(parsed.module)
+        if (parsed.schemaVersion !== 1 || !name.test(parsed.adapter) || !adapterMap.has(parsed.adapter)
             || !Array.isArray(parsed.inputs) || parsed.inputs.length > 10
             || new Set(parsed.inputs.map((input) => input.id)).size !== parsed.inputs.length
             || (parsed.placementPhaseInput !== undefined
@@ -208,7 +208,7 @@ export function frozenBadges(badges, workflow) {
             || parsed.textPlaceholders.some((placeholder) => !name.test(placeholder))) {
             throw new Error(`Invalid frozen badge rule: ${rule.id}`);
         }
-        return { ...parsed, hash: adapterMap.get(parsed.module).hash };
+        return { ...parsed, hash: adapterMap.get(parsed.adapter).hash };
     });
     const textPlaceholdersValid = (text, placeholders) => typeof text === "string"
         && text.trim() && text.length <= 120
@@ -223,7 +223,7 @@ export function frozenBadges(badges, workflow) {
     }
     for (const adapter of adapters) {
         validateAsset(adapter, "generated.badge-rule-adapter");
-        if (!resolvedRules.some((rule) => rule.module === adapter.name)) {
+        if (!resolvedRules.some((rule) => rule.adapter === adapter.name)) {
             throw new Error(`Unused frozen badge evaluator: ${adapter.name}`);
         }
     }
@@ -333,7 +333,7 @@ export function frozenBadges(badges, workflow) {
         checked.push(instance);
     }
     return { instances, types: resolvedTypes, rules: resolvedRules,
-        adapters: adapters.map(({ name: module, hash }) => ({ module, hash })) };
+        adapters: adapters.map(({ name: adapter, hash }) => ({ adapter, hash })) };
 }
 
 function frozenImage(item, values, constraints) {

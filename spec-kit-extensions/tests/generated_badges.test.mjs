@@ -43,7 +43,7 @@ const moduleFile = new URL("../extension-canvas-design/generated-host/badges/ada
 const hash = createHash("sha256").update(await readFile(moduleFile)).digest("hex");
 const rule = { id: "checklist-progress", label: "Progress", description: "Progress",
     inputs: [{ id: "artifact", type: "artifact" }], textPlaceholders: ["completed", "total", "percent"],
-    module: "badge-rule-content-adapter", hash };
+    adapter: "badge-rule-content-adapter", hash };
 const type = { id: "progress", title: "Progress", description: "Progress",
     rule: rule.id, defaultText: "{completed}/{total} complete", defaultColor: "blue", enabled: true };
 const instance = { id: "work", type: type.id, inputs: { artifact: {
@@ -51,6 +51,17 @@ const instance = { id: "work", type: type.id, inputs: { artifact: {
 } }, text: "{completed}/{total} complete", color: "blue",
     showIn: ["workflow-list", "workflow-summary", "phase-card"], phase: "tasks" };
 const badges = { instances: [instance], types: [type], rules: [rule] };
+
+test("generated rules require the adapter key rather than the former module key", () => {
+    const { adapter, ...withoutAdapter } = rule;
+    assert.doesNotThrow(() => validateBadges(badges, ["tasks"]));
+    assert.throws(() => validateBadges({ ...badges, rules: [{
+        ...withoutAdapter, module: adapter,
+    }] }, ["tasks"]), /Invalid generated badge rule/);
+    assert.throws(() => validateBadges({ ...badges, rules: [{
+        ...rule, module: adapter,
+    }] }, ["tasks"]), /Invalid generated badge rule/);
+});
 
 test("generated runtime rejects Constitution card and output placements", () => {
     const constitution = { id: "speckit.constitution",
@@ -98,7 +109,7 @@ const phaseArtifactRule = { id: "phase-artifact-complete", label: "Phase artifac
     description: "Ordered phase outputs", placementPhaseInput: "target",
     inputs: [{ id: "target", type: "artifact", scope: "metadata" },
         { id: "prerequisites", type: "ordered-artifacts", scope: "metadata", before: "target" }],
-    textPlaceholders: [], module: "badge-rule-phase-artifact-complete-adapter",
+    textPlaceholders: [], adapter: "badge-rule-phase-artifact-complete-adapter",
     hash: createHash("sha256").update(await readFile(phaseArtifactAdapter)).digest("hex") };
 const phaseArtifactType = { ...type, id: "phase-artifact-complete",
     title: "Phase artifact complete", rule: phaseArtifactRule.id,
@@ -440,14 +451,14 @@ test("artifact staleness uses metadata and does not require rule-specific host l
     t.after(() => rm(cwd, { recursive: true, force: true }));
     await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
     await writeFile(join(cwd, "specs", "alpha", "tasks.md"), "Work");
-    const module = "badge-rule-artifact-state-adapter";
+    const adapter = "badge-rule-artifact-state-adapter";
     const hash = createHash("sha256").update(await readFile(new URL(
         "../extension-canvas-design/generated-host/badges/adapters/artifact-state.mjs",
         import.meta.url))).digest("hex");
     const config = { instances: [{ ...instance, id: "stale", type: "stale",
         text: "Stale", color: "amber" }],
     types: [{ ...type, id: "stale", rule: "artifact-stale" }],
-    rules: [{ ...rule, id: "artifact-stale", module, hash, textPlaceholders: [] }] };
+    rules: [{ ...rule, id: "artifact-stale", adapter, hash, textPlaceholders: [] }] };
     await verifyBadgeModules(config);
     const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
     const evaluate = (completedAt) => evaluateBadges(config, { cwd, workflows: ["specs/alpha"],
@@ -467,7 +478,7 @@ test("artifact staleness uses metadata and does not require rule-specific host l
 test("badge config rejects undeclared outputs and normalizes completed run statuses", async (t) => {
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-run-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
-    const module = "badge-rule-run-adapter";
+    const adapter = "badge-rule-run-adapter";
     const hash = createHash("sha256").update(await readFile(new URL(
         "../extension-canvas-design/generated-host/badges/adapters/run.mjs",
         import.meta.url))).digest("hex");
@@ -475,7 +486,7 @@ test("badge config rejects undeclared outputs and normalizes completed run statu
         text: "Done", color: "green", showIn: ["workflow-summary", "phase-card"], phase: "tasks" }],
     types: [{ ...type, id: "done", rule: "phase-run-complete" }],
     rules: [{ ...rule, id: "phase-run-complete", inputs: [{ id: "phase", type: "phase" }],
-        textPlaceholders: [], module, hash }] };
+        textPlaceholders: [], adapter, hash }] };
     const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
     validateBadges(config, phases);
     assert.throws(() => validateBadges(badges, [{ id: "tasks", outputs: [] }]),

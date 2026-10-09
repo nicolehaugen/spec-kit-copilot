@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "work-complete",
+  "rule": "work-complete",
+  "control": "stock.badge-inputs"
+}

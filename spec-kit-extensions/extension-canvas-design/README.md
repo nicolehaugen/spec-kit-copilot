@@ -315,7 +315,12 @@ enabled state. Its definitions also supply the selected types in generated
 canvases; a type must refer to a registered rule. Rules and their self-contained
 JavaScript adapters remain independently replaceable templates under
 `generated-host/badges/`; rule metadata declares typed evidence inputs and
-supported text placeholders. Saved badge instances refer to type IDs, so renaming
+supported text placeholders. Each rule's `adapter` names its registered
+`generated.badge-rule-adapter` evaluator; this is separate from the Designer
+input control's `adapter`. Preset rule definitions using the former `module`
+key must change to `adapter` before loading with this source; generated apps
+already on disk keep their bundled rule and runtime unchanged. Saved badge
+instances refer to type IDs, so renaming
 one requires updating existing instances before Generate. Generate
 freezes only selected definitions and adapters into the app so runtime never
 needs the design-time preset. Generated apps use bounded reads of declared
@@ -327,6 +332,24 @@ time to the latest run's start (or completion for older records without a start)
 Counts and freshness are best-effort; unreadable evidence
 produces a diagnostic rather than an invented exact result. A replacement
 phase adapter must declare badge support before phase-card placement is used.
+
+Designer input controls are separate from generated evaluators. Each registered
+`designer.badge-input-binding` maps one rule ID to a reusable
+`designer.badge-input-control` JSON definition (`id`, `adapter`, supported
+`inputTypes`). Its registered, self-contained `designer.badge-input-adapter`
+exports `controlId`, `contractVersion = 1`, and
+`mount({root, rule, inputs, phases, outputs, onChange})`. It renders inside the
+provided root and reports the **complete** structured `inputs` object through
+`onChange`; the Designer validates saved input IDs, types, and confirmed
+outputs against the rule, regardless of what the adapter allows in the browser.
+The base extension binds its nine rules to `stock.badge-inputs`; a preset can
+register a custom JSON definition, adapter, and rule binding without editing
+the Badges tab. Add the three named templates to the composed
+`load-page` command with strategy `replace`; use the existing Specify template
+precedence for replacements. Missing controls or evaluators and disabled types
+do not fall back to other implementations. The binding and Designer adapter
+are **not** packaged in the generated app. The rule's `before` refers to
+another declared input, not to a package dependency.
 The generated Workflow page advertises its supported badge destinations
 (`workflow.list`, `workflow.summary`, `phase.card`, and `phase.output`) in
 `generated-host/workflow-page/workflow.json`. A preset can replace its

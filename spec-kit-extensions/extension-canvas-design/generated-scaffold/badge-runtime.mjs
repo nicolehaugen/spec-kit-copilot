@@ -4,7 +4,7 @@ import { Worker, isMainThread, parentPort, workerData } from "node:worker_thread
 import { confined, countMarkdownDirectory, readBoundedWithMetadata, readRegularFileMetadata,
     safePath } from "./files.mjs";
 
-const moduleId = /^[a-z][a-z0-9-]{0,79}$/;
+const adapterId = /^[a-z][a-z0-9-]{0,79}$/;
 const identifier = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const instanceId = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
 const hashPattern = /^[a-f0-9]{64}$/;
@@ -14,8 +14,8 @@ const inputTypes = new Set(["artifact", "artifact-set", "ordered-artifacts", "ph
 
 if (!isMainThread && workerData?.badgeEvaluation) {
     try {
-        const { module, hash, ruleId, inputs, evidence: data, workflowId } = workerData.badgeEvaluation;
-        const bytes = await readFile(new URL(`./badges/${module}.mjs`, import.meta.url));
+        const { adapter, hash, ruleId, inputs, evidence: data, workflowId } = workerData.badgeEvaluation;
+        const bytes = await readFile(new URL(`./badges/${adapter}.mjs`, import.meta.url));
         if (!bytes.length || bytes.length > 32 * 1024
             || createHash("sha256").update(bytes).digest("hex") !== hash)
             throw new Error("Packaged badge evaluator changed after startup");
@@ -69,7 +69,8 @@ export function validateBadges(config, phases = []) {
     if (!unique(config.instances) || !unique(config.types) || !unique(config.rules))
         throw new Error("Duplicate generated badge ID");
     for (const rule of config.rules) {
-        if (!rule || !identifier.test(rule.id) || !moduleId.test(rule.module)
+        if (!rule || Object.hasOwn(rule, "module") || !identifier.test(rule.id)
+            || typeof rule.adapter !== "string" || !adapterId.test(rule.adapter)
             || !hashPattern.test(rule.hash) || typeof rule.label !== "string"
             || typeof rule.description !== "string" || !Array.isArray(rule.textPlaceholders)
             || rule.textPlaceholders.some((placeholder) => !identifier.test(
@@ -179,23 +180,23 @@ export function validateBadges(config, phases = []) {
 
 export async function verifyBadgeModules(badges) {
     const checked = new Map();
-    for (const { module, hash } of badges?.rules ?? []) {
-        if (checked.has(module)) {
-            if (checked.get(module) !== hash) throw new Error(`Conflicting frozen badge evaluator ${module}`);
+    for (const { adapter, hash } of badges?.rules ?? []) {
+        if (checked.has(adapter)) {
+            if (checked.get(adapter) !== hash) throw new Error(`Conflicting frozen badge evaluator ${adapter}`);
             continue;
         }
-        checked.set(module, hash);
-        const bytes = await readFile(new URL(`./badges/${module}.mjs`, import.meta.url));
+        checked.set(adapter, hash);
+        const bytes = await readFile(new URL(`./badges/${adapter}.mjs`, import.meta.url));
         if (!bytes.length || bytes.length > 32 * 1024
             || createHash("sha256").update(bytes).digest("hex") !== hash)
-            throw new Error(`Packaged badge evaluator ${module} differs from its frozen hash`);
+            throw new Error(`Packaged badge evaluator ${adapter} differs from its frozen hash`);
     }
 }
 
 function runRule(rule, inputs, evidence, workflowId) {
     return new Promise((resolve, reject) => {
         const worker = new Worker(new URL(import.meta.url), {
-            execArgv: [], workerData: { badgeEvaluation: { module: rule.module, hash: rule.hash,
+            execArgv: [], workerData: { badgeEvaluation: { adapter: rule.adapter, hash: rule.hash,
                 ruleId: rule.id, inputs, evidence, workflowId } },
             resourceLimits: { maxOldGenerationSizeMb: 48, maxYoungGenerationSizeMb: 16 },
         });

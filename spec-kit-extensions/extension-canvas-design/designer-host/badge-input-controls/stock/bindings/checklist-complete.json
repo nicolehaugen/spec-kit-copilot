@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "id": "checklist-complete",
+  "rule": "checklist-complete",
+  "control": "stock.badge-inputs"
+}
