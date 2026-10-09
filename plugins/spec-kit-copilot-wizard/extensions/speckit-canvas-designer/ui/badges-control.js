@@ -149,9 +149,22 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
     };
     const redraw = () => {
         renderId++;
-        activeControl?.dispose?.();
+        const previousControl = activeControl;
         activeControl = null;
+        let disposalError;
+        try {
+            previousControl?.dispose?.();
+        } catch (error) {
+            disposalError = error;
+        }
         root.replaceChildren();
+        if (disposalError) {
+            const warning = element("p",
+                `Could not dispose badge input control: ${disposalError.message}`,
+                "settings-field-error");
+            warning.setAttribute("role", "alert");
+            root.append(warning);
+        }
         if (catalogOpen) {
             const back = element("button", "← Back to badges", "badge-back");
             back.type = "button";
@@ -542,8 +555,12 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             if (!hasDeclaredInputs(pending.inputs)) {
                 return revealError("Badge control returned inputs that do not match its rule.");
             }
-            if (!control.isReady()) {
-                return revealError(control.validationError?.() || "Complete the badge inputs before saving.");
+            try {
+                if (!control.isReady()) {
+                    return revealError(control.validationError?.() || "Complete the badge inputs before saving.");
+                }
+            } catch (error) {
+                return revealError(`Badge input control readiness failed: ${error.message}`);
             }
             if (pending.targets.length > 100) {
                 return revealError("A badge can have at most 100 placements. Remove some selections.");

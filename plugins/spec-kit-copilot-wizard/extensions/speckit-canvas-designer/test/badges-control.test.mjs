@@ -185,6 +185,76 @@ test("disposed badge controls cannot update a redrawn editor or another badge", 
     } finally { cleanup(); }
 });
 
+test("throwing disposal reports an error without blocking cancel, refresh, or save", () => {
+    let disposals = 0;
+    const { root, view, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            onChange({ phase: "specify" });
+            return { isReady: () => true, dispose() {
+                disposals++;
+                throw new Error("broken cleanup");
+            } };
+        },
+    });
+    const assertDisposalError = () => assert.match(descendants(root)
+        .find((node) => node.attributes.role === "alert").textContent,
+    /Could not dispose badge input control: broken cleanup/);
+    try {
+        choose(root);
+        root.querySelector(".badge-editor").children.find((node) =>
+            node.className === "badge-actions").children[1].events.click();
+        assert.ok(root.querySelector(".badge-add"));
+        assertDisposalError();
+
+        choose(root);
+        view.updateOutputs({ specify: { outputs: ["changed.md"], view: "changed.md" },
+            plan: { outputs: ["plan.md"], view: "plan.md" } });
+        assert.ok(root.querySelector(".badge-editor"));
+        assertDisposalError();
+        submit(root.querySelector(".badge-editor"));
+        assert.equal(draftBadges.length, 1);
+        assert.ok(root.querySelector(".badge-row"));
+        assertDisposalError();
+        assert.equal(disposals, 3);
+    } finally { cleanup(); }
+});
+
+test("throwing control readiness or validation reports inline errors without saving", () => {
+    let failure = "readiness";
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            onChange({ phase: "specify" });
+            return { isReady() {
+                if (failure === "readiness") throw new Error("broken readiness");
+                return failure !== "validation";
+            }, validationError() {
+                throw new Error("broken validation");
+            } };
+        },
+    });
+    try {
+        const editor = choose(root);
+        assert.doesNotThrow(() => submit(editor));
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Badge input control readiness failed: broken readiness/);
+        failure = "validation";
+        assert.doesNotThrow(() => submit(editor));
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Badge input control readiness failed: broken validation/);
+        failure = null;
+        submit(editor);
+        assert.equal(draftBadges.length, 1);
+    } finally { cleanup(); }
+});
+
 test("preset control edits and reopens its own labeled phase input", () => {
     const badgeTypes = [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
         defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];

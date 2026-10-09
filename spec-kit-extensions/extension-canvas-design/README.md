@@ -347,9 +347,11 @@ the browser also checks the loaded adapter before mounting it. It reports the
 does not change the draft. Adapters must send a complete replacement after
 initializing defaults and after each edit. Missing or partial callback payloads
 are rejected, and a failed adapter import is reported in its badge editor
-without preventing other Designer pages from loading. The Designer validates
-saved input IDs, types, and confirmed
-outputs against the rule, regardless of what the adapter allows in the browser.
+without preventing other Designer pages from loading. A failing readiness or
+validation callback blocks that badge's submission with an inline error; a
+failing disposal is reported without blocking navigation. The Designer
+validates saved input IDs, types, and confirmed outputs against the rule,
+regardless of what the adapter allows in the browser.
 The base extension binds its nine rules to `stock.badge-inputs`; a preset can
 register a custom JSON definition, adapter, and rule binding without editing
 the Badges tab. Add the three named templates to the composed
