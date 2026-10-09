@@ -332,7 +332,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 doc = json.loads(path.read_text("utf-8"))
                 with self.subTest(kind=kind, path=str(path)):
                     validator.validate(doc)
-                    if path.is_relative_to(PACKAGE) and kind != "designer.badge-input-binding":
+                    if path.is_relative_to(PACKAGE):
                         self.assertEqual(doc["$schema"], os.path.relpath(
                             PACKAGE / "schemas" / f"{kind}.schema.json",
                             path.parent).replace("\\", "/"))

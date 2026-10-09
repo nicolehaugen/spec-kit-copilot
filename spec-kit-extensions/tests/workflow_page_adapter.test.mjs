@@ -233,3 +233,26 @@ test("Workflow page state requires a boolean slug setting and supports both mode
         model: { userProvidesSlug: false }, phaseState: { slugEditable: true },
     }), /slug settings disagree/);
 });
+
+test("Workflow page contract validates project badges before a replacement adapter receives them", () => {
+    const received = [];
+    const replacement = { update(state) { received.push(state.model.badges.project); } };
+    const badge = { id: "constitution", text: "Ready", phaseText: "Project ready",
+        color: "purple", showIn: [], targets: [{ phase: "speckit.constitution", output: null },
+            { phase: "speckit.constitution", output: ".specify/memory/constitution.md" }] };
+    const legacy = { id: "legacy", text: "Ready", color: "theme",
+        showIn: ["phase-card"], phase: "speckit.constitution" };
+    const state = (project) => ({ phaseState: { slugEditable: false },
+        model: { userProvidesSlug: false, badges: { project } } });
+    replacement.update(validateWorkflowPageState(state([badge, legacy])));
+    replacement.update(validateWorkflowPageState(state([])));
+    assert.deepEqual(received, [[badge, legacy], []]);
+    for (const invalid of ["invalid", [null], [{ ...badge, text: null }],
+        [{ ...badge, color: null }], [{ ...badge, targets: [{ phase: "speckit.constitution" }] }],
+        [{ ...badge, targets: [{ phase: 42, output: null }] }],
+        [{ ...badge, targets: "invalid" }], [{ ...legacy, phase: undefined }]]) {
+        assert.throws(() => replacement.update(validateWorkflowPageState(state(invalid))),
+            /invalid project badge results/);
+    }
+    assert.equal(received.length, 2);
+});

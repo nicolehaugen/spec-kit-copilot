@@ -25,6 +25,8 @@ const presetEvaluator = new URL("../../spec-kit-presets/copilot-badge-input-test
 await cp(presetEvaluator, join(generated, "badges", "badge-rule-test-phase-adapter.mjs"));
 const { evaluateBadges, validateBadges, verifyBadgeModules } =
     await import(pathToFileURL(join(generated, "badge-runtime.mjs")).href);
+const { validateWorkflowPageState } =
+    await import(pathToFileURL(join(generated, "contracts", "host-adapter.mjs")).href);
 const { createRuntime } = await import(pathToFileURL(join(generated, "runtime.mjs")).href);
 const { countMarkdownDirectory } = await import(pathToFileURL(join(generated, "files.mjs")).href);
 const { readBoundedWithMetadata } = await import(pathToFileURL(join(generated, "files.mjs")).href);
@@ -124,6 +126,8 @@ test("project Constitution badges evaluate without workflows and do not count as
         phases: [phase], outputPath: async ({ output }) => output,
         runFor: () => null });
     const empty = await evaluate([]);
+    assert.equal(validateWorkflowPageState({ model: { userProvidesSlug: false, badges: empty },
+        phaseState: { slugEditable: false } }).model.badges.project.length, 1);
     assert.deepEqual(empty.project.map(({ phaseText }) => phaseText), ["Project ready"],
         JSON.stringify(empty.diagnostics));
     assert.deepEqual(empty.items, {});

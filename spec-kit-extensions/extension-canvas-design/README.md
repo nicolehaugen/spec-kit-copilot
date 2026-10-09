@@ -669,6 +669,14 @@ not executed in Node to inspect its exports. Declaring
 project badge rendering. Designer Generate and frozen materialization reject
 project placements when a replacement adapter lacks this capability; adapters
 that do not render project badges should omit it.
+The generated host validates this optional Workflow-page state before calling
+the adapter's `update`: `badges.project` is an array of rendered badges with
+string `id`, `text`, and `color`, optional string `phaseText`, and a `showIn`
+array. Each badge has either `targets` (nonempty array of `{ phase, output }`,
+with string `phase` and `output` either a string path or `null` for a card)
+or a legacy `phase` string with `phase-card` in `showIn`. Malformed project
+badge results cause an incompatible Workflow-page state error rather than
+being passed to a replacement adapter.
 The `generated-phase-control` definition places itself in
 `workflow.phases`, has `schemaVersion: 1`, `id: "workflow-phases"`, an `adapter` name (stock:
 `generated-phase-adapter`), and optional `viewLabels` keyed by selected phase ID,
