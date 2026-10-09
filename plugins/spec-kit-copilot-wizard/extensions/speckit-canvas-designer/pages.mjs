@@ -880,16 +880,19 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         badgeInputControls.findIndex((other) => other.adapter === item.adapter) === index)) {
         const entry = loaded.find((item) => item.name === binding.adapter
             && item.kind === "designer.badge-input-adapter");
-        const bytes = await readFrozenAsset(entry, specify);
-        let module;
-        try {
-            module = await import(`data:text/javascript;base64,${bytes.toString("base64")}`);
-        } catch (error) {
-            throw new Error(`${entry.name}: Designer badge input adapter could not load: ${error.message}`,
-                { cause: error });
-        }
-        if (module.controlId !== binding.control || module.contractVersion !== 1
-            || typeof module.mount !== "function") {
+        const { init, parse } = await import("es-module-lexer/minimal");
+        await init();
+        const [, exports] = parse(entry.document);
+        const literalExport = (name, pattern) => {
+            const declaration = exports.find((item) => item.n === name);
+            if (!declaration || !/(?:^|\n)[ \t]*export[ \t]+const[ \t]+$/
+                .test(entry.document.slice(0, declaration.s))) return null;
+            return entry.document.slice(declaration.e).match(pattern)?.[1] ?? null;
+        };
+        const id = literalExport("controlId",
+            /^\s*=\s*["']([a-z][a-z0-9.-]{0,79})["']\s*;/);
+        const version = literalExport("contractVersion", /^\s*=\s*(1)\s*;/);
+        if (id !== binding.control || version !== "1") {
             throw new Error(`${entry.name}: incompatible Designer badge input adapter for ${binding.rule}`);
         }
     }

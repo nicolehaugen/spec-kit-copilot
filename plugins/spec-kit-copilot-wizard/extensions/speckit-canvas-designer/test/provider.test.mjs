@@ -441,6 +441,21 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
         item.name === "designer-badge-input-stock-adapter");
     await assert.rejects(load(templates.filter((item) => item !== inputAdapter)),
         /missing Designer badge input adapter designer-badge-input-stock-adapter/);
+    const inputAdapterOriginal = await readFile(inputAdapter.path, "utf8");
+    await writeFile(inputAdapter.path, inputAdapterOriginal
+        + "\nthrow new Error('must not execute in the Designer Node process');\n");
+    await load();
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        'controlId = "stock.badge-inputs"', 'controlId = "wrong.badge-inputs"'));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        'controlId = "stock.badge-inputs"',
+        'controlId = ["stock", "badge-inputs"].join(".")'));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        "contractVersion = 1", "contractVersion = 2"));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal);
     const original = await readFile(rule.path, "utf8");
     const { adapter: legacyAdapter, ...withoutAdapter } = JSON.parse(original);
     await writeFile(rule.path, JSON.stringify({ ...withoutAdapter, module: legacyAdapter }));

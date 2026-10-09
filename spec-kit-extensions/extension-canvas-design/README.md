@@ -339,7 +339,10 @@ Designer input controls are separate from generated evaluators. Each registered
 `inputTypes`). Its registered, self-contained `designer.badge-input-adapter`
 exports `controlId`, `contractVersion = 1`, and
 `mount({root, rule, inputs, phases, outputs, onChange})`. It renders inside the
-provided root and reports the **complete** structured `inputs` object through
+provided root. The identity and version must be direct literal `export const`
+declarations so Designer can check them without executing preset code in Node;
+the browser also checks the loaded adapter before mounting it. It reports the
+**complete** structured `inputs` object through
 `onChange`. The host passes a detached input snapshot; changing that object
 does not change the draft. Adapters must send a complete replacement after
 initializing defaults and after each edit. Missing or partial callback payloads

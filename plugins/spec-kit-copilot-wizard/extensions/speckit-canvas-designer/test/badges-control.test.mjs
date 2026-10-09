@@ -155,6 +155,36 @@ test("host ignores direct input mutation and rejects missing or partial control 
     } finally { cleanup(); }
 });
 
+test("disposed badge controls cannot update a redrawn editor or another badge", () => {
+    const callbacks = [];
+    const { root, view, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            callbacks.push(onChange);
+            onChange({ phase: "specify" });
+            return { isReady: () => true, dispose() {} };
+        },
+    });
+    try {
+        choose(root);
+        view.updateOutputs({ specify: { outputs: ["changed.md"], view: "changed.md" },
+            plan: { outputs: ["plan.md"], view: "plan.md" } });
+        callbacks[0]({ phase: "plan" });
+        submit(root.querySelector(".badge-editor"));
+        assert.equal(draftBadges[0].inputs.phase, "specify");
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        callbacks[1]({ phase: "plan" });
+        submit(root.querySelector(".badge-editor"));
+        assert.equal(draftBadges[0].inputs.phase, "specify");
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        root.querySelector(".badge-back").events.click();
+        assert.doesNotThrow(() => callbacks[3]({ phase: "plan" }));
+        assert.equal(draftBadges[0].inputs.phase, "specify");
+    } finally { cleanup(); }
+});
+
 test("preset control edits and reopens its own labeled phase input", () => {
     const badgeTypes = [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
         defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];

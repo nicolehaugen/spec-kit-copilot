@@ -140,6 +140,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
     let catalogOpen = false;
     let pending = null;
     let activeControl;
+    let renderId = 0;
     const openCatalog = () => {
         pending = null;
         catalogOpen = true;
@@ -147,6 +148,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         root.querySelector(".badge-type-choice")?.focus?.();
     };
     const redraw = () => {
+        renderId++;
         activeControl?.dispose?.();
         activeControl = null;
         root.replaceChildren();
@@ -338,9 +340,12 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const inputIds = (rule.inputs ?? []).map(({ id }) => id).sort().join();
         const hasDeclaredInputs = (value) => value && typeof value === "object"
             && !Array.isArray(value) && Object.keys(value).sort().join() === inputIds;
+        const editorPending = pending;
+        const editorRenderId = renderId;
         try {
             control = controlMount?.({ root: controlRoot, rule, inputs: structuredClone(pending.inputs),
                 phases, outputs, onChange(nextInputs) {
+                    if (renderId !== editorRenderId || pending !== editorPending) return;
                     if (!hasDeclaredInputs(nextInputs)) {
                         revealError("Badge control returned inputs that do not match its rule.");
                         return;

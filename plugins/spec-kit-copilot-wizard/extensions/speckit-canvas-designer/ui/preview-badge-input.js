@@ -10,6 +10,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
         const field = document.createElement(input.type === "text" ? "input" : "select");
         if (input.type === "text") {
             field.value = value[input.id] ?? "";
+            value[input.id] = field.value;
             field.addEventListener("input", () => {
                 value[input.id] = field.value;
                 onChange({ ...value });
@@ -25,9 +26,15 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                 option.textContent = choice.label;
                 field.append(option);
             }
-            if (input.type === "phase") field.value = value[input.id] ?? choices[0]?.value;
-            else if (input.type === "artifact") {
-                field.value = JSON.stringify(value[input.id] ?? {});
+            if (input.type === "phase") {
+                value[input.id] ??= choices[0]?.value ?? "";
+                field.value = value[input.id];
+                if (!choices.length) ready = false;
+            } else if (input.type === "artifact") {
+                value[input.id] ??= choices.length
+                    ? JSON.parse(choices[0].value) : { phase: "", output: "" };
+                field.value = JSON.stringify(value[input.id]);
+                if (!choices.length) ready = false;
             } else {
                 ready = false;
                 const hint = document.createElement("span");
@@ -43,5 +50,10 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
         label.append(field);
         root.append(label);
     }
-    return { isReady: () => ready };
+    if (ready) onChange(structuredClone(value));
+    return { isReady: () => ready && rule.inputs.every((input) =>
+        input.type === "text" ? !!value[input.id]?.trim()
+            : input.type === "phase" ? phases.includes(value[input.id])
+                : input.type === "artifact" ? outputs[value[input.id]?.phase]?.outputs
+                    ?.includes(value[input.id]?.output) : false) };
 }

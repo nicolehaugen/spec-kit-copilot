@@ -12,6 +12,7 @@ import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/spe
 import { fingerprint, handoffDirectory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
+import { previewModel } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/preview.mjs";
 import { materialize } from "../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs";
 import { verifyComposition } from "../../spec-kit-extensions/extension-canvas-design/scripts/verify-launch.mjs";
 
@@ -243,6 +244,24 @@ test("a failed badge adapter import leaves other Designer pages available", asyn
         await expect(page.locator(".badge-editor")).toContainText("Could not load badge input control");
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(page.getByRole("tab", { name: "Outputs" })).toBeVisible();
+    } finally {
+        await shell.close();
+    }
+});
+
+test("sample preview initializes visible badge input defaults before creating badges", async ({ page }) => {
+    const shell = await startShell(null, previewModel(), { preview: true });
+    try {
+        await page.goto(shell.url);
+        await page.getByRole("button", { name: "+ Add badge" }).click();
+        await page.getByRole("button", { name: "Phase run complete" }).click();
+        await expect(page.locator(".badge-input-controls select")).toHaveValue("constitution");
+        await page.getByRole("button", { name: "Create badge" }).click();
+        await expect(page.locator(".badge-row")).toContainText("Phase run complete");
+        await page.getByRole("button", { name: "+ Add badge" }).click();
+        await page.getByRole("button", { name: "Work complete" }).click();
+        await page.getByRole("button", { name: "Create badge" }).click();
+        await expect(page.locator(".badge-row")).toHaveCount(2);
     } finally {
         await shell.close();
     }
