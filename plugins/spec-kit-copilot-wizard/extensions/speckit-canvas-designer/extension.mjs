@@ -5,13 +5,27 @@ import { readHandoff } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages } from "./pages.mjs";
 import { previewModel } from "./preview.mjs";
-import { loadDesignerSettings } from "./settings.mjs";
+import { freshDesignerSettings } from "./settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from "./contracts/host-open.mjs";
+import { loadLastOpen, replaceLastOpen } from "./open-state.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
 
 const servers = new Map();
 const opening = new Map();
+let inventoryQueue = Promise.resolve();
 let checkout;
+
+async function withInventoryLock(action) {
+    const previous = inventoryQueue;
+    let release;
+    inventoryQueue = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+        return await action();
+    } finally {
+        release();
+    }
+}
 
 async function ensureDependencies() {
     const marker = new URL("./node_modules/es-module-lexer/package.json", import.meta.url);
@@ -70,11 +84,10 @@ const session = await joinSession({
             opening.set(ctx.instanceId, token);
             try {
                 const previous = servers.get(ctx.instanceId);
-                if (previous) {
-                    servers.delete(ctx.instanceId);
-                    await previous.close();
-                }
-                const { preview, handoffId, pages, templates } = validateDesignerOpenInput(ctx.input);
+                const requested = validateDesignerOpenInput(ctx.input);
+                const restored = !requested.preview && requested.handoffId === undefined
+                    ? await withInventoryLock(() => loadLastOpen(session.workspacePath)) : null;
+                const { preview, handoffId, pages, templates } = restored ?? requested;
                 if (!preview) await ensureDependencies();
                 let handoff = null;
                 let model = preview ? previewModel() : null;
@@ -87,17 +100,55 @@ const session = await joinSession({
                     const project = await getCheckout();
                     await assertPageCommand(project);
                     model = await loadResolvedDesignerPages(handoff, project, pages, templates);
-                    model = await loadDesignerSettings(session.workspacePath, handoff, model);
+                    model = await freshDesignerSettings(session.workspacePath, handoff, model);
                 }
                 const next = await startShell(handoff, model, handoff
                     ? { project: await getCheckout(), workspace: session.workspacePath, session }
                     : { preview: preview === true });
-                if (opening.get(ctx.instanceId) !== token) {
+                try {
+                    return await withInventoryLock(async () => {
+                        const assertOpen = () => {
+                            if (opening.get(ctx.instanceId) !== token) {
+                                throw new CanvasError("designer_open_failed",
+                                    "Designer panel closed while opening");
+                            }
+                        };
+                        const prepare = async () => {
+                            assertOpen();
+                            if (previous) {
+                                if (servers.get(ctx.instanceId) !== previous) {
+                                    throw new CanvasError("designer_open_failed",
+                                        "Designer panel closed while opening");
+                                }
+                                servers.delete(ctx.instanceId);
+                                try {
+                                    await previous.close();
+                                } catch (error) {
+                                    if (opening.get(ctx.instanceId) === token
+                                        && !servers.has(ctx.instanceId)) {
+                                        servers.set(ctx.instanceId, previous);
+                                    }
+                                    throw error;
+                                }
+                            }
+                        };
+                        const install = () => {
+                            assertOpen();
+                            servers.set(ctx.instanceId, next);
+                            return { title: "Spec Kit Canvas Designer", url: next.url };
+                        };
+                        assertOpen();
+                        if (handoff && !restored) {
+                            return replaceLastOpen(session.workspacePath,
+                                { handoffId, pages, templates }, prepare, install);
+                        }
+                        await prepare();
+                        return install();
+                    });
+                } catch (error) {
                     await next.close();
-                    throw new CanvasError("designer_open_failed", "Designer panel closed while opening");
+                    throw error;
                 }
-                servers.set(ctx.instanceId, next);
-                return { title: "Spec Kit Canvas Designer", url: next.url };
             } catch (error) {
                 if (error instanceof CanvasError) throw error;
                 throw new CanvasError("designer_open_failed", error.message);

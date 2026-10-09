@@ -110,10 +110,11 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
             constraints: {}, values: {}, revision: "test", outputs: handoff.workflow.outputEvidence };
         shell = await startShell(handoff, model, { workspace: child });
         await page.goto(shell.url);
-        await page.getByRole("tab", { name: "Outputs" }).click();
-        await expect(page.getByRole("radio", {
-            name: "Open specs/<slug>/spec.md by default",
-        })).toBeChecked();
+        await expect(page.getByRole("tab", { name: "Outputs" })).toHaveCount(0);
+        const stateUrl = new URL(shell.url);
+        stateUrl.pathname = "/api/state";
+        const state = await (await fetch(stateUrl)).json();
+        expect(state.outputs).toEqual(handoff.workflow.outputEvidence);
         await writeFile(join(folder, "handoff.json"), JSON.stringify({
             ...handoff, sourceFingerprint: "0".repeat(64),
         }));

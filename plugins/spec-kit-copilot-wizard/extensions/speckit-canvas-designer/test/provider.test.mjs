@@ -6,6 +6,7 @@ import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import {
@@ -19,11 +20,32 @@ import {
     loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
 import { freezeGeneration, generationBlockers, validateEssentials } from "../generation.mjs";
+import { generationAvailability, GENERATION_EXISTS, GENERATION_PENDING } from "../contracts/generation-request.mjs";
 import { decodeImage } from "../image.mjs";
 import { renderStockPage } from "../../../../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 
 const ID = "designer_1";
 const scalarFixtures = new Map();
+async function installOpenSkill(project) {
+    const path = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-open-generated", "SKILL.md");
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, "---\nname: speckit-extension-canvas-design-open-generated\n---\n");
+}
+async function waitFor(check) {
+    const deadline = Date.now() + 2000;
+    while (!check()) {
+        if (Date.now() > deadline) assert.fail("Timed out waiting for child dispatch");
+        await delay(10);
+    }
+}
+test("generation availability contract rejects incompatible flags and prioritizes queued work", () => {
+    assert.deepEqual(generationAvailability(false, false), { available: true, error: null });
+    assert.deepEqual(generationAvailability(true, false), { available: false, error: GENERATION_PENDING });
+    assert.deepEqual(generationAvailability(false, true), { available: false, error: GENERATION_EXISTS });
+    assert.deepEqual(generationAvailability(true, true), { available: false, error: GENERATION_PENDING });
+    assert.throws(() => generationAvailability(null, false), /Invalid Designer generation availability/);
+});
 function stockMarkup(config) {
     const root = { innerHTML: "" };
     renderStockPage(root, { canvas: config.canvas, mainPageAsset: config.mainPageAsset,
@@ -1170,6 +1192,7 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
             { page: "designer-outputs", fields: [], fixedControl: "designer.outputs" },
         ] },
         root, pageViews, currentPage: null,
+        generate: { hidden: false }, openGenerated: { hidden: false },
         tabs: { children: [{ dataset: { page: "designer-badges" }, setAttribute() {} },
             { dataset: { page: "designer-outputs" }, setAttribute() {} }] },
         mountBadges: () => {
@@ -2776,11 +2799,20 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries, templates));
     const prompts = [];
+    const dispatchErrors = [];
+    let dispatchFails = false;
     const shell = await startShell(handoff, model, { project, workspace,
-        session: { send: async (value) => prompts.push(value.prompt) } });
+        session: {
+            send: async (value) => {
+                if (dispatchFails) throw new Error("generation channel unavailable");
+                prompts.push(value.prompt);
+            },
+            log: async (message, options) => dispatchErrors.push({ message, options }),
+        } });
     t.after(() => shell.close());
     const url = new URL(shell.url);
     const endpoint = new URL(`/api/generate?token=${url.searchParams.get("token")}`, url);
@@ -2800,25 +2832,49 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal((await post(generationRequest("stale", values))).status, 422);
     assert.equal((await post(generationRequest(0, {
         ...values, "canvas.id": "../outside",
-    }))).status, 422);
+    }))).status, 409);
     assert.equal((await post(generationRequest(0, values),
         new URL("/api/generate?token=wrong", url))).status, 404);
     assert.equal(prompts.length, 0);
+    const unsaved = await post(generationRequest(0, values));
+    assert.equal(unsaved.status, 409);
+    assert.match((await unsaved.json()).error, /Save the current settings/);
+    const newerValues = { ...values, "canvas.description": "Newer settings" };
+    const saved = await saveDesignerSettings(workspace, handoff, model,
+        { revision: 0, modelRevision: model.revision, values: newerValues });
+    assert.equal(saved.settingsRevision, 1);
     await rm(generateSkill);
-    const unavailable = await post(generationRequest(0, values));
+    const unavailable = await post(generationRequest(saved.settingsRevision, newerValues));
     assert.equal(unavailable.status, 409);
     assert.match((await unavailable.json()).error, /Launch a new Designer session with a compatible Canvas Design extension/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
-    const newerValues = { ...values, "canvas.description": "Newer settings" };
-    const saved = await saveDesignerSettings(workspace, handoff, model,
-        { revision: 0, modelRevision: model.revision, values: newerValues });
-    assert.equal(saved.settingsRevision, 1);
     const stale = await post(generationRequest(0, values));
     assert.equal(stale.status, 409);
     assert.match((await stale.json()).error, /settings changed elsewhere/);
+    assert.equal(prompts.length, 0);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
+    for (const changed of [
+        generationRequest(saved.settingsRevision, { ...newerValues, "canvas.id": "unsaved-id" }),
+        { ...generationRequest(saved.settingsRevision, newerValues), outputs: {} },
+        { ...generationRequest(saved.settingsRevision, newerValues), badges: [{ id: "unsaved" }] },
+    ]) {
+        const mismatch = await post(changed);
+        assert.equal(mismatch.status, 409);
+        assert.match((await mismatch.json()).error, /Save the current settings/);
+    }
+    assert.equal(prompts.length, 0);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
+    const absentReplacement = await post({
+        ...generationRequest(saved.settingsRevision, newerValues),
+        replaceExisting: true, replaceRequestId: "prior-request",
+    });
+    assert.equal(absentReplacement.status, 409);
+    assert.match((await absentReplacement.json()).error, /Canvas is absent/);
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
@@ -2826,6 +2882,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(response.status, 202);
     const generated = await response.json();
     assert.equal(generated.target, ".github/extensions/my-canvas/");
+    await waitFor(() => prompts.length === 1);
     assert.match(prompts[0], /speckit-extension-canvas-design-generate skill/);
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", generated.requestId, "request.json")));
@@ -2833,6 +2890,191 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(frozen.canvas.description, "Newer settings");
     assert.equal(frozen.settingsRevision, 1);
     assert.deepEqual(frozen.workflow.selectedPhases, handoff.workflow.selectedPhases);
+    const target = join(project, ".github", "extensions", "my-canvas");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ canvas: { id: "my-canvas" } }));
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: handoff.handoffId, requestId: generated.requestId,
+            sourceFingerprint: frozen.sourceFingerprint }));
+    const replace = { ...generationRequest(saved.settingsRevision, newerValues),
+        replaceExisting: true, replaceRequestId: generated.requestId };
+    assert.equal((await post({ ...replace, replaceRequestId: "../escape" })).status, 422);
+    assert.equal((await post({ ...replace, replaceRequestId: undefined })).status, 422);
+    assert.equal((await post({ ...replace, replaceRequestId: "stale" })).status, 409);
+    assert.equal(prompts.length, 1);
+    const replaced = await post(replace);
+    assert.equal(replaced.status, 202, await replaced.text());
+    await waitFor(() => prompts.length === 2);
+    assert.match(prompts[1], new RegExp(`--replace-existing=${generated.requestId}`));
+    dispatchFails = true;
+    const another = { ...newerValues, "canvas.id": "another-canvas" };
+    const next = await saveDesignerSettings(workspace, handoff, model,
+        { revision: saved.settingsRevision, modelRevision: model.revision, values: another });
+    const failedDispatch = await post(generationRequest(next.settingsRevision, another));
+    assert.equal(failedDispatch.status, 202);
+    await waitFor(() => dispatchErrors.length === 1);
+    assert.match(dispatchErrors[0].message, /Generate dispatch failed: generation channel unavailable/);
+    assert.deepEqual(dispatchErrors[0].options, { level: "error" });
+});
+
+test("Generate retries while a child request is pending and still protects existing output", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const skill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-generate", "SKILL.md");
+    await mkdir(dirname(skill), { recursive: true });
+    await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
+    const prompts = [];
+    const shell = await startShell(handoff, model, { project, workspace,
+        session: { send: async (value) => prompts.push(value.prompt) } });
+    t.after(() => shell.close());
+    const stateUrl = new URL(shell.url);
+    stateUrl.pathname = "/api/state";
+    const generateUrl = new URL(shell.url);
+    generateUrl.pathname = "/api/generate";
+    const first = { ...model.values, "canvas.id": "first-canvas", "canvas.displayName": "First" };
+    const second = { ...first, "canvas.id": "second-canvas", "canvas.displayName": "Second" };
+    const post = (values, revision = 0) => fetch(generateUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelRevision: model.revision, settingsRevision: revision, values }) });
+    const initial = await saveDesignerSettings(workspace, handoff, model,
+        { modelRevision: model.revision, revision: 0, values: first });
+    const firstResult = await post(first, initial.settingsRevision);
+    assert.equal(firstResult.status, 202);
+    const { requestId } = await firstResult.json();
+    assert.equal((await post(first, initial.settingsRevision)).status, 202);
+    assert.equal((await post(second, initial.settingsRevision)).status, 409);
+    const target = join(project, ".github", "extensions", "first-canvas");
+    await mkdir(target, { recursive: true });
+    assert.equal((await (await fetch(stateUrl)).json()).generationAvailable, true);
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    await writeFile(join(target, "canvas-config.json"),
+        JSON.stringify({ canvas: { id: "first-canvas" } }));
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: handoff.handoffId, requestId,
+            sourceFingerprint: handoff.sourceFingerprint }));
+    const duplicate = await post(first, initial.settingsRevision);
+    assert.equal(duplicate.status, 409);
+    assert.match((await duplicate.json()).error, /already exists/);
+    const saveUrl = new URL(shell.url);
+    saveUrl.pathname = "/api/save";
+    const saved = await fetch(saveUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelRevision: model.revision,
+            revision: initial.settingsRevision, values: second }) });
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json()).generationAvailable, true);
+    assert.equal((await post(second, 2)).status, 202);
+    assert.equal((await post(second, 2)).status, 202);
+    await waitFor(() => prompts.length === 4);
+});
+
+test("output status, folder reveal and Open enforce the same generated identity", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
+    const revealed = [];
+    const prompts = [];
+    const dispatchErrors = [];
+    let dispatchFails = false;
+    let blockSend = false;
+    let resolveSend;
+    const shell = await startShell(handoff, model, { project, workspace,
+        session: {
+            send: async ({ prompt }) => {
+                if (dispatchFails) throw new Error("child session unavailable");
+                prompts.push(prompt);
+                if (blockSend) await new Promise((resolve) => { resolveSend = resolve; });
+            },
+            log: async (message, options) => dispatchErrors.push({ message, options }),
+        },
+        launchFolder: (_command, [path]) => {
+            revealed.push(path);
+            const child = { once(event, callback) {
+                if (event === "spawn") queueMicrotask(callback);
+                return child;
+            }, unref() {} };
+            return child;
+        } });
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    const getStatus = (id) => fetch(new URL(`/api/output-status?token=${url.searchParams.get("token")}&canvasId=${encodeURIComponent(id)}`, url));
+    const action = (path, body) => fetch(new URL(`${path}?token=${url.searchParams.get("token")}`, url), {
+        method: "POST", headers: { "Content-Type": "application/json", Origin: url.origin },
+        body: JSON.stringify(body),
+    });
+    assert.equal((await getStatus("../escape")).status, 422);
+    assert.deepEqual(await (await getStatus("my-canvas")).json(),
+        { status: "absent", target: ".github/extensions/my-canvas/" });
+    assert.equal((await action("/api/reveal-output", { canvasId: "../escape" })).status, 422);
+    const parentReveal = await action("/api/reveal-output", { canvasId: "my-canvas" });
+    assert.equal(parentReveal.status, 200);
+    assert.deepEqual(await parentReveal.json(), { target: ".github/extensions/" });
+    assert.equal(revealed[0], join(project, ".github", "extensions"));
+    const missing = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(missing.status, 422);
+    assert.match((await missing.json()).error, /Generate the canvas files first/);
+    const target = join(project, ".github", "extensions", "my-canvas");
+    await mkdir(target);
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    await writeFile(join(target, "canvas-config.json"), JSON.stringify({ canvas: { id: "my-canvas" } }));
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: "another", requestId: "request-1" }));
+    assert.equal((await (await getStatus("my-canvas")).json()).status, "foreign");
+    assert.equal((await action("/api/reveal-output", { canvasId: "my-canvas" })).status, 422);
+    assert.equal((await action("/api/open-generated", { canvasId: "my-canvas" })).status, 422);
+    await writeFile(join(target, "settings-provenance.json"),
+        JSON.stringify({ handoffId: handoff.handoffId, requestId: "request-1" }));
+    assert.deepEqual(await (await getStatus("my-canvas")).json(),
+        { status: "foreign", target: ".github/extensions/my-canvas/" });
+    assert.equal((await action("/api/open-generated", { canvasId: "my-canvas" })).status, 422);
+    await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
+        handoffId: handoff.handoffId, requestId: "request-1", sourceFingerprint: "a".repeat(64),
+    }));
+    assert.deepEqual(await (await getStatus("my-canvas")).json(),
+        { status: "ready", target: ".github/extensions/my-canvas/", requestId: "request-1" });
+    assert.equal((await action("/api/reveal-output", { canvasId: "my-canvas" })).status, 200);
+    assert.equal(revealed[1], target);
+    const withoutSkill = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(withoutSkill.status, 422);
+    assert.match((await withoutSkill.json()).error, /does not provide Open/);
+    const openSkill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-open-generated", "SKILL.md");
+    await mkdir(dirname(openSkill), { recursive: true });
+    await writeFile(openSkill, "---\nname: speckit-extension-canvas-design-open-generated\n---\n");
+    dispatchFails = true;
+    const failed = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(failed.status, 202);
+    assert.deepEqual(await failed.json(),
+        { status: "opening", target: ".github/extensions/my-canvas/" });
+    await waitFor(() => dispatchErrors.length === 1);
+    assert.match(dispatchErrors[0].message, /Open dispatch failed: child session unavailable/);
+    assert.deepEqual(dispatchErrors[0].options, { level: "error" });
+    assert.equal(prompts.length, 0);
+    dispatchFails = false;
+    blockSend = true;
+    const opened = await action("/api/open-generated", { canvasId: "my-canvas" });
+    assert.equal(opened.status, 202);
+    assert.deepEqual(await opened.json(),
+        { status: "opening", target: ".github/extensions/my-canvas/" });
+    await waitFor(() => prompts.length === 1 && resolveSend);
+    assert.match(prompts[0], /speckit-extension-canvas-design-open-generated skill/);
+    assert.match(prompts[0], /request-1/);
+    resolveSend();
 });
 
 test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
@@ -2861,6 +3103,7 @@ test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
     const prompts = [];
     const shell = await startShell(handoff, saved, { project, workspace,
         session: { send: async (value) => prompts.push(value.prompt) } });
@@ -2870,7 +3113,7 @@ test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
     const response = await fetch(url, { method: "POST",
         headers: { "Content-Type": "application/json" }, body });
     assert.equal(response.status, 202);
-    assert.equal(prompts.length, 1);
+    await waitFor(() => prompts.length === 1);
     const { requestId } = await response.json();
     const frozen = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
         "handoffs", handoff.handoffId, "generations", requestId, "request.json")));
@@ -2906,6 +3149,66 @@ test("missing Generate skill disables the button and reports a repair path witho
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
+    const asset = await fetch(new URL(`/ui/generation-state.js?token=${url.searchParams.get("token")}`, url));
+    assert.equal(asset.status, 200);
+    assert.match(await asset.text(), /export const GENERATION_EXISTS/);
+    assert.equal((await fetch(new URL("/ui/generation-state.js?token=wrong", url))).status, 404);
+    const saveUrl = new URL(`/api/save?token=${url.searchParams.get("token")}`, url);
+    const save = async (values, revision) => {
+        const result = await fetch(saveUrl, { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modelRevision: model.revision, revision, values }) });
+        assert.equal(result.status, 200);
+        return result.json();
+    };
+    const target = join(project, ".github", "extensions", "my-canvas");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    const values = { ...model.values, "canvas.id": "my-canvas", "canvas.displayName": "My Canvas" };
+    await save(values, 0);
+    const duplicateState = await (await fetch(stateUrl)).json();
+    assert.equal(duplicateState.generationAvailable, false);
+    assert.equal(duplicateState.generationError, state.generationError);
+    await save({ ...values, "canvas.id": "new-canvas" }, 1);
+    const uniqueState = await (await fetch(stateUrl)).json();
+    assert.equal(uniqueState.generationAvailable, false);
+    assert.equal(uniqueState.generationError, state.generationError);
+});
+
+test("an older Generate-only package cannot dispatch a combined Generate and Open turn", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const generateSkill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-generate", "SKILL.md");
+    await mkdir(dirname(generateSkill), { recursive: true });
+    await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
+    const prompts = [];
+    const shell = await startShell(handoff, model, { project, workspace,
+        session: { send: async ({ prompt }) => prompts.push(prompt) } });
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    const stateUrl = new URL(url);
+    stateUrl.pathname = "/api/state";
+    const state = await (await fetch(stateUrl)).json();
+    assert.equal(state.generationAvailable, false);
+    assert.match(state.generationError, /does not provide separate Generate and Open commands/);
+    const generateUrl = new URL(url);
+    generateUrl.pathname = "/api/generate";
+    const response = await fetch(generateUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelRevision: model.revision, settingsRevision: 0,
+            values: { ...model.values, "canvas.id": "my-canvas",
+                "canvas.displayName": "My Canvas" } }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, state.generationError);
+    assert.equal(prompts.length, 0);
 });
 
 test("malformed raw request targets return 404 without stopping the shell", async (t) => {
@@ -3752,17 +4055,20 @@ test("named value sources freeze typed values and run from a portable canvas wit
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
     const prompts = [];
     const shell = await startShell(handoff, overridden, { project, workspace,
         session: { send: async ({ prompt }) => prompts.push(prompt) } });
     t.after(() => shell.close());
+    const saved = await saveDesignerSettings(workspace, handoff, overridden,
+        { modelRevision: overridden.revision, revision: 0, values: selected });
     const endpoint = new URL(shell.url);
     endpoint.pathname = "/api/generate";
     const post = (approvedProviders) => fetch(endpoint, {
         method: "POST", headers: { "Content-Type": "application/json",
             Origin: endpoint.origin },
         body: JSON.stringify({ modelRevision: overridden.revision,
-            settingsRevision: 0, values: selected,
+            settingsRevision: saved.settingsRevision, values: selected,
             ...(approvedProviders === undefined ? {} : { approvedProviders }) }),
     });
     const approval = overridden.templates.filter((item) => item.kind === "generated.computed-value-provider")
@@ -3779,7 +4085,7 @@ test("named value sources freeze typed values and run from a portable canvas wit
     assert.match((await changedApproval.json()).error, /changed since Designer opened/);
     await writeFile(provider.path, originalProvider);
     assert.equal((await post(approval)).status, 202);
-    assert.equal(prompts.length, 1);
+    await waitFor(() => prompts.length === 1);
     const prepared = await freezeGeneration({ model, values: selected, handoff, project, workspace });
     await writeFile(provider.path, `${originalProvider}\n// changed after freeze`);
     await assert.rejects(freezeGeneration({ model, values: selected, handoff, project, workspace }),
@@ -4511,7 +4817,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
+    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "open-state.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
         "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
@@ -4542,7 +4848,13 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         export async function startShell(...args) {
             const shell = await actualStartShell(...args);
             if (globalThis.__pauseDesignerShell) await globalThis.__pauseDesignerShell(shell);
-            return shell;
+            return { ...shell, close: async () => {
+                if (globalThis.__failDesignerClose?.(shell)) {
+                    throw new Error("Previous Designer server could not close");
+                }
+                if (globalThis.__pauseDesignerClose) await globalThis.__pauseDesignerClose(shell);
+                return shell.close();
+            } };
         }
     `);
     const shared = join(workspace, "speckit-wizard-canvas", "env");
@@ -4554,7 +4866,8 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             join(shared, file));
     }
     await mkdir(join(extension, "ui"));
-    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js",
+    for (const file of ["index.html", "app.js", "generation-state.js", "generated-output-state.js",
+        "identity-control.js", "outputs-control.js",
         "control-adapter-contract.js", "badges-control.js", "badge-duplicates.js",
         "preview-badge-input.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
@@ -4578,6 +4891,14 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
                 log: async () => {} };
         };
     `);
+    const inventorySource = await readFile(join(extension, "open-state.mjs"), "utf8");
+    const stage = /await saveLastOpen\(workspace, input\);\r?\n(\s*)await prepare\(\);/;
+    assert.match(inventorySource, stage);
+    const eol = inventorySource.includes("\r\n") ? "\r\n" : "\n";
+    await writeFile(join(extension, "open-state.mjs"), inventorySource.replace(stage,
+        (_match, indent) => `await saveLastOpen(workspace, input);${eol}${indent}`
+            + `if (globalThis.__pauseDesignerInventory) await globalThis.__pauseDesignerInventory();`
+            + `${eol}${indent}await prepare();`));
     await import(pathToFileURL(join(extension, "extension.mjs")).href);
     const canvas = globalThis.__designerTestCanvas;
     delete globalThis.__designerTestCanvas;
@@ -4609,7 +4930,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             "generated.phase-dialog-binding", "generated.button-control-definition",
             "generated.button-adapter", "generated.button-placement"]);
 
-    let releaseShell;
+    let releaseShell, releaseOldClose, releaseInventory;
     try {
         await assert.rejects(readFile(join(extension, "node_modules", "es-module-lexer", "package.json")),
             { code: "ENOENT" });
@@ -4656,7 +4977,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             (error) => error.code === "designer_open_failed"
                 && error.message.includes(schema)
                 && /Repair or reinstall extension-canvas-design/.test(error.message));
-        await assert.rejects(fetch(empty.url));
+        assert.match(await (await fetch(empty.url)).text(), /No Wizard handoff is attached yet/);
         await writeFile(schema, installedSchema);
         await assert.rejects(canvas.open({ instanceId: "same", input: {
             handoffId: ID, pages: [{ ...entries[0], path: join(project, ".specify", "missing.json") },
@@ -4672,6 +4993,43 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         const initial = await (await fetch(stateUrl)).json();
         assert.equal(initial.pages.length, 4);
         assert.equal((await fetch(new URL("/api/reload", filled.url), { method: "POST" })).status, 404);
+        await canvas.onClose({ instanceId: "same" });
+        const resumed = await canvas.open({ instanceId: "resumed", input: {} });
+        const resumedStateUrl = new URL(resumed.url);
+        resumedStateUrl.pathname = "/api/state";
+        const resumedState = await (await fetch(resumedStateUrl)).json();
+        assert.equal(resumedState.handoffId, ID);
+        assert.equal(resumedState.pages.length, initial.pages.length);
+        assert.equal(resumedState.revision, initial.revision);
+        await canvas.onClose({ instanceId: "resumed" });
+        await import(`${pathToFileURL(join(extension, "extension.mjs")).href}?restart=1`);
+        const restartedCanvas = globalThis.__designerTestCanvas;
+        delete globalThis.__designerTestCanvas;
+        delete globalThis.__designerTestTools;
+        const afterRestart = await restartedCanvas.open({ instanceId: "after-restart", input: {} });
+        const afterRestartState = new URL(afterRestart.url);
+        afterRestartState.pathname = "/api/state";
+        assert.equal((await (await fetch(afterRestartState)).json()).handoffId, ID);
+        await restartedCanvas.onClose({ instanceId: "after-restart" });
+        const lastOpen = join(workspace, "speckit-canvas-designer", "last-open.json");
+        const originalOpen = await readFile(lastOpen);
+        await writeFile(lastOpen, "{broken");
+        await assert.rejects(canvas.open({ instanceId: "resumed", input: {} }),
+            /Invalid saved Designer open inventory JSON/);
+        await writeFile(lastOpen, JSON.stringify({ ...JSON.parse(originalOpen),
+            templates: [{ name: "wrong", path: "bad", sourceId: "x",
+                kind: "unknown", strategy: "replace" }] }));
+        await assert.rejects(canvas.open({ instanceId: "resumed", input: {} }),
+            /Invalid saved Designer open inventory/);
+        await writeFile(lastOpen, originalOpen);
+        const handoffPath = join(handoffDirectory(workspace, ID), "handoff.json");
+        const originalHandoff = await readFile(handoffPath);
+        await rm(handoffPath);
+        await assert.rejects(canvas.open({ instanceId: "resumed", input: {} }),
+            (error) => error.code === "designer_handoff_invalid");
+        await writeFile(handoffPath, originalHandoff);
+        await canvas.open({ instanceId: "resumed", input: {} });
+        await canvas.onClose({ instanceId: "resumed" });
         const templatePath = join(project, ".specify", "billing.json");
         await writeFile(templatePath, JSON.stringify({
             schemaVersion: 1, id: "billing-code", host: "designer",
@@ -4761,9 +5119,86 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         const restoredUrl = new URL(restored.url);
         restoredUrl.pathname = "/api/state";
         const restoredState = await (await fetch(restoredUrl)).json();
-        assert.deepEqual(restoredState.values, savedValues);
+        assert.deepEqual(restoredState.values, initial.values);
         assert.equal(restoredState.settingsRevision, 1);
-        assert.equal(restoredState.persisted, true);
+        assert.equal(restoredState.persisted, false);
+        const freshValues = { ...restoredState.values, "canvas.id": "second-designer",
+            "canvas.displayName": "Second Designer" };
+        const freshSave = new URL(restored.url);
+        freshSave.pathname = "/api/save";
+        const nextSave = await fetch(freshSave, { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modelRevision: restoredState.revision,
+                revision: restoredState.settingsRevision, values: freshValues }) });
+        assert.equal(nextSave.status, 200);
+        assert.equal((await nextSave.json()).settingsRevision, 2);
+        assert.equal((await (await fetch(restoredUrl)).json()).values["canvas.id"], "second-designer");
+
+        const beforeReplacement = await readFile(lastOpen);
+        const raceId = "designer_2";
+        await saveHandoff(workspace, validHandoff(raceId));
+        globalThis.__failDesignerClose = (shell) => shell.url === restored.url;
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
+            handoffId: raceId, pages: entries, templates: scalarFixtures.get(project),
+        } }), /Previous Designer server could not close/);
+        delete globalThis.__failDesignerClose;
+        assert.deepEqual(await readFile(lastOpen), beforeReplacement);
+        assert.equal((await fetch(restored.url)).status, 200);
+
+        let candidate;
+        globalThis.__pauseDesignerShell = async (shell) => { candidate = shell; };
+        const closingPrevious = new Promise((resolve) => {
+            globalThis.__pauseDesignerClose = async (shell) => {
+                if (shell.url !== restored.url) return;
+                resolve();
+                await new Promise((release) => { releaseOldClose = release; });
+            };
+        });
+        const late = canvas.open({ instanceId: "same", input: {
+            handoffId: raceId, pages: entries, templates: scalarFixtures.get(project),
+        } });
+        await closingPrevious;
+        assert.equal(JSON.parse(await readFile(lastOpen)).handoffId, raceId);
+        const waitingRestore = canvas.open({ instanceId: "waiting-restore", input: {} });
+        await canvas.onClose({ instanceId: "same" });
+        delete globalThis.__pauseDesignerClose;
+        delete globalThis.__pauseDesignerShell;
+        releaseOldClose();
+        releaseOldClose = null;
+        await assert.rejects(late, /panel closed while opening/);
+        assert.deepEqual(await readFile(lastOpen), beforeReplacement);
+        await assert.rejects(fetch(candidate.url));
+        await assert.rejects(fetch(restored.url));
+        const waiting = await waitingRestore;
+        const waitingState = new URL(waiting.url);
+        waitingState.pathname = "/api/state";
+        assert.equal((await (await fetch(waitingState)).json()).handoffId, ID);
+        await canvas.onClose({ instanceId: "waiting-restore" });
+
+        const prior = await canvas.open({ instanceId: "same", input: {} });
+        const beforeSaveRace = await readFile(lastOpen);
+        let savingCandidate;
+        globalThis.__pauseDesignerShell = async (shell) => { savingCandidate = shell; };
+        const saving = new Promise((resolve) => {
+            globalThis.__pauseDesignerInventory = async () => {
+                resolve();
+                await new Promise((release) => { releaseInventory = release; });
+            };
+        });
+        const interruptedSave = canvas.open({ instanceId: "same", input: {
+            handoffId: raceId, pages: entries, templates: scalarFixtures.get(project),
+        } });
+        await saving;
+        assert.equal(JSON.parse(await readFile(lastOpen)).handoffId, raceId);
+        await canvas.onClose({ instanceId: "same" });
+        delete globalThis.__pauseDesignerInventory;
+        delete globalThis.__pauseDesignerShell;
+        releaseInventory();
+        releaseInventory = null;
+        await assert.rejects(interruptedSave, /panel closed while opening/);
+        assert.deepEqual(await readFile(lastOpen), beforeSaveRace);
+        await assert.rejects(fetch(prior.url));
+        await assert.rejects(fetch(savingCandidate.url));
 
         const started = new Promise((resolve) => {
             globalThis.__pauseDesignerShell = async (shell) => {
@@ -4783,7 +5218,13 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         assert.equal((await fetch(reopenedAfterClose.url)).status, 200);
     } finally {
         releaseShell?.();
+        releaseOldClose?.();
+        releaseInventory?.();
         delete globalThis.__pauseDesignerShell;
+        delete globalThis.__pauseDesignerInventory;
+        delete globalThis.__pauseDesignerClose;
+        delete globalThis.__failDesignerClose;
+        await canvas.onClose({ instanceId: "waiting-restore" });
         await canvas.onClose({ instanceId: "closed-during-open" });
         await canvas.onClose({ instanceId: "same" });
     }

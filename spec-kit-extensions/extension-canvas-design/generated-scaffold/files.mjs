@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, opendir, realpath, readdir, mkdir, mkdtemp, rename, rm, rmdir, unlink } from "node:fs/promises";
 import { resolve, relative, isAbsolute, dirname, join, basename } from "node:path";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 export class UserError extends Error {
     constructor(message, status = 400) { super(message); this.status = status; }
@@ -204,7 +205,15 @@ export async function atomicJson(root, path, data) {
     try {
         const handle = await open(temporary, "wx", 0o600);
         try { await handle.writeFile(JSON.stringify(data)); } finally { await handle.close(); }
-        await rename(temporary, target);
+        for (let attempt = 0; ; attempt++) {
+            try { await rename(temporary, target); break; }
+            catch (error) {
+                // Windows can briefly lock the destination while another reader has it open.
+                if (process.platform !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(error.code)
+                    || attempt === 4) throw error;
+                await delay(25 * (attempt + 1));
+            }
+        }
     } finally {
         try { await unlink(temporary); } catch (error) { if (error.code !== "ENOENT") throw error; }
     }

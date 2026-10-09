@@ -18,6 +18,19 @@ const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-
 const canvasIdPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const execFileAsync = promisify(execFile);
 
+export async function canvasOutputExists(project, id, entryPoint = false) {
+    if (!project || typeof id !== "string" || !canvasIdPattern.test(id)
+        || reserved.has(id) || isWindowsDeviceName(id)) return false;
+    try {
+        const output = await stat(join(project, ".github", "extensions", id,
+            ...(entryPoint ? ["extension.mjs"] : [])));
+        return entryPoint ? output.isFile() : true;
+    } catch (error) {
+        if (error.code === "ENOENT") return false;
+        throw error;
+    }
+}
+
 export function generationBlockers(model) {
     const pages = model.pages ?? [];
     const essentials = pages.find((page) => page.page === "designer-essentials");
@@ -177,7 +190,7 @@ export function validBadgeEvidence(instance, rule, phaseIds, declared) {
 
 export async function freezeGeneration({ model, values, outputs = model.outputs, badges = model.badges,
     handoff, project, workspace,
-    runtimeInventory, inventoryWarning }) {
+    runtimeInventory, inventoryWarning, replaceExisting = false }) {
     const blockers = generationBlockers(model);
     if (blockers.length) throw new Error(`Cannot generate: ${blockers.join("; ")}`);
     const essentials = validateEssentials(model, values);
@@ -647,11 +660,8 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
     const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
-    try {
-        await stat(target);
+    if (!replaceExisting && await canvasOutputExists(checkout, essentials["canvas.id"])) {
         throw new Error(`Canvas already exists: ${target}`);
-    } catch (error) {
-        if (error.code !== "ENOENT") throw error;
     }
     const actual = runtimeInventory === undefined ? undefined
         : reconcileInstalledVersions(handoff.workflow.installed, runtimeInventory);
