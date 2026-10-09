@@ -155,9 +155,11 @@ no badge is evaluated or rendered until one is explicitly added.
 
 The Workflow header names the collection with the description just below it.
 The generated canvas keeps New workflow in the header and shows a bordered,
-searchable workflow list immediately, with "No workflows yet" inside the empty
-list. New adds a selected **Not started** row in the list, prefilled with
-**Workflow 1** (then Workflow 2, and so on). Its editable Workflow name comes
+searchable workflow list immediately. When there are workflow phases but no
+workflows, opening the canvas automatically creates and selects a **Not started**
+**Workflow 1** row. Existing workflows remain untouched; the empty list shows
+"No workflows yet" when no workflow phases are available. New adds another
+selected **Not started** row (Workflow 2, and so on). Its editable Workflow name comes
 before the optional Artifact directory slug, shown only when enabled in Essentials.
 The name labels the list row; a supplied slug previews artifact output paths.
 Without one, Specify chooses the artifact directory. No directory is created until

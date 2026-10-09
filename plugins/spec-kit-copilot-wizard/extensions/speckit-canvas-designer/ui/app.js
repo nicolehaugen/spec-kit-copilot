@@ -240,6 +240,7 @@ generate.addEventListener("click", async () => {
     } finally {
         generating = false;
         updateSave();
+        await checkConnection(true);
     }
 });
 
@@ -714,6 +715,7 @@ const status = document.getElementById("conn-status");
 let connectionError = "";
 let outputStatusError = "";
 let healthChecks = 0;
+let availabilityCheck = 0;
 function connectionStatus(state) {
     status.className = `conn conn-${state}`;
     status.textContent = state === "live" ? "Live" : state === "connecting" ? "Connecting" : "Disconnected";
@@ -730,9 +732,10 @@ async function checkOutputStatus(id) {
         outputStatusError = error.message;
     }
 }
-async function checkConnection() {
+async function checkConnection(forceAvailability = false) {
     try {
-        const refreshAvailability = model && ++healthChecks % 6 === 0;
+        const refreshAvailability = model && (forceAvailability || ++healthChecks % 6 === 0);
+        const check = refreshAvailability ? ++availabilityCheck : 0;
         const response = await fetch(
             `${refreshAvailability ? "/api/state" : "/ui/styles.css"}?token=${encodeURIComponent(token)}`,
             { signal: AbortSignal.timeout(5000) });
@@ -744,9 +747,11 @@ async function checkConnection() {
                     || (latest.generationError !== null && typeof latest.generationError !== "string")) {
                     throw new Error("Designer connection check returned invalid generation state");
                 }
-                model.generationAvailable = latest.generationAvailable;
-                model.generationError = latest.generationError;
-                updateGenerate();
+                if (check === availabilityCheck) {
+                    model.generationAvailable = latest.generationAvailable;
+                    model.generationError = latest.generationError;
+                    updateGenerate();
+                }
             }
             connectionStatus("live");
             if (connectionError && generationNote.textContent === connectionError)

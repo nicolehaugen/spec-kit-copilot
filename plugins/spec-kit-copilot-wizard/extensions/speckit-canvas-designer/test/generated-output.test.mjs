@@ -87,11 +87,26 @@ test("generated output distinguishes absent, foreign, incomplete and ready targe
     await writeFile(join(target, "canvas-config.json"), JSON.stringify({ canvas: { id: "team-dashboard" } }));
     await writeFile(join(target, "settings-provenance.json"),
         JSON.stringify({ handoffId: "handoff-1", requestId: "request-1" }));
+    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
+    await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
+        handoffId: "handoff-1", requestId: "request-1", sourceFingerprint: "a".repeat(64),
+    }));
     assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "incomplete");
     await writeFile(join(target, "extension.mjs"), "export {};");
     assert.deepEqual(await generatedOutput(project, "team-dashboard", "handoff-1"), {
         status: "ready", target: ".github/extensions/team-dashboard/", requestId: "request-1",
     });
+    for (const sourceFingerprint of [undefined, "", "A".repeat(64), "a".repeat(63)]) {
+        await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
+            handoffId: "handoff-1", requestId: "request-1", sourceFingerprint,
+        }));
+        assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
+    }
+    await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
+        handoffId: "handoff-1", requestId: "request-1", sourceFingerprint: "a".repeat(64),
+        extra: true,
+    }));
+    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
 
     assert.equal((await generatedOutput(project, "team-dashboard", "other")).status, "foreign");
     await rm(target, { recursive: true });

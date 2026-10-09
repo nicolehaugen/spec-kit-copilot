@@ -174,6 +174,7 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
         generating: false, status: {}, messageBox: {}, checkReady: () => true,
         validateGenerateResponse, validateOutputError,
         showError: () => {}, updateSave: () => {},
+        checkConnection: async (force) => { calls.push(["availability", force]); },
         refreshOutputStatus: async () => ({ status: "absent", requestId: null }),
         updateOutputDisplay: () => {},
         setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
@@ -200,7 +201,8 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
         target: ".github/extensions/first-canvas/", requestId: "request-1",
     }) });
     await request;
-    assert.deepEqual(calls, [["save", "first-canvas"], ["generate", "first-canvas"]]);
+    assert.deepEqual(calls, [["save", "first-canvas"], ["generate", "first-canvas"],
+        ["availability", true]]);
     assert.equal(context.requestedCanvasId, "first-canvas");
     assert.equal(context.requestedRequestId, "request-1");
 });
@@ -217,6 +219,7 @@ test("Generate does not dispatch or disable future attempts when the implicit sa
         requestedCanvasId: null, token: "test", generating: false, messageBox: {},
         outputStatus: "absent", requestedRequestId: null,
         checkReady: () => true, showError: () => {}, updateSave: () => {},
+        checkConnection: async () => {},
         setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
         refreshOutputStatus: async () => ({ status: "absent", requestId: null }),
         updateOutputDisplay: () => {},
@@ -244,6 +247,7 @@ test("replacement uses the confirmed output identity even when status changes du
         outputStatus: "ready", outputRequestId: "original-request",
         generating: false, messageBox: {}, token: "test",
         checkReady: () => true, updateSave: () => {}, showError: () => {},
+        checkConnection: async () => {},
         refreshOutputStatus: async () => ({ status: "ready", requestId: "original-request" }),
         confirmReplacement: async () => { context.outputRequestId = "newer-request"; return true; },
         persistSettings: async () => ({ revision: "model-1", settingsRevision: 1 }),
@@ -276,6 +280,7 @@ test("Generate reports valid errors and rejects incompatible error responses", a
             draft: { "canvas.id": "first-canvas" }, draftOutputs: {}, draftBadges: [],
             generating: false, messageBox: {}, requestedCanvasId: null,
             checkReady: () => true, updateSave: () => {}, setMessage: () => {},
+            checkConnection: async () => {},
             showError: () => {}, refreshOutputStatus: async () => ({ status: "absent" }),
             persistSettings: async () => ({ revision: "model-1", settingsRevision: 1 }),
             fetch: async () => ({ ok: false, status: 422, json: async () => body }),
@@ -427,6 +432,43 @@ test("health checks use a small authenticated asset, but periodically refresh ge
     assert.equal(requests.filter((url) => url.startsWith("/ui/styles.css")).length, 5);
     assert.equal(model.generationError, GENERATION_EXISTS);
     assert.equal(updates, 1);
+    assert.equal(status.textContent, "Live");
+});
+
+test("submission refresh supersedes an older pending availability poll", async () => {
+    const start = source.indexOf('const status = document.getElementById("conn-status");');
+    const end = source.lastIndexOf("try {", source.indexOf("    [{ mountIdentity", start));
+    const model = { generationAvailable: true, generationError: null };
+    const status = {};
+    let releasePending;
+    let requests = 0;
+    const { checkConnection } = runInNewContext(`${source.slice(start, end)}
+({ checkConnection })`, {
+        document: { getElementById: () => status },
+        errorBox: {}, generationNote: { textContent: "" }, token: "test", model,
+        requestedCanvasId: null, openingRequested: false, currentPage: "designer-essentials",
+        fetch: async (url) => {
+            if (url.startsWith("/ui/")) return { ok: true };
+            requests++;
+            if (requests === 1) return new Promise((resolve) => { releasePending = resolve; });
+            return { ok: true, json: async () => ({
+                generationAvailable: true, generationError: null,
+            }) };
+        },
+        updateGenerate: () => {}, refreshOutputStatus: async () => {},
+        setMessage: () => {}, setInterval: () => 1, clearInterval: () => {},
+        window: { addEventListener: () => {} }, AbortSignal, encodeURIComponent,
+    });
+    const stale = checkConnection(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, 1);
+    await checkConnection(true);
+    releasePending({ ok: true, json: async () => ({
+        generationAvailable: false, generationError: GENERATION_PENDING,
+    }) });
+    await stale;
+    assert.equal(model.generationAvailable, true);
+    assert.equal(model.generationError, null);
     assert.equal(status.textContent, "Live");
 });
 

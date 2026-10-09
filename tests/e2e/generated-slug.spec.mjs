@@ -625,7 +625,10 @@ test("generated page selection ignores stale imports and async renderers", async
         { id: "fast", title: "Fast", renderer: "fast" },
     ]);
     try {
+        let slowRequested;
+        const slowRequest = new Promise((resolve) => { slowRequested = resolve; });
         await page.route("**/pages/slow.mjs*", async (route) => {
+            slowRequested();
             await new Promise((resolve) => setTimeout(resolve, 250));
             await route.fulfill({ contentType: "text/javascript", body: `
                 globalThis.slowModuleLoaded = true;
@@ -644,6 +647,7 @@ test("generated page selection ignores stale imports and async renderers", async
         await page.goto(canvas.url);
         const root = page.locator("#generated-page");
         await page.locator('[data-canvas-page="slow"]').click();
+        await slowRequest;
         await page.locator('[data-canvas-page="fast"]').click();
         await expect(root).toHaveText("Fast");
         await page.waitForFunction(() => globalThis.slowModuleLoaded);

@@ -83,8 +83,12 @@ export async function generatedOutput(project, id, handoffId, readJson = readGen
     try {
         const config = await readJson(target, "canvas-config.json", open, folder);
         const provenance = await readJson(target, "settings-provenance.json", open, folder);
-        if (config?.canvas?.id !== id || provenance?.handoffId !== handoffId
-            || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(provenance.requestId)) return result;
+        if (config?.canvas?.id !== id || !provenance || typeof provenance !== "object"
+            || Array.isArray(provenance)
+            || Object.keys(provenance).sort().join() !== "handoffId,requestId,sourceFingerprint"
+            || provenance.handoffId !== handoffId
+            || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(provenance.requestId)
+            || !/^[a-f0-9]{64}$/.test(provenance.sourceFingerprint)) return result;
         const entry = await lstat(join(target, "extension.mjs"));
         const current = await lstat(target);
         if (!current.isDirectory() || current.isSymbolicLink()

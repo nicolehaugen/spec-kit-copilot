@@ -36,6 +36,7 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
             ] } : {}) };
     }
     const state = { handoffId: "test", revision: "test", generationAvailable: true,
+        generationError: null,
         settingsRevision: 0, persisted: false, templates, controls,
         adapters: { "stock.text": "designer-control-adapter-text",
             "stock.checkbox": "designer-control-adapter-checkbox" },

@@ -2872,7 +2872,8 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     await writeFile(join(target, "canvas-config.json"),
         JSON.stringify({ canvas: { id: "my-canvas" } }));
     await writeFile(join(target, "settings-provenance.json"),
-        JSON.stringify({ handoffId: handoff.handoffId, requestId: generated.requestId }));
+        JSON.stringify({ handoffId: handoff.handoffId, requestId: generated.requestId,
+            sourceFingerprint: frozen.sourceFingerprint }));
     const replace = { ...generationRequest(saved.settingsRevision, newerValues),
         replaceExisting: true, replaceRequestId: generated.requestId };
     assert.equal((await post({ ...replace, replaceRequestId: "../escape" })).status, 422);
@@ -2932,7 +2933,8 @@ test("Generate retries while a child request is pending and still protects exist
     await writeFile(join(target, "canvas-config.json"),
         JSON.stringify({ canvas: { id: "first-canvas" } }));
     await writeFile(join(target, "settings-provenance.json"),
-        JSON.stringify({ handoffId: handoff.handoffId, requestId }));
+        JSON.stringify({ handoffId: handoff.handoffId, requestId,
+            sourceFingerprint: handoff.sourceFingerprint }));
     const duplicate = await post(first);
     assert.equal(duplicate.status, 409);
     assert.match((await duplicate.json()).error, /already exists/);
@@ -3009,6 +3011,12 @@ test("output status, folder reveal and Open enforce the same generated identity"
     assert.equal((await action("/api/open-generated", { canvasId: "my-canvas" })).status, 422);
     await writeFile(join(target, "settings-provenance.json"),
         JSON.stringify({ handoffId: handoff.handoffId, requestId: "request-1" }));
+    assert.deepEqual(await (await getStatus("my-canvas")).json(),
+        { status: "foreign", target: ".github/extensions/my-canvas/" });
+    assert.equal((await action("/api/open-generated", { canvasId: "my-canvas" })).status, 422);
+    await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
+        handoffId: handoff.handoffId, requestId: "request-1", sourceFingerprint: "a".repeat(64),
+    }));
     assert.deepEqual(await (await getStatus("my-canvas")).json(),
         { status: "ready", target: ".github/extensions/my-canvas/", requestId: "request-1" });
     assert.equal((await action("/api/reveal-output", { canvasId: "my-canvas" })).status, 200);
