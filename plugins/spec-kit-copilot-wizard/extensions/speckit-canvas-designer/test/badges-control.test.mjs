@@ -367,6 +367,31 @@ test("throwing disposal reports an error without blocking cancel, refresh, or sa
     } finally { cleanup(); }
 });
 
+test("non-Error mount and disposal failures remain visible without aborting redraw", () => {
+    let failMount = true;
+    const { root, cleanup } = setup({
+        controlMount({ onChange }) {
+            if (failMount) throw null;
+            onChange({ artifacts: [{ phase: "specify", outputs: ["spec.md"] }] });
+            return { isReady: () => true, dispose() { throw undefined; } };
+        },
+    });
+    try {
+        choose(root);
+        assert.match(descendants(root).find((node) => node.textContent
+            ?.includes("Could not load badge input control")).textContent, /: null$/);
+        failMount = false;
+        root.querySelector(".badge-editor").children.find((node) =>
+            node.className === "badge-actions").children[1].events.click();
+        choose(root);
+        root.querySelector(".badge-editor").children.find((node) =>
+            node.className === "badge-actions").children[1].events.click();
+        assert.ok(root.querySelector(".badge-add"));
+        assert.match(descendants(root).find((node) => node.attributes.role === "alert").textContent,
+            /Could not dispose badge input control: undefined/);
+    } finally { cleanup(); }
+});
+
 test("throwing control readiness or validation reports inline errors without saving", () => {
     let failure = "readiness";
     const { root, draftBadges, cleanup } = setup({
@@ -377,6 +402,7 @@ test("throwing control readiness or validation reports inline errors without sav
             onChange({ phase: "specify" });
             return { isReady() {
                 if (failure === "readiness") throw new Error("broken readiness");
+                if (failure === "undefined") throw undefined;
                 return failure !== "validation";
             }, validationError() {
                 throw new Error("broken validation");
@@ -389,6 +415,11 @@ test("throwing control readiness or validation reports inline errors without sav
         assert.equal(draftBadges.length, 0);
         assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
             /Badge input control readiness failed: broken readiness/);
+        failure = "undefined";
+        assert.doesNotThrow(() => submit(editor));
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Badge input control readiness failed: undefined/);
         failure = "validation";
         assert.doesNotThrow(() => submit(editor));
         assert.equal(draftBadges.length, 0);

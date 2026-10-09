@@ -8,6 +8,14 @@ const PLACES = [
 ];
 const COLORS = ["theme", "red", "green", "amber", "blue", "purple", "pink", "orange"];
 
+function adapterError(error) {
+    if (error instanceof Error) return error.message;
+    if (error !== null && (typeof error === "object" || typeof error === "function")) {
+        return "a non-Error value";
+    }
+    return String(error);
+}
+
 function element(tag, text, className) {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -211,15 +219,17 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const previousControl = activeControl;
         activeControl = null;
         let disposalError;
+        let disposalFailed = false;
         try {
             previousControl?.dispose?.();
         } catch (error) {
             disposalError = error;
+            disposalFailed = true;
         }
         root.replaceChildren();
-        if (disposalError) {
+        if (disposalFailed) {
             const warning = element("p",
-                `Could not dispose badge input control: ${disposalError.message}`,
+                `Could not dispose badge input control: ${adapterError(disposalError)}`,
                 "settings-field-error");
             warning.setAttribute("role", "alert");
             root.append(warning);
@@ -430,14 +440,14 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                         }
                         pending.inputs = structuredClone(nextInputs);
                     } catch (error) {
-                        revealError(`Badge control returned invalid inputs: ${error.message}`);
+                        revealError(`Badge control returned invalid inputs: ${adapterError(error)}`);
                         return;
                     }
                     revealError("");
                     syncPhasePlacement();
                 } });
         } catch (error) {
-            controlRoot.append(element("p", `Could not load badge input control: ${error.message}`,
+            controlRoot.append(element("p", `Could not load badge input control: ${adapterError(error)}`,
                 "settings-field-error"));
         }
         activeControl = control;
@@ -628,7 +638,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                     return revealError(control.validationError?.() || "Complete the badge inputs before saving.");
                 }
             } catch (error) {
-                return revealError(`Badge input control readiness failed: ${error.message}`);
+                return revealError(`Badge input control readiness failed: ${adapterError(error)}`);
             }
             if (pending.targets.length > 100) {
                 return revealError("A badge can have at most 100 placements. Remove some selections.");
