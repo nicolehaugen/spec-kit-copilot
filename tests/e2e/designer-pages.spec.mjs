@@ -340,7 +340,7 @@ test("unchanged minimal Essentials preset composes and opens a savable partial D
     const [major, minor, patch] = version.slice(1).map(Number);
     expect(major > 1 || major === 1 && (minor > 0 || patch >= 7),
         available.stdout).toBe(true);
-    const workspace = await mkdtemp(join(scratchRoot, ".minimal-designer-e2e-"));
+    const workspace = await mkdtemp(join(tmpdir(), "minimal-designer-e2e-"));
     const project = join(workspace, "project");
     let packages;
     const workflow = { selectedPhases: [] };

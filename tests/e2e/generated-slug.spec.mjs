@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { copyFile, cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { test, expect } from "./playwright.mjs";
 
-const scratchRoot = fileURLToPath(new URL("../../", import.meta.url));
+const scratchRoot = tmpdir();
 
 const workflowSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/", import.meta.url);
 const phaseControlSource = new URL("../../spec-kit-extensions/extension-canvas-design/generated-host/phase-control/", import.meta.url);
@@ -739,14 +740,16 @@ test("failed autosave retains workflow identity through SSE and Refresh for retr
         });
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-empty")).toBeVisible();
+        await expect(page.locator("#workflow-pipeline")).toBeVisible();
         await page.locator("#new-workflow").click();
+        await expect(page.locator("#workflow-name")).toBeVisible();
         await page.locator("#workflow-name").fill("Unsaved workflow");
         await page.locator("#workflow-slug").fill("unsaved-slug");
         await page.locator("#phase-args").focus();
         await expect(page.locator("#workflow-action-error")).toContainText("Your draft is retained");
         await mkdir(join(canvas.root, "specs", "other-workflow"), { recursive: true });
         canvas.broadcast();
-        await expect(page.locator("#workflow-count")).toHaveText("(1)");
+        await expect(page.locator("#workflow-count")).toHaveText("(2)");
         await expect(page.locator("#workflow-name")).toHaveValue("Unsaved workflow");
         await expect(page.locator("#workflow-slug")).toHaveValue("unsaved-slug");
         await page.locator("#refresh-state").click();
@@ -821,6 +824,7 @@ test("empty workflow list creates a numbered pending row without making a direct
     try {
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-list")).toBeVisible();
+        await expect(page.locator("#workflow-pipeline")).toBeVisible();
         await expect(page.locator("#workflow-empty")).toBeVisible();
         await expect(page.locator("#workflow-empty")).toContainText("No workflows yet");
         await expect(page.locator("#workflow-name")).toBeHidden();
@@ -915,9 +919,11 @@ test("browser draft and in-flight run recover in a new host, while invalid run s
         await mkdir(skill, { recursive: true });
         await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
         await page.goto(canvas.url);
+        await expect(page.locator("#workflow-pipeline")).toBeVisible();
         await page.locator("#new-workflow").click();
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
         const pendingId = (await canvas.runtime.snapshot()).selected;
+        await expect(page.locator(`#workflow-list [data-workflow-id="${pendingId}"].active`)).toBeVisible();
         const draftKey = JSON.stringify([pendingId, "specify"]);
         await page.locator("#phase-args").fill("Browser-entered draft");
         await page.locator("#phase-args").press("Tab");
@@ -1027,9 +1033,11 @@ test("a later successful save does not hide a failed phase draft", async ({ page
         });
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-empty")).toBeVisible();
+        await expect(page.locator("#workflow-pipeline")).toBeVisible();
         await page.locator("#new-workflow").click();
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
         const pendingId = (await canvas.runtime.snapshot()).selected;
+        await expect(page.locator(`#workflow-list [data-workflow-id="${pendingId}"].active`)).toBeVisible();
         await page.locator("#phase-args").fill("Keep this draft");
         await expect(page.locator("#workflow-action-error")).toContainText("Phase draft save failed");
         await page.locator("#run-constitution").click();
