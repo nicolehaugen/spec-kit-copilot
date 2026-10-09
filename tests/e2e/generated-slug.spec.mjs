@@ -587,7 +587,7 @@ test("generated page hides all Workflow content and restores it on return", asyn
             body: 'export function renderPage({ root }) { root.textContent = "Overview"; }',
         }));
         await page.goto(canvas.url);
-        await page.locator("#new-workflow").click();
+        await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await page.locator("#workflow-name").fill("Draft workflow");
         await expect(page.locator("#instance-collection")).toBeVisible();
         await expect(page.locator('[data-field-id="billing.costCode"]')).toBeVisible();
