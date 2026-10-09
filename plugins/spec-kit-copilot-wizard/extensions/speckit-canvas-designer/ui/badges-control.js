@@ -425,6 +425,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         };
         editor.append(controlRoot);
         let control;
+        let isReady;
         const inputIds = (rule.inputs ?? []).map(({ id }) => id).sort().join();
         const hasDeclaredInputs = (value) => value && typeof value === "object"
             && !Array.isArray(value) && Object.keys(value).sort().join() === inputIds;
@@ -449,12 +450,13 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                     revealError("");
                     syncPhasePlacement();
                 } });
+            isReady = control?.isReady;
         } catch (error) {
             controlRoot.append(element("p", `Could not load badge input control: ${adapterError(error)}`,
                 "settings-field-error"));
         }
         activeControl = control;
-        if ((!control || typeof control.isReady !== "function") && !controlRoot.children.length) {
+        if (typeof isReady !== "function" && !controlRoot.children.length) {
             controlRoot.append(element("p", "Badge input controls are unavailable.",
                 "settings-field-error"));
         }
@@ -630,14 +632,14 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 }
             }
             if (!pending.color) return revealError("Select a badge color.");
-            if (!control || typeof control.isReady !== "function") {
+            if (typeof isReady !== "function") {
                 return revealError("Badge input controls are unavailable.");
             }
             if (!hasDeclaredInputs(pending.inputs)) {
                 return revealError("Badge control returned inputs that do not match its rule.");
             }
             try {
-                if (control.isReady() !== true) {
+                if (isReady.call(control) !== true) {
                     return revealError(control.validationError?.() || "Complete the badge inputs before saving.");
                 }
             } catch (error) {

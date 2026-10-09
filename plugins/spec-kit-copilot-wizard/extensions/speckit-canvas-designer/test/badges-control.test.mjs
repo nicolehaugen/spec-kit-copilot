@@ -410,6 +410,33 @@ test("throwing control readiness or validation reports inline errors without sav
             } };
         },
     });
+
+    test("throwing readiness getter stays in the badge editor instead of aborting redraw", () => {
+        let reads = 0;
+        const { root, draftBadges, cleanup } = setup({
+            badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+                defaultText: "Ready", defaultColor: "green", enabled: true }],
+            badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+            controlMount({ onChange }) {
+                onChange({ phase: "specify" });
+                return { get isReady() {
+                    reads++;
+                    throw new Error("broken readiness getter");
+                } };
+            },
+        });
+        try {
+            const editor = choose(root);
+            assert.match(descendants(editor).find((node) => node.textContent
+                ?.includes("Could not load badge input control")).textContent,
+            /broken readiness getter/);
+            assert.doesNotThrow(() => submit(editor));
+            assert.equal(reads, 1);
+            assert.equal(draftBadges.length, 0);
+            assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+                /input controls are unavailable/);
+        } finally { cleanup(); }
+    });
     try {
         const editor = choose(root);
         assert.doesNotThrow(() => submit(editor));
