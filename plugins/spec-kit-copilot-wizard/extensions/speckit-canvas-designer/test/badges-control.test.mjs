@@ -400,6 +400,32 @@ test("throwing control readiness or validation reports inline errors without sav
     } finally { cleanup(); }
 });
 
+test("badge submission requires a literal true readiness result", () => {
+    let readiness = Promise.resolve(false);
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            onChange({ phase: "specify" });
+            return { isReady: () => readiness };
+        },
+    });
+    try {
+        const editor = choose(root);
+        for (const result of [Promise.resolve(false), Promise.resolve(true), 1, "ready"]) {
+            readiness = result;
+            submit(editor);
+            assert.equal(draftBadges.length, 0);
+            assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+                /Complete the badge inputs/);
+        }
+        readiness = true;
+        submit(editor);
+        assert.equal(draftBadges.length, 1);
+    } finally { cleanup(); }
+});
+
 test("preset control initializes, edits, and reopens its own labeled phase input", () => {
     const badgeTypes = [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
         defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];

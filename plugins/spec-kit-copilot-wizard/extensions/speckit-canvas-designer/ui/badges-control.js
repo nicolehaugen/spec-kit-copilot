@@ -624,7 +624,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 return revealError("Badge control returned inputs that do not match its rule.");
             }
             try {
-                if (!control.isReady()) {
+                if (control.isReady() !== true) {
                     return revealError(control.validationError?.() || "Complete the badge inputs before saving.");
                 }
             } catch (error) {
