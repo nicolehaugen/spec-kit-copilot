@@ -1,0 +1,481 @@
+import { execFile } from "node:child_process";
+import { createWriteStream } from "node:fs";
+import { access, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
+import { Transform } from "node:stream";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+import { load, JSON_SCHEMA } from "js-yaml";
+import { readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
+import { designerOpenInputSchema } from "../../speckit-canvas-designer/contracts/host-open.mjs";
+import { checkSchema } from "../../speckit-canvas-designer/contracts/design-contributions.mjs";
+import { normalizeInstalledWorkflowInventory } from "../contracts/specify-inventory.mjs";
+import { specifySpawnOptions } from "../env/specify-invocation.mjs";
+import { prepareHandoff, preflight, verifyHostedCanvasDesign, verifyLocalInstall } from "./designer-launch-check.mjs";
+import { validateLocalSource } from "./designer-local-sources.mjs";
+
+const exec = promisify(execFile);
+const CLI = process.platform === "win32" ? "specify.exe" : "specify";
+const BASE = "extension-canvas-design";
+const CATALOGS = [
+    ["extension", "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json"],
+    ["preset", "https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-presets/catalog.json"],
+];
+const GROUP = { presets: "preset", extensions: "extension", bundles: "bundle" };
+const WARNING = /(?:^|\n)[^\n]*(?:no base command layer|composition[^\n]*\b(?:warning|incomplete|failed)\b)[^\n]*/i;
+
+function elapsed(start) { return Math.round(performance.now() - start); }
+// Specify's Windows console entry point is an .exe; avoid interpreting approved URLs or paths in cmd.exe.
+const directRun = (run) => (binary, args, options) => run(binary, args, {
+    ...options, shell: process.platform === "win32" ? false : options.shell,
+});
+
+export async function runSpecify(project, args, run = exec, { confirmApprovedSource = false } = {}) {
+    const options = await specifySpawnOptions(project, {
+        timeout: 120000, maxBuffer: 2 * 1024 * 1024,
+        shell: process.platform === "win32" ? false : undefined,
+    });
+    let output;
+    try {
+        const execution = run(CLI, args, options);
+        // Confirm only a frozen --from URL or a frozen bundle source approved in the handoff.
+        if (args.includes("--from") || confirmApprovedSource) execution.child?.stdin?.end("y\n");
+        output = await execution;
+    }
+    catch (error) {
+        throw new Error(`Specify ${args.slice(0, 3).join(" ")} failed: ${error.stderr || error.message}`, { cause: error });
+    }
+    const { stdout = "", stderr = "" } = output;
+    if (WARNING.test(`${stdout}\n${stderr}`)) {
+        throw new Error(`Specify ${args.slice(0, 3).join(" ")} reported a composition warning: ${stdout} ${stderr}`);
+    }
+    return stdout;
+}
+
+async function inventory(project, kind, command) {
+    let data;
+    try { data = JSON.parse(await command([GROUP[kind], "list", "--json"])); }
+    catch (error) { throw new Error(`Invalid ${kind} inventory: ${error.message}`, { cause: error }); }
+    return normalizeInstalledWorkflowInventory({
+        presets: kind === "presets" ? data : [],
+        extensions: kind === "extensions" ? data : [],
+        bundles: kind === "bundles" ? data : [],
+    })[kind];
+}
+
+function locatorFor(handoff, kind, item) {
+    const locator = handoff.workflow.installLocators[kind].find((entry) => entry.installedId === item.id);
+    if (!locator) throw new Error(`No frozen ${kind} source for ${item.id}`);
+    return locator;
+}
+
+function standalone(handoff, kind) {
+    const entries = new Map();
+    for (const installed of handoff.workflow.installed[kind]) {
+        if (kind === "extensions" && installed.id === BASE) continue;
+        entries.set(installed.id, { installed, locator: locatorFor(handoff, kind, installed) });
+    }
+    for (const selected of handoff.selections[kind]) {
+        if (kind === "extensions" && selected.id === BASE) continue;
+        if ([...entries.values()].some((entry) => entry.locator.catalogId === selected.id
+            && entry.locator.source === selected.source)) continue;
+        if (!entries.has(selected.id)) {
+            entries.set(selected.id, { selected, locator: {
+                installedId: selected.id, source: selected.source, catalogId: selected.id,
+                downloadUrl: selected.downloadUrl,
+            } });
+        }
+    }
+    for (const local of handoff.localSelections?.[kind] ?? []) {
+        if (kind === "extensions" && local.id === BASE) continue;
+        const previous = entries.get(local.id);
+        entries.set(local.id, { ...previous, local, locator: {
+            installedId: local.id, source: "local", path: local.path,
+        } });
+    }
+    return [...entries.values()];
+}
+
+async function inspectPackage(project, kind, item, command, warnings) {
+    const id = item.locator.installedId;
+    const listed = (await inventory(project, kind, command)).find((entry) => entry.id === id);
+    if (!listed) throw new Error(`Installed ${kind} ${id} is missing`);
+    const path = join(project, ".specify", kind, id);
+    const manifest = await validateLocalSource(kind, path);
+    if (manifest.id !== id || manifest.version !== listed.version) {
+        throw new Error(`Installed ${kind} ${id} manifest and inventory disagree`);
+    }
+    if (item.locator.source === "local" && listed.source !== "local") {
+        throw new Error(`Approved local ${kind} ${id} is not a local installation`);
+    }
+    if (item.locator.source === "default" && !item.locator.downloadUrl
+        && listed.source !== "default") {
+        throw new Error(`Installed ${kind} ${id} differs from the frozen default source`);
+    }
+    if (item.locator.source !== "local" && listed.source !== "local"
+        && listed.source !== item.locator.source) {
+        throw new Error(`Installed ${kind} ${id} differs from the frozen catalog source`);
+    }
+    const expected = item.local?.version ?? item.installed?.version ?? item.selected?.version;
+    if (expected && listed.version !== expected) {
+        warnings.push(`${kind} ${id} version drift: approved ${expected}, installed ${listed.version}.`);
+    }
+    return listed;
+}
+
+async function installPackage(project, kind, item, command, warnings, verifyLocal) {
+    const group = GROUP[kind];
+    const { locator, installed } = item;
+    let args;
+    if (locator.source === "local") {
+        const source = await validateLocalSource(kind, locator.path);
+        if (source.id !== locator.installedId) throw new Error(`Local ${kind} ${locator.installedId} changed manifest ID`);
+        args = kind === "extensions" ? [group, "add", source.path, "--dev", "--force"]
+            : [group, "add", "--dev", source.path];
+    } else {
+        args = [group, "add", locator.catalogId];
+        if (locator.downloadUrl) args.push("--from", locator.downloadUrl);
+        if (kind === "extensions") args.push("--force");
+    }
+    if (installed) args.push("--priority", String(installed.priority));
+    const before = !installed && !item.local
+        ? new Set((await inventory(project, kind, command)).map((entry) => entry.id)) : null;
+    try { await command(args); }
+    catch (error) {
+        if (kind !== "presets" || !/already installed|already exists/i.test(error.message)) throw error;
+        await command(["preset", "remove", locator.installedId]);
+        await command(args);
+    }
+    if (before) {
+        const added = (await inventory(project, kind, command)).filter((entry) => !before.has(entry.id));
+        if (added.length === 1 && added[0].id !== locator.installedId) {
+            locator.installedId = added[0].id;
+        }
+    }
+    const actual = await inspectPackage(project, kind, item, command, warnings);
+    if (installed) {
+        if (actual.priority !== installed.priority) {
+            await command([group, "set-priority", installed.id, String(installed.priority)]);
+        }
+        if (actual.enabled !== installed.enabled) {
+            await command([group, installed.enabled ? "enable" : "disable", installed.id]);
+        }
+        const restored = (await inventory(project, kind, command)).find((entry) => entry.id === installed.id);
+        if (restored.priority !== installed.priority || restored.enabled !== installed.enabled) {
+            throw new Error(`Cannot restore runtime ${kind} ${installed.id} priority or enabled state`);
+        }
+    }
+    if (item.local) await verifyLocal(project, kind, item.local.id);
+}
+
+async function bundleSource(locator, download) {
+    if (!locator.downloadUrl && !locator.bundleYml) return { path: locator.catalogId, dispose: async () => {} };
+    const temp = await mkdtemp(join(tmpdir(), "speckit-designer-bundle-"));
+    try {
+        const path = locator.bundleYml ? join(temp, "bundle.yml") : join(temp, "bundle.zip");
+        if (locator.bundleYml) await writeFile(path, locator.bundleYml, "utf8");
+        else await download(locator.downloadUrl, path);
+        return { path, dispose: async () => rm(temp, { recursive: true, force: true }) };
+    } catch (error) {
+        await rm(temp, { recursive: true, force: true });
+        throw error;
+    }
+}
+
+async function downloadBundle(url, path) {
+    const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
+    if (!response.ok || !response.body) throw new Error(`Bundle download failed (${response.status})`);
+    let bytes = 0;
+    const limit = new Transform({
+        transform(chunk, encoding, callback) {
+            bytes += chunk.length;
+            callback(bytes > 50 * 1024 * 1024 ? new Error("Bundle download exceeds 50 MB") : null, chunk);
+        },
+    });
+    await pipeline(response.body, limit, createWriteStream(path));
+}
+
+async function installBundles(project, handoff, command, warnings, download) {
+    const entries = new Map(handoff.workflow.installed.bundles.map((bundle) =>
+        [bundle.id, { bundle, locator: locatorFor(handoff, "bundles", bundle) }]));
+    for (const selected of handoff.selections.bundles) {
+        if ([...entries.values()].some((entry) => entry.locator.catalogId === selected.id
+            && entry.locator.source === selected.source)) continue;
+        if (!entries.has(selected.id)) entries.set(selected.id, { selected,
+            locator: { installedId: selected.id, source: selected.source,
+                catalogId: selected.id, downloadUrl: selected.downloadUrl } });
+    }
+    for (const { bundle, selected, locator } of entries.values()) {
+        const before = selected && !bundle
+            ? new Set((await inventory(project, "bundles", command)).map((entry) => entry.id)) : null;
+        const source = await bundleSource(locator, download);
+        try { await command(["bundle", "install", source.path],
+            Boolean(locator.downloadUrl || locator.bundleYml)); }
+        finally { await source.dispose(); }
+        const listed = await inventory(project, "bundles", command);
+        const added = before && listed.filter((item) => !before.has(item.id));
+        const actual = listed.find((item) => item.id === locator.installedId)
+            ?? (added?.length === 1 ? added[0] : undefined);
+        if (!actual) throw new Error(`Installed bundle ${locator.installedId} is missing`);
+        const expected = bundle?.version ?? selected?.version;
+        if (expected && actual.version !== expected) {
+            warnings.push(`Bundle ${actual.id} version drift: approved ${expected}, installed ${actual.version}.`);
+        }
+    }
+    return entries.size;
+}
+
+async function verifyRuntime(project, handoff, command, warnings) {
+    for (const kind of ["extensions", "presets"]) {
+        if (!handoff.workflow.installed[kind].length) continue;
+        const actual = await inventory(project, kind, command);
+        for (const item of handoff.workflow.installed[kind]) {
+            const locator = locatorFor(handoff, kind, item);
+            const local = handoff.localSelections?.[kind]?.find((entry) => entry.id === item.id);
+            const found = actual.find((entry) => entry.id === item.id);
+            if (!found || found.priority !== item.priority || found.enabled !== item.enabled
+                || (local && found.source !== "local")
+                || (!(kind === "extensions" && item.id === BASE) && !local && locator.source !== "local"
+                    && found.source !== "local" && found.source !== locator.source)) {
+                throw new Error(`Runtime ${kind} ${item.id} does not match the frozen installation`);
+            }
+            await inspectPackage(project, kind, {
+                installed: item, local,
+                locator: kind === "extensions" && item.id === BASE && !local && handoff.canvasDesign
+                    ? { installedId: BASE, source: "copilot",
+                        catalogId: BASE, downloadUrl: handoff.canvasDesign.downloadUrl }
+                    : locator,
+            }, command, warnings);
+        }
+    }
+    if (!handoff.workflow.installed.bundles.length) return;
+    const bundles = await inventory(project, "bundles", command);
+    for (const bundle of handoff.workflow.installed.bundles) {
+        const actual = bundles.find((entry) => entry.id === bundle.id);
+        if (!actual) throw new Error(`Runtime bundle ${bundle.id} is missing`);
+        if (actual.version !== bundle.version) {
+            warnings.push(`Bundle ${bundle.id} version drift: approved ${bundle.version}, installed ${actual.version}.`);
+        }
+    }
+}
+
+function uniqueWarnings(warnings) { return [...new Set(warnings)]; }
+
+async function registerCatalog(project, kind, url, command) {
+    const config = join(project, ".specify", `${kind}-catalogs.yml`);
+    let text;
+    try { text = await readFile(config, "utf8"); }
+    catch (error) {
+        if (error.code !== "ENOENT") throw error;
+    }
+    if (text !== undefined) {
+        if (Buffer.byteLength(text) > 65536) throw new Error(`Oversized ${kind} catalog configuration`);
+        const parsed = load(text, { schema: JSON_SCHEMA });
+        if (!Array.isArray(parsed?.catalogs)) throw new Error(`Invalid ${kind} catalog configuration`);
+        const existing = parsed.catalogs.find((entry) => entry.name === "spec-kit-copilot");
+        if (existing) {
+            if (existing.url !== url || existing.install_allowed !== true) {
+                throw new Error(`Existing ${kind} catalog differs from the approved source`);
+            }
+            return;
+        }
+    }
+    await command([kind, "catalog", "add", url, "--name", "spec-kit-copilot", "--install-allowed"]);
+}
+
+export async function verifyComposedLoadPage(project, command) {
+    const skill = join(project, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md");
+    const contents = await readFile(skill, "utf8");
+    if (!contents.trim()) throw new Error("Generated Canvas Design load-page skill is empty");
+    let artifacts;
+    try { artifacts = JSON.parse(await command(["artifact", "list", "--json"])); }
+    catch (error) { throw new Error(`Invalid Specify command inventory: ${error.message}`, { cause: error }); }
+    const name = "speckit.extension-canvas-design.load-page";
+    const entry = Array.isArray(artifacts) && artifacts.find((artifact) =>
+        artifact.id === `command:${name}` && artifact.kind === "command" && artifact.name === name);
+    if (!entry || !Array.isArray(entry.stack) || !entry.stack.some((layer) => layer.active === true)) {
+        throw new Error("Specify did not resolve the composed Canvas Design load-page command");
+    }
+    return { skill, stack: entry.stack };
+}
+
+async function verifyPresetRegistrations(project, commandStack, verifier, skill) {
+    const firstReplacement = commandStack.findIndex((entry) => entry.strategy === "replace");
+    const contributors = new Set(commandStack.slice(0, firstReplacement < 0
+        ? commandStack.length : firstReplacement).filter((entry) =>
+        entry.layer === "preset" && entry.strategy === "append").map((entry) => entry.sourceId));
+    if (!contributors.size) return;
+    const { declarations } = await import(pathToFileURL(verifier).href);
+    const composed = new Map(declarations(await readFile(skill, "utf8")).map((entry) =>
+        [entry.name, entry]));
+    for (const id of contributors) {
+        const folder = join(project, ".specify", "presets", id);
+        const text = await readFile(join(folder, "preset.yml"), "utf8");
+        if (Buffer.byteLength(text) > 65536) throw new Error(`Oversized preset manifest: ${id}`);
+        const manifest = load(text, { schema: JSON_SCHEMA });
+        const registrations = manifest?.provides?.templates?.filter((entry) =>
+            entry.type === "command" && entry.name === "speckit.extension-canvas-design.load-page"
+            && entry.strategy === "append");
+        if (!registrations?.length) {
+            throw new Error(`Specify reports an unregistered Canvas Design command layer from ${id}`);
+        }
+        for (const registration of registrations) {
+            if (typeof registration.file !== "string" || isAbsolute(registration.file)) {
+                throw new Error(`Invalid Canvas Design command path in preset ${id}`);
+            }
+            const source = resolve(folder, registration.file);
+            const rel = relative(folder, source);
+            if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || await realpath(source) !== source) {
+                throw new Error(`Canvas Design command path escapes preset ${id}`);
+            }
+            for (const entry of declarations(await readFile(source, "utf8"))) {
+                if (composed.get(entry.name)?.kind !== entry.kind) {
+                    throw new Error(`Preset ${id} registration ${entry.name} is missing from Specify's composed command`);
+                }
+            }
+        }
+    }
+}
+
+export async function installDesignerSetup(project, root, id, hash, {
+    run = exec, download = downloadBundle, prepare = prepareHandoff,
+    check = preflight, verifyLocal = verifyLocalInstall, verifyBase = verifyHostedCanvasDesign,
+} = {}) {
+    const timings = {};
+    const warnings = [];
+    const command = (args, confirmApprovedSource = false) =>
+        runSpecify(project, args, run, { confirmApprovedSource });
+    const safeRun = directRun(run);
+    let start = performance.now();
+    await prepare(root, id, hash);
+    let state;
+    try { state = await check(project, root, id, hash, safeRun); }
+    catch (error) {
+        if (error.code === "ENOENT") throw new Error("Specify CLI is missing; invoke speckit-cli-setup and retry.", { cause: error });
+        throw error;
+    }
+    timings.preflight = elapsed(start);
+    const handoff = await readHandoff(root, id, undefined, hash);
+    if (!state.initialized) {
+        start = performance.now();
+        await command(["init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
+            "--integration", "copilot", "--integration-options=--skills",
+            "--script", process.platform === "win32" ? "ps" : "sh"]);
+        if (!(await check(project, root, id, hash, safeRun)).initialized) {
+            throw new Error("Specify init did not create the child project's .specify directory");
+        }
+        timings.init = elapsed(start);
+    }
+    start = performance.now();
+    for (const [kind, url] of CATALOGS) {
+        await registerCatalog(project, kind, url, command);
+    }
+    timings.catalogs = elapsed(start);
+    const localBase = handoff.localSelections?.extensions?.find((entry) => entry.id === BASE);
+    const base = { locator: localBase
+        ? { installedId: BASE, source: "local", path: localBase.path }
+        : { installedId: BASE, source: "copilot", catalogId: BASE,
+            downloadUrl: handoff.canvasDesign.downloadUrl }, local: localBase,
+        installed: handoff.workflow.installed.extensions.find((entry) => entry.id === BASE) };
+    const verify = async (child, kind, localId) => verifyLocal(child, handoff, kind, localId, safeRun);
+    start = performance.now();
+    await installPackage(project, "extensions", base, command, warnings, verify);
+    const initialBase = localBase ? null : await verifyBase(project, handoff, safeRun);
+    warnings.push(...(initialBase?.warnings ?? []));
+    timings.base = elapsed(start);
+    start = performance.now();
+    const bundleCount = await installBundles(project, handoff, command, warnings, download);
+    if (bundleCount) {
+        await installPackage(project, "extensions", base, command, warnings, verify);
+    }
+    const baseResult = bundleCount && !localBase
+        ? await verifyBase(project, handoff, safeRun) : null;
+    warnings.push(...(baseResult?.warnings ?? []));
+    timings.bundles = elapsed(start);
+    for (const kind of ["extensions", "presets"]) {
+        start = performance.now();
+        for (const item of standalone(handoff, kind)) {
+            await installPackage(project, kind, item, command, warnings, verify);
+        }
+        timings[kind] = elapsed(start);
+    }
+    start = performance.now();
+    await verifyRuntime(project, handoff, command, warnings);
+    for (const kind of ["extensions", "presets"]) {
+        for (const local of handoff.localSelections?.[kind] ?? []) {
+            await verify(project, kind, local.id);
+        }
+    }
+    await verifyComposedLoadPage(project, command);
+    timings.inventory = elapsed(start);
+    return { stage: "installed", timings, warnings: uniqueWarnings(warnings) };
+}
+
+export async function finalizeDesignerSetup(project, root, id, hash, {
+    run = exec, check = preflight, verifyLocal = verifyLocalInstall,
+    verifyBase = verifyHostedCanvasDesign,
+} = {}) {
+    const start = performance.now();
+    const safeRun = directRun(run);
+    await check(project, root, id, hash, safeRun);
+    const handoff = await readHandoff(root, id, undefined, hash);
+    const command = (args) => runSpecify(project, args, run);
+    const warnings = [];
+    await verifyRuntime(project, handoff, command, warnings);
+    for (const kind of ["extensions", "presets"]) {
+        for (const local of handoff.localSelections?.[kind] ?? []) {
+            await verifyLocal(project, handoff, kind, local.id, safeRun);
+        }
+    }
+    const base = handoff.localSelections?.extensions?.some((entry) => entry.id === BASE);
+    if (!base) {
+        const result = await verifyBase(project, handoff, safeRun);
+        warnings.push(...result.warnings);
+    }
+    const composed = await verifyComposedLoadPage(project, command);
+    const verifier = join(project, ".specify", "extensions", BASE, "scripts", "verify-launch.mjs");
+    let verified;
+    try { await access(verifier); verified = true; }
+    catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        verified = false;
+    }
+    if (!verified) {
+        return { stage: "manual-resolution", timings: { finalize: elapsed(start) },
+            warnings: uniqueWarnings(warnings) };
+    }
+    await verifyPresetRegistrations(project, composed.stack, verifier, composed.skill);
+    const options = await specifySpawnOptions(project, {
+        timeout: 120000, maxBuffer: 2 * 1024 * 1024,
+        shell: false,
+    });
+    options.env = { ...options.env, COLUMNS: "8192", NO_COLOR: "1" };
+    const { stdout, stderr = "" } = await run(process.execPath, [verifier, project], options);
+    if (stderr.trim()) throw new Error(`Designer composition verification warning: ${stderr}`);
+    const result = JSON.parse(stdout);
+    if (!Array.isArray(result.pages) || !Array.isArray(result.templates)) {
+        throw new Error("Designer composition verifier returned an incomplete open input");
+    }
+    const openInput = { handoffId: id, pages: result.pages, templates: result.templates };
+    checkSchema(openInput, designerOpenInputSchema, "Designer open input");
+    return { stage: "ready", openInput,
+        timings: { finalize: elapsed(start) }, warnings: uniqueWarnings(warnings) };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    try {
+        const [, , stage, project, root, id, hash] = process.argv;
+        if (!["install", "finalize"].includes(stage) || !project || !root || !id || !hash) {
+            throw new Error("Expected install|finalize <child-checkout> <session-root> <handoff-id> <sha256>.");
+        }
+        const result = stage === "install"
+            ? await installDesignerSetup(project, root, id, hash)
+            : await finalizeDesignerSetup(project, root, id, hash);
+        console.log(JSON.stringify(result));
+    } catch (error) {
+        console.error(`Designer setup failed: ${error.message}`);
+        process.exitCode = 1;
+    }
+}
