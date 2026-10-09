@@ -57,7 +57,7 @@ separate release-readiness verification.
 | `copilot-logo-gallery-test` | Generated canvas | Uploaded gallery image renders in the generated gallery slot. **Implemented.** |
 | `copilot-generated-page-test` | Generated canvas | Registered page appears only in the generated app, not as a Designer tab. **Implemented.** |
 | `copilot-canvas-values-test` | Generated canvas | Typed values and computed provider render the intended generated page/workflow. **Implemented.** |
-| `copilot-dialog-buttons-test` | Generated canvas | Registered dialog/button control opens and behaves in the generated app without a workflow run. **Implemented.** |
+| `copilot-dialog-buttons-test` | Generated canvas | Dialog-only button confirms without a run; Implement phase dialog shows selected-phase context, cancels without a run and confirms a run request. **Implemented.** |
 | `copilot-phase-view-label-test` | Generated canvas | Replacement phase definition changes the generated Plan viewer label using a deterministic Plan artifact. **Implemented.** |
 
 All 11 fixtures have behavioral journeys with `--dev` installs from the

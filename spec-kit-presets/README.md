@@ -83,6 +83,8 @@ spec-kit-presets/
 │   └── commands/
 └── copilot-vertical-phase-control/
     ├── preset.yml
+    ├── commands/
+    │   └── load-page.md
     └── generated/
 ```
 

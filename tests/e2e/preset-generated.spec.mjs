@@ -36,10 +36,11 @@ async function generate(page, journey, dispatched, id, {
     await page.getByRole("textbox", { name: "Title (required)" }).fill(`Test ${id}`);
     await page.getByRole("tab", { name: "Generate" }).click();
     await page.locator("#generate-canvas").click();
-    const approval = page.getByRole("dialog", { name: "Approve generated value providers" });
-    if (await approval.isVisible()) {
-        const provider = journey.templates.find((entry) =>
-            entry.kind === "generated.computed-value-provider");
+    const provider = journey.templates.find((entry) =>
+        entry.kind === "generated.computed-value-provider");
+    if (provider) {
+        const approval = page.getByRole("dialog", { name: "Approve generated value providers" });
+        await expect(approval).toBeVisible();
         const bytes = await readFile(provider.path);
         await expect(approval).toContainText(provider.name);
         await expect(approval).toContainText(`Source: ${provider.sourceId}`);
@@ -281,7 +282,7 @@ test("canvas values render typed fields while processing-only value stays on its
     } finally { await closeJourney(journey); }
 });
 
-test("dialog-only button confirms locally without dispatching a workflow run", async ({ page }) => {
+test("dialog-only button stays local while Implement confirmation carries phase context", async ({ page }) => {
     test.setTimeout(480_000);
     const { journey, dispatched } = await journeyFor(page, "dialog-buttons", {
         phases: ["specify", "plan", "tasks", "implement"], registrations: [
@@ -298,7 +299,9 @@ test("dialog-only button confirms locally without dispatching a workflow run", a
         page.on("request", (request) => {
             if (new URL(request.url()).pathname === "/api/run") runRequests.push(request);
         });
-        const { config } = await generate(page, journey, dispatched, "preset-dialog");
+        const { config } = await generate(page, journey, dispatched, "preset-dialog", {
+            workflowEvidence: true,
+        });
         expect(config.buttons).toContainEqual(expect.objectContaining({
             id: "canvas-workflow-button-test", action: { type: "dialog.result" },
         }));
@@ -313,6 +316,41 @@ test("dialog-only button confirms locally without dispatching a workflow run", a
         await expect(dialog).toBeHidden();
         expect((await journey.generatedRuntime.snapshot()).runs).toEqual(before.runs);
         expect(runRequests).toHaveLength(0);
+
+        const constitution = join(journey.project, ".specify", "memory");
+        await mkdir(constitution, { recursive: true });
+        await writeFile(join(constitution, "constitution.md"), "# Constitution\n");
+        const skill = join(journey.project, ".github", "skills", "speckit-implement");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-implement\n---\n");
+        await journey.generatedRuntime.refresh();
+        await page.reload();
+        await page.getByRole("button", { name: "preset-feature", exact: true }).click();
+        await page.locator('[data-phase-index="3"]').click();
+        await expect(page.locator("#phase-card h2")).toHaveText("Implement");
+        await page.route("**/api/run", async (route) => {
+            const result = await journey.generatedRuntime.run(
+                route.request().postDataJSON(), "preset-dialog-e2e");
+            await route.fulfill({ json: result });
+        });
+        await page.locator("#run-phase").click();
+        const phaseDialog = page.getByRole("dialog", { name: "Review this action" });
+        await expect(phaseDialog).toContainText("Confirm before continuing.");
+        await expect(phaseDialog).toContainText("Implement (implement)");
+        await phaseDialog.getByRole("button", { name: "Not now" }).click();
+        await expect(phaseDialog).toBeHidden();
+        expect(runRequests).toHaveLength(0);
+        await page.locator("#run-phase").click();
+        await expect(phaseDialog).toContainText("Implement (implement)");
+        await phaseDialog.getByRole("button", { name: "Continue" }).click();
+        await expect(phaseDialog).toBeHidden();
+        await expect.poll(() => runRequests.length).toBe(1);
+        expect(runRequests[0].postDataJSON()).toMatchObject({
+            phase: "implement", itemId: "specs/preset-feature",
+        });
+        await expect.poll(async () =>
+            (await journey.generatedRuntime.snapshot()).statuses.implement.status)
+            .toBe("Request sent");
     } finally { await closeJourney(journey); }
 });
 
