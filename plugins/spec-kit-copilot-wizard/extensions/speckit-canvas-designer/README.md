@@ -234,8 +234,12 @@ is blocked rather than silently reloading Designer.
 For a verified same-handoff target, **Regenerate canvas** confirms that all
 files, including manual edits, will be overwritten. The generator stages and
 validates replacement, then swaps directories with rollback; foreign or
-incomplete output is not replaceable. The target-folder path is a link that
-reveals `.github/extensions/` until the generated folder exists, and reveals
+incomplete output is not replaceable. The server rejects replacement fields
+when the target is absent; creation must be submitted without replacement,
+and replacement requires the matching verified prior request ID. If a target
+appears before creation, review it and confirm regeneration when it belongs
+to this handoff, or save a different Canvas ID. The target-folder link reveals
+`.github/extensions/` until the generated folder exists, and reveals
 the generated folder afterward.
 **Open canvas** is available only after the generated files are verified.
 An accepted regeneration waits for its own verified output before enabling

@@ -2869,6 +2869,15 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
+    const absentReplacement = await post({
+        ...generationRequest(saved.settingsRevision, newerValues),
+        replaceExisting: true, replaceRequestId: "prior-request",
+    });
+    assert.equal(absentReplacement.status, 409);
+    assert.match((await absentReplacement.json()).error, /Canvas is absent/);
+    assert.equal(prompts.length, 0);
+    await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations")), { code: "ENOENT" });
     const response = await post(generationRequest(saved.settingsRevision, newerValues));
     assert.equal(response.status, 202);
     const generated = await response.json();

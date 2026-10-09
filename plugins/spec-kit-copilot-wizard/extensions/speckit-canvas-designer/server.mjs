@@ -337,15 +337,19 @@ export async function startShell(handoff = null, model = null,
                     throw new Error("Designer settings changed elsewhere. Save the current settings before generating.");
                 }
                 const output = await generatedOutput(project, current.values["canvas.id"], handoff.handoffId);
-                if (output.status !== "absent"
-                    && (output.status !== "ready" || input.replaceExisting !== true
-                        || input.replaceRequestId !== output.requestId)) {
+                const authorized = output.status === "absent"
+                    ? input.replaceExisting !== true
+                    : output.status === "ready" && input.replaceExisting === true
+                        && input.replaceRequestId === output.requestId;
+                if (!authorized) {
                     res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify({ error: output.status === "ready"
-                            ? input.replaceExisting === true
-                                ? "Canvas changed since replacement was confirmed; review and confirm again."
-                                : GENERATION_EXISTS
-                            : `Cannot replace ${output.status} canvas output; inspect the target folder first.` }));
+                        .end(JSON.stringify({ error: output.status === "absent"
+                            ? "Canvas is absent; refresh its status and generate without replacement."
+                            : output.status === "ready"
+                                ? input.replaceExisting === true
+                                    ? "Canvas changed since replacement was confirmed; review and confirm again."
+                                    : GENERATION_EXISTS
+                                : `Cannot replace ${output.status} canvas output; inspect the target folder first.` }));
                     return;
                 }
                 validateBadges(current.badges, { ...current, phases: handoff.workflow.selectedPhases });
