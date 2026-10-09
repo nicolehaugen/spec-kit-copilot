@@ -1068,8 +1068,14 @@ async function refresh(reconcile = false) {
     }
     return sequence === refreshSequence;
 }
-async function refreshCurrent() {
-    while (!(await refresh())) {}
+let currentRefresh;
+function refreshCurrent() {
+    if (!currentRefresh) {
+        currentRefresh = (async () => {
+            while (!(await refresh())) {}
+        })().finally(() => { currentRefresh = null; });
+    }
+    return currentRefresh;
 }
 async function selectPhase(index) {
     if (index < 0 || index >= workflowPhases().length) return;

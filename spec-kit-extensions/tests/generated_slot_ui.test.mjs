@@ -260,11 +260,39 @@ test("stale-revision recovery waits for an applied snapshot before retrying crea
         },
     };
     const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
-        ${section("async function refreshCurrent()", "async function selectPhase(")}
+        ${section("let currentRefresh;", "async function selectPhase(")}
         retryRevision`, context);
     assert.equal(await retry("/api/workflow/new", {}, () => !context.model.items.length), null);
     assert.equal(refreshes, 2);
     assert.equal(attempts, 1);
+});
+
+test("overlapping stale actions share one applied refresh instead of superseding each other", async () => {
+    const snapshots = [], attempts = [];
+    const context = {
+        refreshSequence: 0, model: { revision: 0, items: [] },
+        workflowPage: {}, mountedPage: "workflow", timer: null, saveFailure: null,
+        constitution: () => null, renderPhase() {}, syncFieldMounts: async () => {},
+        $: () => null, document: {},
+        api: (path, input) => {
+            if (path === "/api/state") return new Promise((resolve) => snapshots.push(resolve));
+            attempts.push(input.revision);
+            if (input.revision === 0) return Promise.reject(
+                Object.assign(new Error("Stale revision"), { status: 409, code: "STALE_REVISION" }));
+            return Promise.resolve({ revision: 2 });
+        },
+    };
+    const retry = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+        ${section("async function refresh(reconcile = false) {", "async function selectPhase(")}
+        retryRevision`, context);
+    const first = retry("/api/workflow/new", {});
+    const second = retry("/api/workflow/new", {});
+    await new Promise(setImmediate);
+    assert.equal(snapshots.length, 1);
+    snapshots[0]({ revision: 1, items: [{ id: "__new__:1" }], statuses: {} });
+    await Promise.all([first, second]);
+    assert.deepEqual(attempts, [0, 0, 1, 1]);
+    assert.equal(context.model.revision, 1);
 });
 
 test("a persistent revision conflict asks for another attempt, not a manual refresh", async () => {
