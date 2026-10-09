@@ -86,7 +86,7 @@ function outputPathsReady() {
 }
 
 function outputPath(id) {
-    return `.github\\extensions\\${id || "<canvas-id>"}\\`;
+    return `.github/extensions/${id || "<canvas-id>"}/`;
 }
 
 function updateOutputDisplay() {

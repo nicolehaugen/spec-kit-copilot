@@ -311,9 +311,9 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
             return [style.backgroundColor, style.color, style.fontWeight, style.padding];
         }));
     expect(buttonStyles[0]).toEqual(buttonStyles[1]);
-    await expect(page.locator("#output-target")).toHaveText(".github\\extensions\\first-canvas\\");
-    await expect(page.locator("#open-output-folder")).toHaveText(".github\\extensions\\first-canvas\\");
-    await expect(page.locator("#share-project-path")).toHaveText(".github\\extensions\\first-canvas\\");
+    await expect(page.locator("#output-target")).toHaveText(".github/extensions/first-canvas/");
+    await expect(page.locator("#open-output-folder")).toHaveText(".github/extensions/first-canvas/");
+    await expect(page.locator("#share-project-path")).toHaveText(".github/extensions/first-canvas/");
     await expect(page.getByRole("heading", { name: "Share · Optional" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Personal extension" })).toBeVisible();
     await expect(page.locator("#generation-status")).toHaveText("Not generated");
@@ -327,7 +327,7 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
     await expect(page.locator("#open-generated-canvas")).toBeHidden();
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("second-canvas");
     await page.getByRole("tab", { name: "Generate" }).click();
-    await expect(page.locator("#output-target")).toHaveText(".github\\extensions\\second-canvas\\");
+    await expect(page.locator("#output-target")).toHaveText(".github/extensions/second-canvas/");
     await page.locator("#generate-canvas").click();
     await expect.poll(() => requests.length).toBe(1);
     await expect(page.locator("#generation-status")).toContainText("Creating canvas files");

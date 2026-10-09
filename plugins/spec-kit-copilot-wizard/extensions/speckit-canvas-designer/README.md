@@ -125,7 +125,7 @@ Artifact directory slug. If entered, it previews the View target; the created
 directory, which may include a numeric prefix, remains authoritative.
 The resolved **Outputs** definition (`designer-artifacts`) remains in the
 model and frozen generation data, but its tab is hidden in this MVP. Inferred
-pipeline artifacts and saved outputs are retained; Constitution still opens
+pipeline artifacts remain; Constitution still opens
 `.specify/memory/constitution.md`. The **Generate** tab is fixed shell
 UI rather than a customizable contribution, so it does not register a JSON
 definition or adapter/renderer template pair.
@@ -133,7 +133,9 @@ The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff retains the saved revision but starts a fresh form
-from template defaults when its resolved pages are unchanged.
+from template defaults when its resolved pages are unchanged. Saved output
+additions and viewer selections are not restored on reopen; a subsequent Save
+or Generate replaces them with the handoff defaults.
 Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
 blank retains the current color in that mode, while invalid hex blocks Generate
 without preventing an incomplete draft from being saved. The generated canvas
@@ -220,7 +222,7 @@ For a verified same-handoff target, **Regenerate canvas** confirms that all
 files, including manual edits, will be overwritten. The generator stages and
 validates replacement, then swaps directories with rollback; foreign or
 incomplete output is not replaceable. The target-folder path is a link that
-reveals `.github\extensions` until the generated folder exists, and reveals
+reveals `.github/extensions/` until the generated folder exists, and reveals
 the generated folder afterward.
 **Open canvas** is available only after the generated files are verified.
 Before dispatch, the Open step warns that registration disconnects Designer

@@ -2,6 +2,7 @@ import { execFile, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFile, cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify, stripVTControlCharacters } from "node:util";
@@ -921,7 +922,7 @@ test("Billing preset and built-in palette persist through Generate and render th
         const canvasId = page.getByRole("textbox", { name: "Canvas ID (required)" });
         await canvasId.fill("billing-second");
         await page.getByRole("tab", { name: "Generate" }).click();
-        await expect(page.locator("#output-target")).toContainText(".github\\extensions\\billing-second\\");
+        await expect(page.locator("#output-target")).toContainText(".github/extensions/billing-second/");
         await expect(page.locator("#generate-canvas")).toBeEnabled();
         await page.getByRole("tab", { name: "Essentials" }).click();
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
