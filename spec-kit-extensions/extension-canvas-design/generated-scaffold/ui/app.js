@@ -655,12 +655,13 @@ async function api(path, input, options = {}) {
     }
     return result;
 }
-async function retryRevision(path, input) {
+async function retryRevision(path, input, shouldRetry = () => true) {
     try {
         return await api(path, { ...input, revision: model.revision });
     } catch (error) {
         if (error.status !== 409 || error.code !== "STALE_REVISION") throw error;
         await refresh();
+        if (!shouldRetry()) return null;
         try {
             return await api(path, { ...input, revision: model.revision });
         } catch (retryError) {
@@ -1076,9 +1077,12 @@ async function selectFeature(value) {
     await persist({ selected: value });
     await refresh();
 }
-async function createWorkflow() {
+async function createWorkflow(initial = false) {
     await flush();
-    await retryRevision("/api/workflow/new", {});
+    if (initial && model.items.length) return;
+    const created = await retryRevision("/api/workflow/new", {},
+        initial ? () => !model.items.length : undefined);
+    if (!created) return;
     message("", "workflow-action-error");
     workflowQuery = "";
     slugTouched = false;
@@ -1495,7 +1499,9 @@ window.addEventListener("pagehide", () => {
     buttonMounts.forEach((instance) => instance.dispose());
     disposeFieldMounts(mountedPage);
 });
-await refresh().catch((error) => message(error.message, "canvas-message", true));
+await refresh().then(async () => {
+    if (!model.items.length && workflowPhases().length) await createWorkflow(true);
+}).catch((error) => message(error.message, "canvas-message", true));
 for (const root of document.querySelectorAll("[data-control-id]")) {
     void mountGeneratedControl(root);
 }

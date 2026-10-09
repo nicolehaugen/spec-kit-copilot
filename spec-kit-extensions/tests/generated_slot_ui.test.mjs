@@ -143,6 +143,75 @@ test("a stale revision refreshes internally and retries a workflow action once",
     assert.ok(calls.every(({ path }) => path === "/api/workflow/new"));
 });
 
+test("first open creates a workflow only when no workflow exists and phases are configured", async () => {
+    const startup = section("await refresh().then(async () => {",
+        "for (const root of document.querySelectorAll(\"[data-control-id]\"))");
+    for (const [items, phases, expected] of [
+        [[], [{ id: "specify", project: false }], 1],
+        [[{ id: "__new__:1", pending: true }], [{ id: "specify", project: false }], 0],
+        [[{ id: "specs/demo" }], [{ id: "specify", project: false }], 0],
+        [[], [{ id: "constitution", project: true }], 0],
+    ]) {
+        const calls = [];
+        const context = {
+            model: null,
+            refresh: async () => { context.model = { items, phases }; },
+            workflowPhases: () => context.model.phases.filter((phase) => !phase.project),
+            createWorkflow: async (initial) => { calls.push(initial); },
+            message: (text) => { throw new Error(text); },
+        };
+        await runInNewContext(`(async () => { ${startup} })()`, context);
+        assert.deepEqual(calls, Array(expected).fill(true));
+    }
+});
+
+test("first open uses the existing workflow endpoint and selects the new pending row", async () => {
+    const calls = [];
+    const context = {
+        model: null, workflowQuery: "", slugTouched: false, current: 0,
+        flush: async () => {},
+        refresh: async () => {
+            context.model = { revision: calls.length, phases: [{ id: "specify", project: false }],
+                items: calls.length ? [{ id: "__new__:1", pending: true }] : [] };
+        },
+        workflowPhases: () => context.model.phases.filter((phase) => !phase.project),
+        api: async (path, input) => {
+            calls.push({ path, revision: input.revision });
+            return { revision: 1, id: "__new__:1" };
+        },
+        message: (text) => { assert.equal(text, ""); },
+    };
+    await runInNewContext(`(async () => {
+        ${section("async function retryRevision(", "const workflowPhases =")}
+        ${section("async function createWorkflow(", "async function deleteFeature(")}
+        ${section("await refresh().then(async () => {",
+            "for (const root of document.querySelectorAll(\"[data-control-id]\"))")}
+    })()`, context);
+    assert.deepEqual(calls, [{ path: "/api/workflow/new", revision: 0 }]);
+    assert.equal(context.model.items[0].id, "__new__:1");
+});
+
+test("first-open workflow creation does not duplicate one created by another panel", async () => {
+    const calls = [];
+    const context = {
+        model: { revision: 0, items: [] },
+        flush: async () => {},
+        api: async (path, input) => {
+            calls.push({ path, revision: input.revision });
+            throw Object.assign(new Error("Stale revision"), { status: 409, code: "STALE_REVISION" });
+        },
+        refresh: async () => { context.model = { revision: 1, items: [{ id: "__new__:1" }] }; },
+        message: () => { throw new Error("Unexpected message"); },
+    };
+    const create = runInNewContext(`${section("async function retryRevision(", "const workflowPhases =")}
+        ${section("async function createWorkflow(", "async function deleteFeature(")}
+        createWorkflow`, context);
+    await create(true);
+    assert.deepEqual(calls, [{ path: "/api/workflow/new", revision: 0 }]);
+    await create(true);
+    assert.equal(calls.length, 1);
+});
+
 test("a persistent revision conflict asks for another attempt, not a manual refresh", async () => {
     const model = { revision: 3 };
     let attempts = 0, refreshes = 0;
