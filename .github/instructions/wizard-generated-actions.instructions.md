@@ -1,5 +1,5 @@
 ---
-applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**/*,spec-kit-extensions/extension-canvas-design/generated-host/**/*,spec-kit-extensions/extension-canvas-design/generated-scaffold/**/*,spec-kit-presets/*/generated/**/*"
+applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**/*,spec-kit-extensions/extension-canvas-design/generated-host/**/*,spec-kit-extensions/extension-canvas-design/generated-scaffold/**/*,spec-kit-presets/*/generated/**/*,tests/fixtures/test-presets/*/generated/**/*"
 ---
 
 Keep phase Run and retry actions available when a Copilot agent turn is

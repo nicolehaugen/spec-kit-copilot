@@ -651,7 +651,7 @@ test("Designer badge save and reopen freezes registered assets into generated co
         const { project, entries } = await projectFixture(t, workspace);
         const templates = [...await stockTemplates(project), ...await badgeTemplates(project)];
         const preset = fileURLToPath(new URL(
-            "../../../../../spec-kit-presets/copilot-badge-input-test/", import.meta.url));
+            "../../../../../tests/fixtures/test-presets/copilot-badge-input-test/", import.meta.url));
         const replacement = templates.find((item) => item.name === "badges-settings");
         const presetFolder = join(project, ".specify", "presets", "copilot-badge-input-test");
         const settingsPath = join(presetFolder, "designer", "badges.json");
@@ -878,7 +878,7 @@ test("Generate freezes winning dialog and button assets with their registrations
     const { project, entries } = await projectFixture(t, workspace);
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/",
         import.meta.url));
-    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-dialog-buttons-test/",
+    const preset = fileURLToPath(new URL("../../../../../tests/fixtures/test-presets/copilot-dialog-buttons-test/",
         import.meta.url));
     const templates = await stockTemplates(project);
     for (const [name, kind, directory, filename, root] of [
@@ -1400,7 +1400,7 @@ test("preset field placements resolve into Workflow and added-page slots", async
         await writeFile(path, typeof contents === "string" ? contents : JSON.stringify(contents));
         return { name, path, kind, strategy: "replace", sourceId: "placement-fixture" };
     };
-    const risk = new URL("../../../../../spec-kit-presets/copilot-risk-matrix-test/controls/risk-matrix/",
+    const risk = new URL("../../../../../tests/fixtures/test-presets/copilot-risk-matrix-test/controls/risk-matrix/",
         import.meta.url);
     const riskSchema = { type: "object", properties: {
         impact: ["low", "medium", "high"], likelihood: ["low", "medium", "high"],
@@ -2159,7 +2159,7 @@ test("logo gallery preset places a reusable Logo in its declared asset slot", as
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
-    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-logo-gallery-test/",
+    const preset = fileURLToPath(new URL("../../../../../tests/fixtures/test-presets/copilot-logo-gallery-test/",
         import.meta.url));
     const folder = join(project, ".specify", "presets");
     await mkdir(folder);
@@ -3416,7 +3416,7 @@ test("registered contributions validate slots, sources, references and determini
         handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
         handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
         await saveHandoff(workspace, handoff);
-        const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-billing-canvas-test/",
+        const preset = fileURLToPath(new URL("../../../../../tests/fixtures/test-presets/copilot-billing-canvas-test/",
             import.meta.url));
         const directory = join(project, ".specify", "presets");
         await mkdir(directory);
@@ -3718,7 +3718,7 @@ test("generated-only page validates typed assets, freezes winners and packages w
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
-    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-generated-page-test/",
+    const preset = fileURLToPath(new URL("../../../../../tests/fixtures/test-presets/copilot-generated-page-test/",
         import.meta.url));
     const directory = join(project, ".specify", "presets");
     await mkdir(directory);
@@ -3843,7 +3843,7 @@ test("generated-only page validates typed assets, freezes winners and packages w
     await assert.rejects(stat(sideEffectPath), { code: "ENOENT" });
     await writeFile(rendererPath, renderer);
     const billing = JSON.parse(await readFile(new URL(
-        "../../../../../spec-kit-presets/copilot-billing-canvas-test/designer/settings/billing.json",
+        "../../../../../tests/fixtures/test-presets/copilot-billing-canvas-test/designer/settings/billing.json",
         import.meta.url)));
     const billingPath = join(directory, "billing.json");
     await writeFile(billingPath, JSON.stringify({ ...billing, slot: "essentials.options" }));
@@ -3902,7 +3902,7 @@ test("named value sources freeze typed values and run from a portable canvas wit
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
     const preset = fileURLToPath(new URL(
-        "../../../../../spec-kit-presets/copilot-canvas-values-test/", import.meta.url));
+        "../../../../../tests/fixtures/test-presets/copilot-canvas-values-test/", import.meta.url));
     const directory = join(project, ".specify", "presets");
     await mkdir(directory);
     const items = [
@@ -4302,7 +4302,7 @@ test("paired control validates both adapters, typed values and portable generate
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
     handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
     await saveHandoff(workspace, handoff);
-    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-risk-matrix-test/",
+    const preset = fileURLToPath(new URL("../../../../../tests/fixtures/test-presets/copilot-risk-matrix-test/",
         import.meta.url));
     const directory = join(project, ".specify", "presets");
     await mkdir(directory);
@@ -5054,7 +5054,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         assert.equal(templateState.pages.length, initial.pages.length);
         assert.notEqual(templateState.revision, initial.revision);
         const preset = fileURLToPath(new URL(
-            "../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url));
+            "../../../../../tests/fixtures/test-presets/copilot-canvas-design-test/", import.meta.url));
         const testPage = join(project, ".specify", "pr1-test-page.json");
         const testField = join(project, ".specify", "pr1-test-field.json");
         await copyFile(join(preset, "designer", "tabs", "pr1-test.json"), testPage);

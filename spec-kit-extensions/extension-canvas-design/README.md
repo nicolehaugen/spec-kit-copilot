@@ -248,7 +248,7 @@ A button adapter exports
 with `dispose()`. The optional
 `dialog.trigger` adapter instead receives `onTrigger`. Both are executable
 approved template code, not sandboxed JSON. The test-only
-`spec-kit-presets/copilot-dialog-buttons-test` fixture adds one `speckit.implement`
+`tests/fixtures/test-presets/copilot-dialog-buttons-test` fixture adds one `speckit.implement`
 confirmation and a separate `workflow.actions` button; it is not a runtime
 package or a catalog release.
 The Badges tab offers **Value match**, **Artifact current**,
@@ -607,7 +607,7 @@ Essentials is valid for generation.
 
 The repository-local `copilot-billing-canvas-test` preset exercises stock
 read-only placement on Billing and Essentials. The isolated
-[test-only preset](../../spec-kit-presets/copilot-canvas-design-test/preset.yml)
+[test-only preset](../../tests/fixtures/test-presets/copilot-canvas-design-test/preset.yml)
 registers an additional Designer page with stock text and checkbox fields. The
 browser integration test covers the checkbox default, rendering, save, and
 reopen. The preset is installed locally, not published in the canonical preset

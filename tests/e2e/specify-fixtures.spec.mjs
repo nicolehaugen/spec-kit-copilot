@@ -17,7 +17,7 @@ const require = createRequire(new URL(
 ));
 const { load } = require("js-yaml");
 const run = promisify(execFile);
-const presetPath = fileURLToPath(new URL("../../spec-kit-presets/copilot-wizard-layer-test/", import.meta.url));
+const presetPath = fileURLToPath(new URL("../fixtures/test-presets/copilot-wizard-layer-test/", import.meta.url));
 const extensionPath = fileURLToPath(new URL("../fixtures/specify/extension-wizard-flow-test/", import.meta.url));
 
 test("Specify installs both Wizard fixtures and resolves their commands and review skill", async () => {

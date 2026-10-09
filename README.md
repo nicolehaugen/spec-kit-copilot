@@ -51,16 +51,18 @@ wizard canvas, or any combination.
 
 ## Spec Kit presets
 
-This repo also hosts **Copilot-specific Spec Kit presets** under
+This repo also hosts **shipping Copilot-specific Spec Kit presets** under
 [`spec-kit-presets/`](spec-kit-presets). These are *not* Copilot plugins — they are
 consumed by the **`specify` CLI** (`specify preset add`), and are kept in their own
 isolated subtree (with their own `catalog.json`) so Spec Kit plumbing is never
-confused with Copilot plugin/marketplace plumbing.
+confused with Copilot plugin/marketplace plumbing. Test-only presets live in
+[`tests/fixtures/test-presets/`](tests/fixtures/test-presets/) instead.
 
 | Preset | Requires | Why it is Copilot-specific |
 | --- | --- | --- |
 | [`copilot-sub-agents`](spec-kit-presets/copilot-sub-agents) | Spec Kit `>= 0.8.0` | Uses Copilot delegation — VS Code `runSubagent`, Copilot CLI sub-agents, `.github/agents/` |
 | [`copilot-assess-ask-questions`](spec-kit-presets/copilot-assess-ask-questions) | Spec Kit `>= 0.9.0`, `assess` extension | Drives the assess pipeline through Copilot's interactive `ask_user` tool (no plain-text fallback) |
+| [`copilot-vertical-phase-control`](spec-kit-presets/copilot-vertical-phase-control) | Spec Kit `>= 1.0.7`, `extension-canvas-design` | Replaces the generated phase control with the Copilot Autopilot workflow |
 
 See [`spec-kit-presets/README.md`](spec-kit-presets/README.md) for the plumbing
 boundary, install commands, and versioning. Only Copilot-specific presets are hosted

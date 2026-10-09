@@ -587,6 +587,7 @@ test("generated page hides all Workflow content and restores it on return", asyn
             body: 'export function renderPage({ root }) { root.textContent = "Overview"; }',
         }));
         await page.goto(canvas.url);
+        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await page.locator("#workflow-name").fill("Draft workflow");
         await expect(page.locator("#instance-collection")).toBeVisible();
@@ -743,6 +744,7 @@ test("failed autosave retains workflow identity through SSE and Refresh for retr
             return route.continue();
         });
         await page.goto(canvas.url);
+        await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await expect(page.locator("#workflow-name")).toBeVisible();
         await page.locator("#workflow-name").fill("Unsaved workflow");
@@ -821,7 +823,7 @@ test("disabled custom slugs leave the artifact directory unresolved until Specif
     }
 });
 
-test("an empty workflow list creates a numbered pending row without making a directory", async ({ page }) => {
+test("first visit auto-creates a numbered pending row without making a directory", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
         await page.goto(canvas.url);
@@ -926,6 +928,7 @@ test("browser draft and in-flight run recover in a new host, while invalid run s
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
+        await expect(page.locator("#phase-args")).toBeVisible();
         const pendingId = (await canvas.runtime.snapshot()).selected;
         await expect(page.locator(`#workflow-list [data-workflow-id="${pendingId}"].active`)).toBeVisible();
         const draftKey = JSON.stringify([pendingId, "specify"]);
@@ -1038,6 +1041,7 @@ test("a later successful save does not hide a failed phase draft", async ({ page
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toMatch(/^__new__:/);
+        await expect(page.locator("#phase-args")).toBeVisible();
         const pendingId = (await canvas.runtime.snapshot()).selected;
         await expect(page.locator(`#workflow-list [data-workflow-id="${pendingId}"].active`)).toBeVisible();
         await page.locator("#phase-args").fill("Keep this draft");

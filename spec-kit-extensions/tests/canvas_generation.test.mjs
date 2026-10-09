@@ -1441,7 +1441,7 @@ test("phase view label preset and differently named adapter survive generation",
     const { project, workspace, sdk } = await fixture(t);
     const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
     const preset = JSON.parse(await readFile(new URL(
-        "../../spec-kit-presets/copilot-phase-view-label-test/generated/phase-control.json", import.meta.url)));
+        "../../tests/fixtures/test-presets/copilot-phase-view-label-test/generated/phase-control.json", import.meta.url)));
     const control = model.templates.find((item) => item.name === "generated-phase-control");
     const adapter = model.templates.find((item) => item.name === "generated-phase-adapter");
     const presetBytes = Buffer.from(JSON.stringify(preset));
@@ -1616,7 +1616,7 @@ test("frozen named values reject tampered modules and package independently of t
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations", prepared.requestId, "request.json");
     const original = JSON.parse(await readFile(requestPath, "utf8"));
-    const preset = new URL("../../spec-kit-presets/copilot-canvas-values-test/", import.meta.url);
+    const preset = new URL("../../tests/fixtures/test-presets/copilot-canvas-values-test/", import.meta.url);
     const sourceId = "copilot-canvas-values-test";
     const asset = async (name, kind, file) => {
         const content = await readFile(new URL(file, preset));

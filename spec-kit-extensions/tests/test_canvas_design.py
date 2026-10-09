@@ -294,30 +294,35 @@ class CanvasDesignPackageTests(unittest.TestCase):
         )
         schemas = {kind: json.loads((PACKAGE / f"schemas/{kind}.schema.json").read_text("utf-8"))
                    for kind in kinds}
-        preset_tabs = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/tabs/*.json"))
-        preset_generated_pages = list((EXTENSIONS.parent / "spec-kit-presets").glob("*/generated/pages/*.json"))
+        preset_roots = (EXTENSIONS.parent / "spec-kit-presets",
+                        EXTENSIONS.parent / "tests/fixtures/test-presets")
+        def preset_files(pattern):
+            return [path for root in preset_roots for path in root.glob(pattern)]
+
+        preset_tabs = preset_files("*/designer/tabs/*.json")
+        preset_generated_pages = preset_files("*/generated/pages/*.json")
         fixtures = {
             "designer.tab-definition": [PACKAGE / f"designer-host/tabs/{name}.json" for name in PAGE_NAMES]
                 + preset_tabs,
             "designer.setting-definition": list(PACKAGE.glob("designer-host/essentials-settings/*.json"))
-                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/settings/*.json")),
+                + preset_files("*/designer/settings/*.json"),
             "designer.badge-input-control": list(PACKAGE.glob(
                 "designer-host/badge-input-controls/*/control.json"))
-                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/control.json")),
+                + preset_files("*/designer/control.json"),
             "designer.badge-input-binding": list(PACKAGE.glob(
                 "designer-host/badge-input-controls/*/bindings/*.json"))
-                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/designer/binding.json")),
+                + preset_files("*/designer/binding.json"),
             "generated.added-page-definition": preset_generated_pages,
             "generated.workflow-page-definition": [PACKAGE / "generated-host/workflow-page/workflow.json"],
             "shared.control-definition": list(PACKAGE.glob("shared-controls/*/control.json"))
-                + list((EXTENSIONS.parent / "spec-kit-presets").glob("*/controls/*/control.json")),
-            "generated.value-definition": list((EXTENSIONS.parent / "spec-kit-presets").glob("*/values/*.json")),
+                + preset_files("*/controls/*/control.json"),
+            "generated.value-definition": preset_files("*/values/*.json"),
         }
         self.assertTrue(all(fixtures.values()))
-        preset_badge = EXTENSIONS.parent / "spec-kit-presets/copilot-badge-input-test/designer"
+        preset_badge = EXTENSIONS.parent / "tests/fixtures/test-presets/copilot-badge-input-test/designer"
         self.assertIn(preset_badge / "control.json", fixtures["designer.badge-input-control"])
         self.assertIn(preset_badge / "binding.json", fixtures["designer.badge-input-binding"])
-        for manifest_path in (EXTENSIONS.parent / "spec-kit-presets").glob("*/preset.yml"):
+        for manifest_path in preset_files("*/preset.yml"):
             manifest = yaml.safe_load(manifest_path.read_text("utf-8"))
             for template in manifest.get("provides", {}).get("templates", []):
                 with self.subTest(preset=manifest_path.parent.name, template=template["name"]):
@@ -376,8 +381,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     badge_validator.validate({**definition, "module": definition["adapter"]})
         badge_validator.validate(json.loads((EXTENSIONS.parent
-            / "spec-kit-presets/copilot-badge-input-test/generated/rule.json").read_text("utf-8")))
-        value = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
+            / "tests/fixtures/test-presets/copilot-badge-input-test/generated/rule.json").read_text("utf-8")))
+        value = json.loads((EXTENSIONS.parent / "tests/fixtures/test-presets/copilot-canvas-values-test/values/workflow.json").read_text("utf-8"))
         self.assertEqual(value["source"]["kind"], "computed")
         validator = Draft202012Validator(schemas["generated.value-definition"])
         for invalid in (
@@ -391,7 +396,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                     validator.validate(invalid)
 
     def test_minimal_essentials_test_preset_registers_only_required_controls(self):
-        fixture = EXTENSIONS.parent / "spec-kit-presets/copilot-minimal-essentials-test"
+        fixture = EXTENSIONS.parent / "tests/fixtures/test-presets/copilot-minimal-essentials-test"
         manifest = yaml.safe_load((fixture / "preset.yml").read_text("utf-8"))
         self.assertEqual(manifest["preset"]["id"], "copilot-minimal-essentials-test")
         self.assertEqual(manifest["requires"]["extensions"], [EXTENSION_ID])
@@ -508,7 +513,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
     def test_object_setting_requires_generated_binding(self):
         schema = json.loads((PACKAGE / "schemas/designer.setting-definition.schema.json").read_text("utf-8"))
         validator = Draft202012Validator(schema)
-        setting = json.loads((EXTENSIONS.parent / "spec-kit-presets/copilot-risk-matrix-test"
+        setting = json.loads((EXTENSIONS.parent / "tests/fixtures/test-presets/copilot-risk-matrix-test"
                               / "designer/settings/risk-rating.json").read_text("utf-8"))
         validator.validate(setting)
         del setting["generatedBinding"]

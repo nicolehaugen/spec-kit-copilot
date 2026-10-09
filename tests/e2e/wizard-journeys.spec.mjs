@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { test, expect } from "./playwright.mjs";
 import { collectArtifactEvidence, effectiveSource } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/artifact-evidence.mjs";
 import { compositionActions } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/canvas-runtime/actions/composition.mjs";
@@ -14,17 +16,19 @@ import { startServer } from "../../plugins/spec-kit-copilot-wizard/extensions/sp
 import { validateLocalSource } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server/designer-local-sources.mjs";
 import { writeState } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/state/store.mjs";
 
-const presetPath = fileURLToPath(new URL("../../spec-kit-presets/copilot-wizard-layer-test/", import.meta.url));
+const presetPath = fileURLToPath(new URL("../fixtures/test-presets/copilot-wizard-layer-test/", import.meta.url));
 const extensionPath = fileURLToPath(new URL("../fixtures/specify/extension-wizard-flow-test/", import.meta.url));
 const preset = await validateLocalSource("presets", presetPath);
 const extension = await validateLocalSource("extensions", extensionPath);
 const review = "speckit.extension-wizard-flow-test.review";
+const run = promisify(execFile);
 
 async function withWizardCheckout(page, run, {
     setup: setupOverrides = {}, environment: environmentOverrides = {},
     reload, boot, depsError, beforeNavigate, send,
+    checkoutPrefix = join(tmpdir(), "wizard-flow-e2e-"),
 } = {}) {
-    const root = await mkdtemp(join(tmpdir(), "wizard-flow-e2e-"));
+    const root = await mkdtemp(checkoutPrefix);
     const id = randomUUID();
     const inst = getInstance(id);
     const prompts = [];
@@ -202,6 +206,88 @@ test("ready Wizard unlocks navigation and pipeline edits preserve the selected p
         expect(inst.state.pipeline).toBeNull();
         server.broadcast({ type: "invalidate", reason: "pipeline verified" });
         await expect(page.locator("#stepper .step.active")).toHaveCount(1);
+    });
+});
+
+test("installed Wizard preset replaces Plan and prepends Specify in the visible command pipeline", async ({ page }) => {
+    test.setTimeout(180_000);
+    await withWizardCheckout(page, async ({ root, inst, prompts }) => {
+        const commands = page.locator('#comp-artifacts [data-subtab-panel="comp:command"]');
+        const plan = commands.locator(".comp-artifact-row")
+            .filter({ has: page.getByRole("button", { name: /commands\/speckit\.plan/ }) });
+        const specify = commands.locator(".comp-artifact-row")
+            .filter({ has: page.getByRole("button", { name: /commands\/speckit\.specify/ }) });
+
+        await page.locator('#setup-stepper .step[data-substep="composition"]').click();
+        await expect(page.locator("#comp-group-presets")).toContainText(preset.name);
+        await expect(plan).toContainText("commands/speckit.plan");
+        await expect(plan.locator(".comp-stack-layer").first()).toContainText(preset.name);
+        await expect(plan.locator(".comp-stack-layer").first()).toContainText("Replace");
+        await expect(plan.locator(".comp-stack-layer").first()).toHaveClass(/is-active/);
+        await expect(plan.locator(".comp-stack-layer").last()).toContainText("Core");
+        await expect(specify.locator(".comp-stack-layer").first()).toContainText(preset.name);
+        await expect(specify.locator(".comp-stack-layer").first()).toContainText("Prepend");
+        await expect(specify.locator(".comp-stack-layer").first()).toHaveClass(/is-active/);
+        await expect(specify.locator(".comp-stack-layer").last()).toContainText("Core");
+
+        const artifacts = inst.cachedComposition.artifacts;
+        for (const name of ["speckit.plan", "speckit.specify"]) {
+            expect(artifacts.filter((item) => item.id === `commands/${name}`)).toHaveLength(1);
+        }
+        expect(artifacts.find((item) => item.id === "commands/speckit.plan")
+            .stack.find((layer) => layer.active)).toMatchObject({
+            presetId: preset.id, strategy: "replace",
+        });
+        expect(artifacts.find((item) => item.id === "commands/speckit.specify")
+            .stack.find((layer) => layer.active)).toMatchObject({
+            presetId: preset.id, strategy: "prepend",
+        });
+
+        await page.getByRole("tab", { name: "Phases" }).click();
+        const steps = page.locator("#stepper .step:not(.step-hook)");
+        await expect(steps.filter({ hasText: "Specify" })).toHaveCount(1);
+        await expect(steps.filter({ hasText: "Plan" })).toHaveCount(1);
+        const labels = await steps.allTextContents();
+        expect(labels.findIndex((label) => label.includes("Specify")))
+            .toBeLessThan(labels.findIndex((label) => label.includes("Plan")));
+        await steps.filter({ hasText: "Specify" }).click();
+        await expect(page.locator("#phase-card")).toContainText(preset.name);
+        await steps.filter({ hasText: "Plan" }).click();
+        await expect(page.locator("#phase-card")).toContainText(preset.name);
+        const submit = page.waitForResponse((response) =>
+            response.url().includes("/api/phase/submit") && response.request().method() === "POST");
+        await page.locator("#phase-card").getByRole("button", { name: "Run phase" }).click();
+        expect((await submit).ok()).toBe(true);
+        await expect.poll(() => prompts.length).toBe(1);
+        expect(prompts[0]).toContain("speckit-plan");
+        expect(await readFile(join(root, ".github", "skills", "speckit-plan", "SKILL.md"), "utf8"))
+            .toContain("Wizard test Plan layer");
+    }, {
+        checkoutPrefix: fileURLToPath(new URL("./.wizard-layer-checkout-", import.meta.url)),
+        beforeNavigate: async ({ root, inst }) => {
+            const specifyCli = async (...args) => (await run("specify", args, {
+                cwd: root, timeout: 90_000, maxBuffer: 2 * 1024 * 1024,
+            })).stdout;
+            await specifyCli("init", "--here", "--force", "--non-interactive",
+                "--ignore-agent-tools", "--integration", "copilot",
+                "--integration-options=--skills", "--script",
+                process.platform === "win32" ? "ps" : "sh");
+            const corePlan = await readFile(join(root, ".github", "skills", "speckit-plan", "SKILL.md"), "utf8");
+            const coreSpecify = await readFile(join(root, ".github", "skills", "speckit-specify", "SKILL.md"), "utf8");
+            expect(corePlan).not.toContain("Wizard test Plan layer");
+            expect(coreSpecify).not.toContain("Wizard test Specify prelude");
+            await specifyCli("preset", "add", "--dev", presetPath);
+            const installed = JSON.parse(await specifyCli("preset", "list", "--json"));
+            const item = installed.find((entry) => entry.id === preset.id);
+            expect(item).toMatchObject({ id: preset.id, version: preset.version, enabled: true });
+            inst.cachedPresetItems = installed.map((entry, cliOrder) => ({
+                ...entry, installedId: entry.id, active: entry.enabled, cliOrder,
+            }));
+            const composedSpecify = await readFile(join(root, ".github", "skills", "speckit-specify", "SKILL.md"), "utf8");
+            expect(composedSpecify).toContain("Wizard test Specify prelude");
+            expect(composedSpecify).not.toBe(coreSpecify);
+            expect((await runFastComposition(inst, { reason: "installed-wizard-preset" })).ok).toBe(true);
+        },
     });
 });
 

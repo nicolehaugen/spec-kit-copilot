@@ -1,5 +1,5 @@
 ---
-applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**/*,spec-kit-extensions/extension-canvas-design/**/*,spec-kit-extensions/tests/**/*,spec-kit-presets/*/generated/**/*,spec-kit-presets/copilot-*-test/**/*,tests/e2e/**/*,tests/fixtures/specify/**/*"
+applyTo: "plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/**/*,plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/**/*,spec-kit-extensions/extension-canvas-design/**/*,spec-kit-extensions/tests/**/*,spec-kit-presets/*/generated/**/*,tests/e2e/**/*,tests/fixtures/specify/**/*,tests/fixtures/test-presets/**/*"
 ---
 
 **Treat a failing test as evidence to investigate, not permission to change the assertion.**

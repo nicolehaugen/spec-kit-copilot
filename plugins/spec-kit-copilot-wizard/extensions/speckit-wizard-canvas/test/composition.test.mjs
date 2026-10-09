@@ -1420,7 +1420,7 @@ test("installed test packages expose nested manifest metadata, layers, and a non
     const presetId = "copilot-wizard-layer-test";
     const extensionId = "extension-wizard-flow-test";
     const presetSource = fileURLToPath(new URL(
-        `../../../../../spec-kit-presets/${presetId}/`, import.meta.url));
+        `../../../../../tests/fixtures/test-presets/${presetId}/`, import.meta.url));
     const extensionSource = fileURLToPath(new URL(
         `../../../../../tests/fixtures/specify/${extensionId}/`, import.meta.url));
     try {

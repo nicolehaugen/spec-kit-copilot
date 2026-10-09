@@ -6,7 +6,7 @@ import { mount as mountPreviewInputs } from "../ui/preview-badge-input.js";
 import { mount as mountStockInputs, controlId, contractVersion } from
     "../../../../../spec-kit-extensions/extension-canvas-design/designer-host/badge-input-controls/stock/designer.mjs";
 import { mount as mountPresetInputs } from
-    "../../../../../spec-kit-presets/copilot-badge-input-test/designer/adapter.mjs";
+    "../../../../../tests/fixtures/test-presets/copilot-badge-input-test/designer/adapter.mjs";
 
 class Node {
     constructor(tagName) {

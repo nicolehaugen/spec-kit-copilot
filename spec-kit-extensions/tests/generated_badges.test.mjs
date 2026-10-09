@@ -20,7 +20,7 @@ for (const name of ["content", "artifact-state", "run"]) {
 }
 await cp(new URL("../extension-canvas-design/generated-host/badges/adapters/phase-artifact-complete.mjs",
     import.meta.url), join(generated, "badges", "badge-rule-phase-artifact-complete-adapter.mjs"));
-const presetEvaluator = new URL("../../spec-kit-presets/copilot-badge-input-test/generated/evaluator.mjs",
+const presetEvaluator = new URL("../../tests/fixtures/test-presets/copilot-badge-input-test/generated/evaluator.mjs",
     import.meta.url);
 await cp(presetEvaluator, join(generated, "badges", "badge-rule-test-phase-adapter.mjs"));
 const { evaluateBadges, validateBadges, verifyBadgeModules } =

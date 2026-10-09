@@ -30,11 +30,11 @@ Only Copilot-specific presets belong here. Agent-agnostic presets (generic theme
 extension-specific workflows that don't rely on Copilot's tools) do **not** belong in
 this Copilot integration hub.
 
-The [`copilot-canvas-design-test`](copilot-canvas-design-test) and
-[`copilot-logo-gallery-test`](copilot-logo-gallery-test) presets are
-**test-only** local fixtures for the Copilot Canvas Designer provider. They are
-intentionally absent from `catalog.json` and are not released; install them
-locally with `specify preset add --dev`.
+The **test-only** local presets for Wizard, Designer, and generated-canvas
+coverage live alongside the tests in
+[`tests/fixtures/test-presets/`](../tests/fixtures/test-presets/). They are outside this
+shipping preset directory and `catalog.json`; install them locally with
+`specify preset add --dev <path-to-fixture>`.
 
 ## Installing a preset
 
@@ -78,9 +78,14 @@ spec-kit-presets/
 ├── copilot-sub-agents/
 │   ├── preset.yml
 │   └── commands/
-└── copilot-assess-ask-questions/
+├── copilot-assess-ask-questions/
+│   ├── preset.yml
+│   └── commands/
+└── copilot-vertical-phase-control/
     ├── preset.yml
-    └── commands/
+    ├── commands/
+    │   └── load-page.md
+    └── generated/
 ```
 
 ## Versioning & distribution

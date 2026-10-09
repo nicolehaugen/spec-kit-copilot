@@ -7,7 +7,7 @@ import {
 } from "../pages.mjs";
 
 const base = new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
-const preset = new URL("../../../../../spec-kit-presets/copilot-dialog-buttons-test/", import.meta.url);
+const preset = new URL("../../../../../tests/fixtures/test-presets/copilot-dialog-buttons-test/", import.meta.url);
 const json = async (root, path) => JSON.parse(await readFile(new URL(path, root), "utf8"));
 
 test("stock named dialog and button contracts are registered and valid", async () => {

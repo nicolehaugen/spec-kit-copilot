@@ -13,7 +13,7 @@ development. From the project root:
 
 ```powershell
 specify extension add --dev <path-to-worktree>\spec-kit-extensions\extension-canvas-design
-specify preset add --dev <path-to-worktree>\spec-kit-presets\copilot-logo-gallery-test
+specify preset add --dev <path-to-worktree>\tests\fixtures\test-presets\copilot-logo-gallery-test
 ```
 
 The gallery field requires the base extension's shared `stock.image`
