@@ -16,11 +16,12 @@ export function mount({ root, rule, inputs, phases, onChange }) {
         option.textContent = phase.replace(/^speckit\./, "");
         select.append(option);
     }
-    select.value = inputs.phase;
+    select.value = inputs.phase ?? phases[0] ?? "";
     select.addEventListener("change", () => onChange({ phase: select.value }));
     label.append(select);
     const explanation = document.createElement("p");
     explanation.textContent = "This badge appears only after the selected phase's latest run completes.";
     root.replaceChildren(label, explanation);
+    onChange({ phase: select.value });
     return { isReady: () => phases.includes(select.value) };
 }

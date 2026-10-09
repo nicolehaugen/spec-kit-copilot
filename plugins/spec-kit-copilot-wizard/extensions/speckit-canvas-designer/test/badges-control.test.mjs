@@ -400,7 +400,7 @@ test("throwing control readiness or validation reports inline errors without sav
     } finally { cleanup(); }
 });
 
-test("preset control edits and reopens its own labeled phase input", () => {
+test("preset control initializes, edits, and reopens its own labeled phase input", () => {
     const badgeTypes = [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
         defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];
     const badgeRules = [{ id: "test-phase", inputs: [{ id: "phase", type: "phase" }] }];
@@ -414,14 +414,39 @@ test("preset control edits and reopens its own labeled phase input", () => {
         assert.ok(select);
         assert.ok(descendants(editor).some((node) => node.textContent.includes(
             "only after the selected phase")));
-        select.value = "plan";
-        select.events.change();
+        assert.equal(select.value, "specify");
         submit(editor);
+        assert.equal(badges[0].inputs.phase, "specify");
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        const edited = root.querySelector(".badge-editor");
+        const editSelect = descendants(edited).find((node) => node.tagName === "select"
+            && node.attributes["aria-label"] === "Phase to confirm");
+        assert.equal(editSelect.value, "specify");
+        editSelect.value = "plan";
+        editSelect.events.change();
+        submit(edited);
         assert.equal(badges[0].inputs.phase, "plan");
         root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
         const reopened = root.querySelector(".badge-editor");
         assert.equal(descendants(reopened).find((node) => node.tagName === "select"
             && node.attributes["aria-label"] === "Phase to confirm").value, "plan");
+    } finally { cleanup(); }
+});
+
+test("preset control remains incomplete when there are no available phases", () => {
+    const { root, draftBadges, cleanup } = setup({
+        phases: [], outputs: {},
+        badgeTypes: [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
+            defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }],
+        badgeRules: [{ id: "test-phase", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount: mountPresetInputs,
+    });
+    try {
+        const editor = choose(root);
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Complete the badge inputs/);
     } finally { cleanup(); }
 });
 
