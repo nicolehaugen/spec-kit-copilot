@@ -48,6 +48,7 @@ const ASSETS = {
 const GENERATE_SKILL = "speckit-extension-canvas-design-generate";
 const OPEN_SKILL = "speckit-extension-canvas-design-open-generated";
 const GENERATE_UNAVAILABLE = "Canvas Design does not provide Generate in this session. Launch a new Designer session with a compatible Canvas Design extension or the current local source.";
+const SPLIT_UNAVAILABLE = "Canvas Design does not provide separate Generate and Open commands in this session. Install the current local Canvas Design source before generating.";
 
 async function hasProjectSkill(project, name) {
     try {
@@ -85,9 +86,11 @@ export async function startShell(handoff = null, model = null,
         }
     }
     const token = randomBytes(24).toString("hex");
-    const skillAvailable = project ? await hasProjectSkill(project, GENERATE_SKILL) : false;
+    const generateSkillAvailable = project ? await hasProjectSkill(project, GENERATE_SKILL) : false;
+    const openSkillAvailable = project ? await hasProjectSkill(project, OPEN_SKILL) : false;
+    const skillAvailable = generateSkillAvailable && openSkillAvailable;
     const generationError = handoff?.workflow?.installed && project && !skillAvailable
-        ? GENERATE_UNAVAILABLE : null;
+        ? generateSkillAvailable ? SPLIT_UNAVAILABLE : GENERATE_UNAVAILABLE : null;
     let queuedCanvasId = null;
     let queuedRequestId = null;
     const state = async () => {
@@ -317,9 +320,11 @@ export async function startShell(handoff = null, model = null,
                         await readFrozenAsset(item, specify);
                     }
                 }
-                if (!await hasProjectSkill(project, GENERATE_SKILL)) {
+                const currentGenerateSkill = await hasProjectSkill(project, GENERATE_SKILL);
+                if (!currentGenerateSkill || !await hasProjectSkill(project, OPEN_SKILL)) {
                     res.writeHead(409, { "Content-Type": "application/json; charset=utf-8" })
-                        .end(JSON.stringify({ error: GENERATE_UNAVAILABLE }));
+                        .end(JSON.stringify({ error: currentGenerateSkill ? SPLIT_UNAVAILABLE
+                            : GENERATE_UNAVAILABLE }));
                     return;
                 }
                 let runtimeInventory, inventoryWarning;

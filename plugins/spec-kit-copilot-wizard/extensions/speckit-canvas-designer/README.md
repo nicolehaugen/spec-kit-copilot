@@ -208,7 +208,9 @@ before reporting **Canvas files created.** An in-flight request cannot be
 dispatched twice. If an agent attempt fails or remains uncertain, inspect the
 child-session chat; close and reopen Designer before retrying a stalled request.
 Reopening starts with template defaults while retaining the saved revision.
-Generation requires the installed Generate skill and a complete Wizard handoff.
+Generation requires both separate Generate and Open skills and a complete
+Wizard handoff; a hosted package with only the older combined Generate command
+is blocked rather than silently reloading Designer.
 For a verified same-handoff target, **Regenerate canvas** confirms that all
 files, including manual edits, will be overwritten. The generator stages and
 validates replacement, then swaps directories with rollback; foreign or

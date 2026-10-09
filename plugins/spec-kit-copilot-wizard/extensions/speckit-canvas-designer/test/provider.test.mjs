@@ -25,6 +25,12 @@ import { renderStockPage } from "../../../../../spec-kit-extensions/extension-ca
 
 const ID = "designer_1";
 const scalarFixtures = new Map();
+async function installOpenSkill(project) {
+    const path = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-open-generated", "SKILL.md");
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, "---\nname: speckit-extension-canvas-design-open-generated\n---\n");
+}
 test("generation availability contract rejects incompatible flags and prioritizes queued work", () => {
     assert.deepEqual(generationAvailability(false, false), { available: true, error: null });
     assert.deepEqual(generationAvailability(true, false), { available: false, error: GENERATION_PENDING });
@@ -2530,6 +2536,7 @@ test("Generate freezes Essentials and queues one composed skill invocation", asy
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries, templates));
     const prompts = [];
@@ -2616,6 +2623,7 @@ test("Generate accepts another Canvas ID only after matching files and provenanc
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(dirname(skill), { recursive: true });
     await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
     const model = await loadDesignerSettings(workspace, handoff,
         await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
     const prompts = [];
@@ -2762,6 +2770,7 @@ test("Generate accepts a saved Designer draft larger than 16KB", async (t) => {
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
     const prompts = [];
     const shell = await startShell(handoff, saved, { project, workspace,
         session: { send: async (value) => prompts.push(value.prompt) } });
@@ -2831,6 +2840,42 @@ test("missing Generate skill disables the button and reports a repair path witho
     const uniqueState = await (await fetch(stateUrl)).json();
     assert.equal(uniqueState.generationAvailable, false);
     assert.equal(uniqueState.generationError, state.generationError);
+});
+
+test("an older Generate-only package cannot dispatch a combined Generate and Open turn", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+    handoff.sourceFingerprint = fingerprint({ workflow: handoff.workflow, selections: handoff.selections });
+    await saveHandoff(workspace, handoff);
+    const { project, entries } = await projectFixture(t, workspace);
+    const generateSkill = join(project, ".github", "skills",
+        "speckit-extension-canvas-design-generate", "SKILL.md");
+    await mkdir(dirname(generateSkill), { recursive: true });
+    await writeFile(generateSkill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    const model = await loadDesignerSettings(workspace, handoff,
+        await loadResolvedDesignerPages(handoff, project, entries, await stockTemplates(project)));
+    const prompts = [];
+    const shell = await startShell(handoff, model, { project, workspace,
+        session: { send: async ({ prompt }) => prompts.push(prompt) } });
+    t.after(() => shell.close());
+    const url = new URL(shell.url);
+    const stateUrl = new URL(url);
+    stateUrl.pathname = "/api/state";
+    const state = await (await fetch(stateUrl)).json();
+    assert.equal(state.generationAvailable, false);
+    assert.match(state.generationError, /does not provide separate Generate and Open commands/);
+    const generateUrl = new URL(url);
+    generateUrl.pathname = "/api/generate";
+    const response = await fetch(generateUrl, { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelRevision: model.revision, settingsRevision: 0,
+            values: { ...model.values, "canvas.id": "my-canvas",
+                "canvas.displayName": "My Canvas" } }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, state.generationError);
+    assert.equal(prompts.length, 0);
 });
 
 test("malformed raw request targets return 404 without stopping the shell", async (t) => {
@@ -3670,6 +3715,7 @@ test("named value sources freeze typed values and run from a portable canvas wit
         "speckit-extension-canvas-design-generate", "SKILL.md");
     await mkdir(join(project, ".github", "skills", "speckit-extension-canvas-design-generate"));
     await writeFile(skill, "---\nname: speckit-extension-canvas-design-generate\n---\n");
+    await installOpenSkill(project);
     const prompts = [];
     const shell = await startShell(handoff, overridden, { project, workspace,
         session: { send: async ({ prompt }) => prompts.push(prompt) } });
