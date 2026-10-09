@@ -140,7 +140,9 @@ it follows the system contrast preference until explicitly changed. There is
 no Designer color preview or contrast warning. The Designer connection pill
 reports Live when the current provider responds and Disconnected when a
 bounded health check fails; the check does not replace the panel or discard
-unsaved drafts. The 10-second liveness probe fetches a small authenticated
+unsaved drafts. A transient interruption notice clears when the connection
+recovers, without clearing unrelated errors or queued-generation guidance.
+The 10-second liveness probe fetches a small authenticated
 stylesheet; every sixth probe also refreshes the full generation availability
 state. The server remains authoritative at Generate if availability changes
 between polls. If the provider URL is dead, closing and reopening the panel

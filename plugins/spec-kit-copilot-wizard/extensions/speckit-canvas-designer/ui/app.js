@@ -495,7 +495,8 @@ async function checkConnection() {
                 updateGenerate();
             }
             connectionStatus("live");
-            if (connectionError && errorBox.textContent === connectionError) showError("");
+            if (connectionError && generationNote.textContent === connectionError)
+                setMessage(generationNote, "");
             connectionError = "";
         }
     } catch (error) {

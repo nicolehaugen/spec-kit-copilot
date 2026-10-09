@@ -235,16 +235,25 @@ test("Designer health check reports failed and restored connections without repl
     assert.match(generationNote.textContent, /connection interrupted.*503.*Unsaved edits remain/);
     assert.match(generationNote.textContent, /restart Designer \(close this panel and open Designer again\)/);
     assert.equal(draft["canvas.displayName"], "Unsaved title");
+    errorBox.textContent = "Unrelated field error";
     response = { ok: true, json: async () => ({ generationAvailable: true, generationError: null }) };
     await check();
     assert.equal(status.textContent, "Live");
-    assert.equal(errorBox.textContent, "");
+    assert.equal(generationNote.textContent, "");
+    assert.equal(generationNote.hidden, true);
+    assert.equal(errorBox.textContent, "Unrelated field error");
     assert.equal(reloaded, false);
     setQueued("first-canvas");
     response = { ok: false, status: 503 };
     await check();
     assert.equal(status.textContent, "Disconnected");
-    assert.equal(errorBox.textContent, "");
+    assert.equal(errorBox.textContent, "Unrelated field error");
+    assert.equal(generationNote.textContent, generationGuidance);
+    response = { ok: true, json: async () => ({
+        generationAvailable: false, generationError: GENERATION_PENDING,
+    }) };
+    await check();
+    assert.equal(status.textContent, "Live");
     assert.equal(generationNote.textContent, generationGuidance);
 });
 
