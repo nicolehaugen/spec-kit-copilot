@@ -343,8 +343,9 @@ provided root. The identity and version must be direct literal `export const`
 declarations so Designer can check them without executing preset code in Node;
 the browser also checks the loaded adapter before mounting it. It reports the
 **complete** structured `inputs` object through
-`onChange`. The host passes a detached input snapshot; changing that object
-does not change the draft. Adapters must send a complete replacement after
+`onChange`. The host passes detached snapshots of the rule, inputs, phases,
+and confirmed outputs; mutating them does not change host-owned state.
+Adapters must send a complete replacement after
 initializing defaults and after each edit. Missing or partial callback payloads
 are rejected, and a failed adapter import is reported in its badge editor
 without preventing other Designer pages from loading. A failing readiness or

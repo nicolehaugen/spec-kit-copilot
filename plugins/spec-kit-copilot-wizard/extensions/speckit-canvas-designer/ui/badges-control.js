@@ -356,8 +356,9 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const editorPending = pending;
         const editorRenderId = renderId;
         try {
-            control = controlMount?.({ root: controlRoot, rule, inputs: structuredClone(pending.inputs),
-                phases, outputs, onChange(nextInputs) {
+            control = controlMount?.({ root: controlRoot, rule: structuredClone(rule),
+                inputs: structuredClone(pending.inputs), phases: structuredClone(phases),
+                outputs: structuredClone(outputs), onChange(nextInputs) {
                     if (renderId !== editorRenderId || pending !== editorPending) return;
                     if (!hasDeclaredInputs(nextInputs)) {
                         revealError("Badge control returned inputs that do not match its rule.");

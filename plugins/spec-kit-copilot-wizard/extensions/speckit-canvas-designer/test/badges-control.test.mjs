@@ -123,22 +123,37 @@ test("host accepts a custom input control without rendering rule-specific inputs
     } finally { cleanup(); }
 });
 
-test("host ignores direct input mutation and rejects missing or partial control updates", () => {
+test("host isolates adapter data and rejects missing or partial control updates", () => {
     let update;
+    const phases = ["specify", "plan"];
+    const outputs = {
+        specify: { outputs: ["other.md", "spec.md"], view: "spec.md" },
+        plan: { outputs: ["plan.md"], view: "plan.md" },
+    };
+    const badgeRules = [{ id: "custom", inputs: [{ id: "phase", type: "phase" },
+        { id: "text", type: "text" }] }];
     const { root, draftBadges, cleanup } = setup({
+        phases, outputs, badgeRules,
         badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
             defaultText: "Ready", defaultColor: "green", enabled: true }],
-        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" },
-            { id: "text", type: "text" }] }],
-        controlMount({ inputs, onChange }) {
+        controlMount({ rule, inputs, phases: choices, outputs: evidence, onChange }) {
             inputs.phase = "specify";
             inputs.text = "mutated";
+            rule.inputs[0].id = "other";
+            rule.inputs.push({ id: "extra", type: "text" });
+            choices.splice(0, choices.length);
+            evidence.specify.outputs.splice(0, evidence.specify.outputs.length);
+            evidence.specify.view = "removed.md";
             update = onChange;
             return { isReady: () => true };
         },
     });
     try {
         const editor = choose(root);
+        assert.deepEqual(badgeRules[0].inputs.map(({ id }) => id), ["phase", "text"]);
+        assert.deepEqual(phases, ["specify", "plan"]);
+        assert.deepEqual(outputs.specify,
+            { outputs: ["other.md", "spec.md"], view: "spec.md" });
         update();
         assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
             /do not match its rule/);
@@ -152,6 +167,7 @@ test("host ignores direct input mutation and rejects missing or partial control 
         replacement.text = "mutated afterward";
         submit(editor);
         assert.deepEqual(draftBadges[0].inputs, { phase: "plan", text: "valid" });
+        assert.deepEqual(outputs.specify.outputs, ["other.md", "spec.md"]);
     } finally { cleanup(); }
 });
 
