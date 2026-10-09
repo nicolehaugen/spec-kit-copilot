@@ -191,6 +191,13 @@ placements fail validation before generation. The separate badge capability
 evaluates frozen adapters against declared evidence, computes per-workflow
 matches and matching-workflow summary counts, and passes presentation-ready
 results to the page. The page does not read files or decide badge outcomes.
+The host-to-Workflow-page state requires a boolean `model.userProvidesSlug`
+(except before the first model arrives), matching the boolean
+`phaseState.slugEditable` passed to the phase control. False hides custom slug
+entry and leaves a pending `<slug>` output unresolved until Specify runs; true
+shows optional slug entry and previews an output only when a valid slug is
+entered. The generated host validates these fields before mounting or updating
+adapters and rejects missing, non-boolean, or conflicting values.
 The opt-in Phase artifact complete rule reads metadata for one target output
 and zero or more selected earlier outputs, comparing adjacent modification
 times in workflow order; it does not depend on phase-run status.

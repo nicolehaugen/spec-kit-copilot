@@ -1053,7 +1053,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.equal(added.status, 200);
     const created = await added.json();
     const pending = await (await fetch(new URL(`/api/state?token=${token}`, opened.url))).json();
-    assert.equal(pending.items.find((item) => item.id === created.id).slug, "workflow-1");
+    assert.equal(pending.items.find((item) => item.id === created.id).slug, "");
     const removed = await request("/api/workflow/pending/remove",
         { itemId: created.id, revision: pending.revision });
     assert.equal(removed.status, 200);
@@ -1618,8 +1618,7 @@ test("legacy result state stays on disk but is not evaluated or shown", async (t
     await mkdir(join(project, ".specify", "memory"), { recursive: true });
     await writeFile(join(project, ".specify", "memory", "constitution.md"), "# Existing principles\n");
     await runtime.save({ revision: 0, selected: "__new__" });
-    const run = await runtime.run({ phase: "specify", itemId: "__new__", args: "Feature",
-        slug: "legacy-feature" }, "panel-legacy");
+    const run = await runtime.run({ phase: "specify", itemId: "__new__", args: "Feature" }, "panel-legacy");
     events = [
         { type: "user.message", data: { messageId: "message-legacy", interactionId: "interaction-legacy" } },
         { type: "assistant.turn_start", data: { interactionId: "interaction-legacy", turnId: "turn-legacy" } },

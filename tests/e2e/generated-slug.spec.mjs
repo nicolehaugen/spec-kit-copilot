@@ -660,7 +660,7 @@ test("generated page selection ignores stale imports and async renderers", async
 });
 
 test("new workflow run follows its confirmed slug and blocks deletion while active", async () => {
-    const canvas = await openGeneratedCanvas(false);
+    const canvas = await openGeneratedCanvas(true);
     try {
         const skill = join(canvas.root, ".github", "skills", "speckit-specify");
         await mkdir(skill, { recursive: true });
@@ -702,7 +702,11 @@ test("enabled slug previews the View target folder and persists across phases", 
         await expect(page.locator("#workflow-list")).toBeVisible();
         await page.locator("#new-workflow").click();
         const target = page.locator("#browse-output-folder");
-        await expect(target.locator("code")).toHaveText("specs/workflow-1/spec.md");
+        await expect(page.locator("#workflow-slug")).toBeVisible();
+        await expect(page.locator("#workflow-slug")).toHaveValue("");
+        await expect(page.locator("#phase-output-prompt")).toHaveText(
+            "Choose an artifact folder name to preview the output path.");
+        await expect(target).toBeHidden();
         await page.locator("#workflow-name").fill("Customer dashboard");
         await expect(page.locator("#workflow-name")).toHaveValue("Customer dashboard");
         await expect(page.locator("#feature-select")).toHaveCount(0);
@@ -791,21 +795,22 @@ test("failed New creation leaves the list intact and can be retried explicitly",
     }
 });
 
-test("legacy disabled slug option still previews the required artifact folder", async ({ page }) => {
+test("disabled custom slugs leave the artifact directory unresolved until Specify runs", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
         await page.goto(canvas.url);
         await page.locator("#new-workflow").click();
         await expect(page.locator("#workflow-name")).toBeVisible();
-        await expect(page.locator("#workflow-slug")).toBeVisible();
-        await expect(page.locator("#workflow-slug")).toHaveValue("workflow-1");
+        await expect(page.locator("#workflow-slug")).toBeHidden();
         await expect(page.locator("#constitution-card")).toHaveCount(0);
         expect(await page.evaluate(() => {
             const collection = document.querySelector("#instance-collection").getBoundingClientRect();
             const navigation = document.querySelector("#phase-navigation").getBoundingClientRect();
             return navigation.top - collection.bottom;
         })).toBeLessThanOrEqual(28);
-        await expect(page.locator("#browse-output-folder code")).toHaveText("specs/workflow-1/spec.md");
+        await expect(page.locator("#phase-output-prompt")).toHaveText(
+            "Run the phase to resolve the output path.");
+        await expect(page.locator("#browse-output-folder")).toBeHidden();
     } finally {
         await canvas.close();
     }
@@ -1120,7 +1125,8 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await expect(page.locator("#mobile-phase-select")).toBeHidden();
         await page.locator("#new-workflow").click();
         await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
-        await expect(page.locator("#workflow-slug")).toHaveValue("workflow-1");
+        await expect(page.locator("#workflow-slug")).toBeVisible();
+        await expect(page.locator("#workflow-slug")).toHaveValue("");
         await expect(page.locator("#run-phase")).toBeDisabled();
         await page.locator('[data-phase-index="3"]').click();
         await expect(page.locator("#next-phase")).toHaveText("Next: Create issues ▶");
@@ -1129,7 +1135,7 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await mkdir(join(canvas.root, ".specify", "memory"), { recursive: true });
         await writeFile(join(canvas.root, ".specify", "memory", "constitution.md"), "# Constitution");
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#constitution-status")).toHaveText("Available");
+        await expect(page.locator("#constitution-status")).toBeHidden();
         await expect(page.locator("#constitution-prerequisite")).toBeHidden();
         await expect(page.locator("#view-constitution")).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

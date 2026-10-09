@@ -1,7 +1,8 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
 const { mountPageAssets, createStockImageRenderer } = await import(
     `./page-assets.mjs${new URL(import.meta.url).search}`);
-const { validatePhaseAdapter, validatePhaseMount } = await import(
+const { validatePhaseAdapter, validatePhaseMount, validatePhaseState,
+    validateWorkflowPageState } = await import(
     `/contracts/host-adapter.mjs${new URL(import.meta.url).search}`);
 const token = new URL(location.href).searchParams.get("token");
 const imageRegistration = document.getElementById("stock-image-registration");
@@ -784,11 +785,12 @@ function pendingLabel(step) {
 }
 function renderStatus() {
     if (workflowPage) {
-        workflowPage.update({ model: structuredClone(model), phaseState: phaseState(pendingLabel),
+        workflowPage.update(validateWorkflowPageState({ model: structuredClone(model),
+            phaseState: phaseState(pendingLabel),
             pendingLabel, sending, setupBusy, inputPending: Boolean(timer),
             slugTouched, slugError: slugError(),
             valueDrafts: Object.fromEntries([...failedValueDrafts, ...pendingFieldDrafts]
-                .map(([id, draft]) => [id, draft.value])) });
+                .map(([id, draft]) => [id, draft.value])) }));
         return;
     }
     function artifactAction(buttonId, noticeId, status) {
@@ -801,7 +803,7 @@ function renderStatus() {
             notice.hidden = !notice.textContent;
         }
     }
-    phaseControl?.update(phaseState(pendingLabel));
+    phaseControl?.update(validatePhaseState(phaseState(pendingLabel)));
     const setupPending = model.showSetup && !model.setup?.ready;
     const idle = !hasSelectedWorkflow();
     $("workflow-pipeline").querySelectorAll("[data-phase-index]").forEach((button) => {
@@ -1316,6 +1318,7 @@ try {
     const { controlId } = adapter;
     const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
     const mountPhase = (root, initialState) => {
+        validatePhaseState(initialState);
         phaseControl = mount({ root,
         definition: { id: controlId, viewLabels: JSON.parse(pipelineRoot.dataset.viewLabels) },
         state: initialState,
@@ -1363,7 +1366,7 @@ try {
         workflow: "__new__", status: null, draft: "",
         output: initialPhases[0]?.output ?? null, outputLinks: [],
         badgeSlots: phaseBadgeSlots, badgeModels: [],
-        slugEditable: Boolean($("workflow-slug")), sending: false, statuses: {}, autopilot: null,
+        slugEditable: false, sending: false, statuses: {}, autopilot: null,
         setupPending: false,
     };
     if (workflowRoot.dataset.pageModule) {
@@ -1374,7 +1377,7 @@ try {
         }
         workflowPage = await pageModule.mount({
             root: workflowRoot, definition: JSON.parse(workflowRoot.dataset.pageDefinition),
-            state: { model: null, phaseState: initialState },
+            state: validateWorkflowPageState({ model: null, phaseState: initialState }),
             actions: {
                 selectWorkflow: (id) => { requireModel(); return selectFeature(id); },
                 createWorkflow: async () => {

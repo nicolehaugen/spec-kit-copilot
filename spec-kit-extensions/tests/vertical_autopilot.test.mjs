@@ -38,7 +38,7 @@ async function setup(t, vertical = true, phaseDialogs = []) {
     const stateFile = join(root, "generated-canvases",
         createHash("sha256").update(JSON.stringify([project, "test-autopilot"])).digest("hex"), "state.json");
     const options = { config: {
-        canvas: { id: "test-autopilot" }, phases: ["specify", "plan"],
+        canvas: { id: "test-autopilot" }, userProvidesSlug: true, phases: ["specify", "plan"],
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
             plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
         ...(phaseDialogs.length ? { phaseDialogs } : {}),
