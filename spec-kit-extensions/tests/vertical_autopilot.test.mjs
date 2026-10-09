@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-async function setup(t, vertical = true, phaseDialogs = []) {
+async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = true) {
     const root = await mkdtemp(join(tmpdir(), "vertical-autopilot-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const target = join(root, "generated");
@@ -38,7 +38,7 @@ async function setup(t, vertical = true, phaseDialogs = []) {
     const stateFile = join(root, "generated-canvases",
         createHash("sha256").update(JSON.stringify([project, "test-autopilot"])).digest("hex"), "state.json");
     const options = { config: {
-        canvas: { id: "test-autopilot" }, phases: ["specify", "plan"],
+        canvas: { id: "test-autopilot" }, userProvidesSlug, phases: ["specify", "plan"],
         phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
             plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
         ...(phaseDialogs.length ? { phaseDialogs } : {}),
@@ -101,6 +101,7 @@ test("vertical Autopilot starts first, verifies each artifact and refuses skippe
     const { autopilotId } = await startNewAutopilot(runtime);
     assert.equal(sent[0].agentMode, "autopilot");
     assert.match(sent[0].prompt, /beginning with step 0/);
+    assert.match(sent[0].prompt, /Requested artifact folder name \(slug\): "demo"\./);
     await assert.rejects(runtime.reportAutopilotStep(
         { autopilotId, phase: "plan", action: "start" }, "panel"), /configured order/);
     const { phaseRunId } = await runtime.reportAutopilotStep(
@@ -123,6 +124,19 @@ test("vertical Autopilot starts first, verifies each artifact and refuses skippe
     assert.equal(session.mode, "interactive");
     await assert.rejects(runtime.reportAutopilotStep(
         { autopilotId, phase: "plan", action: "start" }, "panel"), /inactive/);
+});
+
+test("Autopilot omits an empty slug request in both custom and automatic modes", async (t) => {
+    for (const enabled of [true, false]) {
+        await t.test(enabled ? "custom slug left blank" : "automatic slug", async (child) => {
+            const { runtime, sent } = await setup(child, true, [], enabled);
+            const { id } = await runtime.createPending({ revision: (await runtime.snapshot()).revision });
+            await runtime.startAutopilot({ itemId: id }, "panel");
+            assert.doesNotMatch(sent[0].prompt, /Requested artifact folder name \(slug\):/);
+            assert.match(sent[0].prompt, /report_workflow_slug \(new workflow only\)/);
+            assert.match(sent[0].prompt, /For subsequent steps use the actual feature directory/);
+        });
+    }
 });
 
 test("concurrent Autopilot reports cannot start twice or skip a step", async (t) => {

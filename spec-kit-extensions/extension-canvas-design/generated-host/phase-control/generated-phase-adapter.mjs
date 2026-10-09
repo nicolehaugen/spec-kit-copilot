@@ -137,10 +137,12 @@ export function mount({ root, definition, state, actions }) {
         const output = next.output ?? "No file output";
         const browse = $("#browse-output-folder");
         browse.querySelector("code").textContent = output;
-        const needsSlug = next.workflow === "__new__" && next.slugEditable
-            && next.output?.includes("<slug>");
+        const needsSlug = next.workflow === "__new__" && next.output?.includes("<slug>");
         $("#phase-output-default").hidden = !next.output || needsSlug;
         $("#phase-output-prompt").hidden = !needsSlug;
+        $("#phase-output-prompt").textContent = next.slugEditable
+            ? "Choose an artifact folder name to preview the output path."
+            : "Run the phase to resolve the output path.";
         browse.hidden = needsSlug;
         if (badgeSlots.has("phase.output")) {
             const viewBadges = $("#phase-view-badges");

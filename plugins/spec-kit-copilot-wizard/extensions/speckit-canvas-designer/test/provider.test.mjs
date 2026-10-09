@@ -619,7 +619,7 @@ async function stockTemplates(project) {
         "designer-host", "essentials-settings");
     await mkdir(directory, { recursive: true });
     const templates = [];
-    for (const name of ["description", "workflow-heading"]) {
+    for (const name of ["description", "workflow-heading", "custom-slug"]) {
         const path = join(directory, `${name}.json`);
         await copyFile(join(source, "designer-host", "essentials-settings", `${name}.json`), path);
         templates.push({ name: `designer-essentials-${name}`, path,
@@ -880,6 +880,39 @@ test("stock image picker announces its format hint and upload error", async (t) 
     const hint = root.children[4];
     assert.equal(hint.textContent, "PNG or JPEG, up to 32 KiB.");
     assert.equal(input.getAttribute("aria-describedby"), `${hint.id} ${error.id}`);
+});
+
+test("stock checkboxes display their JSON help below the label", async (t) => {
+    const previousDocument = globalThis.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const element = () => ({
+        children: [], attributes: new Map(), events: {},
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        getAttribute(name) { return this.attributes.get(name); },
+        addEventListener(name, callback) { this.events[name] = callback; },
+        replaceChildren(...children) { this.children = children; },
+    });
+    globalThis.document = { createElement: element };
+    const { mount } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/shared-controls/stock-checkbox/designer.mjs",
+        import.meta.url));
+    const source = new URL("../../../../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/",
+        import.meta.url);
+    for (const file of ["custom-slug.json", "show-setup.json"]) {
+        const { field } = JSON.parse(await readFile(new URL(file, source), "utf8"));
+        const root = element();
+        let nextValue;
+        mount({ root, field: { ...field, validation: { type: "boolean" } },
+            value: false, onChange: (value) => { nextValue = value; } });
+        const [input, label, hint] = root.children;
+        assert.equal(label.textContent, field.label);
+        assert.equal(hint.className, "settings-hint");
+        assert.equal(hint.textContent, field.description);
+        assert.equal(input.getAttribute("aria-describedby"), hint.id);
+        input.checked = true;
+        input.events.input();
+        assert.equal(nextValue, true);
+    }
 });
 
 test("Designer tabs remain navigable when a field adapter is not ready", async () => {
@@ -1392,7 +1425,7 @@ test("stock image requires one compatible control definition and paired self-con
         ? { ...entry, strategy: "append" } : entry)), /Invalid or duplicate Canvas Design template/);
 });
 
-test("stock contributions retain the four-field layout and minimal replaced Essentials generate defaults", async (t) => {
+test("stock contributions retain the optional slug setting and minimal replaced Essentials generate defaults", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
@@ -1403,14 +1436,23 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const { project, entries } = await projectFixture(t, workspace);
     const templates = await stockTemplates(project);
     const full = await loadResolvedDesignerPages(handoff, project, entries, templates);
+    assert.equal(full.pages[0].description, "Configure settings for your generated canvas app.");
     assert.deepEqual(full.pages[0].fields.map(({ id, label }) => [id, label]), [
         ["canvas.id", "Canvas ID"], ["canvas.displayName", "Title"],
         ["canvas.description", "Description"], ["canvas.workflowListName", "Workflow header"],
+        ["workflowSlug.userProvided", "Allow custom artifact directory slug"],
     ]);
-    assert.equal(Object.hasOwn(full.values, "workflowSlug.userProvided"), false);
+    const essentials = new Map(full.pages[0].fields.map(({ id, description }) => [id, description]));
+    assert.ok([...essentials.values()].every((description) => typeof description === "string"
+        && description.trim()), "Every Essentials field has help text from its JSON definition");
+    assert.match(essentials.get("canvas.id"), /Windows device names like con and com1/);
+    assert.match(essentials.get("canvas.displayName"), /1–120 characters/);
+    assert.match(essentials.get("canvas.description"), /240 characters/);
+    assert.match(essentials.get("canvas.workflowListName"), /80 characters/);
+    assert.equal(full.values["workflowSlug.userProvided"], false);
     const values = { ...full.values, "canvas.id": "stock-canvas",
         "canvas.displayName": "Stock Canvas", "canvas.description": "Stock description",
-        "canvas.workflowListName": "Stock heading" };
+        "canvas.workflowListName": "Stock heading", "workflowSlug.userProvided": true };
     await assert.rejects(freezeGeneration({ model: full, values, project, workspace,
         handoff: { ...handoff, workflow: { ...handoff.workflow, installed: {
             ...handoff.workflow.installed, presets: [{ id: "local-runtime", source: "local",
@@ -1450,6 +1492,7 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     assert.deepEqual(config.canvas, { id: "stock-canvas", displayName: "Stock Canvas",
         description: "Stock description", workflowListName: "Stock heading" });
     assert.equal(config.userProvidesSlug, true);
+    assert.equal(phaseRequest.values["workflowSlug.userProvided"], true);
 
     for (const [id, description, heading, expectedDescription, expectedHeading] of [
         ["blank-stock", "   ", "  ", "Spec Kit workflow canvas.", "Workflows"],
@@ -1482,13 +1525,13 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const defaults = JSON.parse(await readFile(join(project, next.target, "canvas-config.json"), "utf8"));
     assert.equal(defaults.canvas.description, "Spec Kit workflow canvas.");
     assert.equal(defaults.canvas.workflowListName, "Workflows");
-    assert.equal(defaults.userProvidesSlug, true);
+    assert.equal(defaults.userProvidesSlug, false);
     const { renderHtml } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/server.mjs",
         import.meta.url));
     const defaultHtml = renderHtml(defaults);
     assert.match(defaultHtml, /Workflows/);
     assert.match(defaultHtml, /Spec Kit workflow canvas\./);
-    assert.match(stockMarkup(defaults), /id="workflow-slug"[^>]+required/);
+    assert.match(stockMarkup(defaults), /id="workflow-slug"[^>]+maxlength="100"/);
     assert.equal(await readFile(join(project, next.target, "ui", "runtime.css"), "utf8"),
         await readFile(join(project, prepared.target, "ui", "runtime.css"), "utf8"));
     const originalPages = await Promise.all(entries.slice(0, 2)

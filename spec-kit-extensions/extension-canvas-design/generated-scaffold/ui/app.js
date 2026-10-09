@@ -1,7 +1,8 @@
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
 const { mountPageAssets, createStockImageRenderer } = await import(
     `./page-assets.mjs${new URL(import.meta.url).search}`);
-const { validatePhaseAdapter, validatePhaseMount } = await import(
+const { validatePhaseAdapter, validatePhaseMount, validatePhaseState,
+    validateWorkflowPageState } = await import(
     `/contracts/host-adapter.mjs${new URL(import.meta.url).search}`);
 const token = new URL(location.href).searchParams.get("token");
 const imageRegistration = document.getElementById("stock-image-registration");
@@ -222,7 +223,7 @@ const selectedPending = () => model?.items.some((entry) => entry.id === model.se
 const hasSelectedWorkflow = () => model?.items.some((entry) => entry.id === model.selected);
 function slugError() {
     const value = model?.slug ?? "";
-    if (!value) return "Enter an artifact folder name (slug) before creating a workflow.";
+    if (!value) return "";
     if (value.length > 100 || !slugPattern.test(value) || reservedSlug.test(value)) {
         return "Use lowercase letters, numbers, and single hyphens; avoid reserved folder names.";
     }
@@ -745,7 +746,7 @@ function phaseState(pendingLabel = () => null) {
     const status = selected ? model?.statuses[selected.id] : null;
     const item = model?.items.find((entry) => entry.id === model.selected);
     const pending = Boolean(item?.pending || model?.selected === "__new__");
-    const slug = item?.slug ?? (pending ? model.slug : "");
+    const slug = pending && !model?.userProvidesSlug ? "" : item?.slug ?? (pending ? model.slug : "");
     const resolveOutput = (output) => slug && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)
         && (!pending || !slugError())
         ? output?.replace("<slug>", slug) : output;
@@ -784,11 +785,12 @@ function pendingLabel(step) {
 }
 function renderStatus() {
     if (workflowPage) {
-        workflowPage.update({ model: structuredClone(model), phaseState: phaseState(pendingLabel),
+        workflowPage.update(validateWorkflowPageState({ model: structuredClone(model),
+            phaseState: phaseState(pendingLabel),
             pendingLabel, sending, setupBusy, inputPending: Boolean(timer),
             slugTouched, slugError: slugError(),
             valueDrafts: Object.fromEntries([...failedValueDrafts, ...pendingFieldDrafts]
-                .map(([id, draft]) => [id, draft.value])) });
+                .map(([id, draft]) => [id, draft.value])) }));
         return;
     }
     function artifactAction(buttonId, noticeId, status) {
@@ -801,7 +803,7 @@ function renderStatus() {
             notice.hidden = !notice.textContent;
         }
     }
-    phaseControl?.update(phaseState(pendingLabel));
+    phaseControl?.update(validatePhaseState(phaseState(pendingLabel)));
     const setupPending = model.showSetup && !model.setup?.ready;
     const idle = !hasSelectedWorkflow();
     $("workflow-pipeline").querySelectorAll("[data-phase-index]").forEach((button) => {
@@ -813,12 +815,13 @@ function renderStatus() {
         const status = model.statuses[constitution().id];
         artifactAction("view-constitution", "constitution-artifact-status", status);
         const available = status?.artifactAvailability === "available";
-        const statusText = available ? "Available" : status?.artifactAvailability === "error"
+        const statusText = available ? "" : status?.artifactAvailability === "error"
             ? "Unavailable" : status?.status === "Not run" ? "Needed before starting a workflow"
                 : status?.status ?? "Checking...";
         const card = $("constitution-card");
         card.classList.toggle("constitution-ready", available);
         $("constitution-status").textContent = statusText;
+        $("constitution-status").hidden = !statusText;
         $("run-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update" : "Create constitution");
         $("send-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update constitution" : "Create constitution");
         $("run-constitution").disabled = setupPending;
@@ -829,7 +832,7 @@ function renderStatus() {
         $("constitution-args").required = !available;
     }
     const input = $("workflow-slug");
-    if (input && selectedPending()) {
+    if (input && selectedPending() && model.userProvidesSlug) {
         const error = slugTouched && input.value.trim() ? slugError() : "";
         $("workflow-slug-error").textContent = error;
         $("workflow-slug-error").hidden = !error;
@@ -844,6 +847,7 @@ function renderPhase() {
 function renderSlug() {
     const input = $("workflow-slug");
     if (!input) return;
+    input.closest(".field").hidden = !model.userProvidesSlug;
     const first = creationPhase();
     const status = model.items.find((entry) => entry.id === model.selected)?.status;
     input.readOnly = !selectedPending()
@@ -851,7 +855,6 @@ function renderSlug() {
         || Boolean(sending && sending.phase === first?.id)
         || ["Request sent", "Running"].includes(model.statuses[first?.id]?.status);
     input.placeholder = input.readOnly ? "Automatically assigned" : "workflow-1";
-    $("workflow-slug-label").querySelector(".muted").hidden = input.readOnly;
     if (document.activeElement !== input && !timer) {
         input.value = selectedPending() ? model.slug
             : model.items.find((entry) => entry.id === model.selected)?.slug ?? "";
@@ -1132,7 +1135,7 @@ async function send(step, value, target = "phase-action-error") {
         await api("/api/run", { phase: step.id, args: value,
             ...(!step.project ? { itemId: model.selected,
                 ...(selectedPending() && model.name?.trim() ? { name: model.name.trim() } : {}),
-                ...(selectedPending() && $("workflow-slug") && model.slug ? { slug: model.slug } : {}) } : {}) },
+                ...(selectedPending() && model.userProvidesSlug && model.slug ? { slug: model.slug } : {}) } : {}) },
         { signal: runSignal });
         accepted = true;
         if (step.project) {
@@ -1315,6 +1318,7 @@ try {
     const { controlId } = adapter;
     const initialPhases = JSON.parse(pipelineRoot.dataset.phases);
     const mountPhase = (root, initialState) => {
+        validatePhaseState(initialState);
         phaseControl = mount({ root,
         definition: { id: controlId, viewLabels: JSON.parse(pipelineRoot.dataset.viewLabels) },
         state: initialState,
@@ -1362,7 +1366,7 @@ try {
         workflow: "__new__", status: null, draft: "",
         output: initialPhases[0]?.output ?? null, outputLinks: [],
         badgeSlots: phaseBadgeSlots, badgeModels: [],
-        slugEditable: Boolean($("workflow-slug")), sending: false, statuses: {}, autopilot: null,
+        slugEditable: false, sending: false, statuses: {}, autopilot: null,
         setupPending: false,
     };
     if (workflowRoot.dataset.pageModule) {
@@ -1373,7 +1377,7 @@ try {
         }
         workflowPage = await pageModule.mount({
             root: workflowRoot, definition: JSON.parse(workflowRoot.dataset.pageDefinition),
-            state: { model: null, phaseState: initialState },
+            state: validateWorkflowPageState({ model: null, phaseState: initialState }),
             actions: {
                 selectWorkflow: (id) => { requireModel(); return selectFeature(id); },
                 createWorkflow: async () => {

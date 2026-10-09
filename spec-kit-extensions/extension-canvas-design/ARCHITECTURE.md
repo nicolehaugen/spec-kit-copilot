@@ -85,7 +85,7 @@ The **Canvas Design Specify Extension** places its other stock options into an o
 | --- | --- | --- | --- |
 | `canvas.description` | Text | Collection description | Existing default description. |
 | `canvas.workflowListName` | Text | Collection heading | “Workflows.” |
-| `workflowSlug.userProvided` | Legacy frozen value | Accepted from older Designer handoffs; generated workflows now always require an artifact folder name (slug) | Ignored. |
+| `workflowSlug.userProvided` | Checkbox, default off | Allow an optional artifact directory slug for new workflows | Specify chooses the directory. |
 | **Upcoming:** `canvas.logo` | Image upload/preview | Header image | Existing brand mark. |
 | **Upcoming:** `setup.confirm` | Checkbox | Project-setup trigger | Automatic mode when portable setup exists. |
 
@@ -191,6 +191,13 @@ placements fail validation before generation. The separate badge capability
 evaluates frozen adapters against declared evidence, computes per-workflow
 matches and matching-workflow summary counts, and passes presentation-ready
 results to the page. The page does not read files or decide badge outcomes.
+The host-to-Workflow-page state requires a boolean `model.userProvidesSlug`
+(except before the first model arrives), matching the boolean
+`phaseState.slugEditable` passed to the phase control. False hides custom slug
+entry and leaves a pending `<slug>` output unresolved until Specify runs; true
+shows optional slug entry and previews an output only when a valid slug is
+entered. The generated host validates these fields before mounting or updating
+adapters and rejects missing, non-boolean, or conflicting values.
 The opt-in Phase artifact complete rule reads metadata for one target output
 and zero or more selected earlier outputs, comparing adjacent modification
 times in workflow order; it does not depend on phase-run status.
@@ -466,8 +473,9 @@ Core Essentials defines the required fields and a documented slot:
 
 The host sorts contributed settings by their `order`, then source ID and contribution ID for ties. A slot ID identifies the destination tab; it is not a control type.
 
-The generated workflow shell collects the required artifact folder name
-(slug). It is not a Designer field or a slot contribution.
+The generated workflow shell accepts an optional artifact folder name (slug)
+only when the Designer's `workflowSlug.userProvided` slot contribution is on.
+Without a supplied slug, Specify chooses the actual directory.
 
 Billing declares `billing.costCode` as a bounded string field with `control: "stock.text"` and a stock read-only generated binding. The base extension resolves `stock.text` and its Designer/generated adapters; Billing reuses those registrations without per-field adapter files. Each field's control ID selects exactly one resolved definition, with no separate contribution-level template dependency declaration; missing or duplicate definitions fail. Generate packages the winning generated adapter once. A **new** control such as the risk matrix in section 14 instead registers its own definition and paired adapters.
 

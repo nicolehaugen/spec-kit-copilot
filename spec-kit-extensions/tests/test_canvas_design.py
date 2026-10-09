@@ -44,7 +44,7 @@ FILES = {
     "schemas/generated.value-definition.schema.json",
     *(f"designer-host/tabs/{name}.json" for name in PAGE_NAMES),
     *(f"designer-host/essentials-settings/{name}.json" for name in (
-        "description", "workflow-heading", "show-setup", "header-logo", "main-page-logo",
+        "description", "workflow-heading", "custom-slug", "show-setup", "header-logo", "main-page-logo",
     )),
     *(f"designer-host/appearance-settings/{mode}-{color}.json"
       for mode in ("light", "dark")
@@ -139,7 +139,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             [(f"designer-{page}", f"designer-host/tabs/{filename}.json")
              for page, filename in zip(PAGE_IDS, PAGE_NAMES)]
             + [(f"designer-essentials-{filename}", f"designer-host/essentials-settings/{filename}.json")
-               for filename in ("description", "workflow-heading",
+               for filename in ("description", "workflow-heading", "custom-slug",
                                 "show-setup", "header-logo", "main-page-logo")]
             + [(f"designer-appearance-{mode}-{color}",
                 f"designer-host/appearance-settings/{mode}-{color}.json")
@@ -245,7 +245,8 @@ class CanvasDesignPackageTests(unittest.TestCase):
             self.pages[0]["fields"],
             [
                 {"id": "canvas.id", "label": "Canvas ID", "control": "stock.text", "description": "Use 1–100 characters: lowercase letters (a–z), numbers (0–9), and hyphens (-). Start with a letter or number. Reserved IDs, including Windows device names like con and com1, cannot be used."},
-                {"id": "canvas.displayName", "label": "Title", "control": "stock.text"},
+                {"id": "canvas.displayName", "label": "Title", "control": "stock.text",
+                 "description": "Enter a title of 1–120 characters for your canvas."},
             ],
         )
         stock = [json.loads((PACKAGE / f"designer-host/essentials-settings/{name}.json").read_text("utf-8"))

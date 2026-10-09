@@ -11,6 +11,6 @@
     "control": "stock.checkbox",
     "default": false,
     "label": "Show setup",
-    "description": "Show a setup-only view until the project and workflow runtime packages are ready."
+    "description": "Show a setup button for users to review and approve installation of required presets, extensions, and bundles. When off, nothing is installed automatically; install prerequisites another way before running workflows."
   }
 }
