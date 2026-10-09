@@ -652,8 +652,11 @@ declare a subset of supported badge destinations, and add slots; unsupported
 configured placements fail rather than disappearing. Existing generated apps
 with the older page definition keep their original presentation.
 When a configured badge targets the project Constitution card or output, the
-Workflow-page adapter must export `capabilities = ["workflow.badges.project.v1"]`
-and render `state.model.badges.project` at those destinations. Declaring
+Workflow-page adapter must begin with the literal line
+`export const capabilities = ["workflow.badges.project.v1"];` and render
+`state.model.badges.project` at those destinations. This first-line declaration
+is checked as text at Generate and materialization; the browser adapter is
+not executed in Node to inspect its exports. Declaring
 `phase.card` or `phase.output` in `badgeDestinations` alone does not promise
 project badge rendering. Designer Generate and frozen materialization reject
 project placements when a replacement adapter lacks this capability; adapters

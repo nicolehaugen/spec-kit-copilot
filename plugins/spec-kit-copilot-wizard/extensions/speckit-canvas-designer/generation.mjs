@@ -419,9 +419,9 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             throw new Error("Selected badge placement has no declared Workflow or phase control slot");
         }
         if (hasProjectTargets && workflowAdapter) {
-            const pageModule = await import(`data:text/javascript;base64,${workflowPage.assets[3].content}`);
-            if (!Array.isArray(pageModule.capabilities)
-                || !pageModule.capabilities.includes("workflow.badges.project.v1")) {
+            const pageSource = Buffer.from(workflowPage.assets[3].content, "base64").toString("utf8");
+            if (!/^export const capabilities = \["workflow\.badges\.project\.v1"\];(?:\r?\n|$)/
+                .test(pageSource)) {
                 throw new Error(`${workflowAdapter.name} does not support project badges; use a project-badge-capable Workflow page adapter or remove the project placement`);
             }
         }

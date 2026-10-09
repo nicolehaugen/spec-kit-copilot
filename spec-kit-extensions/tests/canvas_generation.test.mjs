@@ -479,7 +479,8 @@ test("selected badge definitions and evaluator are packaged without preset files
         entry.kind === "generated.workflow-page-adapter");
     const originalPage = await readFile(pageAdapter.path, "utf8");
     const withoutProject = originalPage.replace(
-        'export const capabilities = ["workflow.badges.project.v1"];', "");
+        'export const capabilities = ["workflow.badges.project.v1"];', "")
+        + '\nthrow new Error("Workflow page adapter ran in Node");\n';
     assert.notEqual(withoutProject, originalPage);
     await writeFile(pageAdapter.path, withoutProject);
     pageAdapter.hash = createHash("sha256").update(withoutProject).digest("hex");
@@ -504,6 +505,15 @@ test("selected badge definitions and evaluator are packaged without preset files
     await assert.rejects(materialize(project, workspace, handoff.handoffId,
         projectRequest.requestId), /Frozen Workflow page adapter does not support project badges/);
     await assert.rejects(readdir(join(project, projectRequest.target)), { code: "ENOENT" });
+    const browserOnly = `${originalPage}\nthrow new Error("Workflow page adapter ran in Node");\n`;
+    await writeFile(pageAdapter.path, browserOnly);
+    pageAdapter.hash = createHash("sha256").update(browserOnly).digest("hex");
+    const browserRequest = await freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "browser-only-page" },
+        handoff, outputs, badges: [projectBadge] });
+    await materialize(project, workspace, handoff.handoffId, browserRequest.requestId);
+    assert.match(await readFile(join(project, browserRequest.target, "pages",
+        "generated-workflow-page-adapter.mjs"), "utf8"), /Workflow page adapter ran in Node/);
 });
 
 test("Checklist complete freezes both confirmed outputs and rejects a reordered prerequisite", async (t) => {

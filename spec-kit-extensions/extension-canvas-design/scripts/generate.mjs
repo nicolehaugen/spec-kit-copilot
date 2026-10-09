@@ -1383,10 +1383,9 @@ export async function materialize(project, workspace, handoffId, requestId) {
             && badge.phase?.replace(/^speckit\./, "") === "constitution"
         || badge.targets?.some((target) =>
             target.phase.replace(/^speckit\./, "") === "constitution"))) {
-        const { capabilities } = await import(
-            `data:text/javascript;base64,${request.workflowPage.assets[3].content}`);
-        if (!Array.isArray(capabilities)
-            || !capabilities.includes("workflow.badges.project.v1")) {
+        const pageSource = Buffer.from(request.workflowPage.assets[3].content, "base64").toString("utf8");
+        if (!/^export const capabilities = \["workflow\.badges\.project\.v1"\];(?:\r?\n|$)/
+            .test(pageSource)) {
             throw new Error("Frozen Workflow page adapter does not support project badges");
         }
     }
