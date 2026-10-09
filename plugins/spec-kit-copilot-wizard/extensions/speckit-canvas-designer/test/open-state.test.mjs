@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, open, readFile, rename, rm, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { loadLastOpen, saveLastOpen } from "../open-state.mjs";
+import { loadLastOpen, replaceLastOpen, saveLastOpen } from "../open-state.mjs";
 
 async function fixture(t) {
     const workspace = await mkdtemp(join(tmpdir(), "designer-open-"));
@@ -13,6 +13,22 @@ async function fixture(t) {
 
 const record = { handoffId: "handoff-1", pages: [], templates: [] };
 const inventory = (workspace) => join(workspace, "speckit-canvas-designer", "last-open.json");
+
+test("failed replacement restores the exact prior inventory, including invalid or missing records", async (t) => {
+    const workspace = await fixture(t);
+    const fail = async () => { throw new Error("Previous server could not close"); };
+    await assert.rejects(replaceLastOpen(workspace, record, fail, () => {}),
+        /Previous server could not close/);
+    assert.equal(await loadLastOpen(workspace), null);
+    await writeFile(inventory(workspace), "{invalid");
+    await assert.rejects(replaceLastOpen(workspace, record, fail, () => {}),
+        /Previous server could not close/);
+    assert.equal(await readFile(inventory(workspace), "utf8"), "{invalid");
+    await assert.rejects(replaceLastOpen(workspace, record, async () => {},
+        () => { throw new Error("Panel closed while opening"); }),
+    /Panel closed while opening/);
+    assert.equal(await readFile(inventory(workspace), "utf8"), "{invalid");
+});
 
 test("saved open inventory round-trips and rejects a file exceeding 1 MiB", async (t) => {
     const workspace = await fixture(t);

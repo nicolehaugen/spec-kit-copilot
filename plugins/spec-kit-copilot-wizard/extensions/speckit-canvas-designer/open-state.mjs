@@ -95,3 +95,37 @@ export async function saveLastOpen(workspace, input) {
         await rm(temporary, { force: true });
     }
 }
+
+export async function replaceLastOpen(workspace, input, prepare, install) {
+    const path = await statePath(workspace);
+    const backup = join(dirname(path), `last-open-${randomUUID()}.backup`);
+    let backedUp = false;
+    try {
+        await rename(path, backup);
+        backedUp = true;
+    } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+    }
+    try {
+        await saveLastOpen(workspace, input);
+        await prepare();
+        const result = install();
+        if (backedUp) {
+            void rm(backup, { force: true }).catch((error) =>
+                process.emitWarning(`Could not remove saved Designer inventory backup: ${error.message}`));
+        }
+        return result;
+    } catch (error) {
+        try {
+            if (await realpath(dirname(path)) !== dirname(path)) {
+                throw new Error("Designer open inventory escapes session artifacts");
+            }
+            await rm(path, { force: true });
+            if (backedUp) await rename(backup, path);
+        } catch (rollbackError) {
+            throw new AggregateError([error, rollbackError],
+                "Could not restore saved Designer open inventory");
+        }
+        throw error;
+    }
+}

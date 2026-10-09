@@ -4361,7 +4361,13 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         export async function startShell(...args) {
             const shell = await actualStartShell(...args);
             if (globalThis.__pauseDesignerShell) await globalThis.__pauseDesignerShell(shell);
-            return shell;
+            return { ...shell, close: async () => {
+                if (globalThis.__failDesignerClose?.(shell)) {
+                    throw new Error("Previous Designer server could not close");
+                }
+                if (globalThis.__pauseDesignerClose) await globalThis.__pauseDesignerClose(shell);
+                return shell.close();
+            } };
         }
     `);
     const shared = join(workspace, "speckit-wizard-canvas", "env");
@@ -4396,6 +4402,14 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
                 log: async () => {} };
         };
     `);
+    const inventorySource = await readFile(join(extension, "open-state.mjs"), "utf8");
+    const stage = /await saveLastOpen\(workspace, input\);\r?\n(\s*)await prepare\(\);/;
+    assert.match(inventorySource, stage);
+    const eol = inventorySource.includes("\r\n") ? "\r\n" : "\n";
+    await writeFile(join(extension, "open-state.mjs"), inventorySource.replace(stage,
+        (_match, indent) => `await saveLastOpen(workspace, input);${eol}${indent}`
+            + `if (globalThis.__pauseDesignerInventory) await globalThis.__pauseDesignerInventory();`
+            + `${eol}${indent}await prepare();`));
     await import(pathToFileURL(join(extension, "extension.mjs")).href);
     const canvas = globalThis.__designerTestCanvas;
     delete globalThis.__designerTestCanvas;
@@ -4426,7 +4440,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             "generated.phase-dialog-binding", "generated.button-control-definition",
             "generated.button-adapter", "generated.button-placement"]);
 
-    let releaseShell;
+    let releaseShell, releaseOldClose, releaseInventory;
     try {
         await assert.rejects(readFile(join(extension, "node_modules", "es-module-lexer", "package.json")),
             { code: "ENOENT" });
@@ -4630,6 +4644,72 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         assert.equal((await nextSave.json()).settingsRevision, 2);
         assert.equal((await (await fetch(restoredUrl)).json()).values["canvas.id"], "second-designer");
 
+        const beforeReplacement = await readFile(lastOpen);
+        const raceId = "designer_2";
+        await saveHandoff(workspace, validHandoff(raceId));
+        globalThis.__failDesignerClose = (shell) => shell.url === restored.url;
+        await assert.rejects(canvas.open({ instanceId: "same", input: {
+            handoffId: raceId, pages: entries, templates: scalarFixtures.get(project),
+        } }), /Previous Designer server could not close/);
+        delete globalThis.__failDesignerClose;
+        assert.deepEqual(await readFile(lastOpen), beforeReplacement);
+        assert.equal((await fetch(restored.url)).status, 200);
+
+        let candidate;
+        globalThis.__pauseDesignerShell = async (shell) => { candidate = shell; };
+        const closingPrevious = new Promise((resolve) => {
+            globalThis.__pauseDesignerClose = async (shell) => {
+                if (shell.url !== restored.url) return;
+                resolve();
+                await new Promise((release) => { releaseOldClose = release; });
+            };
+        });
+        const late = canvas.open({ instanceId: "same", input: {
+            handoffId: raceId, pages: entries, templates: scalarFixtures.get(project),
+        } });
+        await closingPrevious;
+        assert.equal(JSON.parse(await readFile(lastOpen)).handoffId, raceId);
+        const waitingRestore = canvas.open({ instanceId: "waiting-restore", input: {} });
+        await canvas.onClose({ instanceId: "same" });
+        delete globalThis.__pauseDesignerClose;
+        delete globalThis.__pauseDesignerShell;
+        releaseOldClose();
+        releaseOldClose = null;
+        await assert.rejects(late, /panel closed while opening/);
+        assert.deepEqual(await readFile(lastOpen), beforeReplacement);
+        await assert.rejects(fetch(candidate.url));
+        await assert.rejects(fetch(restored.url));
+        const waiting = await waitingRestore;
+        const waitingState = new URL(waiting.url);
+        waitingState.pathname = "/api/state";
+        assert.equal((await (await fetch(waitingState)).json()).handoffId, ID);
+        await canvas.onClose({ instanceId: "waiting-restore" });
+
+        const prior = await canvas.open({ instanceId: "same", input: {} });
+        const beforeSaveRace = await readFile(lastOpen);
+        let savingCandidate;
+        globalThis.__pauseDesignerShell = async (shell) => { savingCandidate = shell; };
+        const saving = new Promise((resolve) => {
+            globalThis.__pauseDesignerInventory = async () => {
+                resolve();
+                await new Promise((release) => { releaseInventory = release; });
+            };
+        });
+        const interruptedSave = canvas.open({ instanceId: "same", input: {
+            handoffId: raceId, pages: entries, templates: scalarFixtures.get(project),
+        } });
+        await saving;
+        assert.equal(JSON.parse(await readFile(lastOpen)).handoffId, raceId);
+        await canvas.onClose({ instanceId: "same" });
+        delete globalThis.__pauseDesignerInventory;
+        delete globalThis.__pauseDesignerShell;
+        releaseInventory();
+        releaseInventory = null;
+        await assert.rejects(interruptedSave, /panel closed while opening/);
+        assert.deepEqual(await readFile(lastOpen), beforeSaveRace);
+        await assert.rejects(fetch(prior.url));
+        await assert.rejects(fetch(savingCandidate.url));
+
         const started = new Promise((resolve) => {
             globalThis.__pauseDesignerShell = async (shell) => {
                 resolve(shell);
@@ -4648,7 +4728,13 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         assert.equal((await fetch(reopenedAfterClose.url)).status, 200);
     } finally {
         releaseShell?.();
+        releaseOldClose?.();
+        releaseInventory?.();
         delete globalThis.__pauseDesignerShell;
+        delete globalThis.__pauseDesignerInventory;
+        delete globalThis.__pauseDesignerClose;
+        delete globalThis.__failDesignerClose;
+        await canvas.onClose({ instanceId: "waiting-restore" });
         await canvas.onClose({ instanceId: "closed-during-open" });
         await canvas.onClose({ instanceId: "same" });
     }

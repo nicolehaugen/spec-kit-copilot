@@ -251,6 +251,10 @@ successful handoff and revalidates its pages and templates, but starts a fresh
 editable form rather than rehydrating saved values.
 An invalid saved inventory or missing handoff fails explicitly rather than
 opening a blank shell; an explicit launch can repair the saved inventory.
+Replacement saves the new inventory only when the open succeeds; if closing
+the previous server fails or the panel closes while replacement is pending,
+the prior inventory is restored and the new shell is closed. A concurrent
+empty-input open waits for that decision rather than reading a staged record.
 Opening `speckit-canvas-designer` without input before any successful handoff
 launch still shows an empty shell. A different session cannot reuse this
 session's handoff or resolved inventory. Panels opened before this restore
