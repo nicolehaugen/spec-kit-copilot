@@ -17,6 +17,11 @@ independently packaged and validates request integrity with its own
 The browser's matching mount, readiness, and draft-change rules live in
 `ui/control-adapter-contract.js`, served with the provider rather than loaded
 from a preset.
+The browser and provider import the same `ui/generation-state.js` definitions
+for pending and duplicate-ID errors; the browser loads that asset through the
+authenticated shell. An unavailable Generate skill takes precedence over a
+duplicate saved ID, so the duplicate-ID click exception cannot mask a missing
+capability.
 
 For local UX inspection, the project skill `speckit-designer-preview` opens the
 official Designer canvas with `{preview:true}`. It shows an illustrative Badges
@@ -124,7 +129,8 @@ on this tab.
 The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
-reopening the same handoff restores them when its resolved pages are unchanged.
+reopening the same handoff retains the saved revision but starts a fresh form
+from template defaults when its resolved pages are unchanged.
 Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
 blank retains the current color in that mode, while invalid hex blocks Generate
 without preventing an incomplete draft from being saved. The generated canvas
@@ -134,7 +140,10 @@ it follows the system contrast preference until explicitly changed. There is
 no Designer color preview or contrast warning. The Designer connection pill
 reports Live when the current provider responds and Disconnected when a
 bounded health check fails; the check does not replace the panel or discard
-unsaved drafts. If the provider URL is dead, closing and reopening the panel
+unsaved drafts. The 10-second liveness probe fetches a small authenticated
+stylesheet; every sixth probe also refreshes the full generation availability
+state. The server remains authoritative at Generate if availability changes
+between polls. If the provider URL is dead, closing and reopening the panel
 from Copilot is still necessary.
 Generate freezes the combined artifact links into the app: its phase card links
 to each listed file and View artifact opens the selected default. A phase with no

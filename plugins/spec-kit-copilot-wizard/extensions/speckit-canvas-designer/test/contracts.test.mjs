@@ -1,12 +1,27 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { serializeGenerationRequest, validateGenerateSubmission } from "../contracts/generation-request.mjs";
+import { GENERATION_EXISTS, GENERATION_PENDING, generationAvailability } from "../ui/generation-state.js";
+import { GENERATION_EXISTS as SERVER_EXISTS, GENERATION_PENDING as SERVER_PENDING,
+    generationAvailability as serverAvailability } from "../contracts/generation-request.mjs";
 import { validateGenerationRequestIntegrity } from "../../../../../spec-kit-extensions/extension-canvas-design/scripts/contracts/generation-request.mjs";
 import { normalizeObservedVersions } from "../contracts/specify-inventory.mjs";
 import { validateSaveRequest, validateSavedSettings } from "../contracts/designer-settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput, validateLastOpen } from "../contracts/host-open.mjs";
 import { checkSchema } from "../contracts/design-contributions.mjs";
 import { validateDesignerAdapterExports } from "../contracts/control-adapter.mjs";
+
+test("browser and server share generation states and reject incompatible availability", () => {
+    assert.equal(GENERATION_EXISTS, SERVER_EXISTS);
+    assert.equal(GENERATION_PENDING, SERVER_PENDING);
+    assert.equal(generationAvailability, serverAvailability);
+    assert.deepEqual(generationAvailability(false, true),
+        { available: false, error: GENERATION_EXISTS });
+    assert.deepEqual(generationAvailability(true, false),
+        { available: false, error: GENERATION_PENDING });
+    assert.throws(() => generationAvailability("false", false),
+        /Invalid Designer generation availability/);
+});
 
 test("independently packaged generator accepts the exact Designer request and rejects tampering", () => {
     const request = { schemaVersion: 1, handoffId: "handoff-1", requestId: "request-1",

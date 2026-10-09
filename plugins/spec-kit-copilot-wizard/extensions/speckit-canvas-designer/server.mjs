@@ -36,6 +36,7 @@ const ASSETS = {
     "/": ["index.html", "text/html"],
     "/ui/styles.css": ["styles.css", "text/css"],
     "/ui/app.js": ["app.js", "text/javascript"],
+    "/ui/generation-state.js": ["generation-state.js", "text/javascript"],
     "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
     "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
     "/ui/control-adapter-contract.js": ["control-adapter-contract.js", "text/javascript"],
@@ -97,7 +98,7 @@ export async function startShell(handoff = null, model = null, { project, worksp
             generationAvailable: !!handoff?.workflow?.installed && !!session?.send
                 && !!project && skillAvailable && availability.available
                 && generationBlockers(model).length === 0,
-            generationError: availability.error ?? generationError };
+            generationError: pending ? GENERATION_PENDING : generationError ?? availability.error };
     };
     let generating = false;
     const server = createServer(async (req, res) => {

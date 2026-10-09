@@ -2708,6 +2708,30 @@ test("missing Generate skill disables the button and reports a repair path witho
     assert.equal(prompts.length, 0);
     await assert.rejects(readdir(join(workspace, "speckit-canvas-designer", "handoffs",
         handoff.handoffId, "generations")), { code: "ENOENT" });
+    const asset = await fetch(new URL(`/ui/generation-state.js?token=${url.searchParams.get("token")}`, url));
+    assert.equal(asset.status, 200);
+    assert.match(await asset.text(), /export const GENERATION_EXISTS/);
+    assert.equal((await fetch(new URL("/ui/generation-state.js?token=wrong", url))).status, 404);
+    const saveUrl = new URL(`/api/save?token=${url.searchParams.get("token")}`, url);
+    const save = async (values, revision) => {
+        const result = await fetch(saveUrl, { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modelRevision: model.revision, revision, values }) });
+        assert.equal(result.status, 200);
+        return result.json();
+    };
+    const target = join(project, ".github", "extensions", "my-canvas");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "extension.mjs"), "export {};\n");
+    const values = { ...model.values, "canvas.id": "my-canvas", "canvas.displayName": "My Canvas" };
+    await save(values, 0);
+    const duplicateState = await (await fetch(stateUrl)).json();
+    assert.equal(duplicateState.generationAvailable, false);
+    assert.equal(duplicateState.generationError, state.generationError);
+    await save({ ...values, "canvas.id": "new-canvas" }, 1);
+    const uniqueState = await (await fetch(stateUrl)).json();
+    assert.equal(uniqueState.generationAvailable, false);
+    assert.equal(uniqueState.generationError, state.generationError);
 });
 
 test("malformed raw request targets return 404 without stopping the shell", async (t) => {
@@ -4349,7 +4373,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             join(shared, file));
     }
     await mkdir(join(extension, "ui"));
-    for (const file of ["index.html", "app.js", "identity-control.js", "outputs-control.js",
+    for (const file of ["index.html", "app.js", "generation-state.js", "identity-control.js", "outputs-control.js",
         "control-adapter-contract.js", "badges-control.js", "badge-duplicates.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }

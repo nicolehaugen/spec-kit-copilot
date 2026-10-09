@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
+import { GENERATION_EXISTS, GENERATION_PENDING } from "../ui/generation-state.js";
 
 const source = await readFile(new URL("../ui/app.js", import.meta.url), "utf8");
 const generationGuidance = "Canvas generation is underway. You can close the Designer now. To generate another canvas, reopen Designer after this one finishes generation.";
@@ -21,9 +22,8 @@ test("Designer shows only one message bar across repeated errors and generation 
         messageBox: slots["action-message"],
     });
     const visible = () => names.filter((name) => !slots[name].hidden);
-    const exists = "Canvas already exists; choose and save a different Canvas ID.";
-    setMessage(slots["generation-note"], exists);
-    setMessage(slots["page-error"], exists);
+    setMessage(slots["generation-note"], GENERATION_EXISTS);
+    setMessage(slots["page-error"], GENERATION_EXISTS);
     assert.deepEqual(visible(), ["page-error"]);
     setMessage(slots["page-error"], "");
     assert.deepEqual(visible(), ["generation-note"]);
@@ -135,7 +135,7 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
         generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
         model: { preview: false, templates: [], revision: "model-1", settingsRevision: 0 },
         draft, draftOutputs: {}, draftBadges: [], queuedCanvasId: null, token: "test",
-        existingCanvasMessage: "Canvas already exists; choose and save a different Canvas ID.",
+        GENERATION_EXISTS,
         generating: false, status: {}, messageBox: {}, checkReady: () => true,
         showError: () => {}, updateSave: () => {},
         setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
@@ -172,7 +172,7 @@ test("Generate does not dispatch or disable future attempts when the implicit sa
         generate: { disabled: false, addEventListener: (_name, handler) => { click = handler; } },
         model: { preview: false, templates: [], revision: "model-1", settingsRevision: 0 },
         draft: { "canvas.id": "first-canvas" }, draftOutputs: {}, draftBadges: [],
-        existingCanvasMessage: "Canvas already exists; choose and save a different Canvas ID.",
+        GENERATION_EXISTS,
         queuedCanvasId: null, token: "test", generating: false, messageBox: {},
         checkReady: () => true, showError: () => {}, updateSave: () => {},
         setMessage: (slot, text) => { slot.textContent = text; slot.hidden = !text; },
@@ -197,6 +197,7 @@ test("Designer health check reports failed and restored connections without repl
     const generationNote = { textContent: "", hidden: true };
     const draft = { "canvas.displayName": "Unsaved title" };
     let response = { ok: true, json: async () => ({ generationAvailable: true, generationError: null }) };
+    const requests = [];
     let polls;
     let reloaded = false;
     const { checkConnection: check, setQueued } = runInNewContext(`${source.slice(start, end)}
@@ -211,7 +212,7 @@ test("Designer health check reports failed and restored connections without repl
         queuedCanvasId: null,
         generationGuidance,
         generating: false,
-        fetch: async () => response,
+        fetch: async (url) => { requests.push(url); return response; },
         updateGenerate: () => {},
         AbortSignal,
         encodeURIComponent,
@@ -225,6 +226,7 @@ test("Designer health check reports failed and restored connections without repl
     assert.equal(status.textContent, undefined);
     await check();
     assert.equal(status.textContent, "Live");
+    assert.match(requests.at(-1), /^\/ui\/styles\.css\?/);
     response = { ok: false, status: 503 };
     polls();
     await check();
@@ -244,6 +246,41 @@ test("Designer health check reports failed and restored connections without repl
     assert.equal(status.textContent, "Disconnected");
     assert.equal(errorBox.textContent, "");
     assert.equal(generationNote.textContent, generationGuidance);
+});
+
+test("health checks use a small authenticated asset, but periodically refresh generation availability", async () => {
+    const start = source.indexOf('const status = document.getElementById("conn-status");');
+    const end = source.lastIndexOf("try {", source.indexOf("    [{ mountIdentity", start));
+    const status = {};
+    const note = { textContent: "" };
+    const errorBox = { textContent: "" };
+    const requests = [];
+    let updates = 0;
+    const model = { generationAvailable: false, generationError: GENERATION_PENDING };
+    const { checkConnection } = runInNewContext(`${source.slice(start, end)}
+({ checkConnection })`, {
+        document: { getElementById: () => status },
+        errorBox, generationNote: note, token: "test", model,
+        queuedCanvasId: "first-canvas", generating: false, generationGuidance,
+        fetch: async (url) => {
+            requests.push(url);
+            return url.startsWith("/api/state")
+                ? { ok: true, json: async () => ({
+                    generationAvailable: false, generationError: GENERATION_EXISTS,
+                }) }
+                : { ok: true, json: () => { throw new Error("Asset is not JSON"); } };
+        },
+        updateGenerate: () => { updates++; }, AbortSignal, encodeURIComponent,
+        showError: () => {}, setMessage: () => {},
+        setInterval: () => 1, clearInterval: () => {},
+        window: { addEventListener: () => {} },
+    });
+    for (let i = 0; i < 6; i++) await checkConnection();
+    assert.equal(requests.filter((url) => url.startsWith("/api/state")).length, 1);
+    assert.equal(requests.filter((url) => url.startsWith("/ui/styles.css")).length, 5);
+    assert.equal(model.generationError, GENERATION_EXISTS);
+    assert.equal(updates, 1);
+    assert.equal(status.textContent, "Live");
 });
 
 test("queued editing lock belongs to this panel, not a new Designer instance", () => {
@@ -300,7 +337,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
         model, draft, draftOutputs: {}, generate, generationNote, generationError,
         saving: false, generating: false,
         queuedCanvasId: "first-canvas", generationGuidance, activeUploads: new Set(),
-        existingCanvasMessage: "Canvas already exists; choose and save a different Canvas ID.",
+        GENERATION_EXISTS, GENERATION_PENDING,
         setMessage: (slot, text) => {
             slot.textContent = text;
             const selected = generationNote.textContent ? generationNote
@@ -339,7 +376,7 @@ test("Generate stays disabled in the queued panel even after publication and a d
     assert.equal(generate.disabled, true);
     model.values["canvas.id"] = "first-canvas";
     model.generationAvailable = false;
-    model.generationError = "Canvas already exists; choose and save a different Canvas ID.";
+    model.generationError = GENERATION_EXISTS;
     update();
     assert.equal(generationNote.hidden, false);
     assert.equal(generationNote.textContent, generationGuidance);
@@ -349,4 +386,38 @@ test("Generate stays disabled in the queued panel even after publication and a d
     assert.equal(generationNote.hidden, false);
     assert.equal(generationError.hidden, true);
     assert.equal(generationError.textContent, model.generationError);
+});
+
+test("a missing Generate capability cannot be bypassed by changing an existing Canvas ID", () => {
+    const start = source.indexOf("function outputPathsReady()");
+    const end = source.indexOf("function confirmProviders(", start);
+    const unavailable = "Canvas Design does not provide Generate in this session.";
+    const model = {
+        pages: [{ page: "designer-essentials", fields: [
+            { id: "canvas.id" }, { id: "canvas.displayName" },
+        ] }],
+        values: { "canvas.id": "existing" }, handoffId: "handoff-1",
+        generationAvailable: false, generationError: unavailable,
+        generationBlockers: [],
+    };
+    const draft = { "canvas.id": "existing" };
+    const generate = { disabled: false };
+    const generationError = { textContent: "" };
+    const generationNote = { textContent: "" };
+    const update = runInNewContext(`${source.slice(start, end)}
+updateGenerate`, {
+        model, draft, draftOutputs: {}, generate, generationNote, generationError,
+        saving: false, generating: false, queuedCanvasId: null,
+        generationGuidance, activeUploads: new Set(),
+        GENERATION_EXISTS, GENERATION_PENDING,
+        setMessage: (slot, text) => { slot.textContent = text; },
+        required: ["canvas.id", "canvas.displayName"],
+    });
+    update();
+    assert.equal(generate.disabled, true);
+    assert.equal(generationError.textContent, unavailable);
+    draft["canvas.id"] = "unique";
+    update();
+    assert.equal(generate.disabled, true);
+    assert.equal(generationError.textContent, unavailable);
 });

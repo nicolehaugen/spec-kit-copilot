@@ -16,14 +16,19 @@ async function statePath(workspace) {
     return join(folder, "last-open.json");
 }
 
-export async function loadLastOpen(workspace) {
+export async function loadLastOpen(workspace, openFile = open) {
     const path = await statePath(workspace);
     let file;
     try {
-        file = await open(path, constants.O_RDONLY
+        file = await openFile(path, constants.O_RDONLY
             | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     } catch (error) {
-        if (error.code === "ENOENT") return null;
+        if (error.code === "ENOENT") {
+            if (await realpath(dirname(path)) !== dirname(path)) {
+                throw new Error("Designer open inventory escapes session artifacts");
+            }
+            return null;
+        }
         throw error;
     }
     try {
