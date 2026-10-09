@@ -8,6 +8,18 @@ import { declarations, inventoryEntries, isInside, templateWinner, verifyComposi
 
 const source = fileURLToPath(new URL("../extension-canvas-design/", import.meta.url));
 
+test("load-page guidance reopens from same-session inventory without requesting a handoff ID", async () => {
+    const command = await readFile(join(source, "commands", "load-page.md"), "utf8");
+    assert.match(command, /reopen Designer in this same session/);
+    assert.match(command, /Session folder:[\s\S]*speckit-canvas-designer\/last-open\.json/);
+    assert.match(command, /instanceId:"designer-reopen"` and `input:\{\}`/);
+    assert.match(command, /If it is missing, stop[\s\S]*launch Designer again from the\s+Wizard/);
+    assert.match(command, /Do not ask the user for a handoff ID, scan other sessions, or open the\s+sample preview/);
+    assert.match(command, /Report a provider error\s+unchanged/);
+    assert.match(command, /never request an\s+internal handoff ID from the user/);
+    assert.doesNotMatch(command, /If the handoff ID is missing, ask for it/);
+});
+
 test("template containment rejects outside paths and other Windows drives", () => {
     const root = join(tmpdir(), "canvas-check", ".specify");
     assert.equal(isInside(root, join(root, "pages", "template.json")), true);

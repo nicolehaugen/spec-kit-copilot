@@ -395,6 +395,10 @@ resolutions, unsafe paths, missing or unreadable winning files, invalid handoffs
 and an unavailable provider stop the operation before an open URL is returned.
 A readable page with invalid JSON shows an error tab with a path and reason;
 healthy pages stay usable.
+For a same-session reopen, the command instead asks the installed Designer
+provider to restore its saved `last-open.json` with empty input. If that record
+is missing, it directs a new Wizard launch rather than asking the user for an
+internal handoff ID or silently opening the sample preview.
 
 `scripts/verify-launch.mjs` reads the generated skill's declarations and
 verifies every declared name against one fresh Specify artifact inventory

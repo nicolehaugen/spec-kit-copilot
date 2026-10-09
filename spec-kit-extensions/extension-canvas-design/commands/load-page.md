@@ -4,9 +4,22 @@ description: Resolve registered Canvas Design templates and open the Designer on
 
 ## Context
 
-$ARGUMENTS supplies the Wizard `handoffId`. Work in this session's
-project, not the Wizard's checkout. If the handoff ID is missing, ask for it;
-do not guess or select another session's handoff.
+Work in this session's project, not the Wizard's checkout. For a request to
+**reopen Designer in this same session**, use the `Session folder:` path from
+this session's context to check for
+`speckit-canvas-designer/last-open.json`. If it is missing, stop and explain
+that this session cannot restore Designer; launch Designer again from the
+Wizard. Do not ask the user for a handoff ID, scan other sessions, or open the
+sample preview. If the file exists, let the provider validate it: open the
+official `plugin:spec-kit-copilot-wizard:speckit-canvas-designer` canvas once
+with `instanceId:"designer-reopen"` and `input:{}`. Report a provider error
+unchanged; do not fall back to a blank shell or preview. Reopening does not
+run the template-resolution steps below.
+
+For a **first launch**, `$ARGUMENTS` supplies the Wizard `handoffId` and the
+steps below resolve its complete template inventory. If it is missing, stop
+and direct the user to launch Designer from the Wizard; never request an
+internal handoff ID from the user or guess one from local files.
 
 ## Pages
 
