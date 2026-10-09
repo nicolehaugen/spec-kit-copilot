@@ -14,5 +14,5 @@
     "total",
     "percent"
   ],
-  "module": "badge-rule-content-adapter"
+  "adapter": "badge-rule-content-adapter"
 }

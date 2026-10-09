@@ -181,9 +181,9 @@ export function frozenBadges(badges, workflow) {
     });
     const resolvedRules = rules.map((rule) => {
         const { parsed } = definition(rule, "generated.badge-rule-definition",
-            ["schemaVersion", "id", "label", "description", "inputs", "textPlaceholders", "module",
+            ["schemaVersion", "id", "label", "description", "inputs", "textPlaceholders", "adapter",
                 ...(rule.placementPhaseInput === undefined ? [] : ["placementPhaseInput"])]);
-        if (parsed.schemaVersion !== 1 || !name.test(parsed.module) || !adapterMap.has(parsed.module)
+        if (parsed.schemaVersion !== 1 || !name.test(parsed.adapter) || !adapterMap.has(parsed.adapter)
             || !Array.isArray(parsed.inputs) || parsed.inputs.length > 10
             || new Set(parsed.inputs.map((input) => input.id)).size !== parsed.inputs.length
             || (parsed.placementPhaseInput !== undefined
@@ -208,7 +208,7 @@ export function frozenBadges(badges, workflow) {
             || parsed.textPlaceholders.some((placeholder) => !name.test(placeholder))) {
             throw new Error(`Invalid frozen badge rule: ${rule.id}`);
         }
-        return { ...parsed, hash: adapterMap.get(parsed.module).hash };
+        return { ...parsed, hash: adapterMap.get(parsed.adapter).hash };
     });
     const textPlaceholdersValid = (text, placeholders) => typeof text === "string"
         && text.trim() && text.length <= 120
@@ -223,11 +223,13 @@ export function frozenBadges(badges, workflow) {
     }
     for (const adapter of adapters) {
         validateAsset(adapter, "generated.badge-rule-adapter");
-        if (!resolvedRules.some((rule) => rule.module === adapter.name)) {
+        if (!resolvedRules.some((rule) => rule.adapter === adapter.name)) {
             throw new Error(`Unused frozen badge evaluator: ${adapter.name}`);
         }
     }
     const phaseOutputs = workflow.phaseArtifacts ?? {};
+    const projectPhase = workflow.selectedPhases.find((phase) =>
+        phase.replace(/^speckit\./, "") === "constitution");
     const declared = (source) => source && workflow.selectedPhases.includes(source.phase)
         && typeof source.output === "string"
         && phaseOutputs[source.phase]?.outputs?.includes(source.output);
@@ -301,8 +303,7 @@ export function frozenBadges(badges, workflow) {
                 !["workflow-list", "workflow-summary", "phase-card"].includes(place))
             || (instance.targets === undefined
                 ? (instance.showIn.includes("phase-card")
-                    && (!workflow.selectedPhases.includes(instance.phase)
-                        || instance.phase.replace(/^speckit\./, "") === "constitution"))
+                    && !workflow.selectedPhases.includes(instance.phase))
                     || (!instance.showIn.includes("phase-card") && instance.phase != null)
                 : instance.phase != null || instance.showIn.includes("phase-card")
                     || !Array.isArray(instance.targets) || instance.targets.length > 100
@@ -310,12 +311,21 @@ export function frozenBadges(badges, workflow) {
                         JSON.stringify([target?.phase, target?.output]))).size !== instance.targets.length
                     || instance.targets.some((target) => !target
                         || !workflow.selectedPhases.includes(target.phase)
-                        || target.phase.replace(/^speckit\./, "") === "constitution"
                         || (target.output !== null
                             && (!rule.inputs.some((input) =>
                                 ["artifact", "artifact-set"].includes(input.type))
                                 || !declared(target)))))) {
             throw new Error(`Invalid configured badge: ${instance?.id ?? "unknown"}`);
+        }
+        if (projectPhase && (instance.targets?.some((target) => target.phase === projectPhase)
+            || instance.showIn.includes("phase-card") && instance.phase === projectPhase)
+            && rule.inputs.some(({ id, type: inputType }) => {
+                const value = instance.inputs[id];
+                return inputType !== "text" && (inputType === "phase" ? value !== projectPhase
+                    : Array.isArray(value) ? value.some((entry) => entry.phase !== projectPhase)
+                        : value.phase !== projectPhase);
+            })) {
+            throw new Error(`Badge ${instance.id} has a project placement with workflow rule inputs`);
         }
         ids.add(instance.id);
         const destinations = new Set(targets(instance).map(({ phase, output }) =>
@@ -333,7 +343,7 @@ export function frozenBadges(badges, workflow) {
         checked.push(instance);
     }
     return { instances, types: resolvedTypes, rules: resolvedRules,
-        adapters: adapters.map(({ name: module, hash }) => ({ module, hash })) };
+        adapters: adapters.map(({ name: adapter, hash }) => ({ adapter, hash })) };
 }
 
 function frozenImage(item, values, constraints) {
@@ -1227,7 +1237,7 @@ function configuration(request) {
     const mainImage = generatedAssets?.find((item) => !item.page && item.slot === "workflow.intro");
     const imageConfig = (item) => ({ file: imageFile(item), mime: item.mime, hash: item.hash });
     const pageImages = generatedAssets?.filter((item) => item.page) ?? [];
-    const config = { schemaVersion: 1, canvas, userProvidesSlug: true,
+    const config = { schemaVersion: 1, canvas, userProvidesSlug: values["workflowSlug.userProvided"] ?? false,
         ...(Object.keys(appearance).length ? { appearance } : {}),
         showSetup: values["setup.show"] ?? false,
         ...(request.runtimeSetup ? { runtimeSetup: request.runtimeSetup } : {}),
@@ -1477,6 +1487,17 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         }
     }
     const config = configuration({ ...request, installed: request.actualInstalled ?? request.installed });
+    if (config.workflowPage.pageAdapter && config.badges?.instances.some((badge) =>
+        badge.showIn.includes("phase-card")
+            && badge.phase?.replace(/^speckit\./, "") === "constitution"
+        || badge.targets?.some((target) =>
+            target.phase.replace(/^speckit\./, "") === "constitution"))) {
+        const pageSource = Buffer.from(request.workflowPage.assets[3].content, "base64").toString("utf8");
+        if (!/^export const capabilities = \["workflow\.badges\.project\.v1"\];(?:\r?\n|$)/
+            .test(pageSource)) {
+            throw new Error("Frozen Workflow page adapter does not support project badges");
+        }
+    }
     if (!isDeepStrictEqual(request.runtimeSetup, handoff.workflow.runtimeSetup)) {
         throw new Error("Runtime setup recipe differs from the Wizard handoff");
     }

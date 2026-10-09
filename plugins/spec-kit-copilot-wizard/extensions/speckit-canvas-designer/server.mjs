@@ -77,12 +77,31 @@ export async function startShell(handoff = null, model = null,
         : new Map([["/", { type: "text/html", content: shellHtml() }]]);
     if (model) {
         const adapters = Object.values(model.adapters ?? {});
-        if (adapters.length && !project) throw new Error("Designer project is required for adapters");
-        const specify = adapters.length ? join(await realpath(project), ".specify") : null;
+        const badgeAdapters = [...new Set((model.badgeInputControls ?? [])
+            .map((item) => item.adapter))];
+        if ((adapters.length || badgeAdapters.length) && !project && !preview) {
+            throw new Error("Designer project is required for adapters");
+        }
+        const specify = project && (adapters.length || badgeAdapters.length)
+            ? join(await realpath(project), ".specify") : null;
         for (const name of adapters) {
             const adapter = model.templates.find((item) => item.name === name
                 && item.kind === "designer.control-adapter");
             if (!adapter) throw new Error(`${name}: Designer adapter is unavailable`);
+            assets.set(`/adapters/${name}.mjs`, {
+                type: "text/javascript", content: await readFrozenAsset(adapter, specify),
+            });
+        }
+        for (const name of badgeAdapters) {
+            if (preview && name === "preview-badge-input") {
+                assets.set(`/adapters/${name}.mjs`, { type: "text/javascript",
+                    content: await readFile(new URL("./ui/preview-badge-input.js",
+                        import.meta.url), "utf8") });
+                continue;
+            }
+            const adapter = model.templates.find((item) => item.name === name
+                && item.kind === "designer.badge-input-adapter");
+            if (!adapter) throw new Error(`${name}: Designer badge input adapter is unavailable`);
             assets.set(`/adapters/${name}.mjs`, {
                 type: "text/javascript", content: await readFrozenAsset(adapter, specify),
             });

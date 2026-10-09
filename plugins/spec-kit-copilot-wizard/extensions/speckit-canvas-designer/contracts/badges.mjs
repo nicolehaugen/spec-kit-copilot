@@ -12,11 +12,15 @@ export function validateBadges(badges, model) {
     const types = new Map((model.badgeTypes ?? []).map((type) => [type.id, type]));
     const rules = new Map((model.badgeRules ?? []).map((rule) => [rule.id, rule]));
     const phases = new Set(model.phases ?? []);
+    const projectPhase = [...phases].find((phase) =>
+        phase.replace(/^speckit\./, "") === "constitution");
     const outputs = model.outputs ?? {};
     const ids = new Set();
     const checked = [];
     for (const [index, badge] of badges.entries()) {
-        const fail = (reason) => { throw new Error(`Invalid Designer badge ${index + 1}: ${reason}`); };
+        const fail = (reason) => { throw new Error(`Invalid Designer badge ${index + 1}`
+            + `${typeof badge?.id === "string" && /^[a-z0-9-]{1,80}$/.test(badge.id)
+                ? ` (${badge.id})` : ""}: ${reason}`); };
         if (!record(badge) || !exactKeys(badge,
             ["id", "type", "inputs", "text", "color", "showIn",
                 ...(Object.hasOwn(badge, "phaseText") ? ["phaseText"] : []),
@@ -30,7 +34,18 @@ export function validateBadges(badges, model) {
         ids.add(badge.id);
         const type = types.get(badge.type);
         const rule = rules.get(type?.rule);
-        if (!type || !type.enabled || !rule) fail("unknown or disabled badge type");
+        if (!type) fail(`missing badge type ${badge.type}`);
+        if (!type.enabled) fail(`disabled badge type ${badge.type}`);
+        if (!rule) fail(`missing badge rule ${type.rule} required by type ${badge.type}`);
+        if (model.templates && !model.templates.some((item) =>
+            item.kind === "generated.badge-rule-adapter"
+                && item.name === rule.adapter)) {
+            fail(`missing generated evaluator ${rule.adapter} required by rule ${rule.id}`);
+        }
+        if (model.badgeInputControls
+            && !model.badgeInputControls.some((item) => item.rule === rule.id)) {
+            fail(`missing Designer input control for rule ${rule.id}`);
+        }
         if (!record(badge.inputs) || !exactKeys(badge.inputs, (rule.inputs ?? []).map(({ id }) => id))) {
             fail("unexpected or missing rule inputs");
         }
@@ -118,7 +133,6 @@ export function validateBadges(badges, model) {
             for (const target of badge.targets) {
                 if (!record(target) || !exactKeys(target, ["phase", "output"])
                     || !phases.has(target.phase)
-                    || target.phase.replace(/^speckit\./, "") === "constitution"
                     || (target.output !== null
                         && (!(rule.inputs ?? []).some((input) =>
                             input.type === "artifact" || input.type === "artifact-set")
@@ -131,7 +145,6 @@ export function validateBadges(badges, model) {
             }
         } else if (badge.showIn.includes("phase-card")
             ? !phases.has(badge.phase)
-                || badge.phase.replace(/^speckit\./, "") === "constitution"
             : badge.phase != null) fail("invalid phase-card destination");
         if (rule.placementPhaseInput
             && (badge.targets?.length
@@ -140,6 +153,16 @@ export function validateBadges(badges, model) {
                 : badge.showIn.includes("phase-card")
                     && badge.phase !== badge.inputs[rule.placementPhaseInput]?.phase)) {
             fail("Phase card must be on the output's target phase");
+        }
+        if (projectPhase && (badge.targets?.some((target) => target.phase === projectPhase)
+            || badge.showIn.includes("phase-card") && badge.phase === projectPhase)
+            && rule.inputs.some(({ id, type }) => {
+                const value = badge.inputs[id];
+                return type !== "text" && (type === "phase" ? value !== projectPhase
+                    : Array.isArray(value) ? value.some((entry) => entry.phase !== projectPhase)
+                        : value.phase !== projectPhase);
+            })) {
+            fail("project placement requires project-level rule inputs");
         }
         const validText = (value, placeholders) => typeof value === "string" && !!value.trim()
             && value.length <= 120 && !/[\x00-\x1f\x7f<>]/.test(value)

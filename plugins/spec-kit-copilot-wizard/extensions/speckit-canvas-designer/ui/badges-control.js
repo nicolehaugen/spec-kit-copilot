@@ -7,7 +7,14 @@ const PLACES = [
     ["workflow-summary", "Workflow summary"],
 ];
 const COLORS = ["theme", "red", "green", "amber", "blue", "purple", "pink", "orange"];
-const supportsPhaseCard = (phase) => phase?.replace(/^speckit\./, "") !== "constitution";
+
+function adapterError(error) {
+    if (error instanceof Error) return error.message;
+    if (error !== null && (typeof error === "object" || typeof error === "function")) {
+        return "a non-Error value";
+    }
+    return String(error);
+}
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -40,48 +47,9 @@ function phaseOptions(phases) {
         .replace(/[.-]/g, " ").replace(/^./, (first) => first.toUpperCase())]);
 }
 
-function artifactOptions(outputs, phase) {
-    return (outputs[phase]?.outputs ?? []).map((path) => [path, path]);
-}
-
-function defaultPhase(phases) {
-    return phases.find(supportsPhaseCard) ?? "";
-}
-
-function firstArtifact(outputs) {
-    const phase = Object.keys(outputs).find((id) =>
-        supportsPhaseCard(id) && outputs[id]?.outputs?.length);
-    if (!phase || !outputs[phase]?.outputs?.length) return { phase: "", output: "" };
-    return { phase, output: outputs[phase].view ?? outputs[phase].outputs[0] };
-}
-
-function newDraft(type, rules, phases, outputs) {
-    const rule = rules.find((item) => item.id === type.rule);
-    const inputs = {};
-    const initial = firstArtifact(outputs);
-    for (const input of rule?.inputs ?? []) {
-        inputs[input.id] = input.type === "phase" ? defaultPhase(phases)
-            : input.type === "text" ? ""
-            : input.type === "artifact" ? { ...initial }
-            : input.type === "ordered-artifacts" ? []
-                : initial.phase ? [{ phase: initial.phase, outputs: [initial.output] }] : [];
-    }
-    if (rule?.id === "checklist-complete") {
-        const prior = phases.find((id) => outputs[id]?.outputs?.length);
-        const firstOutput = outputs[prior]?.view ?? outputs[prior]?.outputs[0];
-        const checklist = prior && phases.find((id) => phases.indexOf(id) > phases.indexOf(prior)
-            && outputs[id]?.outputs?.some((path) => path.toLowerCase()
-                !== firstOutput.toLowerCase()));
-        inputs.prerequisite = prior
-            ? { phase: prior, output: firstOutput }
-            : { phase: "", output: "" };
-        inputs.artifact = checklist
-            ? { phase: checklist, output: outputs[checklist].outputs.find((path) =>
-                path.toLowerCase() !== inputs.prerequisite.output.toLowerCase()) }
-            : { phase: "", output: "" };
-    }
+function newDraft(type) {
     return { id: globalThis.crypto?.randomUUID?.() ?? `badge-${Date.now()}`,
-        type: type.id, inputs, text: type.defaultText, color: type.defaultColor,
+        type: type.id, inputs: {}, text: type.defaultText, color: type.defaultColor,
         showIn: ["workflow-list"], phase: null, targets: [] };
 }
 
@@ -89,17 +57,8 @@ function defaultSummaryText(type) {
     return `${type.title} ({workflows} workflows)`;
 }
 
-function editableBadge(badge, rule, type) {
+function editableBadge(badge, type) {
     const draft = structuredClone(badge);
-    for (const input of rule.inputs ?? []) {
-        if (input.type === "artifact" && !draft.inputs[input.id]) {
-            draft.inputs[input.id] = { phase: "", output: "" };
-        } else if (input.type === "ordered-artifacts" && !Array.isArray(draft.inputs[input.id])) {
-            draft.inputs[input.id] = [];
-        } else if (input.type === "text" && typeof draft.inputs[input.id] !== "string") {
-            draft.inputs[input.id] = "";
-        }
-    }
     if (!Array.isArray(draft.targets)) {
         draft.targets = draft.showIn.includes("phase-card") && draft.phase
             ? [{ phase: draft.phase, output: null }] : [];
@@ -113,10 +72,13 @@ function editableBadge(badge, rule, type) {
     return draft;
 }
 
-function checkedPhases(badge, rule) {
+function evidencePhases(rule, inputs) {
+    if (rule.placementPhaseInput) {
+        return [inputs[rule.placementPhaseInput]?.phase].filter(Boolean);
+    }
     const selected = new Set();
     for (const descriptor of rule.inputs ?? []) {
-        const value = badge.inputs[descriptor.id];
+        const value = inputs[descriptor.id];
         if (descriptor.type === "phase" && value) selected.add(value);
         else if (descriptor.type === "artifact" && value?.phase
             && !(rule.id === "checklist-complete" && descriptor.id === "prerequisite")) {
@@ -126,7 +88,67 @@ function checkedPhases(badge, rule) {
             for (const entry of value ?? []) if (entry.outputs?.length) selected.add(entry.phase);
         }
     }
-    return selected;
+    return [...selected];
+}
+
+function jsonSafe(value) {
+    const active = new Set();
+    const stack = [[value, false, 0]];
+    while (stack.length) {
+        const [current, leaving, depth] = stack.pop();
+        if (leaving) {
+            active.delete(current);
+            continue;
+        }
+        if (current === null || typeof current === "string" || typeof current === "boolean") continue;
+        if (typeof current === "number" && Number.isFinite(current)) continue;
+        if (typeof current !== "object" || depth > 16 || active.has(current)
+            || !(Array.isArray(current)
+                ? Object.getPrototypeOf(current) === Array.prototype
+                : [Object.prototype, null].includes(Object.getPrototypeOf(current)))
+            || Reflect.ownKeys(current).some((key) => typeof key !== "string")
+            || Reflect.ownKeys(current).length !== Object.keys(current).length
+                + (Array.isArray(current) ? 1 : 0)
+            || Array.isArray(current) && (Object.keys(current).length !== current.length
+                || !Array.from({ length: current.length }, (_, index) =>
+                    Object.hasOwn(current, index)).every(Boolean))) return false;
+        active.add(current);
+        stack.push([current, true, depth]);
+        for (const key of Object.keys(current)) {
+            const property = Object.getOwnPropertyDescriptor(current, key);
+            if (!property || !Object.hasOwn(property, "value") || !property.enumerable) return false;
+            stack.push([property.value, false, depth + 1]);
+        }
+    }
+    return true;
+}
+
+function validBadgeInputDraft(inputs, rule, phases, outputs) {
+    const phase = (value) => value === "" || phases.includes(value);
+    const artifact = (value) => value && typeof value === "object"
+        && !Array.isArray(value) && Object.keys(value).sort().join() === "output,phase"
+        && typeof value.phase === "string" && typeof value.output === "string"
+        && (value.phase === "" && value.output === ""
+            || phases.includes(value.phase)
+                && (value.output === "" || outputs[value.phase]?.outputs?.includes(value.output)));
+    return (rule.inputs ?? []).every(({ id, type }) => {
+        const value = inputs[id];
+        if (type === "phase") return typeof value === "string" && phase(value);
+        if (type === "text") return typeof value === "string" && value.length <= 256
+            && !/[\x00-\x1f\x7f]/.test(value);
+        if (type === "artifact") return artifact(value);
+        if (type === "ordered-artifacts") return Array.isArray(value) && value.length <= 100
+            && value.every((entry) => artifact(entry) && entry.phase !== ""
+                && entry.output !== "");
+        if (type === "artifact-set") return Array.isArray(value) && value.length <= 100
+            && value.every((entry) => entry && typeof entry === "object"
+                && !Array.isArray(entry) && Object.keys(entry).sort().join() === "outputs,phase"
+                && phases.includes(entry.phase) && Array.isArray(entry.outputs)
+                && entry.outputs.length > 0 && entry.outputs.length <= 100
+                && entry.outputs.every((path) => typeof path === "string"
+                    && outputs[entry.phase]?.outputs?.includes(path)));
+        return false;
+    });
 }
 
 function placementSummary(badge, phases) {
@@ -172,7 +194,7 @@ function updatePreview(preview, badge) {
 }
 
 export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRules,
-    draftBadges, onChange }) {
+    draftBadges, onChange, controlMount }) {
     let outputsSnapshot = JSON.stringify(outputs);
     const types = badgeTypes.filter((type) => type.enabled);
     for (const [first, second] of [
@@ -187,6 +209,8 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
     const rules = new Map(badgeRules.map((rule) => [rule.id, rule]));
     let catalogOpen = false;
     let pending = null;
+    let activeControl;
+    let renderId = 0;
     const openCatalog = () => {
         pending = null;
         catalogOpen = true;
@@ -194,7 +218,25 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         root.querySelector(".badge-type-choice")?.focus?.();
     };
     const redraw = () => {
+        renderId++;
+        const previousControl = activeControl;
+        activeControl = null;
+        let disposalError;
+        let disposalFailed = false;
+        try {
+            previousControl?.dispose?.();
+        } catch (error) {
+            disposalError = error;
+            disposalFailed = true;
+        }
         root.replaceChildren();
+        if (disposalFailed) {
+            const warning = element("p",
+                `Could not dispose badge input control: ${adapterError(disposalError)}`,
+                "settings-field-error");
+            warning.setAttribute("role", "alert");
+            root.append(warning);
+        }
         if (catalogOpen) {
             const back = element("button", "← Back to badges", "badge-back");
             back.type = "button";
@@ -213,7 +255,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                     element("span", type.description ?? "", "settings-note"),
                     element("span", "›", "badge-chevron"));
                 choice.addEventListener("click", () => {
-                    pending = newDraft(type, badgeRules, phases, outputs);
+                    pending = newDraft(type);
                     catalogOpen = false;
                     redraw();
                     root.querySelector(".badge-editor-heading")?.focus?.();
@@ -280,7 +322,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 edit.disabled = !available;
                 edit.setAttribute("aria-label", `Edit ${label || type?.title || badge.type}`);
                 edit.addEventListener("click", () => {
-                    pending = editableBadge(badge, rules.get(type.rule), type);
+                    pending = editableBadge(badge, type);
                     redraw();
                     root.querySelector(".badge-editor-heading")?.focus?.();
                 });
@@ -327,7 +369,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         let duplicateTarget;
         editDuplicate.addEventListener("click", () => {
             if (!duplicateTarget) return;
-            pending = editableBadge(duplicateTarget, rule, type);
+            pending = editableBadge(duplicateTarget, type);
             redraw();
             root.querySelector(".badge-editor-heading")?.focus?.();
         });
@@ -338,9 +380,12 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             duplicateTarget = null;
             if (message) error.focus?.();
         };
-        editor.addEventListener("input", () => revealError(""));
-        editor.addEventListener("change", () => revealError(""));
-        const phaseChoices = phaseOptions(phases);
+        const controlRoot = element("div", undefined, "badge-input-controls");
+        const clearHostError = (event) => {
+            if (!controlRoot.contains(event.target)) revealError("");
+        };
+        editor.addEventListener("input", clearHostError);
+        editor.addEventListener("change", clearHostError);
         const previewField = element("div", undefined, "badge-preview-field");
         previewField.append(element("span", "Preview (example)"), preview);
         const colorGroup = element("div", undefined, "badge-input-group");
@@ -373,284 +418,47 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 phasePlacement.checked = false;
                 phaseTextField.hidden = true;
                 delete pending.phaseText;
-                revealError("Phase cards are available only for workflow phases. Choose workflow-phase evidence.");
+                revealError("Choose phase evidence before selecting Phase placement.");
             }
             pending.targets = selected.map((phase) => ({ phase, output: null }));
             refreshLegacy();
         };
-        if (ordered) {
-            const target = pending.inputs[ordered.before];
-            const targetPhase = select(phaseChoices, target.phase, "Target phase");
-            const targetOutput = select(artifactOptions(outputs, target.phase),
-                target.output, "Target output");
-            const targetWarning = element("p",
-                "This phase has no confirmed matching output. Choose an output on the Outputs page or select a different phase.",
-                "settings-field-error");
-            const earlierGroup = element("div", undefined, "badge-artifact-set");
-            const explanation = element("div", undefined, "settings-note");
-            const refresh = () => {
-                targetOutput.replaceChildren(...artifactOptions(outputs, target.phase).map(([path]) => {
-                    const option = element("option", path);
-                    option.value = path;
-                    return option;
-                }));
-                targetOutput.value = target.output;
-                targetWarning.hidden = !!outputs[target.phase]?.outputs?.includes(target.output);
-                earlierGroup.replaceChildren();
-                const prerequisites = pending.inputs[ordered.id];
-                const earlier = phases.slice(0, phases.indexOf(target.phase));
-                const invalid = prerequisites.filter((entry) => !earlier.includes(entry.phase)
-                    || !outputs[entry.phase]?.outputs?.includes(entry.output));
-                if (invalid.length) {
-                    earlierGroup.append(element("p",
-                        "Some saved choices are no longer earlier confirmed outputs. Remove or correct them before saving.",
-                        "settings-field-error"));
-                    const remove = element("button", "Remove unavailable selections");
-                    remove.type = "button";
-                    remove.addEventListener("click", () => {
-                        pending.inputs[ordered.id] = prerequisites.filter((entry) => !invalid.includes(entry));
-                        refresh();
-                    });
-                    earlierGroup.append(remove);
-                }
-                const setChoice = (id, output) => {
-                    const remaining = pending.inputs[ordered.id]
-                        .filter((entry) => entry.phase !== id);
-                    if (output) remaining.push({ phase: id, output });
-                    pending.inputs[ordered.id] = remaining.sort((a, b) =>
-                        phases.indexOf(a.phase) - phases.indexOf(b.phase));
-                    refresh();
-                };
-                for (const id of earlier) {
-                    const title = phaseOptions([id])[0][1];
-                    const selected = prerequisites.find((entry) => entry.phase === id);
-                    const label = element("label", undefined, "badge-check");
-                    const checkbox = element("input");
-                    checkbox.type = "checkbox";
-                    checkbox.checked = !!selected;
-                    checkbox.disabled = !outputs[id]?.outputs?.length;
-                    checkbox.addEventListener("change", () =>
-                        setChoice(id, checkbox.checked
-                            ? outputs[id]?.view ?? outputs[id].outputs[0] : null));
-                    label.append(checkbox, element("span", title));
-                    earlierGroup.append(label);
-                    if (checkbox.disabled) {
-                        earlierGroup.append(element("p",
-                            `No confirmed outputs for ${title}. Add one on the Outputs page.`,
-                            "settings-note"));
-                    }
-                    if (!selected) continue;
-                    const outputList = element("div", undefined, "badge-output-list");
-                    outputList.setAttribute("role", "radiogroup");
-                    outputList.setAttribute("aria-label", `${title} outputs`);
-                    for (const [path] of artifactOptions(outputs, id)) {
-                        const option = element("label", undefined, "badge-check");
-                        const radio = element("input");
-                        radio.type = "radio";
-                        radio.name = `badge-${pending.id}-${id}`;
-                        radio.checked = selected.output === path;
-                        radio.addEventListener("change", () => { if (radio.checked) setChoice(id, path); });
-                        option.append(radio, element("span", path));
-                        outputList.append(option);
-                    }
-                    earlierGroup.append(outputList);
-                }
-                explanation.replaceChildren();
-                const chain = [...pending.inputs[ordered.id]
-                    .filter((entry) => earlier.includes(entry.phase)
-                        && outputs[entry.phase]?.outputs?.includes(entry.output))
-                    .sort((a, b) => phases.indexOf(a.phase) - phases.indexOf(b.phase)), target];
-                for (const [index, entry] of chain.entries()) {
-                    const title = phaseOptions([entry.phase])[0][1];
-                    explanation.append(element("p", index
-                        ? `${title}: ${entry.output} must exist and be at least as recent as ${chain[index - 1].output}.`
-                        : `${title}: ${entry.output} must exist.`));
-                }
-                if (chain.length > 1) {
-                    explanation.append(element("p",
-                        "All of these conditions must pass for a workflow."));
-                }
-                syncPhasePlacement();
-            };
-            targetPhase.addEventListener("change", () => {
-                target.phase = targetPhase.value;
-                target.output = outputs[target.phase]?.view ?? outputs[target.phase]?.outputs?.[0] ?? "";
-                refresh();
-            });
-            targetOutput.addEventListener("change", () => {
-                target.output = targetOutput.value;
-                refresh();
-            });
-            editor.append(field("Target phase", targetPhase), field("Required output", targetOutput),
-                targetWarning,
-                element("h3", "Which earlier outputs must be current?"), earlierGroup,
-                element("h3", "When this badge appears"), explanation);
-            refresh();
-        }
-        if (!ordered) {
-        for (const descriptor of rule.inputs ?? []) {
-            if (rule.inputs.length > 1 && descriptor.type !== "text") {
-                editor.append(element("h4", descriptor.label ?? (descriptor.type === "phase"
-                    ? "Completion phase" : descriptor.type === "text"
-                        ? "Text to match" : "Output to check")));
-            }
-            if (descriptor.type === "text") {
-                const value = element("input");
-                value.type = "text";
-                value.maxLength = 256;
-                value.value = pending.inputs[descriptor.id];
-                value.addEventListener("input", () => { pending.inputs[descriptor.id] = value.value; });
-                editor.append(field(descriptor.label ?? "Text to match", value,
-                    "Match this literal text anywhere in the output, ignoring capitalization."));
-            } else if (descriptor.type === "phase") {
-                const value = pending.inputs[descriptor.id];
-                const group = element("div", undefined, "badge-phase-list");
-                const choices = [];
-                for (const [id, title] of phaseChoices) {
-                    const label = element("label", undefined, "badge-check");
-                    const checkbox = element("input");
-                    checkbox.type = "checkbox";
-                    checkbox.checked = value === id;
-                    checkbox.addEventListener("change", () => {
-                        pending.inputs[descriptor.id] = checkbox.checked ? id : "";
-                        for (const [otherId, other] of choices) other.checked = otherId === pending.inputs[descriptor.id];
-                        syncPhasePlacement();
-                    });
-                    choices.push([id, checkbox]);
-                    label.append(checkbox, element("span", title));
-                    group.append(label);
-                }
-                editor.append(group);
-            } else if (descriptor.type === "artifact") {
-                const value = pending.inputs[descriptor.id];
-                const group = element("div", undefined, "badge-phase-list");
-                const choices = [];
-                for (const [id, title] of phaseChoices) {
-                    const label = element("label", undefined, "badge-check");
-                    const checkbox = element("input");
-                    checkbox.type = "checkbox";
-                    checkbox.checked = value.phase === id;
-                    const outputList = element("div", undefined, "badge-output-list");
-                    outputList.setAttribute("role", "group");
-                    outputList.setAttribute("aria-label", `${title} outputs`);
-                    outputList.hidden = !checkbox.checked;
-                    const outputChoices = [];
-                    for (const [path] of artifactOptions(outputs, id)) {
-                        const item = element("label", undefined, "badge-check");
-                        const output = element("input");
-                        output.type = "checkbox";
-                        output.checked = value.phase === id && value.output === path;
-                        output.addEventListener("change", () => {
-                            value.phase = id;
-                            value.output = output.checked ? path : "";
-                            for (const [otherId, other, list, options] of choices) {
-                                other.checked = otherId === value.phase;
-                                list.hidden = !other.checked;
-                                for (const [otherPath, input] of options) {
-                                    input.checked = otherId === value.phase && otherPath === value.output;
-                                }
-                            }
-                            syncPhasePlacement();
-                        });
-                        outputChoices.push([path, output]);
-                        item.append(output, element("span", path));
-                        outputList.append(item);
-                    }
-                    if (!outputChoices.length) outputList.append(element("p",
-                        "No confirmed outputs. Add one on the Outputs page.", "settings-note"));
-                    checkbox.addEventListener("change", () => {
-                        value.phase = checkbox.checked ? id : "";
-                        value.output = checkbox.checked ? outputs[id]?.view ?? outputs[id]?.outputs?.[0] ?? "" : "";
-                        for (const [otherId, other, list, options] of choices) {
-                            other.checked = otherId === value.phase;
-                            list.hidden = !other.checked;
-                            for (const [path, input] of options) {
-                                input.checked = otherId === value.phase && path === value.output;
-                            }
+        editor.append(controlRoot);
+        let control;
+        let isReady;
+        const inputIds = (rule.inputs ?? []).map(({ id }) => id).sort().join();
+        const hasDeclaredInputs = (value) => value && typeof value === "object"
+            && !Array.isArray(value) && Object.keys(value).sort().join() === inputIds;
+        const editorPending = pending;
+        const editorRenderId = renderId;
+        try {
+            control = controlMount?.({ root: controlRoot, rule: structuredClone(rule),
+                inputs: structuredClone(pending.inputs), phases: structuredClone(phases),
+                outputs: structuredClone(outputs), onChange(nextInputs) {
+                    if (renderId !== editorRenderId || pending !== editorPending) return;
+                    try {
+                        if (!hasDeclaredInputs(nextInputs) || !jsonSafe(nextInputs)
+                            || !validBadgeInputDraft(nextInputs, rule, phases, outputs)) {
+                            revealError("Badge control returned inputs that do not match its rule or available evidence.");
+                            return;
                         }
-                        syncPhasePlacement();
-                    });
-                    choices.push([id, checkbox, outputList, outputChoices]);
-                    label.append(checkbox, element("span", title));
-                    group.append(label, outputList);
-                }
-                editor.append(group);
-            } else if (descriptor.type === "artifact-set") {
-                const group = element("div", undefined, "badge-artifact-set");
-                const chosen = new Set((pending.inputs[descriptor.id] ?? [])
-                    .flatMap(({ phase, outputs: paths }) => paths.map((path) => JSON.stringify([phase, path]))));
-                const available = phases.filter((id) => outputs[id]?.outputs?.length);
-                const confirmed = new Set(available.flatMap((id) =>
-                    outputs[id].outputs.map((path) => JSON.stringify([id, path]))));
-                const stale = [...chosen].filter((key) => !confirmed.has(key));
-                const updateInputs = () => {
-                    pending.inputs[descriptor.id] = phases.map((id) => ({
-                        phase: id, outputs: (outputs[id]?.outputs ?? [])
-                            .filter((path) => chosen.has(JSON.stringify([id, path]))),
-                    })).filter((entry) => entry.outputs.length);
+                        pending.inputs = structuredClone(nextInputs);
+                    } catch (error) {
+                        revealError(`Badge control returned invalid inputs: ${adapterError(error)}`);
+                        return;
+                    }
+                    revealError("");
                     syncPhasePlacement();
-                };
-                const warning = element("p", stale.length
-                    ? "Some selected evidence outputs are no longer confirmed. Choose a current output to replace them."
-                    : "", "settings-field-error");
-                warning.hidden = !stale.length;
-                for (const [id, title] of phaseChoices) {
-                    const label = element("label", undefined, "badge-check");
-                    const phase = element("input");
-                    phase.type = "checkbox";
-                    phase.checked = outputs[id]?.outputs?.some((path) =>
-                        chosen.has(JSON.stringify([id, path]))) ?? false;
-                    const outputList = element("div", undefined, "badge-output-list");
-                    outputList.setAttribute("role", "group");
-                    outputList.setAttribute("aria-label", `${title} outputs`);
-                    outputList.hidden = !phase.checked;
-                    const outputChecks = [];
-                    for (const [path] of artifactOptions(outputs, id)) {
-                        const item = element("label", undefined, "badge-check");
-                        const checkbox = element("input");
-                        checkbox.type = "checkbox";
-                        const key = JSON.stringify([id, path]);
-                        checkbox.checked = chosen.has(key);
-                        checkbox.addEventListener("change", () => {
-                            for (const oldKey of stale) chosen.delete(oldKey);
-                            warning.hidden = true;
-                            if (checkbox.checked) chosen.add(key);
-                            else chosen.delete(key);
-                            phase.checked = outputChecks.some(([key]) => chosen.has(key));
-                            outputList.hidden = !phase.checked;
-                            updateInputs();
-                        });
-                        outputChecks.push([key, checkbox]);
-                        item.append(checkbox, element("span", path));
-                        outputList.append(item);
-                    }
-                    if (!outputChecks.length) outputList.append(element("p",
-                        "No confirmed outputs. Add one on the Outputs page.", "settings-note"));
-                    phase.addEventListener("change", () => {
-                        for (const oldKey of stale) chosen.delete(oldKey);
-                        warning.hidden = true;
-                        for (const [key, checkbox] of outputChecks) {
-                            if (!phase.checked) chosen.delete(key);
-                            checkbox.checked = chosen.has(key);
-                        }
-                        if (phase.checked && !outputChecks.some(([key]) => chosen.has(key))) {
-                            const preferred = outputs[id]?.view ?? outputs[id]?.outputs?.[0];
-                            if (preferred) chosen.add(JSON.stringify([id, preferred]));
-                            for (const [key, checkbox] of outputChecks) checkbox.checked = chosen.has(key);
-                        }
-                        outputList.hidden = !phase.checked;
-                        updateInputs();
-                    });
-                    label.append(phase, element("span", title));
-                    group.append(label, outputList);
-                }
-                if (!available.length) {
-                    group.append(element("p", "Add a confirmed output on the Outputs page first.", "settings-note"));
-                }
-                group.append(warning);
-                editor.append(group);
-            }
+                } });
+            isReady = control?.isReady;
+        } catch (error) {
+            controlRoot.append(element("p", `Could not load badge input control: ${adapterError(error)}`,
+                "settings-field-error"));
         }
+        activeControl = control;
+        if (typeof isReady !== "function" && !controlRoot.children.length) {
+            controlRoot.append(element("p", "Badge input controls are unavailable.",
+                "settings-field-error"));
         }
         editor.append(element("h3", ordered ? "Where should it appear?"
             : "Where to show this badge"));
@@ -696,9 +504,8 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const phaseLabel = element("label", undefined, "badge-check");
         phasePlacement = element("input");
         phasePlacement.type = "checkbox";
-        const phaseCardPhases = () => (rule.placementPhaseInput
-            ? [pending.inputs[rule.placementPhaseInput]?.phase].filter(Boolean)
-            : [...checkedPhases(pending, rule)]).filter(supportsPhaseCard);
+        const phaseCardPhases = () => evidencePhases(rule, pending.inputs)
+            .filter((phase) => phases.includes(phase));
         const followsEvidence = () => {
             const selected = new Set(phaseCardPhases());
             return pending.targets.length === selected.size
@@ -723,7 +530,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         phasePlacement.addEventListener("change", () => {
             if (phasePlacement.checked && !phaseCardPhases().length) {
                 phasePlacement.checked = false;
-                revealError("Phase cards are available only for workflow phases. Choose workflow-phase evidence.");
+                revealError("Choose phase evidence before selecting Phase placement.");
             }
             pending.targets = phasePlacement.checked
                 ? phaseCardPhases().map((phase) => ({ phase, output: null })) : [];
@@ -741,7 +548,6 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const supportsArtifactTargets = rule.inputs?.some(({ type }) =>
             type === "artifact" || type === "artifact-set");
         const unavailableTarget = ({ phase, output }) => !phases.includes(phase)
-            || !supportsPhaseCard(phase)
             || (output !== null && (!supportsArtifactTargets
                 || !outputs[phase]?.outputs?.includes(output)));
         const legacy = element("div", undefined, "badge-legacy-placement");
@@ -826,47 +632,18 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 }
             }
             if (!pending.color) return revealError("Select a badge color.");
-            for (const descriptor of rule.inputs ?? []) {
-                const value = pending.inputs[descriptor.id];
-                if (descriptor.type === "text"
-                    && (typeof value !== "string" || !value.trim()
-                        || value.length > 256 || /[\x00-\x1f\x7f]/.test(value))) {
-                    return revealError("Enter text to match (1-256 characters).");
-                }
-                if (descriptor.type === "phase" && !phases.includes(value)) {
-                    return revealError("Choose a phase for this badge to check.");
-                }
-                if (descriptor.type === "artifact"
-                    && !outputs[value?.phase]?.outputs?.includes(value.output)) {
-                    return revealError("Choose a confirmed output for this badge to check.");
-                }
-                if (descriptor.type === "artifact-set"
-                    && (!Array.isArray(value) || !value.some((entry) => entry.outputs?.length)
-                        || value.some((entry) => !phases.includes(entry.phase)
-                            || !Array.isArray(entry.outputs)
-                            || entry.outputs.some((path) =>
-                                !outputs[entry.phase]?.outputs?.includes(path))))) {
-                    return revealError("Choose at least one confirmed output for this badge to check.");
-                }
-                if (descriptor.type === "ordered-artifacts") {
-                    const target = pending.inputs[descriptor.before];
-                    const chain = [...value, target];
-                    if (!Array.isArray(value) || value.length > 100
-                        || chain.some((entry) => !phases.includes(entry?.phase)
-                            || !outputs[entry.phase]?.outputs?.includes(entry.output))
-                        || chain.some((entry, index) => index > 0
-                            && phases.indexOf(chain[index - 1].phase) >= phases.indexOf(entry.phase))
-                        || new Set(chain.map((entry) => entry.output.toLowerCase())).size !== chain.length) {
-                        return revealError("Choose one distinct confirmed output per selected earlier phase.");
-                    }
-                }
+            if (typeof isReady !== "function") {
+                return revealError("Badge input controls are unavailable.");
             }
-            if (rule.id === "checklist-complete") {
-                const { artifact, prerequisite } = pending.inputs;
-                if (phases.indexOf(prerequisite.phase) >= phases.indexOf(artifact.phase)
-                    || prerequisite.output.toLowerCase() === artifact.output.toLowerCase()) {
-                    return revealError("Choose a different confirmed earlier output for Checklist complete.");
+            if (!hasDeclaredInputs(pending.inputs)) {
+                return revealError("Badge control returned inputs that do not match its rule.");
+            }
+            try {
+                if (isReady.call(control) !== true) {
+                    return revealError(control.validationError?.() || "Complete the badge inputs before saving.");
                 }
+            } catch (error) {
+                return revealError(`Badge input control readiness failed: ${adapterError(error)}`);
             }
             if (pending.targets.length > 100) {
                 return revealError("A badge can have at most 100 placements. Remove some selections.");

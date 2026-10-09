@@ -1,3 +1,4 @@
+export const capabilities = ["workflow.badges.project.v1"];
 export const pageId = "workflow";
 export const contractVersion = 1;
 
@@ -48,12 +49,12 @@ export function renderStockPage(root, definition) {
                 <input class="phase-input-control" id="workflow-name" type="text" maxlength="120"
                     placeholder="Workflow 1" aria-describedby="workflow-name-help">
                 <span class="muted" id="workflow-name-help">Shown in the workflow list.</span></label>
-            <label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact folder name (slug) <span class="muted">Required</span></span>
-                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100" required
+            <label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact directory slug</span>
+                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100"
                     pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="workflow-1"
                     aria-describedby="workflow-slug-help workflow-slug-error">
-                <span class="muted" id="workflow-slug-help">Folder for workflow artifacts. Created when Specify runs;
-                    use lowercase, numbers, or hyphens.</span>
+                <span class="muted" id="workflow-slug-help">Leave blank to let Spec Kit choose the directory.
+                    Use lowercase, numbers, or hyphens.</span>
                 <span id="workflow-slug-error" class="workflow-error" role="alert" hidden></span></label>
         </div>
         ${hasBadges && definition.badgeDestinations.includes("workflow.summary")
@@ -73,10 +74,16 @@ export function renderStockPage(root, definition) {
     </section>
     ${hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
         <div class="constitution-summary"><strong>Constitution</strong><span class="muted">
-            Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span></div>
+            Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span>
+            ${hasBadges && definition.badgeDestinations.includes("phase.card")
+                ? '<span id="constitution-badges" class="canvas-badges" aria-label="Constitution badges"></span>' : ""}
+        </div>
         <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p>
-            <p id="constitution-artifact-status" class="muted" role="status"></p></div>
+            <p id="constitution-artifact-status" class="muted" role="status"></p>
+        </div>
         <div class="constitution-actions">
+            ${hasBadges && definition.badgeDestinations.includes("phase.output")
+                ? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
             <button class="btn btn-secondary" id="view-constitution" type="button"
                 aria-describedby="constitution-artifact-status" hidden>View</button>
             <button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button>
@@ -143,7 +150,7 @@ export function mount({ root, definition, state, actions }) {
             : query ? `${shown} of ${rows.length} workflows match.` : "";
         notice.hidden = !notice.textContent;
     }
-    function badgeList(badges) {
+    function badgeList(badges, phaseText = false) {
         const group = document.createElement("span");
         group.className = "canvas-badges";
         for (const badge of badges) {
@@ -160,7 +167,7 @@ export function mount({ root, definition, state, actions }) {
                 label.style.color = (luminance + 0.05) / (0.005605 + 0.05)
                     >= 1.05 / (luminance + 0.05) ? "#111" : "#fff";
             }
-            label.textContent = badge.text;
+            label.textContent = phaseText ? badge.phaseText ?? badge.text : badge.text;
             group.append(label);
         }
         return group;
@@ -433,6 +440,16 @@ export function mount({ root, definition, state, actions }) {
     function status(model) {
         const phase = model.phases.find((entry) => entry.project);
         if (phase) {
+            if (model.badges?.project !== undefined && !Array.isArray(model.badges.project)) {
+                throw new Error("Invalid project badge results");
+            }
+            const projectBadges = model.badges?.project ?? [];
+            const forTarget = (output) => projectBadges.filter((badge) => badge.targets
+                ? badge.targets.some((target) => target.phase === phase.id && target.output === output)
+                : output === null && badge.showIn.includes("phase-card") && badge.phase === phase.id);
+            find("constitution-badges")?.replaceChildren(badgeList(forTarget(null), true));
+            find("constitution-output-badges")?.replaceChildren(badgeList(
+                forTarget(phase.output), true));
             const result = model.statuses[phase.id];
             const available = result?.artifactAvailability === "available";
             const notice = find("constitution-artifact-status");
@@ -442,11 +459,12 @@ export function mount({ root, definition, state, actions }) {
             notice.hidden = !notice.textContent;
             find("view-constitution").hidden = !available;
             find("constitution-card").classList.toggle("constitution-ready", available);
-            find("constitution-status").textContent = available ? ""
+            const status = find("constitution-status");
+            status.textContent = available ? ""
                 : result?.artifactAvailability === "error" ? "Unavailable"
                     : result?.status === "Not run" ? "Needed before starting a workflow"
                         : result?.status ?? "Checking...";
-            find("constitution-status").hidden = available;
+            status.hidden = !status.textContent;
             const label = state.pendingLabel(phase) ?? (available ? "Update" : "Create constitution");
             find("run-constitution").textContent = label;
             find("send-constitution").textContent = state.pendingLabel(phase)
@@ -480,9 +498,9 @@ export function mount({ root, definition, state, actions }) {
                 ? model.name ?? "" : item?.label ?? "";
         }
         if (input) {
+            input.closest(".field").hidden = !model.userProvidesSlug;
             input.readOnly = locked;
             input.placeholder = locked ? "Automatically assigned" : "workflow-1";
-            find("workflow-slug-label").querySelector(".muted").hidden = locked;
             if (document.activeElement !== input && !state.inputPending) input.value = pending
                 ? model.slug : item?.slug ?? "";
         }

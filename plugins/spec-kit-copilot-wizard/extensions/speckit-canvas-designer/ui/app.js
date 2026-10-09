@@ -46,6 +46,7 @@ function updateOpenStatus() {
 const activeUploads = new Set();
 const required = ["canvas.id", "canvas.displayName"];
 const scalarAdapters = new Map();
+const badgeInputAdapters = new Map();
 const mounted = new Map();
 const pageViews = new Map();
 const themeKey = "speckit-designer.theme";
@@ -519,7 +520,19 @@ function renderPage(pageId, invalidFieldId) {
     if (page.fixedControl === "designer.badges") {
         badgeView = mountBadges({ root, page, phases: model.phases, outputs: draftOutputs,
             badgeTypes: model.badgeTypes ?? [], badgeRules: model.badgeRules ?? [],
-            draftBadges, onChange: updateSave });
+            draftBadges, onChange: updateSave,
+            controlMount({ root: mount, rule, inputs, phases, outputs, onChange }) {
+                const binding = model.badgeInputControls?.find((item) => item.rule === rule.id);
+                if (!binding) throw new Error(`Missing Designer badge input control for ${rule.id}`);
+                const adapter = badgeInputAdapters.get(binding.adapter);
+                if (adapter instanceof Error) throw adapter;
+                if (!adapter) throw new Error(`Missing Designer badge input adapter ${binding.adapter}`);
+                if (adapter.controlId !== binding.control || adapter.contractVersion !== 1
+                    || typeof adapter.mount !== "function") {
+                    throw new Error(`Incompatible Designer badge input adapter ${binding.adapter}`);
+                }
+                return adapter.mount({ root: mount, rule, inputs, phases, outputs, onChange });
+            } });
         root.setAttribute("aria-busy", "false");
         return true;
     }
@@ -766,6 +779,15 @@ try {
                 scalarAdapters.set(id, error);
             }
         }));
+    await Promise.all([...new Set((initial.badgeInputControls ?? [])
+        .map((item) => item.adapter))].map(async (name) => {
+        try {
+            badgeInputAdapters.set(name, await import(
+                `/adapters/${name}.mjs?token=${encodeURIComponent(token)}`));
+        } catch (error) {
+            badgeInputAdapters.set(name, error);
+        }
+    }));
     applyState(initial);
     connectionStatus("live");
     if (!initial.preview) await refreshOutputStatus(draft?.["canvas.id"]);

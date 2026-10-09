@@ -401,6 +401,22 @@ async function badgeTemplates(project) {
                 kind, strategy: "replace" });
         }
     }
+    for (const [name, relative, kind] of [
+        ["designer-badge-input-stock", "control.json", "designer.badge-input-control"],
+        ["designer-badge-input-stock-adapter", "designer.mjs", "designer.badge-input-adapter"],
+        ...["value-match", "artifact-current", "artifact-stale", "markdown-file-count",
+            "checklist-progress", "checklist-complete", "work-complete",
+            "phase-run-complete", "phase-artifact-complete"].map((id) =>
+            [`designer-badge-binding-${id}`, join("bindings", `${id}.json`),
+                "designer.badge-input-binding"]),
+    ]) {
+        const folder = join("designer-host", "badge-input-controls", "stock");
+        const path = join(project, ".specify", "extensions", "extension-canvas-design", folder, relative);
+        await mkdir(dirname(path), { recursive: true });
+        await copyFile(join(source, folder, relative), path);
+        templates.push({ name, path, sourceId: "extension:extension-canvas-design",
+            kind, strategy: "replace" });
+    }
     return templates;
 }
 
@@ -418,6 +434,10 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
     const model = await load();
     assert.equal(model.badgeTypes.length, 9);
     assert.equal(model.badgeRules.length, 9);
+    assert.equal(model.badgeInputControls.length, 9);
+    assert.ok(model.badgeInputControls.every((item) =>
+        item.control === "stock.badge-inputs"
+        && item.adapter === "designer-badge-input-stock-adapter"));
     assert.ok(model.badgeRules.some((rule) => rule.id === "value-match"
         && rule.inputs[0].type === "artifact" && rule.inputs[1].type === "text"));
     assert.ok(model.badgeRules.some((rule) => rule.id === "markdown-file-count"
@@ -425,8 +445,47 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
     assert.equal(model.badgeTypes.find((item) => item.id === "value-match").title,
         "Value match");
     const rule = templates.find((item) => item.name === "badge-rule-value-match");
+    const binding = templates.find((item) => item.name === "designer-badge-binding-value-match");
+    await assert.rejects(load(templates.filter((item) => item !== binding)),
+        /missing Designer badge input binding for value-match/);
+    const typeEntry = templates.find((item) => item.name === "badges-settings");
+    const typeBytes = await readFile(typeEntry.path, "utf8");
+    const disabledTypes = JSON.parse(typeBytes);
+    disabledTypes.types.find((item) => item.id === "value-match").enabled = false;
+    await writeFile(typeEntry.path, JSON.stringify(disabledTypes));
+    const withoutUnusedBinding = await load(templates.filter((item) => item !== binding));
+    assert.equal(withoutUnusedBinding.badgeInputControls.some((item) =>
+        item.rule === "value-match"), false);
+    assert.equal(withoutUnusedBinding.badgeTypes.find((item) =>
+        item.id === "value-match").enabled, false);
+    await writeFile(typeEntry.path, typeBytes);
+    const control = templates.find((item) => item.name === "designer-badge-input-stock");
+    await assert.rejects(load(templates.filter((item) => item !== control)),
+        /missing Designer badge input control stock.badge-inputs/);
+    const inputAdapter = templates.find((item) =>
+        item.name === "designer-badge-input-stock-adapter");
+    await assert.rejects(load(templates.filter((item) => item !== inputAdapter)),
+        /missing Designer badge input adapter designer-badge-input-stock-adapter/);
+    const inputAdapterOriginal = await readFile(inputAdapter.path, "utf8");
+    await writeFile(inputAdapter.path, inputAdapterOriginal
+        + "\nthrow new Error('must not execute in the Designer Node process');\n");
+    await load();
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        'controlId = "stock.badge-inputs"', 'controlId = "wrong.badge-inputs"'));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        'controlId = "stock.badge-inputs"',
+        'controlId = ["stock", "badge-inputs"].join(".")'));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        "contractVersion = 1", "contractVersion = 2"));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal);
     const original = await readFile(rule.path, "utf8");
-    await writeFile(rule.path, JSON.stringify({ ...JSON.parse(original), module: "not-registered" }));
+    const { adapter: legacyAdapter, ...withoutAdapter } = JSON.parse(original);
+    await writeFile(rule.path, JSON.stringify({ ...withoutAdapter, module: legacyAdapter }));
+    await assert.rejects(load(), /invalid badge rule definition/);
+    await writeFile(rule.path, JSON.stringify({ ...JSON.parse(original), adapter: "not-registered" }));
     await assert.rejects(load(), /missing registered badge adapter/);
     await writeFile(rule.path, original);
     const type = templates.find((item) => item.name === "badges-settings");
@@ -462,8 +521,32 @@ test("preset badge definitions add, replace, and disable registered catalog entr
         "generated.badge-rule-definition", {
             schemaVersion: 1, id: "preset-extra", label: "Preset rule",
             description: "Added by a preset.", inputs: [{ id: "phase", type: "phase" }],
-            textPlaceholders: ["count"], module: "badge-rule-preset-extra",
+            textPlaceholders: ["count"], adapter: "badge-rule-preset-extra",
         });
+    await add("designer-badge-preset-control", "designer.badge-input-control",
+        { schemaVersion: 1, id: "preset.phase", adapter: "designer-badge-preset-adapter",
+            inputTypes: ["phase"] });
+    await add("designer-badge-preset-adapter", "designer.badge-input-adapter",
+        `export const controlId = "preset.phase";
+export const contractVersion = 1;
+export function mount({ root, inputs, phases, onChange }) {
+    const hint = document.createElement("p");
+    hint.textContent = "Choose the phase used by this custom badge.";
+    const select = document.createElement("select");
+    for (const phase of phases) {
+        const option = document.createElement("option");
+        option.value = phase;
+        option.textContent = phase;
+        select.append(option);
+    }
+    select.value = inputs.phase;
+    select.addEventListener("change", () => onChange({ phase: select.value }));
+    root.replaceChildren(hint, select);
+    return { isReady: () => true };
+}`, ".mjs");
+    await add("designer-badge-binding-preset-extra", "designer.badge-input-binding",
+        { schemaVersion: 1, id: "preset-extra", rule: "preset-extra",
+            control: "preset.phase" });
     const settingsEntry = inventory.find((item) => item.name === "badges-settings");
     const settings = JSON.parse(await readFile(settingsEntry.path, "utf8"));
     settings.types.push({ id: "preset-extra", title: "Preset badge",
@@ -492,7 +575,7 @@ test("preset badge definitions add, replace, and disable registered catalog entr
         return path;
     };
     const replacedRule = await replace("badge-rule-checklist-progress", "rules",
-        "checklist-progress.json", { module: "badge-rule-preset-extra" });
+        "checklist-progress.json", { adapter: "badge-rule-preset-extra" });
     const load = () => loadResolvedDesignerPages(validHandoff(), project, entries, inventory,
         (_root, name) => {
             const entry = inventory.find((item) => item.name === name);
@@ -506,9 +589,13 @@ test("preset badge definitions add, replace, and disable registered catalog entr
     assert.equal(model.badgeRules.length, 10);
     assert.equal(model.badgeTypes.find((item) => item.id === "preset-extra").name, "badges-settings");
     assert.equal(model.badgeRules.find((item) => item.id === "preset-extra").name, addedRule.name);
+    assert.deepEqual(model.badgeInputControls.find((item) => item.rule === "preset-extra"),
+        { rule: "preset-extra", control: "preset.phase", adapter: "designer-badge-preset-adapter",
+            binding: "designer-badge-binding-preset-extra",
+            definition: "designer-badge-preset-control", sourceId: "badge-catalog-test" });
     assert.equal(model.badgeTypes.find((item) => item.id === "checklist-progress").rule,
         "checklist-progress");
-    assert.equal(model.badgeRules.find((item) => item.id === "checklist-progress").module,
+    assert.equal(model.badgeRules.find((item) => item.id === "checklist-progress").adapter,
         "badge-rule-preset-extra");
     assert.equal(model.badgeTypes.find((item) => item.id === "artifact-renamed").enabled, false);
     assert.equal(model.badgeTypes.find((item) => item.id === "artifact-renamed").title,
@@ -521,12 +608,12 @@ test("preset badge definitions add, replace, and disable registered catalog entr
     settings.types.find((item) => item.id === "preset-extra").defaultText = "Preset {count}";
     await writeFile(settingsOverride, JSON.stringify(settings));
     await writeFile(replacedRule, JSON.stringify({
-        ...JSON.parse(await readFile(replacedRule, "utf8")), module: "not-registered",
+        ...JSON.parse(await readFile(replacedRule, "utf8")), adapter: "not-registered",
     }));
     await assert.rejects(load(), /missing registered badge adapter/);
     await writeFile(replacedRule, JSON.stringify({
         ...JSON.parse(await readFile(replacedRule, "utf8")),
-        module: "badge-rule-preset-extra",
+        adapter: "badge-rule-preset-extra",
     }));
     settings.types.push({ ...settings.types[0] });
     await writeFile(settingsOverride, JSON.stringify(settings));
@@ -543,6 +630,98 @@ test("Designer badge save and reopen freezes registered assets into generated co
     };
     handoff.sourceFingerprint = fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
+    });
+
+    await t.test("test preset badge uses its own Designer control and packages only its evaluator", async (t) => {
+        const workspace = await fixture(t);
+        const handoff = validHandoff();
+        handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
+        handoff.sourceFingerprint = fingerprint({
+            workflow: handoff.workflow, selections: handoff.selections,
+        });
+        await saveHandoff(workspace, handoff);
+        const { project, entries } = await projectFixture(t, workspace);
+        const templates = [...await stockTemplates(project), ...await badgeTemplates(project)];
+        const preset = fileURLToPath(new URL(
+            "../../../../../spec-kit-presets/copilot-badge-input-test/", import.meta.url));
+        const replacement = templates.find((item) => item.name === "badges-settings");
+        const presetFolder = join(project, ".specify", "presets", "copilot-badge-input-test");
+        const settingsPath = join(presetFolder, "designer", "badges.json");
+        await mkdir(dirname(settingsPath), { recursive: true });
+        await copyFile(join(preset, "designer", "badges.json"), settingsPath);
+        templates.splice(templates.indexOf(replacement), 1,
+            { ...replacement, path: settingsPath, sourceId: "copilot-badge-input-test" });
+        for (const [name, relative, kind] of [
+            ["badge-rule-test-phase", join("generated", "rule.json"), "generated.badge-rule-definition"],
+            ["badge-rule-test-phase-adapter", join("generated", "evaluator.mjs"),
+                "generated.badge-rule-adapter"],
+            ["designer-badge-test-control", join("designer", "control.json"),
+                "designer.badge-input-control"],
+            ["designer-badge-test-adapter", join("designer", "adapter.mjs"),
+                "designer.badge-input-adapter"],
+            ["designer-badge-test-binding", join("designer", "binding.json"),
+                "designer.badge-input-binding"],
+        ]) {
+            const path = join(presetFolder, relative);
+            await mkdir(dirname(path), { recursive: true });
+            await copyFile(join(preset, relative), path);
+            templates.push({ name, path, sourceId: "copilot-badge-input-test",
+                kind, strategy: "replace" });
+        }
+        const inventory = (_root, name) => {
+            const item = templates.find((entry) => entry.name === name);
+            const presetLayer = item?.sourceId === "copilot-badge-input-test";
+            return { kind: "template", stack: [{ active: true,
+                layer: presetLayer ? "preset" : "extension",
+                sourceId: presetLayer ? "copilot-badge-input-test" : "extension-canvas-design",
+                strategy: "replace" }] };
+        };
+        const model = await loadResolvedDesignerPages(handoff, project, entries, templates, inventory);
+        assert.equal(model.badgeInputControls.find((item) => item.rule === "test-phase").control,
+            "test.phase-choice");
+        const initial = await loadDesignerSettings(workspace, handoff, model);
+        const badge = { id: "test-phase-1", type: "test-phase", inputs: { phase: "specify" },
+            text: "Phase confirmed", color: "purple", showIn: ["workflow-list"], phase: null };
+        await assert.rejects(saveDesignerSettings(workspace, handoff, initial, {
+            modelRevision: model.revision, revision: 0, values: initial.values,
+            outputs: initial.outputs,
+            badges: [{ ...badge, inputs: { phase: "unknown" } }],
+        }), /invalid phase input phase/);
+        const saved = await saveDesignerSettings(workspace, handoff, initial, {
+            modelRevision: model.revision, revision: 0,
+            values: { ...initial.values, "canvas.id": "test-badge-canvas",
+                "canvas.displayName": "Test badge canvas" },
+            outputs: initial.outputs, badges: [badge],
+        });
+        const reopened = await loadDesignerSettings(workspace, handoff, model);
+        assert.deepEqual(reopened.badges, [badge]);
+        const prepared = await freezeGeneration({ model: reopened, values: saved.values,
+            badges: reopened.badges, outputs: reopened.outputs, handoff, project, workspace });
+        const { materialize } = await import(new URL(
+            "../../../../../spec-kit-extensions/extension-canvas-design/scripts/generate.mjs", import.meta.url));
+        await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+        const target = join(project, prepared.target);
+        const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
+        assert.deepEqual(config.badges.instances, [badge]);
+        assert.deepEqual(config.badges.rules.map(({ id }) => id), ["test-phase"]);
+        assert.equal(config.badges.rules[0].adapter, "badge-rule-test-phase-adapter");
+        assert.equal(Object.hasOwn(config.badges.rules[0], "module"), false);
+        await assert.rejects(readFile(join(target, "badges", "designer-badge-test-adapter.mjs")),
+            /ENOENT/);
+        assert.equal((await readFile(join(target, "badges", "badge-rule-test-phase-adapter.mjs"),
+            "utf8")).includes("getRun(inputs.phase)"), true);
+        const evaluator = await import(pathToFileURL(join(target, "badges",
+            "badge-rule-test-phase-adapter.mjs")).href);
+        assert.deepEqual(await evaluator.evaluate({ inputs: badge.inputs,
+            evidence: { getRun: async (phase) => ({ status: phase === "specify"
+                ? "completed" : "failed" }) } }), { match: true });
+        assert.deepEqual(await evaluator.evaluate({ inputs: badge.inputs,
+            evidence: { getRun: async () => ({ status: "failed" }) } }), { match: false });
+        await writeFile(join(presetFolder, "designer", "adapter.mjs"),
+            "export const controlId = 'test.phase-choice';");
+        await assert.rejects(freezeGeneration({ model: reopened, values: saved.values,
+            badges: reopened.badges, outputs: reopened.outputs, handoff, project, workspace }),
+        /changed|hash|frozen|integrity/i);
     });
     await saveHandoff(workspace, handoff);
     const { project, entries } = await projectFixture(t, workspace);
@@ -583,13 +762,13 @@ test("Designer badge save and reopen freezes registered assets into generated co
     assert.deepEqual(config.badges.instances, badges);
     assert.equal(config.badges.types[0].id, "checklist-progress");
     assert.equal(config.badges.rules[0].id, "checklist-progress");
-    assert.equal(config.badges.rules[0].module, "badge-rule-content-adapter");
+    assert.equal(config.badges.rules[0].adapter, "badge-rule-content-adapter");
     assert.deepEqual(Object.keys(config.badges).sort(), ["instances", "rules", "types"]);
     assert.deepEqual(await readFile(join(project, prepared.target, "badges",
         "badge-rule-content-adapter.mjs")), Buffer.from(request.badges.adapters[0].content, "base64"));
 });
 
-test("Generate refuses saved Constitution badge destinations while permitting its evidence", async (t) => {
+test("Generate accepts Constitution card and declared output destinations", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
@@ -621,9 +800,41 @@ test("Generate refuses saved Constitution badge destinations while permitting it
         { ...global, targets: [{ phase: "constitution", output: null }] },
         { ...global, targets: [{ phase: "constitution", output: ".specify/memory/constitution.md" }] },
     ]) {
-        await assert.rejects(freezeGeneration({ ...options, badges: [badge] }),
-            /invalid or removed output, phase, text, or placement/);
+        await assert.doesNotReject(freezeGeneration({ ...options, badges: [badge] }));
     }
+    const workflowEvidence = { ...global, inputs: {
+        artifact: { phase: "specify", output: "specs/<slug>/spec.md" },
+    } };
+    await assert.doesNotReject(freezeGeneration({ ...options, badges: [workflowEvidence] }));
+    for (const badge of [
+        { ...workflowEvidence, showIn: ["phase-card"], phase: "constitution" },
+        { ...workflowEvidence, targets: [{ phase: "constitution", output: null }] },
+        { ...workflowEvidence, targets: [{ phase: "constitution",
+            output: ".specify/memory/constitution.md" }] },
+        { ...workflowEvidence, targets: [
+            { phase: "constitution", output: null }, { phase: "specify", output: null },
+        ] },
+    ]) {
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+            modelRevision: model.revision, revision: 0, values, outputs: model.outputs,
+            badges: [badge],
+        }), /project placement requires project-level rule inputs/);
+        await assert.rejects(freezeGeneration({ ...options, badges: [badge] }),
+            /project placement with workflow rule inputs/);
+    }
+    const phaseBadge = { ...global, type: "phase-run-complete",
+        inputs: { phase: "specify" }, text: "Phase run complete",
+        targets: [{ phase: "constitution", output: null }] };
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, {
+        modelRevision: model.revision, revision: 0, values, outputs: model.outputs,
+        badges: [phaseBadge],
+    }), /project placement requires project-level rule inputs/);
+    await assert.rejects(freezeGeneration({ ...options, badges: [phaseBadge] }),
+        /project placement with workflow rule inputs/);
+    await assert.rejects(freezeGeneration({ ...options, badges: [{
+        ...global, targets: [{ phase: "constitution", output: "undeclared.md" }],
+    }] }),
+    /invalid or removed output, phase, text, or placement/);
 });
 
 async function stockTemplates(project) {
@@ -633,7 +844,7 @@ async function stockTemplates(project) {
         "designer-host", "essentials-settings");
     await mkdir(directory, { recursive: true });
     const templates = [];
-    for (const name of ["description", "workflow-heading"]) {
+    for (const name of ["description", "workflow-heading", "custom-slug"]) {
         const path = join(directory, `${name}.json`);
         await copyFile(join(source, "designer-host", "essentials-settings", `${name}.json`), path);
         templates.push({ name: `designer-essentials-${name}`, path,
@@ -894,6 +1105,39 @@ test("stock image picker announces its format hint and upload error", async (t) 
     const hint = root.children[4];
     assert.equal(hint.textContent, "PNG or JPEG, up to 32 KiB.");
     assert.equal(input.getAttribute("aria-describedby"), `${hint.id} ${error.id}`);
+});
+
+test("stock checkboxes display their JSON help below the label", async (t) => {
+    const previousDocument = globalThis.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const element = () => ({
+        children: [], attributes: new Map(), events: {},
+        setAttribute(name, value) { this.attributes.set(name, value); },
+        getAttribute(name) { return this.attributes.get(name); },
+        addEventListener(name, callback) { this.events[name] = callback; },
+        replaceChildren(...children) { this.children = children; },
+    });
+    globalThis.document = { createElement: element };
+    const { mount } = await import(new URL(
+        "../../../../../spec-kit-extensions/extension-canvas-design/shared-controls/stock-checkbox/designer.mjs",
+        import.meta.url));
+    const source = new URL("../../../../../spec-kit-extensions/extension-canvas-design/designer-host/essentials-settings/",
+        import.meta.url);
+    for (const file of ["custom-slug.json", "show-setup.json"]) {
+        const { field } = JSON.parse(await readFile(new URL(file, source), "utf8"));
+        const root = element();
+        let nextValue;
+        mount({ root, field: { ...field, validation: { type: "boolean" } },
+            value: false, onChange: (value) => { nextValue = value; } });
+        const [input, label, hint] = root.children;
+        assert.equal(label.textContent, field.label);
+        assert.equal(hint.className, "settings-hint");
+        assert.equal(hint.textContent, field.description);
+        assert.equal(input.getAttribute("aria-describedby"), hint.id);
+        input.checked = true;
+        input.events.input();
+        assert.equal(nextValue, true);
+    }
 });
 
 test("Designer tabs remain navigable when a field adapter is not ready", async () => {
@@ -1406,7 +1650,7 @@ test("stock image requires one compatible control definition and paired self-con
         ? { ...entry, strategy: "append" } : entry)), /Invalid or duplicate Canvas Design template/);
 });
 
-test("stock contributions retain the four-field layout and minimal replaced Essentials generate defaults", async (t) => {
+test("stock contributions retain the optional slug setting and minimal replaced Essentials generate defaults", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
     handoff.workflow.installed = { presets: [], extensions: [], bundles: [] };
@@ -1417,14 +1661,23 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const { project, entries } = await projectFixture(t, workspace);
     const templates = await stockTemplates(project);
     const full = await loadResolvedDesignerPages(handoff, project, entries, templates);
+    assert.equal(full.pages[0].description, "Configure settings for your generated canvas app.");
     assert.deepEqual(full.pages[0].fields.map(({ id, label }) => [id, label]), [
         ["canvas.id", "Canvas ID"], ["canvas.displayName", "Title"],
         ["canvas.description", "Description"], ["canvas.workflowListName", "Workflow header"],
+        ["workflowSlug.userProvided", "Allow custom artifact directory slug"],
     ]);
-    assert.equal(Object.hasOwn(full.values, "workflowSlug.userProvided"), false);
+    const essentials = new Map(full.pages[0].fields.map(({ id, description }) => [id, description]));
+    assert.ok([...essentials.values()].every((description) => typeof description === "string"
+        && description.trim()), "Every Essentials field has help text from its JSON definition");
+    assert.match(essentials.get("canvas.id"), /Windows device names like con and com1/);
+    assert.match(essentials.get("canvas.displayName"), /1–120 characters/);
+    assert.match(essentials.get("canvas.description"), /240 characters/);
+    assert.match(essentials.get("canvas.workflowListName"), /80 characters/);
+    assert.equal(full.values["workflowSlug.userProvided"], false);
     const values = { ...full.values, "canvas.id": "stock-canvas",
         "canvas.displayName": "Stock Canvas", "canvas.description": "Stock description",
-        "canvas.workflowListName": "Stock heading" };
+        "canvas.workflowListName": "Stock heading", "workflowSlug.userProvided": true };
     await assert.rejects(freezeGeneration({ model: full, values, project, workspace,
         handoff: { ...handoff, workflow: { ...handoff.workflow, installed: {
             ...handoff.workflow.installed, presets: [{ id: "local-runtime", source: "local",
@@ -1464,6 +1717,7 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     assert.deepEqual(config.canvas, { id: "stock-canvas", displayName: "Stock Canvas",
         description: "Stock description", workflowListName: "Stock heading" });
     assert.equal(config.userProvidesSlug, true);
+    assert.equal(phaseRequest.values["workflowSlug.userProvided"], true);
 
     for (const [id, description, heading, expectedDescription, expectedHeading] of [
         ["blank-stock", "   ", "  ", "Spec Kit workflow canvas.", "Workflows"],
@@ -1496,13 +1750,13 @@ test("stock contributions retain the four-field layout and minimal replaced Esse
     const defaults = JSON.parse(await readFile(join(project, next.target, "canvas-config.json"), "utf8"));
     assert.equal(defaults.canvas.description, "Spec Kit workflow canvas.");
     assert.equal(defaults.canvas.workflowListName, "Workflows");
-    assert.equal(defaults.userProvidesSlug, true);
+    assert.equal(defaults.userProvidesSlug, false);
     const { renderHtml } = await import(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/server.mjs",
         import.meta.url));
     const defaultHtml = renderHtml(defaults);
     assert.match(defaultHtml, /Workflows/);
     assert.match(defaultHtml, /Spec Kit workflow canvas\./);
-    assert.match(stockMarkup(defaults), /id="workflow-slug"[^>]+required/);
+    assert.match(stockMarkup(defaults), /id="workflow-slug"[^>]+maxlength="100"/);
     assert.equal(await readFile(join(project, next.target, "ui", "runtime.css"), "utf8"),
         await readFile(join(project, prepared.target, "ui", "runtime.css"), "utf8"));
     const originalPages = await Promise.all(entries.slice(0, 2)
@@ -2918,6 +3172,13 @@ test("sample-only preview renders badges without a handoff and rejects writes", 
     assert.equal(state.generationAvailable, false);
     assert.deepEqual(state.pages.map((page) => page.page), ["designer-badges"]);
     assert.ok(state.badgeTypes.some((type) => type.id === "value-match"));
+    assert.equal(state.badgeInputControls.length, state.badgeRules.length);
+    assert.equal(state.badgeRules.find((rule) => rule.id === "checklist-complete")
+        .placementPhaseInput, undefined);
+    const stock = await fetch(new URL(
+        `/adapters/preview-badge-input.mjs?token=${url.searchParams.get("token")}`, url));
+    assert.equal(stock.status, 200);
+    assert.match(await stock.text(), /export const controlId = "preview.badge-inputs"/);
     assert.ok(state.pipelineOutputs.clarify.outputs.length);
     for (const action of ["save", "generate"]) {
         const response = await fetch(new URL(`/api/${action}?token=${url.searchParams.get("token")}`, url),
@@ -4526,8 +4787,10 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             join(shared, file));
     }
     await mkdir(join(extension, "ui"));
-    for (const file of ["index.html", "app.js", "generation-state.js", "identity-control.js", "outputs-control.js",
-        "control-adapter-contract.js", "badges-control.js", "badge-duplicates.js", "styles.css"]) {
+    for (const file of ["index.html", "app.js", "generation-state.js", "generated-output-state.js",
+        "identity-control.js", "outputs-control.js",
+        "control-adapter-contract.js", "badges-control.js", "badge-duplicates.js",
+        "preview-badge-input.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
     const { project, entries } = await projectFixture(t, workspace);
@@ -4577,7 +4840,8 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             "generated.workflow-page-adapter",
             "generated.phase-control-definition", "generated.phase-control-adapter",
             "designer.badges-settings-definition", "generated.badge-rule-definition",
-            "generated.badge-rule-adapter",
+            "generated.badge-rule-adapter", "designer.badge-input-control",
+            "designer.badge-input-binding", "designer.badge-input-adapter",
             "generated.field-placement",
             "generated.added-page-definition",
             "generated.added-page-renderer", "shared.control-definition",

@@ -42,7 +42,9 @@ The extension may list stock-field contribution JSON under **Canvas Design
 templates**. Presets may list these and generated-host pages and modules under
 **Additional Canvas Design templates** anywhere in this composed command.
 Each registration declares its Canvas Design kind (`designer.badges-settings-definition`,
-`generated.badge-rule-definition`, `generated.badge-rule-adapter`, `designer.setting-definition`,
+`generated.badge-rule-definition`, `generated.badge-rule-adapter`,
+`designer.badge-input-control`, `designer.badge-input-binding`, `designer.badge-input-adapter`,
+`designer.setting-definition`,
 `generated.workflow-page-definition`, `generated.workflow-page-adapter`,
 `generated.phase-control-definition`,
 `generated.phase-control-adapter`,
@@ -139,6 +141,7 @@ unregistered files are not loaded.
 
 - `designer-essentials-description` — `designer.setting-definition`, `replace`
 - `designer-essentials-workflow-heading` — `designer.setting-definition`, `replace`
+- `designer-essentials-custom-slug` — `designer.setting-definition`, `replace`
 - `designer-essentials-show-setup` — `designer.setting-definition`, `replace`
 - `designer-essentials-header-logo` — `designer.setting-definition`, `replace`
 - `designer-essentials-main-page-logo` — `designer.setting-definition`, `replace`
@@ -175,6 +178,17 @@ unregistered files are not loaded.
 - `badge-rule-artifact-state-adapter` — `generated.badge-rule-adapter`, `replace`
 - `badge-rule-run-adapter` — `generated.badge-rule-adapter`, `replace`
 - `badge-rule-phase-artifact-complete-adapter` — `generated.badge-rule-adapter`, `replace`
+- `designer-badge-input-stock` — `designer.badge-input-control`, `replace`
+- `designer-badge-input-stock-adapter` — `designer.badge-input-adapter`, `replace`
+- `designer-badge-binding-value-match` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-artifact-current` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-artifact-stale` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-markdown-file-count` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-checklist-progress` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-checklist-complete` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-work-complete` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-phase-run-complete` — `designer.badge-input-binding`, `replace`
+- `designer-badge-binding-phase-artifact-complete` — `designer.badge-input-binding`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`
 - `designer-control-adapter-image` — `designer.control-adapter`, `replace`
 - `generated-control-adapter-image` — `generated.control-adapter`, `replace`

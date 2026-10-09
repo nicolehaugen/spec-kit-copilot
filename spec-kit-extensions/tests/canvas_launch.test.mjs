@@ -52,6 +52,7 @@ test("generated skill declarations include appended pages and templates anywhere
     assert.deepEqual(declarations("## Pages\n\nNo pages selected.\n"), []);
     assert.ok(names.includes("designer-essentials"));
     assert.ok(names.includes("designer-essentials-description"));
+    assert.ok(names.includes("designer-essentials-custom-slug"));
     assert.ok(names.includes("generated-phase-control"));
     assert.ok(names.includes("generated-phase-adapter"));
     assert.ok(names.includes("sample-renderer"));
@@ -111,6 +112,7 @@ test("composed verification resolves every name, rejects warnings and native scr
         "designer-appearance": join(installed, "designer-host", "tabs", "appearance.json"),
         "designer-essentials-description": join(installed, "designer-host", "essentials-settings", "description.json"),
         "designer-essentials-workflow-heading": join(installed, "designer-host", "essentials-settings", "workflow-heading.json"),
+        "designer-essentials-custom-slug": join(installed, "designer-host", "essentials-settings", "custom-slug.json"),
         "designer-essentials-show-setup": join(installed, "designer-host", "essentials-settings", "show-setup.json"),
         "designer-essentials-header-logo": join(installed, "designer-host", "essentials-settings", "header-logo.json"),
         "designer-essentials-main-page-logo": join(installed, "designer-host", "essentials-settings", "main-page-logo.json"),
@@ -129,6 +131,15 @@ test("composed verification resolves every name, rejects warnings and native scr
         "generated-setup-button-adapter": join(installed, "generated-host", "setup-button-control", "generated-setup-button-adapter.mjs"),
         "generated-setup-button": join(installed, "generated-host", "setup-button-control", "setup.json"),
         "badges-settings": join(installed, "designer-host", "badges-settings", "badge-types.json"),
+        "designer-badge-input-stock": join(installed, "designer-host",
+            "badge-input-controls", "stock", "control.json"),
+        "designer-badge-input-stock-adapter": join(installed, "designer-host",
+            "badge-input-controls", "stock", "designer.mjs"),
+        ...Object.fromEntries(["value-match", "artifact-current", "markdown-file-count",
+            "checklist-progress", "checklist-complete", "work-complete", "phase-run-complete",
+            "artifact-stale", "phase-artifact-complete"].map((id) =>
+            [`designer-badge-binding-${id}`, join(installed, "designer-host",
+                "badge-input-controls", "stock", "bindings", `${id}.json`)])),
         ...Object.fromEntries(["value-match", "artifact-current", "markdown-file-count", "checklist-progress",
             "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
             "phase-artifact-complete"].map((id) =>

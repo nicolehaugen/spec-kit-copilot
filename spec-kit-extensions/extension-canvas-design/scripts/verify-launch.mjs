@@ -10,7 +10,8 @@ const exec = promisify(execFile);
 const NAME = /^[a-z][a-z0-9-]{0,79}$/;
 const KINDS = new Set(["designer.setting-definition",
     "designer.badges-settings-definition", "generated.badge-rule-definition",
-    "generated.badge-rule-adapter",
+    "generated.badge-rule-adapter", "designer.badge-input-control",
+    "designer.badge-input-binding", "designer.badge-input-adapter",
     "generated.workflow-page-definition", "generated.phase-control-definition",
     "generated.workflow-page-adapter",
     "generated.phase-control-adapter",
@@ -24,6 +25,7 @@ const KINDS = new Set(["designer.setting-definition",
 const HEADINGS = new Set(["Pages", "Additional Designer pages",
     "Canvas Design templates", "Additional Canvas Design templates"]);
 const EXECUTABLE = new Set(["generated.badge-rule-adapter",
+    "designer.badge-input-adapter",
     "generated.workflow-page-adapter", "generated.phase-control-adapter",
     "generated.added-page-renderer",
     "designer.control-adapter", "generated.control-adapter", "generated.computed-value-provider",

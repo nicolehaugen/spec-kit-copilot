@@ -683,10 +683,10 @@ export function renderHtml(config, token = "") {
                 <span class="muted" id="workflow-name-help">Shown in the workflow list.</span>
             </label>
             <label class="field" for="workflow-slug">
-                <span class="field-label" id="workflow-slug-label">Artifact folder name (slug) <span class="muted">Required</span></span>
-                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100" required
+                <span class="field-label" id="workflow-slug-label">Artifact directory slug <span class="muted">Optional</span></span>
+                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100"
                     pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="workflow-1" aria-describedby="workflow-slug-help workflow-slug-error">
-                <span class="muted" id="workflow-slug-help">Folder for workflow artifacts. Created when Specify runs; use lowercase, numbers, or hyphens.</span>
+                <span class="muted" id="workflow-slug-help">Leave blank to let Spec Kit choose the directory. Use lowercase, numbers, or hyphens.</span>
                 <span id="workflow-slug-error" class="workflow-error" role="alert" hidden></span>
             </label>
         </div>
@@ -722,9 +722,17 @@ export function renderHtml(config, token = "") {
             data-canvas-title="${escapeHtml(canvas.displayName)}" hidden></section>
         <p id="generated-page-error" class="workflow-error" role="alert" hidden></p>` : "",
         constitution: hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
-            <div class="constitution-summary"><strong>Constitution</strong><span class="muted">Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span></div>
-            <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p><p id="constitution-artifact-status" class="muted" role="status"></p></div>
-            <div class="constitution-actions"><button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button></div>
+            <div class="constitution-summary"><strong>Constitution</strong><span class="muted">Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span>
+            ${config.badges?.instances?.length
+                && (config.workflowPage.badgeDestinations ?? ["phase.card"]).includes("phase.card")
+                ? '<span id="constitution-badges" class="canvas-badges" aria-label="Constitution badges"></span>' : ""}
+            </div>
+            <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p><p id="constitution-artifact-status" class="muted" role="status"></p>
+            </div>
+            <div class="constitution-actions">${config.badges?.instances?.length
+                && (config.workflowPage.badgeDestinations ?? ["phase.output"]).includes("phase.output")
+                ? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
+                <button class="btn btn-secondary" id="view-constitution" type="button" aria-describedby="constitution-artifact-status" hidden>View</button><button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button></div>
         </section>` : "",
         pipeline: `<div id="workflow-pipeline" hidden data-module="/pages/${escapeHtml(config.workflowPage.adapter)}.mjs"
             data-view-labels="${escapeHtml(JSON.stringify(config.workflowPage.viewLabels))}"

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mountBadges } from "../ui/badges-control.js";
+import { previewModel } from "../preview.mjs";
+import { mount as mountPreviewInputs } from "../ui/preview-badge-input.js";
+import { mount as mountStockInputs, controlId, contractVersion } from
+    "../../../../../spec-kit-extensions/extension-canvas-design/designer-host/badge-input-controls/stock/designer.mjs";
+import { mount as mountPresetInputs } from
+    "../../../../../spec-kit-presets/copilot-badge-input-test/designer/adapter.mjs";
 
 class Node {
     constructor(tagName) {
@@ -18,6 +24,7 @@ class Node {
     addEventListener(name, handler) { this.events[name] = handler; }
     setAttribute(name, value) { this.attributes[name] = value; }
     focus() { this.focused = true; }
+    contains(node) { return descendants(this).includes(node); }
     querySelector(selector) {
         return descendants(this).find((node) => node.className.split(" ").includes(selector.slice(1)));
     }
@@ -35,13 +42,14 @@ function setup({ phases = ["specify", "plan"], outputs = {
     defaultColor: "amber", enabled: true }], badgeRules = [{
     id: "count", description: "Count distinct selected artifacts",
     textPlaceholders: ["count"], inputs: [{ id: "artifacts", type: "artifact-set" }],
-}], draftBadges = [] } = {}) {
+}], draftBadges = [], controlMount = mountStockInputs } = {}) {
     const previous = globalThis.document;
     globalThis.document = { createElement: (tag) => new Node(tag) };
     const root = new Node("div");
     let changes = 0;
     const view = mountBadges({ root, page: { title: "Badges", description: "Add result badges" },
-        phases, outputs, badgeTypes, badgeRules, draftBadges, onChange() { changes++; } });
+        phases, outputs, badgeTypes, badgeRules, draftBadges, controlMount,
+        onChange() { changes++; } });
     return { root, view, draftBadges, changes: () => changes,
         cleanup: () => { globalThis.document = previous; } };
 }
@@ -75,6 +83,464 @@ function placementText(root, name) {
 
 function submit(editor) { editor.events.submit({ preventDefault() {} }); }
 
+test("stock input adapter exposes its contract and host requires an injected control", () => {
+    assert.equal(controlId, "stock.badge-inputs");
+    assert.equal(contractVersion, 1);
+    const { root, draftBadges, changes, cleanup } = setup({ controlMount: null });
+    try {
+        const editor = choose(root);
+        assert.ok(descendants(editor).some((node) => node.textContent
+            === "Badge input controls are unavailable."));
+        submit(editor);
+        assert.equal(changes(), 0);
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /input controls are unavailable/);
+    } finally { cleanup(); }
+});
+
+test("host accepts a custom input control without rendering rule-specific inputs", () => {
+    let disposed = 0;
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ root: controlRoot, inputs, onChange }) {
+            inputs.phase = "specify";
+            const choice = document.createElement("output");
+            choice.addEventListener("click", () => onChange({ phase: "plan" }));
+            controlRoot.append(choice);
+            return { isReady: () => true,
+                dispose() { disposed++; } };
+        },
+    });
+
+    try {
+        const editor = choose(root);
+        assert.equal(descendants(editor).filter((node) => node.tagName === "output").length, 1);
+        assert.equal(root.querySelector(".badge-phase-list"), undefined);
+        descendants(editor).find((node) => node.tagName === "output").events.click();
+        submit(editor);
+        assert.equal(disposed, 1);
+        assert.equal(draftBadges[0].inputs.phase, "plan");
+    } finally { cleanup(); }
+});
+
+test("host isolates adapter data and rejects missing or partial control updates", () => {
+    let update;
+    const phases = ["specify", "plan"];
+    const outputs = {
+        specify: { outputs: ["other.md", "spec.md"], view: "spec.md" },
+        plan: { outputs: ["plan.md"], view: "plan.md" },
+    };
+    const badgeRules = [{ id: "custom", inputs: [{ id: "phase", type: "phase" },
+        { id: "text", type: "text" }] }];
+    const { root, draftBadges, cleanup } = setup({
+        phases, outputs, badgeRules,
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        controlMount({ rule, inputs, phases: choices, outputs: evidence, onChange }) {
+            inputs.phase = "specify";
+            inputs.text = "mutated";
+            rule.inputs[0].id = "other";
+            rule.inputs.push({ id: "extra", type: "text" });
+            choices.splice(0, choices.length);
+            evidence.specify.outputs.splice(0, evidence.specify.outputs.length);
+            evidence.specify.view = "removed.md";
+            update = onChange;
+            return { isReady: () => true };
+        },
+    });
+    try {
+        const editor = choose(root);
+        assert.deepEqual(badgeRules[0].inputs.map(({ id }) => id), ["phase", "text"]);
+        assert.deepEqual(phases, ["specify", "plan"]);
+        assert.deepEqual(outputs.specify,
+            { outputs: ["other.md", "spec.md"], view: "spec.md" });
+        update();
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /do not match its rule/);
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        update({ phase: "plan" });
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        const replacement = { phase: "plan", text: "valid" };
+        update(replacement);
+        replacement.text = "mutated afterward";
+        submit(editor);
+        assert.deepEqual(draftBadges[0].inputs, { phase: "plan", text: "valid" });
+        assert.deepEqual(outputs.specify.outputs, ["other.md", "spec.md"]);
+    } finally { cleanup(); }
+});
+
+test("host rejects non-JSON-safe and invalid rule inputs before updating the badge draft", () => {
+    let update;
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [
+            { id: "phase", type: "phase" }, { id: "text", type: "text" },
+            { id: "artifact", type: "artifact" },
+            { id: "artifacts", type: "artifact-set" },
+            { id: "ordered", type: "ordered-artifacts", before: "artifact" },
+        ] }],
+        controlMount({ onChange }) {
+            update = onChange;
+            return { isReady: () => true };
+        },
+    });
+    try {
+        const editor = choose(root);
+        const valid = { phase: "plan", text: "Ready",
+            artifact: { phase: "plan", output: "plan.md" },
+            artifacts: [{ phase: "specify", outputs: ["spec.md"] }],
+            ordered: [{ phase: "specify", output: "other.md" }] };
+        const invalid = [
+            { ...valid, phase: 42 },
+            { ...valid, phase: "unknown" },
+            { ...valid, text: 42 },
+            { ...valid, artifact: { phase: "plan", output: "unknown.md" } },
+            { ...valid, artifacts: [{ phase: "specify", outputs: ["unknown.md"] }] },
+            { ...valid, ordered: [{ phase: "unknown", output: "other.md" }] },
+            { ...valid, artifact: { phase: "plan", output: undefined } },
+            { ...valid, text: Infinity },
+            { ...valid, artifacts: [new Date()] },
+        ];
+        const cyclic = structuredClone(valid);
+        cyclic.artifacts[0].self = cyclic;
+        invalid.push(cyclic);
+        const sparse = structuredClone(valid);
+        sparse.ordered = new Array(1);
+        invalid.push(sparse);
+        const hidden = structuredClone(valid);
+        Object.defineProperty(hidden.artifact, "extra", { value: "not serialized" });
+        invalid.push(hidden);
+        for (const inputs of invalid) {
+            update(inputs);
+            assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+                /do not match its rule or available evidence/);
+            submit(editor);
+            assert.equal(draftBadges.length, 0);
+        }
+        update(valid);
+        update({ ...valid, phase: "unknown" });
+        submit(editor);
+        assert.deepEqual(draftBadges[0].inputs, valid);
+        assert.doesNotThrow(() => JSON.stringify(draftBadges));
+    } finally { cleanup(); }
+});
+
+test("bubbled control events preserve invalid-input errors but host edits clear them", () => {
+    let update;
+    let input;
+    const { root, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ root: controlRoot, onChange }) {
+            update = onChange;
+            input = document.createElement("input");
+            controlRoot.append(input);
+            return { isReady: () => true };
+        },
+    });
+    try {
+        const editor = choose(root);
+        const alert = descendants(editor).find((node) => node.attributes.role === "alert");
+        update({ phase: "unavailable" });
+        editor.events.change({ target: input });
+        assert.match(alert.textContent, /available evidence/);
+        assert.equal(alert.hidden, false);
+        update({ phase: "plan" });
+        assert.equal(alert.hidden, true);
+        update({ phase: "unavailable" });
+        editor.events.input({ target: editor.querySelector(".badge-preview") });
+        assert.equal(alert.hidden, true);
+    } finally { cleanup(); }
+});
+
+test("preview checklist uses its output phase and requires a distinct earlier prerequisite", () => {
+    const model = previewModel();
+    const checklist = model.badgeRules.find((rule) => rule.id === "checklist-complete");
+    assert.equal(checklist.placementPhaseInput, undefined);
+    const { root, draftBadges, cleanup } = setup({
+        phases: model.phases, outputs: model.outputs, badgeTypes: model.badgeTypes,
+        badgeRules: model.badgeRules, controlMount: mountPreviewInputs,
+    });
+    try {
+        const editor = choose(root, model.badgeTypes.findIndex((type) =>
+            type.id === "checklist-complete"));
+        const fields = () => descendants(editor.querySelector(".badge-input-controls"))
+            .filter((node) => node.tagName === "select");
+        const chooseArtifact = (field, phase, output) => {
+            field.value = JSON.stringify({ phase, output });
+            field.events.change();
+        };
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[0], "specify", "specs/<slug>/spec.md");
+        chooseArtifact(fields()[1], "specify", "specs/<slug>/spec.md");
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[1], "plan", "specs/<slug>/plan.md");
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[0], "clarify", "specs/<slug>/spec.md");
+        chooseArtifact(fields()[1], "specify", "specs/<slug>/spec.md");
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        chooseArtifact(fields()[0], "plan", "specs/<slug>/plan.md");
+        chooseArtifact(fields()[1], "constitution", ".specify/memory/constitution.md");
+        const phaseCard = check(root, "badge-placements", "Phase");
+        phaseCard.checked = true;
+        phaseCard.events.change();
+        submit(editor);
+        assert.equal(draftBadges.length, 1);
+        assert.deepEqual(draftBadges[0].targets, [{ phase: "plan", output: null }]);
+    } finally { cleanup(); }
+});
+
+test("disposed badge controls cannot update a redrawn editor or another badge", () => {
+    const callbacks = [];
+    const { root, view, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            callbacks.push(onChange);
+            onChange({ phase: "specify" });
+            return { isReady: () => true, dispose() {} };
+        },
+    });
+    try {
+        choose(root);
+        view.updateOutputs({ specify: { outputs: ["changed.md"], view: "changed.md" },
+            plan: { outputs: ["plan.md"], view: "plan.md" } });
+        callbacks[0]({ phase: "plan" });
+        submit(root.querySelector(".badge-editor"));
+        assert.equal(draftBadges[0].inputs.phase, "specify");
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        callbacks[1]({ phase: "plan" });
+        submit(root.querySelector(".badge-editor"));
+        assert.equal(draftBadges[0].inputs.phase, "specify");
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        root.querySelector(".badge-back").events.click();
+        assert.doesNotThrow(() => callbacks[3]({ phase: "plan" }));
+        assert.equal(draftBadges[0].inputs.phase, "specify");
+    } finally { cleanup(); }
+});
+
+test("throwing disposal reports an error without blocking cancel, refresh, or save", () => {
+    let disposals = 0;
+    const { root, view, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            onChange({ phase: "specify" });
+            return { isReady: () => true, dispose() {
+                disposals++;
+                throw new Error("broken cleanup");
+            } };
+        },
+    });
+    const assertDisposalError = () => assert.match(descendants(root)
+        .find((node) => node.attributes.role === "alert").textContent,
+    /Could not dispose badge input control: broken cleanup/);
+    try {
+        choose(root);
+        root.querySelector(".badge-editor").children.find((node) =>
+            node.className === "badge-actions").children[1].events.click();
+        assert.ok(root.querySelector(".badge-add"));
+        assertDisposalError();
+
+        choose(root);
+        view.updateOutputs({ specify: { outputs: ["changed.md"], view: "changed.md" },
+            plan: { outputs: ["plan.md"], view: "plan.md" } });
+        assert.ok(root.querySelector(".badge-editor"));
+        assertDisposalError();
+        submit(root.querySelector(".badge-editor"));
+        assert.equal(draftBadges.length, 1);
+        assert.ok(root.querySelector(".badge-row"));
+        assertDisposalError();
+        assert.equal(disposals, 3);
+    } finally { cleanup(); }
+});
+
+test("non-Error mount and disposal failures remain visible without aborting redraw", () => {
+    let failMount = true;
+    const { root, cleanup } = setup({
+        controlMount({ onChange }) {
+            if (failMount) throw null;
+            onChange({ artifacts: [{ phase: "specify", outputs: ["spec.md"] }] });
+            return { isReady: () => true, dispose() { throw undefined; } };
+        },
+    });
+    try {
+        choose(root);
+        assert.match(descendants(root).find((node) => node.textContent
+            ?.includes("Could not load badge input control")).textContent, /: null$/);
+        failMount = false;
+        root.querySelector(".badge-editor").children.find((node) =>
+            node.className === "badge-actions").children[1].events.click();
+        choose(root);
+        root.querySelector(".badge-editor").children.find((node) =>
+            node.className === "badge-actions").children[1].events.click();
+        assert.ok(root.querySelector(".badge-add"));
+        assert.match(descendants(root).find((node) => node.attributes.role === "alert").textContent,
+            /Could not dispose badge input control: undefined/);
+    } finally { cleanup(); }
+});
+
+test("throwing control readiness or validation reports inline errors without saving", () => {
+    let failure = "readiness";
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            onChange({ phase: "specify" });
+            return { isReady() {
+                if (failure === "readiness") throw new Error("broken readiness");
+                if (failure === "undefined") throw undefined;
+                return failure !== "validation";
+            }, validationError() {
+                throw new Error("broken validation");
+            } };
+        },
+    });
+
+    test("throwing readiness getter stays in the badge editor instead of aborting redraw", () => {
+        let reads = 0;
+        const { root, draftBadges, cleanup } = setup({
+            badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+                defaultText: "Ready", defaultColor: "green", enabled: true }],
+            badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+            controlMount({ onChange }) {
+                onChange({ phase: "specify" });
+                return { get isReady() {
+                    reads++;
+                    throw new Error("broken readiness getter");
+                } };
+            },
+        });
+        try {
+            const editor = choose(root);
+            assert.match(descendants(editor).find((node) => node.textContent
+                ?.includes("Could not load badge input control")).textContent,
+            /broken readiness getter/);
+            assert.doesNotThrow(() => submit(editor));
+            assert.equal(reads, 1);
+            assert.equal(draftBadges.length, 0);
+            assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+                /input controls are unavailable/);
+        } finally { cleanup(); }
+    });
+    try {
+        const editor = choose(root);
+        assert.doesNotThrow(() => submit(editor));
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Badge input control readiness failed: broken readiness/);
+        failure = "undefined";
+        assert.doesNotThrow(() => submit(editor));
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Badge input control readiness failed: undefined/);
+        failure = "validation";
+        assert.doesNotThrow(() => submit(editor));
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Badge input control readiness failed: broken validation/);
+        failure = null;
+        submit(editor);
+        assert.equal(draftBadges.length, 1);
+    } finally { cleanup(); }
+});
+
+test("badge submission requires a literal true readiness result", () => {
+    let readiness = Promise.resolve(false);
+    const { root, draftBadges, cleanup } = setup({
+        badgeTypes: [{ id: "custom", rule: "custom", title: "Custom",
+            defaultText: "Ready", defaultColor: "green", enabled: true }],
+        badgeRules: [{ id: "custom", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount({ onChange }) {
+            onChange({ phase: "specify" });
+            return { isReady: () => readiness };
+        },
+    });
+    try {
+        const editor = choose(root);
+        for (const result of [Promise.resolve(false), Promise.resolve(true), 1, "ready"]) {
+            readiness = result;
+            submit(editor);
+            assert.equal(draftBadges.length, 0);
+            assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+                /Complete the badge inputs/);
+        }
+        readiness = true;
+        submit(editor);
+        assert.equal(draftBadges.length, 1);
+    } finally { cleanup(); }
+});
+
+test("preset control initializes, edits, and reopens its own labeled phase input", () => {
+    const badgeTypes = [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
+        defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }];
+    const badgeRules = [{ id: "test-phase", inputs: [{ id: "phase", type: "phase" }] }];
+    const badges = [];
+    const { root, cleanup } = setup({ phases: ["speckit.constitution", "specify", "plan"],
+        badgeTypes, badgeRules, draftBadges: badges, controlMount: mountPresetInputs });
+    try {
+        const editor = choose(root);
+        const select = descendants(editor).find((node) => node.tagName === "select"
+            && node.attributes["aria-label"] === "Phase to confirm");
+        assert.ok(select);
+        assert.ok(descendants(editor).some((node) => node.textContent.includes(
+            "only after the selected phase")));
+        assert.equal(select.value, "speckit.constitution");
+        const card = check(root, "badge-placements", "Phase");
+        card.checked = true;
+        card.events.change();
+        assert.equal(card.checked, true);
+        submit(editor);
+        assert.equal(badges[0].inputs.phase, "speckit.constitution");
+        assert.deepEqual(badges[0].targets, [{ phase: "speckit.constitution", output: null }]);
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        const edited = root.querySelector(".badge-editor");
+        const editSelect = descendants(edited).find((node) => node.tagName === "select"
+            && node.attributes["aria-label"] === "Phase to confirm");
+        assert.equal(editSelect.value, "speckit.constitution");
+        editSelect.value = "plan";
+        editSelect.events.change();
+        submit(edited);
+        assert.equal(badges[0].inputs.phase, "plan");
+        assert.deepEqual(badges[0].targets, [{ phase: "plan", output: null }]);
+        root.querySelector(".badge-row").querySelector(".badge-edit").events.click();
+        const reopened = root.querySelector(".badge-editor");
+        assert.equal(descendants(reopened).find((node) => node.tagName === "select"
+            && node.attributes["aria-label"] === "Phase to confirm").value, "plan");
+    } finally { cleanup(); }
+});
+
+test("preset control remains incomplete when there are no available phases", () => {
+    const { root, draftBadges, cleanup } = setup({
+        phases: [], outputs: {},
+        badgeTypes: [{ id: "test-phase", rule: "test-phase", title: "Phase confirmed",
+            defaultText: "Phase confirmed", defaultColor: "purple", enabled: true }],
+        badgeRules: [{ id: "test-phase", inputs: [{ id: "phase", type: "phase" }] }],
+        controlMount: mountPresetInputs,
+    });
+    try {
+        const editor = choose(root);
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        assert.match(descendants(editor).find((node) => node.attributes.role === "alert").textContent,
+            /Complete the badge inputs/);
+    } finally { cleanup(); }
+});
+
 test("refreshing confirmed outputs updates cached choices without losing the badge editor", () => {
     const outputs = { specify: { outputs: ["spec.md"], view: "spec.md" } };
     const { root, view, draftBadges, cleanup } = setup({ phases: ["specify"], outputs });
@@ -106,12 +572,13 @@ test("refreshing confirmed outputs updates cached choices without losing the bad
 const checklistType = { id: "checklist-complete", rule: "checklist-complete",
     title: "Checklist complete", defaultText: "Checklist complete",
     defaultColor: "green", enabled: true };
-const checklistRule = { id: "checklist-complete", textPlaceholders: [], inputs: [
+const checklistRule = { id: "checklist-complete", placementPhaseInput: "artifact",
+    textPlaceholders: [], inputs: [
     { id: "artifact", type: "artifact", label: "Checklist output" },
     { id: "prerequisite", type: "artifact", label: "Earlier output" },
 ] };
 
-test("Constitution evidence can make a workflow badge but cannot select a phase card", () => {
+test("Constitution evidence selects its project card and follows edited phases", () => {
     const phase = "speckit.constitution";
     const { root, draftBadges, cleanup } = setup({
         phases: [phase, "speckit.specify"],
@@ -131,9 +598,7 @@ test("Constitution evidence can make a workflow badge but cannot select a phase 
         const card = check(root, "badge-placements", "Phase");
         card.checked = true;
         card.events.change();
-        assert.equal(card.checked, false);
-        assert.match(root.querySelector(".settings-field-error").textContent,
-            /only for workflow phases/);
+        assert.equal(card.checked, true);
         evidence[1].checked = true;
         evidence[1].events.change();
         card.checked = true;
@@ -141,10 +606,10 @@ test("Constitution evidence can make a workflow badge but cannot select a phase 
         assert.equal(card.checked, true);
         evidence[0].checked = true;
         evidence[0].events.change();
-        assert.equal(card.checked, false);
+        assert.equal(card.checked, true);
         submit(editor);
         assert.equal(draftBadges[0].inputs.phase, phase);
-        assert.deepEqual(draftBadges[0].targets, []);
+        assert.deepEqual(draftBadges[0].targets, [{ phase, output: null }]);
     } finally { cleanup(); }
 });
 

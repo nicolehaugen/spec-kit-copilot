@@ -13,5 +13,5 @@
   "textPlaceholders": [
     "count"
   ],
-  "module": "badge-rule-content-adapter"
+  "adapter": "badge-rule-content-adapter"
 }
