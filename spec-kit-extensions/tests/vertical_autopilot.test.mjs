@@ -53,6 +53,9 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
             runtime = await createRuntime(options);
             return runtime;
         },
+        setEvents: (value) => { events = value; },
+        idle: () => callbacks.get("session.idle")(),
+        active: () => callbacks.get("tool.execution_start")(),
         finish: async (success) => {
             events = [
                 { type: "user.message", data: { messageId: "message-1", interactionId: "turn-1" } },
@@ -72,6 +75,53 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
             throw new Error("Autopilot completion was not reconciled");
         } };
 }
+
+test("restart recovers message-less dispatch only after idle and retains folder checks", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Request sent", artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    let snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Run output unconfirmed");
+    const discard = () => runtime.removePending({ itemId,
+        revision: snapshot.revision, confirmation: "discard" });
+    await assert.rejects(discard(), /agent turn has not ended/);
+    fixture.idle();
+    fixture.active();
+    await assert.rejects(discard(), /agent turn has not ended/);
+    fixture.idle();
+    await mkdir(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await assert.rejects(discard(), /workflow directory appeared/);
+    await rm(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    snapshot = await runtime.snapshot();
+    await discard();
+    assert.equal((await runtime.snapshot()).items.some((row) => row.id === itemId), false);
+});
+
+test("restart reconnects a message-less dispatch to its exact prompt and live turn", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Request sent", artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "recovered", interactionId: "run",
+            content: 'report with {phaseRunId:"interrupted"}' } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    const runtime = await fixture.restart();
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Running");
+    assert.equal(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0].messageId, "recovered");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+});
 
 test("pending recovery includes earlier attempts and unsafe checks after a retry", async (t) => {
     const fixture = await setup(t);

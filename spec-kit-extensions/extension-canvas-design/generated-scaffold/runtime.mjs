@@ -125,6 +125,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     let writes = Promise.resolve();
     let dispatching = false;
+    const interruptedDispatches = new Set(state.runs.filter((run) =>
+        run.sessionId === session.sessionId && !run.autopilotId && !run.messageId
+        && ["Request sent", "Run output unconfirmed"].includes(run.status)).map((run) => run.runId));
+    let idleAfterRestart = false;
     let recoverOnOpen = state.runs.some((run) => run.messageId
         && (!["Completed", "Failed"].includes(run.status)
             || run.status === "Completed" && newItem(run.item) && !run.artifact && !run.confirmedSlug));
@@ -349,7 +353,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
     }
     async function snapshot() {
-        if (recoverOnOpen) { await capture(); recoverOnOpen = false; }
+        if (recoverOnOpen || interruptedDispatches.size) { await capture(); recoverOnOpen = false; }
         const view = structuredClone(state);
         const entries = await items(view);
         const item = view.selected;
@@ -563,7 +567,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 throw new UserError("This row has no run to discard.", 409);
             }
             if (runs.some((run) => !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)
-                || run.messageId === null && run.status !== "Failed")) {
+                || run.messageId === null && run.status !== "Failed"
+                    && !(interruptedDispatches.has(run.runId) && idleAfterRestart && !busy.value))) {
                 throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
             }
             for (const run of runs) {
@@ -1067,6 +1072,18 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         await update((next) => {
             for (const run of next.runs) {
                 if (run.autopilotId) continue;
+                if (interruptedDispatches.has(run.runId) && !run.messageId) {
+                    const matches = events.filter((event) => event.type === "user.message"
+                        && !event.agentId && !event.data?.parentToolCallId
+                        && typeof event.data?.content === "string"
+                        && event.data.content.includes(`phaseRunId:${JSON.stringify(run.runId)}`));
+                    if (matches.length === 1 && matches[0].data.messageId) {
+                        run.messageId = matches[0].data.messageId;
+                    } else {
+                        run.status = "Run output unconfirmed";
+                        run.error = "The app restarted before this request could be tracked. Check chat. Once the session is idle, you can confirm Discard pending row if no workflow folder appeared.";
+                    }
+                }
                 if (run.sessionId !== session.sessionId || !run.messageId || run.status === "Failed"
                     || run.status === "Completed" && (!newItem(run.item) || run.artifact || run.confirmedSlug)) continue;
                 const response = phaseResponse(events, run.messageId);
@@ -1129,6 +1146,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         subscriptions.push(session.on("tool.execution_start", () => { busy.value = true; }));
         subscriptions.push(session.on("session.idle", () => {
             busy.value = false;
+            idleAfterRestart = true;
             reconcile = reconcile.then(capture).catch(() => diagnostic("Generated canvas response reconciliation failed; completion is unconfirmed."));
         }));
     }

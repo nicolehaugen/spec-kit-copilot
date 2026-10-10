@@ -173,6 +173,12 @@ defines pending rows' `hasWorkflowRunHistory` (boolean), `workflowRecoveryMessag
 (string or null), and `status` (Not started, Request sent, Running, Unconfirmed,
 Run output unconfirmed, Completed, or Failed). Recovery messages explain discovered
 folders or inconclusive checks; they do not authorize deletion.
+If a restart loses the dispatch message ID, the host first tries to recover it
+from the unique run ID in the dispatched prompt. Otherwise it shows Run output
+unconfirmed and permits confirmed metadata discard only after observing session
+idle in the restarted host, while still requiring all directory safety checks.
+New session activity blocks discard again; the host never treats an untracked
+dispatch as proof that no prompt was sent.
 After the turn ends, a run-backed row offers a confirmed Discard pending row action.
 This checks all configured workflow roots against the pre-run snapshot, including
 empty directories, and removes only the pending row, drafts, and run history when
