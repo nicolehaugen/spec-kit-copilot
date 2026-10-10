@@ -164,25 +164,6 @@ async function mountGeneratedButtons() {
     }
 }
 
-function renderSetup() {
-    const setup = model?.setup;
-    const visible = model?.showSetup && !setup?.ready;
-    $("setup-surface").hidden = !visible;
-    if (!visible) { activeSetupPlan = null; return; }
-    const status = $("setup-status");
-    status.textContent = setup.error ?? ({
-        initializing: "Initializing Specify in Copilot skills mode. Check chat for progress.",
-        "awaiting-confirmation": "Review the complete package batch before installation.",
-        installing: "Installing confirmed packages. Check chat for progress.",
-        failed: "Setup failed. Check chat, then retry.",
-        cancelled: "Installation cancelled. No additional packages were installed. Select setup to try again.",
-    }[setup.stage] ?? "");
-    status.hidden = !status.textContent;
-    status.classList.toggle("workflow-error", Boolean(setup.error));
-    const button = $("setup-actions").querySelector("button");
-    if (button) button.disabled = setupBusy || ["initializing", "installing"].includes(setup.stage);
-    confirmSetup(setup);
-}
 function confirmSetup(setup) {
     if (setup.stage === "awaiting-confirmation" && setup.planId
         && activeSetupPlan !== setup.planId) {
@@ -208,7 +189,6 @@ function confirmSetup(setup) {
         })();
     }
 }
-const workflowIdentity = $("workflow-identity");
 let phaseControl;
 let workflowPage;
 const drafts = new Map();
@@ -216,11 +196,10 @@ const failedValueDrafts = new Map();
 const failedPatches = new Map();
 let model, current = 0, sending = false, saving = Promise.resolve(), refreshSequence = 0;
 let viewer = null, timer, constitutionTimer, constitutionDraft, saveFailure = null,
-    pendingValueSaves = 0, workflowQuery = "", previousBadgeRows, slugTouched = false;
+    pendingValueSaves = 0, slugTouched = false;
 const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const reservedSlug = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 const selectedPending = () => model?.items.some((entry) => entry.id === model.selected && entry.pending);
-const hasSelectedWorkflow = () => model?.items.some((entry) => entry.id === model.selected);
 function slugError() {
     const value = model?.slug ?? "";
     if (!value) return "";
@@ -488,129 +467,6 @@ function message(text, id = "canvas-message", error = false) {
     notice.setAttribute("role", error ? "alert" : "status");
     notice.classList.toggle("workflow-error", error);
 }
-function displayValue(value) {
-    return typeof value === "object" ? JSON.stringify(value) : String(value);
-}
-function renderValues() {
-    const container = $("canvas-value-list");
-    if (!container || !model) return;
-    $("canvas-value-errors").textContent = Object.values(model.valueErrors).join(" ");
-    $("canvas-values").hidden = !model.valueFields.length && !Object.keys(model.valueErrors).length;
-    const active = document.activeElement;
-    const editing = active?.closest?.("[data-edit-value]");
-    const draft = editing && {
-        id: editing.dataset.editValue,
-        values: [...editing.querySelectorAll("input, select")].map((input) =>
-            ({ property: input.dataset.property, value: input.value, checked: input.checked })),
-        property: active.dataset.property,
-        selectionStart: active instanceof HTMLInputElement && active.type === "text"
-            ? active.selectionStart : null,
-        selectionEnd: active instanceof HTMLInputElement && active.type === "text"
-            ? active.selectionEnd : null,
-    };
-    container.replaceChildren();
-    const groups = new Map();
-    for (const field of model.valueFields) {
-        const groupId = field.section?.id ?? "";
-        let group = groups.get(groupId);
-        if (!group) {
-            group = document.createElement("div");
-            if (field.section) {
-                const heading = document.createElement("h3");
-                heading.textContent = field.section.title;
-                group.append(heading);
-            }
-            groups.set(groupId, group);
-            container.append(group);
-        }
-        const row = document.createElement("div");
-        row.className = "field";
-        const label = document.createElement("label");
-        label.className = "field-label";
-        label.textContent = field.label;
-        row.append(label);
-        if (!field.editable) {
-            const output = document.createElement("div");
-            output.dataset.fieldId = field.id;
-            output.textContent = displayValue(field.value);
-            row.append(output);
-        } else {
-            const editor = document.createElement("div");
-            editor.dataset.editValue = field.id;
-            const retained = failedValueDrafts.get(field.id);
-            const value = retained ? retained.value : field.value;
-            if (field.schema.type === "boolean") {
-                const input = document.createElement("input");
-                input.type = "checkbox";
-                input.checked = value;
-                input.id = `value-${field.id}`;
-                label.htmlFor = input.id;
-                editor.append(input);
-            } else if (field.schema.type === "object") {
-                for (const [key, options] of Object.entries(field.schema.properties)) {
-                    const property = document.createElement("label");
-                    property.textContent = key;
-                    const select = document.createElement("select");
-                    select.className = "phase-input-control";
-                    select.dataset.property = key;
-                    select.setAttribute("aria-label", `${field.label}: ${key}`);
-                    for (const option of options) {
-                        const item = document.createElement("option");
-                        item.value = option;
-                        item.textContent = option;
-                        select.append(item);
-                    }
-                    select.value = value[key];
-                    property.append(select);
-                    editor.append(property);
-                }
-            } else {
-                const input = document.createElement("input");
-                input.type = "text";
-                input.className = "phase-input-control";
-                input.maxLength = field.schema.maxLength;
-                input.value = value;
-                input.id = `value-${field.id}`;
-                label.htmlFor = input.id;
-                editor.append(input);
-            }
-            row.append(editor);
-        }
-        group.append(row);
-    }
-    if (draft) {
-        const editor = [...container.querySelectorAll("[data-edit-value]")]
-            .find((entry) => entry.dataset.editValue === draft.id);
-        if (editor) {
-            const inputs = [...editor.querySelectorAll("input, select")];
-            for (const [index, input] of inputs.entries()) {
-                const retained = draft.values[index];
-                if (!retained || retained.property !== input.dataset.property) continue;
-                if (input.type === "checkbox") input.checked = retained.checked;
-                else input.value = retained.value;
-            }
-            const focused = inputs.find((input) => input.dataset.property === draft.property) ?? inputs[0];
-            focused?.focus({ preventScroll: true });
-            if (focused instanceof HTMLInputElement && focused.type === "text"
-                && draft.selectionStart !== null && draft.selectionEnd !== null) {
-                focused.setSelectionRange(draft.selectionStart, draft.selectionEnd);
-            }
-        }
-    }
-}
-function editValue(element) {
-    const row = element.closest("[data-edit-value]");
-    if (!row || !model) return;
-    const field = model.valueFields.find((entry) => entry.id === row.dataset.editValue && entry.editable);
-    if (!field) return;
-    let value;
-    if (field.schema.type === "boolean") value = row.querySelector("input").checked;
-    else if (field.schema.type === "object") {
-        value = Object.fromEntries([...row.querySelectorAll("[data-property]")]
-            .map((input) => [input.dataset.property, input.value]));
-    } else value = row.querySelector("input").value;
-    return saveFieldValue(field.id, value);
-}
 function saveFieldValue(id, value) {
     const field = model?.valueFields.find((entry) => entry.id === id && entry.editable);
     if (!field) return Promise.reject(new Error(`Field ${id} is not editable.`));
@@ -787,247 +643,15 @@ function pendingLabel(step) {
     return status === "Request sent" || status === "Running" ? "Running" : null;
 }
 function renderStatus() {
-    if (workflowPage) {
-        workflowPage.update(validateWorkflowPageState({ model: structuredClone(model),
-            phaseState: phaseState(pendingLabel),
-            pendingLabel, sending, setupBusy, inputPending: Boolean(timer),
-            slugTouched, slugError: slugError(),
-            valueDrafts: Object.fromEntries([...failedValueDrafts, ...pendingFieldDrafts]
-                .map(([id, draft]) => [id, draft.value])) }));
-        return;
-    }
-    function artifactAction(buttonId, noticeId, status) {
-        const button = $(buttonId), notice = $(noticeId);
-        if (button) button.hidden = status?.artifactAvailability !== "available";
-        if (notice) {
-            notice.textContent = status?.artifactError ?? (status?.artifactAvailability === "available" ? ""
-                : status?.output ? `${status.output} is not available yet. Run the phase, then refresh to check again.`
-                : "No artifact is available for this phase yet. Run the phase, then refresh to check again.");
-            notice.hidden = !notice.textContent;
-        }
-    }
-    phaseControl?.update(validatePhaseState(phaseState(pendingLabel)));
-    const setupPending = model.showSetup && !model.setup?.ready;
-    const idle = !hasSelectedWorkflow();
-    $("workflow-pipeline").querySelectorAll("[data-phase-index]").forEach((button) => {
-        button.disabled = idle;
-    });
-    const mobilePhaseSelect = $("mobile-phase-select");
-    if (mobilePhaseSelect) mobilePhaseSelect.disabled = idle;
-    if (constitution()) {
-        const projectPhase = constitution();
-        if (model.badges?.project !== undefined && !Array.isArray(model.badges.project)) {
-            throw new Error("Invalid project badge results");
-        }
-        const projectBadges = model.badges?.project ?? [];
-        const forTarget = (output) => projectBadges.filter((badge) => badge.targets
-            ? badge.targets.some((target) => target.phase === projectPhase.id && target.output === output)
-            : output === null && badge.showIn.includes("phase-card") && badge.phase === projectPhase.id);
-        $("constitution-badges")?.replaceChildren(badgeList(forTarget(null), true));
-        $("constitution-output-badges")?.replaceChildren(badgeList(
-            forTarget(projectPhase.output), true));
-        const status = model.statuses[projectPhase.id];
-        artifactAction("view-constitution", "constitution-artifact-status", status);
-        const available = status?.artifactAvailability === "available";
-        const statusText = available ? "" : status?.artifactAvailability === "error"
-            ? "Unavailable" : status?.status === "Not run" ? "Needed before starting a workflow"
-                : status?.status ?? "Checking...";
-        const card = $("constitution-card");
-        card.classList.toggle("constitution-ready", available);
-        $("constitution-status").textContent = statusText;
-        $("constitution-status").hidden = !statusText;
-        $("run-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update" : "Create constitution");
-        $("send-constitution").textContent = pendingLabel(constitution()) ?? (available ? "Update constitution" : "Create constitution");
-        $("run-constitution").disabled = setupPending;
-        $("run-constitution").title = setupPending ? "Available after setup" : "";
-        $("send-constitution").disabled = setupPending;
-        $("constitution-dialog-title").textContent = available ? "Update constitution" : "Create constitution";
-        $("constitution-args-label").textContent = available ? "Guidance (optional)" : "Project principles";
-        $("constitution-args").required = !available;
-    }
-    const input = $("workflow-slug");
-    if (input && selectedPending() && model.userProvidesSlug) {
-        const error = slugTouched && input.value.trim() ? slugError() : "";
-        $("workflow-slug-error").textContent = error;
-        $("workflow-slug-error").hidden = !error;
-        input.setAttribute("aria-invalid", String(Boolean(error)));
-    }
-    renderName();
-    renderSlug();
+    workflowPage.update(validateWorkflowPageState({ model: structuredClone(model),
+        phaseState: phaseState(pendingLabel),
+        pendingLabel, sending, setupBusy, inputPending: Boolean(timer),
+        slugTouched, slugError: slugError(),
+        valueDrafts: Object.fromEntries([...failedValueDrafts, ...pendingFieldDrafts]
+            .map(([id, draft]) => [id, draft.value])) }));
 }
 function renderPhase() {
     renderStatus();
-}
-function renderSlug() {
-    const input = $("workflow-slug");
-    if (!input) return;
-    input.closest(".field").hidden = !model.userProvidesSlug;
-    const first = creationPhase();
-    const status = model.items.find((entry) => entry.id === model.selected)?.status;
-    input.readOnly = !selectedPending()
-        || Boolean(status && !["Not started", "Failed"].includes(status))
-        || Boolean(sending && sending.phase === first?.id)
-        || ["Request sent", "Running"].includes(model.statuses[first?.id]?.status);
-    input.placeholder = input.readOnly ? "Automatically assigned" : "workflow-1";
-    if (document.activeElement !== input && !timer) {
-        input.value = selectedPending() ? model.slug
-            : model.items.find((entry) => entry.id === model.selected)?.slug ?? "";
-    }
-}
-function renderName() {
-    const input = $("workflow-name");
-    if (!input) return;
-    const first = creationPhase();
-    const status = model.items.find((entry) => entry.id === model.selected)?.status;
-    input.readOnly = !selectedPending()
-        || Boolean(status && !["Not started", "Failed"].includes(status))
-        || Boolean(sending && sending.phase === first?.id)
-        || ["Request sent", "Running"].includes(model.statuses[first?.id]?.status);
-    if (document.activeElement !== input && !timer) {
-        input.value = selectedPending() ? model.name ?? ""
-            : model.items.find((entry) => entry.id === model.selected)?.label ?? "";
-    }
-}
-function renderCollection() {
-    if (model.items.length <= 8) workflowQuery = "";
-    $("workflow-count").textContent = `(${model.items.length})`;
-    $("new-workflow").disabled = !workflowPhases().length;
-    $("workflow-constitution-note").hidden = model.constitutionReady || !model.items.length;
-    $("workflow-pipeline").hidden = !workflowPhases().length;
-    $("workflow-pipeline").classList.toggle("workflow-pipeline-idle", !hasSelectedWorkflow());
-    const list = $("workflow-rows");
-    const scroll = $("workflow-list").scrollTop;
-    const badgeRows = JSON.stringify(model.badges?.items ?? {});
-    const matches = list.children.length === model.items.length
-        && model.items.every((entry, index) => list.children[index].dataset.workflowId === entry.id)
-        && previousBadgeRows === badgeRows;
-    previousBadgeRows = badgeRows;
-    if (!matches) list.replaceChildren(...model.items.map((entry) => {
-        const item = document.createElement("div");
-        item.className = "instance-row";
-        item.setAttribute("role", "listitem");
-        item.dataset.workflowId = entry.id;
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "instance-select";
-        button.dataset.workflowId = entry.id;
-        const identity = document.createElement("span");
-        identity.className = "instance-select-main";
-        const name = document.createElement("strong");
-        identity.append(name);
-        identity.append(document.createElement("code"));
-        button.append(identity);
-        const badges = (model.badges?.items?.[entry.id] ?? []).filter((badge) =>
-            badge.showIn.includes("workflow-list"));
-        if (badges.length && list.dataset.badgeSlot) {
-            const slot = badgeList(badges);
-            slot.dataset.badgeSlot = list.dataset.badgeSlot;
-            button.append(slot);
-        }
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "instance-delete";
-        remove.dataset.deleteWorkflowId = entry.id;
-        item.append(button, remove);
-        return item;
-    }));
-    for (const [index, entry] of model.items.entries()) {
-        const row = list.children[index];
-        const active = entry.id === model.selected;
-        row.classList.toggle("active", active);
-        row.classList.toggle("pending", Boolean(entry.pending));
-        row.dataset.search = `${entry.label} ${entry.slug}`.toLowerCase();
-        const select = row.querySelector(".instance-select");
-        if (active) select.setAttribute("aria-current", "true");
-        else select.removeAttribute("aria-current");
-        const name = select.querySelector("strong");
-        name.textContent = entry.label;
-        name.title = entry.label;
-        const slug = select.querySelector("code");
-        slug.textContent = entry.slug;
-        slug.hidden = entry.slug === entry.label;
-        let badge = select.querySelector(".phase-notice");
-        if (entry.pending && !badge) {
-            badge = document.createElement("span");
-            badge.className = "phase-notice";
-            select.append(badge);
-        }
-        if (badge) { badge.textContent = entry.status ?? "Not started"; badge.hidden = !entry.pending; }
-        if (entry.pending) select.title = entry.workflowRecoveryMessage ?? "";
-        let recovery = select.querySelector(".recovery-note");
-        if (entry.pending && entry.workflowRecoveryMessage && !recovery) {
-            recovery = document.createElement("span");
-            recovery.className = "recovery-note";
-            select.append(recovery);
-        }
-        if (recovery) { recovery.textContent = entry.workflowRecoveryMessage ?? ""; recovery.hidden = !entry.workflowRecoveryMessage; }
-        const remove = row.querySelector(".instance-delete");
-        remove.hidden = entry.id === "__new__" || entry.pending && entry.hasWorkflowRunHistory
-            && !["Completed", "Failed", "Run output unconfirmed"].includes(entry.status);
-        remove.textContent = entry.pending ? entry.hasWorkflowRunHistory ? "Discard pending row" : "Remove" : "Delete";
-        remove.setAttribute("aria-label", `${remove.textContent} ${entry.label}`);
-    }
-    const editor = workflowIdentity;
-    const selectedRow = [...list.children].find((row) => row.dataset.workflowId === model.selected);
-    editor.hidden = !selectedPending();
-    if (selectedPending() && editor.parentElement !== selectedRow) selectedRow.append(editor);
-    const summary = $("workflow-badge-summary");
-    if (summary) {
-        const badges = model.badges?.summary ?? [];
-        summary.replaceChildren(...(badges.length ? [badgeList(badges)] : []));
-        summary.hidden = !badges.length;
-    }
-    const diagnostics = $("workflow-badge-diagnostics");
-    if (diagnostics) {
-        diagnostics.textContent = model.badges?.diagnostics?.join(" ") ?? "";
-        diagnostics.hidden = !diagnostics.textContent;
-    }
-    $("workflow-empty").hidden = Boolean(model.items.length);
-    $("workflow-empty").textContent = workflowPhases().length
-        ? "No workflows yet." : "No workflow phases are configured.";
-    $("workflow-list").scrollTop = scroll;
-    $("workflow-search-field").hidden = model.items.length <= 8;
-    $("workflow-search").value = workflowQuery;
-    filterWorkflowList();
-}
-function readableBadgeForeground(hex) {
-    const rgb = [1, 3, 5].map((index) => {
-        const channel = parseInt(hex.slice(index, index + 2), 16) / 255;
-        return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-    });
-    const luminance = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
-    return (luminance + 0.05) / (0.005605 + 0.05) >= 1.05 / (luminance + 0.05)
-        ? "#111" : "#fff";
-}
-function badgeList(badges, phaseText = false) {
-    const group = document.createElement("span");
-    group.className = "canvas-badges";
-    for (const badge of badges) {
-        const label = document.createElement("span");
-        label.className = "canvas-badge";
-        label.dataset.color = badge.color;
-        if (/^#[0-9a-fA-F]{6}$/.test(badge.color)) {
-            label.style.backgroundColor = badge.color;
-            label.style.color = readableBadgeForeground(badge.color);
-        }
-        label.textContent = phaseText ? badge.phaseText ?? badge.text : badge.text;
-        group.append(label);
-    }
-    return group;
-}
-function filterWorkflowList() {
-    const query = workflowQuery.trim().toLowerCase();
-    const rows = [...$("workflow-rows").children];
-    let shown = 0;
-    for (const row of rows) {
-        row.hidden = !row.dataset.search.includes(query);
-        if (!row.hidden) shown++;
-    }
-    const notice = $("workflow-list-status");
-    const missing = model.selected !== "__new__" && !model.items.some((entry) => entry.id === model.selected);
-    notice.textContent = missing ? "Selected workflow is unavailable. Choose another or start a new workflow."
-        : query ? `${shown} of ${rows.length} workflows match.` : "";
-    notice.hidden = !notice.textContent;
 }
 async function refresh(reconcile = false) {
     const sequence = ++refreshSequence;
@@ -1035,7 +659,6 @@ async function refresh(reconcile = false) {
     if (sequence !== refreshSequence) return false;
     const previous = model;
     model = next;
-    if (!workflowPage) renderSetup();
     if (!previous) current = Math.max(0, workflowPhases().findIndex((step) => step.id === model.phase));
     // Do not replace live input text during events or background refresh.
     if (previous && (timer || saveFailure)) {
@@ -1051,8 +674,6 @@ async function refresh(reconcile = false) {
         && $("constitution-message")?.classList.contains("workflow-error")) {
         message("", "constitution-message");
     }
-    if (!workflowPage) renderCollection();
-    if (!workflowPage) renderValues();
     renderPhase();
     if (mountedPage === "workflow") {
         try { await syncFieldMounts("workflow", $("workflow-content") ?? document,
@@ -1105,7 +726,6 @@ async function createWorkflow(initial = false) {
         initial ? () => !model.items.length : undefined);
     if (!created) return;
     message("", "workflow-action-error");
-    workflowQuery = "";
     slugTouched = false;
     current = 0;
     await refresh();
@@ -1238,65 +858,6 @@ async function openArtifact(step, output) {
     $("close-artifact").focus();
     await refreshArtifact(result);
 }
-document.addEventListener("input", (event) => {
-    if (!model) return;
-    if (workflowPage) return;
-    if (event.target.id === "workflow-name") {
-        model.name = event.target.value;
-        const entry = model.items.find((item) => item.id === model.selected && item.pending);
-        if (entry) {
-            entry.label = model.name?.trim() || entry.slug || "Unstarted workflow";
-            const row = [...$("workflow-rows").children].find((item) => item.dataset.workflowId === entry.id);
-            row.querySelector("strong").textContent = entry.label;
-            row.querySelector("strong").title = entry.label;
-            row.querySelector("code").hidden = entry.slug === entry.label;
-            row.querySelector(".instance-delete").setAttribute("aria-label", `Remove ${entry.label}`);
-            row.dataset.search = `${entry.label} ${entry.slug}`.toLowerCase();
-        }
-        queueInput();
-    }
-    if (event.target.id === "workflow-slug") {
-        model.slug = event.target.value;
-        const entry = model.items.find((item) => item.id === model.selected && item.pending);
-        if (entry) {
-            entry.slug = model.slug;
-            entry.label = model.name?.trim() || entry.slug || "Unstarted workflow";
-            const row = [...$("workflow-rows").children].find((item) => item.dataset.workflowId === entry.id);
-            row.querySelector("strong").textContent = entry.label;
-            row.querySelector("strong").title = entry.label;
-            row.querySelector("code").textContent = entry.slug;
-            row.querySelector("code").hidden = entry.slug === entry.label;
-            row.querySelector(".instance-delete").setAttribute("aria-label", `Remove ${entry.label}`);
-            row.dataset.search = `${entry.label} ${entry.slug}`.toLowerCase();
-        }
-        queueInput(); renderStatus();
-    }
-    if (event.target.id === "constitution-args") {
-        constitutionDraft = remember(constitution(), event.target.value);
-        clearTimeout(constitutionTimer);
-        constitutionTimer = setTimeout(() => { constitutionTimer = null; saveConstitutionDraft(); }, 400);
-    }
-});
-document.addEventListener("focusout", (event) => {
-    if (workflowPage) return;
-    if (event.target.id === "workflow-slug" && selectedPending()
-        && event.target.value.trim()) {
-        slugTouched = true;
-        renderStatus();
-    }
-});
-document.addEventListener("change", (event) => {
-    if (workflowPage) return;
-    if (event.target.closest?.("[data-edit-value]")) {
-        editValue(event.target).catch((error) =>
-            message(`Value could not be saved: ${error.message} Your edit remains in this panel.`, "canvas-value-errors", true));
-    }
-});
-$("workflow-search")?.addEventListener("input", (event) => {
-    if (workflowPage) return;
-    workflowQuery = event.target.value;
-    if (model) filterWorkflowList();
-});
 function requireModel() {
     if (!model) throw new Error("The canvas is connecting. Use Refresh to try again.");
 }
@@ -1329,30 +890,15 @@ document.addEventListener("click", (event) => {
             message("", "workflow-action-error");
             return;
         }
-        requireModel();
-        if (workflowPage) return;
-        if (button.dataset.deleteWorkflowId) { await deleteFeature(button.dataset.deleteWorkflowId); return; }
-        if (button.dataset.workflowId) { await selectFeature(button.dataset.workflowId); return; }
-        if (button.id === "new-workflow") {
-            await createWorkflow();
-            $("workflow-name")?.focus();
-        }
-        else if (button.id === "view-constitution") {
-            try { await openArtifact(constitution()); }
-            catch (error) { message(error.message, "workflow-action-error", true); }
-        }
-        else if (button.id === "run-constitution") {
-            const key = draftKey(constitution());
-            $("constitution-args").value = drafts.get(key) ?? model.drafts[key] ?? "";
-            $("constitution-dialog").showModal();
-            $("constitution-args").focus();
-        } else if (button.id === "send-constitution") await send(constitution(), $("constitution-args").value, "constitution-message");
     })().catch((error) => message(error.message, "workflow-action-error", true));
 });
 $("artifact-viewer").addEventListener("close", () => { viewer = null; });
 const pipelineRoot = $("workflow-pipeline");
-const workflowRoot = $("workflow-content") ?? $("workflow-surface");
+const workflowRoot = $("workflow-content");
 try {
+    if (!workflowRoot?.dataset.pageModule || !workflowRoot.dataset.pageDefinition) {
+        throw new Error("Missing Workflow page adapter registration");
+    }
     const adapter = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
     const mount = validatePhaseAdapter(adapter);
     const { controlId } = adapter;
@@ -1409,7 +955,7 @@ try {
         slugEditable: false, sending: false, statuses: {}, autopilot: null,
         setupPending: false,
     };
-    if (workflowRoot.dataset.pageModule) {
+    {
         const pageModule = await import(`${workflowRoot.dataset.pageModule}?token=${encodeURIComponent(token)}`);
         if (pageModule.pageId !== "workflow" || pageModule.contractVersion !== 1
             || typeof pageModule.mount !== "function") {
@@ -1492,7 +1038,7 @@ try {
             throw new Error("Workflow page adapter must return update and dispose");
         }
         mountStockPresentation();
-    } else mountPhase(pipelineRoot, initialState);
+    }
 } catch (error) {
     message(`Pipeline could not render: ${error.message}`, "canvas-fatal-error", true);
     throw error;
@@ -1519,8 +1065,7 @@ window.addEventListener("beforeunload", (event) => {
 });
 window.addEventListener("pagehide", () => {
     events.close();
-    if (workflowPage) workflowPage.dispose();
-    else phaseControl?.dispose();
+    workflowPage.dispose();
     buttonMounts.forEach((instance) => instance.dispose());
     disposeFieldMounts(mountedPage);
 });

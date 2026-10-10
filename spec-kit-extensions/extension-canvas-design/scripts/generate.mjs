@@ -490,7 +490,7 @@ function frozenWorkflowPage(page, selectedPhases) {
         || new Set(page.slots.map((slot) => slot?.id)).size !== page.slots.length
         || page.slots.some((slot) => !slot || Object.keys(slot).join() !== "id"
             || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))
-        || !Array.isArray(page.assets) || ![3, 4].includes(page.assets.length)
+        || !Array.isArray(page.assets) || page.assets.length !== 4
         || page.assets[0]?.name !== "generated-workflow"
         || page.assets[0]?.kind !== "generated.workflow-page-definition"
         || page.assets[1]?.name !== "generated-phase-control"
@@ -499,15 +499,16 @@ function frozenWorkflowPage(page, selectedPhases) {
         || !/^[a-z][a-z0-9-]{0,79}$/.test(page.assets[2].name)
         || isWindowsDeviceName(page.assets[2].name)
         || page.assets[2]?.kind !== "generated.phase-control-adapter"
-        || (page.assets.length === 4 && (page.assets[3]?.kind !== "generated.workflow-page-adapter"
+        || (page.assets[3]?.kind !== "generated.workflow-page-adapter"
             || typeof page.assets[3]?.name !== "string"
             || !/^[a-z][a-z0-9-]{0,79}$/.test(page.assets[3].name)
-            || isWindowsDeviceName(page.assets[3].name)))
+            || isWindowsDeviceName(page.assets[3].name))
         || page.assets.some((asset) => !asset || typeof asset !== "object"
             || Object.keys(asset).sort().join() !== "content,hash,kind,name,sourceId"
             || typeof asset.sourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(asset.sourceId)
             || typeof asset.content !== "string"
             || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(asset.content)
+            || !Buffer.from(asset.content, "base64").length
             || Buffer.from(asset.content, "base64").length > 32 * 1024
             || createHash("sha256").update(Buffer.from(asset.content, "base64")).digest("hex") !== asset.hash)) {
         throw new Error("Invalid frozen Workflow page assets");
@@ -516,11 +517,10 @@ function frozenWorkflowPage(page, selectedPhases) {
     try { definition = withoutSchema(JSON.parse(Buffer.from(page.assets[0].content, "base64").toString("utf8"))); }
     catch { throw new Error("Invalid frozen Workflow page definition"); }
     const destinations = ["workflow.list", "workflow.summary", "phase.card", "phase.output"];
-    if (!definition || !["id,order,schemaVersion,slots,title",
-        "adapter,badgeDestinations,id,order,schemaVersion,slots,title"].includes(
-        Object.keys(definition).sort().join())
-        || definition.schemaVersion !== (page.assets.length === 4 ? 2 : 1)
-        || (page.assets.length === 4 && (definition.adapter !== page.assets[3].name
+    if (!definition || Object.keys(definition).sort().join()
+            !== "adapter,badgeDestinations,id,order,schemaVersion,slots,title"
+        || definition.schemaVersion !== 2
+        || (definition.adapter !== page.assets[3].name
             || !Array.isArray(definition.badgeDestinations)
             || definition.badgeDestinations.length > 4
             || new Set(definition.badgeDestinations).size !== definition.badgeDestinations.length
@@ -528,7 +528,7 @@ function frozenWorkflowPage(page, selectedPhases) {
             || definition.badgeDestinations.includes("workflow.list")
                 && !page.slots.some((slot) => slot.id === "workflow.list")
             || definition.badgeDestinations.includes("workflow.summary")
-                && !page.slots.some((slot) => slot.id === "workflow.summary")))
+                && !page.slots.some((slot) => slot.id === "workflow.summary"))
         || definition.id !== page.id
         || definition.title !== page.title || definition.order !== page.order
         || JSON.stringify(definition.slots) !== JSON.stringify(page.slots)) {
@@ -567,17 +567,15 @@ function frozenWorkflowPage(page, selectedPhases) {
     if (page.managedRun !== (control.managedRun === true)) {
         throw new Error("Frozen phase control capabilities differ from its definition");
     }
-    if (page.assets[3]) {
-        if (page.assets[3].name === control.adapter) {
-            throw new Error("Workflow page adapter collides with phase control adapter");
-        }
-        const pageModule = Buffer.from(page.assets[3].content, "base64").toString("utf8");
-        const checkPage = spawnSync("node", ["--check", "--input-type=module"],
-            { input: pageModule, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
-        if (checkPage.error || checkPage.status !== 0
-            || /\bimport\b|\bexport\s+(?:\*|\{[^}]*\})\s+from\b/.test(pageModule)) {
-            throw new Error(`Invalid frozen Workflow page adapter: ${checkPage.stderr || checkPage.error || "module must be self-contained"}`);
-        }
+    if (page.assets[3].name === control.adapter) {
+        throw new Error("Workflow page adapter collides with phase control adapter");
+    }
+    const pageModule = Buffer.from(page.assets[3].content, "base64").toString("utf8");
+    const checkPage = spawnSync("node", ["--check", "--input-type=module"],
+        { input: pageModule, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
+    if (checkPage.error || checkPage.status !== 0
+        || /\bimport\b|\bexport\s+(?:\*|\{[^}]*\})\s+from\b/.test(pageModule)) {
+        throw new Error(`Invalid frozen Workflow page adapter: ${checkPage.stderr || checkPage.error || "module must be self-contained"}`);
     }
     return { title: page.title, order: page.order, slots: page.slots, phaseSlots: control.slots ?? [],
         phaseControl: page.assets[1].name,
@@ -585,9 +583,9 @@ function frozenWorkflowPage(page, selectedPhases) {
         viewLabels: control.viewLabels ?? {}, definitionHash: page.assets[0].hash,
         controlHash: page.assets[1].hash, hash: page.assets[2].hash,
         managedRun: page.managedRun,
-        ...(page.assets[3] ? { pageAdapter: page.assets[3].name,
-            pageAdapterHash: page.assets[3].hash,
-            badgeDestinations: definition.badgeDestinations } : {}) };
+        pageAdapter: page.assets[3].name,
+        pageAdapterHash: page.assets[3].hash,
+        badgeDestinations: definition.badgeDestinations };
 }
 
 function frozenPlacement(item, kind) {
@@ -1487,7 +1485,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         }
     }
     const config = configuration({ ...request, installed: request.actualInstalled ?? request.installed });
-    if (config.workflowPage.pageAdapter && config.badges?.instances.some((badge) =>
+    if (config.badges?.instances.some((badge) =>
         badge.showIn.includes("phase-card")
             && badge.phase?.replace(/^speckit\./, "") === "constitution"
         || badge.targets?.some((target) =>
@@ -1516,11 +1514,9 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         { filename: "phase-control.json",
             bytes: Buffer.from(request.workflowPage.assets[1].content, "base64") },
         { filename: `${config.workflowPage.adapter}.mjs`,
-            bytes: Buffer.from(request.workflowPage.assets[2].content, "base64") });
-    if (request.workflowPage.assets[3]) {
-        pageFiles.push({ filename: `${config.workflowPage.pageAdapter}.mjs`,
+            bytes: Buffer.from(request.workflowPage.assets[2].content, "base64") },
+        { filename: `${config.workflowPage.pageAdapter}.mjs`,
             bytes: Buffer.from(request.workflowPage.assets[3].content, "base64") });
-    }
     for (const item of request.fieldPlacements ?? []) {
         pageFiles.push({ filename: `${item.id}.json`, bytes: Buffer.from(item.assets[0].content, "base64") });
     }

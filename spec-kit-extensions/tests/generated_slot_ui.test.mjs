@@ -15,9 +15,11 @@ const themeSource = await readFile(new URL("../extension-canvas-design/generated
     import.meta.url), "utf8");
 const runtimeCss = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/runtime.css",
     import.meta.url), "utf8");
+const adapterSource = await readFile(new URL("../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs",
+    import.meta.url), "utf8");
 
 test("generated host supplies badge slots to the initial phase adapter mount", () => {
-    const initial = section("const initialState = {", "if (workflowRoot.dataset.pageModule)");
+    const initial = section("const initialState = {", "const pageModule =");
     assert.match(initial, /badgeSlots:\s*phaseBadgeSlots/);
     assert.match(initial, /badgeModels:\s*\[\]/);
 });
@@ -26,12 +28,13 @@ test("workflow actions share a fixed-width column and failures render inline wit
     assert.match(themeSource, /\.instance-delete\s*\{[^}]*flex:\s*0 0 7rem/s);
     assert.doesNotMatch(serverSource, /id="canvas-message"/);
     assert.doesNotMatch(serverSource, /id="canvas-message-dismiss"/);
-    assert.match(serverSource, /id="workflow-action-error"[^>]*role="alert"/);
+    assert.doesNotMatch(serverSource, /id="workflow-action-error"/);
+    assert.match(adapterSource, /id="workflow-action-error"[^>]*role="alert"/);
     assert.match(serverSource, /id="generated-page-error"[^>]*role="alert"/);
     assert.match(serverSource, /id="canvas-fatal-error"[^>]*role="alert"/);
     const notice = { hidden: true, textContent: "", attributes: {}, classList: { toggle() {} },
         setAttribute(name, value) { this.attributes[name] = value; } };
-    const message = runInNewContext(`${section("function message(", "function displayValue(")}
+    const message = runInNewContext(`${section("function message(", "function saveFieldValue(")}
         message`, {
         $: (id) => ({ "workflow-action-error": notice })[id],
         mountedPage: "workflow",
@@ -47,10 +50,10 @@ test("workflow actions share a fixed-width column and failures render inline wit
     assert.doesNotMatch(source, /canvas-message-dismiss|messageTimer/);
 });
 
-function section(start, end) {
-    const first = source.indexOf(start), last = source.indexOf(end, first + start.length);
+function section(start, end, text = source) {
+    const first = text.indexOf(start), last = text.indexOf(end, first + start.length);
     assert.ok(first >= 0 && last > first, `Missing UI section ${start}`);
-    return source.slice(first, last);
+    return text.slice(first, last);
 }
 
 test("a timed-out Run clears the in-flight guard without automatically resubmitting", async () => {
@@ -439,7 +442,7 @@ test("a not-yet-created output browses its parent without opening the artifact v
         },
         $: () => { viewerOpened = true; throw new Error("Viewer should stay closed"); },
     };
-    const openArtifact = runInNewContext(`${section("async function openArtifact(", 'document.addEventListener("input"')}
+    const openArtifact = runInNewContext(`${section("async function openArtifact(", "function requireModel()")}
         openArtifact`, context);
     await openArtifact({ id: "specify", project: false }, "specs/<slug>/notes.md");
     assert.equal(viewerOpened, false);
@@ -518,7 +521,7 @@ class Element {
 
 test("workflow badges render text nodes rather than HTML", () => {
     const context = { document: { createElement: (tag) => new Element(tag) } };
-    const create = runInNewContext(`${section("function readableBadgeForeground(", "function filterWorkflowList(")}
+    const create = runInNewContext(`${section("function badgeList(", "function collection(", adapterSource)}
         badgeList([{ text: "<unsafe>", color: "amber" },
             { text: "White", color: "#ffffff" },
             { text: "Black", color: "#000000" }]);`, context);
@@ -548,13 +551,12 @@ test("summary displays runtime-provided zero count without a selected workflow",
     ]);
     const summary = nodes.get("workflow-badge-summary");
     const context = { document: { createElement: (tag) => new Element(tag) },
-        $: (id) => nodes.get(id), model: { selected: "__new__", items: [],
+        find: (id) => nodes.get(id), model: { selected: "__new__", items: [], phases: [],
             badges: { selected: [], summary: [{ text: "Workflows with checklists (0)", color: "amber" }] } },
-        workflowQuery: "", previousBadgeRows: undefined, workflowIdentity: new Element(), workflowPhases: () => [],
-        hasSelectedWorkflow: () => false, selectedPending: () => false, filterWorkflowList() {} };
-    runInNewContext(`${section("function renderCollection()", "function readableBadgeForeground(")}
-        ${section("function readableBadgeForeground(", "function filterWorkflowList(")}
-        renderCollection();`, context);
+        query: "", previousRows: undefined, workflowIdentity: new Element(), filter() {} };
+    runInNewContext(`${section("function collection(", "function setup(", adapterSource)}
+        ${section("function badgeList(", "function collection(", adapterSource)}
+        collection(model);`, context);
     assert.equal(summary.hidden, false);
     assert.equal(summary.firstElementChild.firstElementChild.textContent, "Workflows with checklists (0)");
 });
@@ -572,20 +574,19 @@ test("workflow row badges update when evidence changes without changing workflow
         ["workflow-search", new Element()],
     ]);
     const model = { items: [{ id: "alpha", label: "Alpha", slug: "alpha" }],
-        selected: "alpha", constitutionReady: true,
+        selected: "alpha", constitutionReady: true, phases: [{}],
         badges: { items: { alpha: [{ text: "One", color: "blue", showIn: ["workflow-list"] }] } } };
     const context = { document: { createElement: (tag) => new Element(tag) },
-        $: (id) => nodes.get(id), model, workflowQuery: "", previousBadgeRows: undefined,
-        workflowIdentity: new Element(), workflowPhases: () => [{}],
-        hasSelectedWorkflow: () => true, selectedPending: () => false, filterWorkflowList() {} };
-    const render = `${section("function renderCollection()", "function readableBadgeForeground(")}
-        ${section("function readableBadgeForeground(", "function filterWorkflowList(")}
-        renderCollection();`;
+        find: (id) => nodes.get(id), model, query: "", previousRows: undefined,
+        workflowIdentity: new Element(), filter() {} };
+    const render = `${section("function collection(", "function setup(", adapterSource)}
+        ${section("function badgeList(", "function collection(", adapterSource)}
+        collection(model);`;
     runInNewContext(render, context);
     const first = nodes.get("workflow-rows").firstElementChild;
     assert.equal(first.querySelector(".canvas-badge").textContent, "One");
     model.badges.items.alpha[0].text = "Two";
-    runInNewContext("renderCollection();", context);
+    runInNewContext("collection(model);", context);
     assert.equal(nodes.get("workflow-rows").firstElementChild.querySelector(".canvas-badge").textContent, "Two");
 });
 
@@ -641,14 +642,14 @@ function harness({ placements, fields = [], pageSlots = [], adapter = null }) {
             notice.textContent = text;
             if (error) notice.setAttribute("role", "alert");
         },
-        renderCollection() {}, renderValues() {}, renderPhase() {}, renderSetup() {},
+        renderPhase() {},
         constitution: () => null, workflowPhases: () => [],
         saveInputs() {},
     };
     const program = [
         "const $ = (id) => document.getElementById(id);",
         section("let phaseControl;", "function currentTheme()"),
-        section("function editValue(element)", "async function api("),
+        section("function saveFieldValue(", "async function api("),
         section("async function retryRevision(", "const workflowPhases ="),
         section("async function refresh(reconcile", "async function selectPhase("),
     ].join("\n")

@@ -178,6 +178,77 @@ for (const [scenario, module, error] of [
     });
 }
 
+for (const [scenario, module, error] of [
+    ["wrong page ID", 'export const pageId = "other"; export const contractVersion = 1; export function mount() {}',
+        "Incompatible Workflow page adapter"],
+    ["wrong contract version", 'export const pageId = "workflow"; export const contractVersion = 2; export function mount() {}',
+        "Incompatible Workflow page adapter"],
+    ["missing mount", 'export const pageId = "workflow"; export const contractVersion = 1;',
+        "Incompatible Workflow page adapter"],
+    ["missing update", 'export const pageId = "workflow"; export const contractVersion = 1; export function mount() { return { dispose() {} }; }',
+        "Workflow page adapter must return update and dispose"],
+    ["missing dispose", 'export const pageId = "workflow"; export const contractVersion = 1; export function mount() { return { update() {} }; }',
+        "Workflow page adapter must return update and dispose"],
+    ["mount failure", 'export const pageId = "workflow"; export const contractVersion = 1; export function mount() { throw new Error("Workflow mount failed"); }',
+        "Workflow mount failed"],
+]) {
+    test(`invalid Workflow page adapter reports ${scenario} without another renderer`, async ({ page }) => {
+        const canvas = await openGeneratedCanvas(false);
+        try {
+            await page.route("**/pages/generated-workflow-page-adapter.mjs*", (route) => route.fulfill({
+                contentType: "text/javascript", body: module,
+            }));
+            await page.goto(canvas.url);
+            await expect(page.locator("#canvas-fatal-error")).toContainText(
+                `Pipeline could not render: ${error}`);
+            await expect(page.locator("#instance-collection")).toHaveCount(0);
+            await expect(page.locator("#setup-surface")).toHaveCount(0);
+            await expect(page.locator("#phase-card")).toHaveCount(0);
+        } finally { await canvas.close(); }
+    });
+}
+
+test("Workflow page adapter load failure is explicit without host rendering", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await page.route("**/pages/generated-workflow-page-adapter.mjs*", (route) => route.abort());
+        await page.goto(canvas.url);
+        await expect(page.locator("#canvas-fatal-error")).toContainText("Pipeline could not render:");
+        await expect(page.locator("#instance-collection")).toHaveCount(0);
+        await expect(page.locator("#phase-card")).toHaveCount(0);
+    } finally { await canvas.close(); }
+});
+
+test("replacement Workflow page owns rendering and uses host workflow operations", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await page.route("**/pages/generated-workflow-page-adapter.mjs*", (route) => route.fulfill({
+            contentType: "text/javascript", body: `export const pageId = "workflow";
+export const contractVersion = 1;
+export function mount({ root, actions }) {
+    root.replaceChildren();
+    const output = document.createElement("p");
+    output.id = "replacement-count";
+    const button = document.createElement("button");
+    button.textContent = "Add from replacement";
+    const create = () => actions.createWorkflow();
+    button.addEventListener("click", create);
+    root.append(output, button);
+    return {
+        update({ model }) { output.textContent = String(model?.items.length ?? 0); },
+        dispose() { button.removeEventListener("click", create); root.replaceChildren(); }
+    };
+}`,
+        }));
+        await page.goto(canvas.url);
+        await expect(page.locator("#replacement-count")).toHaveText("1");
+        await expect(page.locator("#instance-collection")).toHaveCount(0);
+        await page.getByRole("button", { name: "Add from replacement", exact: true }).click();
+        await expect(page.locator("#replacement-count")).toHaveText("2");
+        await expect(page.locator("#canvas-fatal-error")).toBeHidden();
+    } finally { await canvas.close(); }
+});
+
 test("phase adapter mobile navigation selects phases", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false,
         ["specify", "plan", "clarify", "tasks", "taskstoissues", "analyze", "checklist", "implement"]);

@@ -7,7 +7,9 @@ import { createSetup, validateRuntimeSetup } from "../extension-canvas-design/ge
 import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
 import { createWorkflowRoutes } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { createServer } from "node:http";
-import { validatePhaseState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
+import { validateWorkflowPageState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
+import { mount, renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
+import { createHash } from "node:crypto";
 
 const phase = { skill: "speckit-specify" };
 const preset = { id: "real-preset", version: "1.0.0", enabled: true, priority: 12,
@@ -340,26 +342,30 @@ test("frozen local extension reads its nested manifest identity", async (t) => {
         /Frozen local extensions extension-one is unavailable or changed/);
 });
 
-test("setup card keeps the workflow visible while gating phase runs until ready", async () => {
+test("setup card keeps the workflow visible while gating phase runs until ready", async (t) => {
     const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
         import.meta.url), "utf8");
-    const setupCode = source.slice(source.indexOf("function renderSetup()"), source.indexOf("let phaseControl;"));
     const statusCode = source.slice(source.indexOf("function renderStatus()"), source.indexOf("function renderPhase()"));
     const nodes = new Map(["setup-surface", "workflow-surface", "workflow-pipeline", "setup-status", "setup-actions", "run-phase", "phase-args",
         "phase-message"].map((id) => [id, { hidden: false, disabled: false, readOnly: false,
         textContent: "", title: "", classList: { toggle() {} }, querySelector: () => null,
         querySelectorAll: () => [] }]));
     let phasePending;
-    const context = { model: { showSetup: true, setup: { stage: "needs-setup", ready: false,
+    const originalDocument = globalThis.document;
+    globalThis.document = { activeElement: null, getElementById: () => null };
+    t.after(() => { globalThis.document = originalDocument; });
+    const page = mount({ root: { querySelector: (selector) => nodes.get(selector.slice(1)),
+        addEventListener() {}, removeEventListener() {} }, definition: { id: "workflow" },
+        state: { phaseState: {} }, actions: { selectWorkflow() {}, clearSetupPlan() {}, confirmSetup() {},
+            mountPhase: () => ({ update: (state) => { phasePending = state.setupPending; }, dispose() {} }) } });
+    const context = { model: { userProvidesSlug: false, items: [], phases: [], statuses: {},
+        showSetup: true, setup: { stage: "needs-setup", ready: false,
         checks: { cli: "Ready", project: "Ready", packages: "1 to install" } } },
-    setupBusy: false, activeSetupPlan: null, buttons: [], workflowPage: null, phaseControl: { update: (state) => {
-        phasePending = state.setupPending;
-    } }, pendingLabel: () => null, phaseState: () => ({
+    setupBusy: false, workflowPage: page, pendingLabel: () => null, phaseState: () => ({
         slugEditable: false, setupPending: Boolean(context.model.showSetup && !context.model.setup?.ready) }),
-    validatePhaseState,
-    constitution: () => null, hasSelectedWorkflow: () => false, renderName() {}, renderSlug() {},
-    $: (id) => nodes.get(id), Map, Object, Boolean };
-    runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);
+    validateWorkflowPageState, structuredClone, timer: null, sending: false, slugTouched: false,
+    slugError: () => "", failedValueDrafts: new Map(), pendingFieldDrafts: new Map() };
+    runInNewContext(`${statusCode}\nthis.render = renderStatus;`, context);
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, false);
     assert.equal(nodes.get("workflow-surface").hidden, false);
@@ -377,7 +383,7 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     assert.equal(nodes.get("setup-surface").hidden, true);
     assert.equal(nodes.get("workflow-surface").hidden, false);
     assert.equal(phasePending, false);
-    context.model = { showSetup: false, setup: { stage: "needs-setup", ready: false } };
+    context.model = { ...context.model, showSetup: false, setup: { stage: "needs-setup", ready: false } };
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, true);
     assert.equal(phasePending, false);
@@ -386,7 +392,7 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
 test("setup activation errors unhide the status even after an idle render", async () => {
     const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
         import.meta.url), "utf8");
-    const messageCode = source.slice(source.indexOf("function message("), source.indexOf("function displayValue("));
+    const messageCode = source.slice(source.indexOf("function message("), source.indexOf("function saveFieldValue("));
     const status = { hidden: true, textContent: "", classList: { toggle() {} }, setAttribute() {} };
     const context = { $: () => status };
     runInNewContext(`${messageCode}\nmessage("Specify probe failed", "setup-status", true);`, context);
@@ -429,7 +435,10 @@ test("setup routes require canvas token, origin and the current plan", async (t)
     phaseOutputs: { specify: { outputPath: "specs/<slug>/spec.md", expectsArtifact: true } },
     installed: { presets: [], extensions: [], bundles: [] },
     userProvidesSlug: false, workflowPage: { adapter: "generated-phase-adapter",
-        viewLabels: {}, slots: [{ id: "workflow.phases" }] } };
+        pageAdapter: "generated-workflow-page-adapter",
+        pageAdapterHash: createHash("sha256").update(await readFile(new URL(
+            "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs", import.meta.url))).digest("hex"),
+        badgeDestinations: [], viewLabels: {}, slots: [{ id: "workflow.phases" }] } };
     const runtime = { setupStart: setup.start, setupConfirm: setup.confirm };
     let server;
     const routes = createWorkflowRoutes(config, { runtime, instanceId: "panel", token: "test-token",
@@ -444,8 +453,13 @@ test("setup routes require canvas token, origin and the current plan", async (t)
     assert.equal((await fetch(`${base}/api/setup/start`)).status, 401);
     const html = await (await fetch(`${base}/?token=test-token`)).text();
     assert.match(html, /<main id="workflow-surface" class="app-body workflow-surface">/);
-    assert.match(html, /<main id="workflow-surface"[^>]*>[\s\S]*?<section id="setup-surface"[^>]*hidden>/);
-    assert.match(html, /Set up this project[\s\S]*?Set up Spec Kit and install the selected presets, extensions, and bundles\.[\s\S]*?id="setup-actions"/);
+    assert.match(html, /id="workflow-content"[\s\S]*?data-page-module="\/pages\/generated-workflow-page-adapter.mjs"/);
+    assert.doesNotMatch(html, /id="setup-surface"/);
+    const stock = { innerHTML: "" };
+    renderStockPage(stock, { canvas: config.canvas, fieldSlots: [], readOnlyFields: [],
+        generatedControls: [], badgeDestinations: [], textPlacements: [] });
+    assert.match(stock.innerHTML, /<section id="setup-surface"[^>]*hidden>/);
+    assert.match(stock.innerHTML, /Set up this project[\s\S]*?Set up Spec Kit and install the selected presets, extensions, and bundles\.[\s\S]*?id="setup-actions"/);
     assert.doesNotMatch(html, /id="setup-(?:cli|project|packages)"/);
     assert.equal((await post("/api/setup/start", {}, { origin: "https://elsewhere.example" })).status, 403);
     const response = await post("/api/setup/start", {});

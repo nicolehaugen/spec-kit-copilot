@@ -36,8 +36,11 @@ export function readWorkflowPage(page, readPackagedFile) {
         throw new Error("Packaged Workflow page definition does not match its frozen hash");
     }
     const parsed = JSON.parse(definition);
-    if (parsed.schemaVersion !== 1 || parsed.id !== "workflow"
-        || Object.keys(parsed).filter((key) => key !== "$schema").sort().join() !== "id,order,schemaVersion,slots,title"
+    if (parsed.schemaVersion !== 2 || parsed.id !== "workflow"
+        || Object.keys(parsed).filter((key) => key !== "$schema").sort().join()
+            !== "adapter,badgeDestinations,id,order,schemaVersion,slots,title"
+        || parsed.adapter !== page.pageAdapter
+        || !isDeepStrictEqual(parsed.badgeDestinations, page.badgeDestinations)
         || parsed.title !== page.title || parsed.order !== page.order
         || JSON.stringify(parsed.slots) !== JSON.stringify(page.slots)) {
         throw new Error("Packaged Workflow page definition differs from its frozen contract");

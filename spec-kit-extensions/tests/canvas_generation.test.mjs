@@ -440,8 +440,8 @@ test("selected badge definitions and evaluator are packaged without preset files
     delete legacyPage.pageAdapter;
     delete legacyPage.pageAdapterHash;
     delete legacyPage.badgeDestinations;
-    assert.match(renderHtml({ ...config, workflowPage: legacyPage }),
-        /<div class="constitution-actions">\s*<span id="constitution-output-badges"/);
+    assert.throws(() => renderHtml({ ...config, workflowPage: legacyPage }),
+        /Invalid generated canvas configuration/);
     assert.match(html, /&quot;hasConstitution&quot;:true/);
     assert.match(html, /data-badge-slots="[^"]*phase.card[^"]*phase.output/);
     assert.equal(config.badges.rules[0].adapter, "badge-rule-content-adapter");
@@ -1387,6 +1387,92 @@ test("Workflow layout and phase control freeze, validate and package independent
     assert.throws(() => readConfig(), /phase control|Invalid generated canvas/);
 });
 
+test("Workflow page adapter is mandatory in frozen requests and packaged configuration", async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(requestPath, "utf8"));
+    assert.equal(original.workflowPage.assets.length, 4);
+    await assert.rejects(freezeGeneration({ project, workspace,
+        model: { ...model, templates: model.templates.filter((entry) =>
+            entry.kind !== "generated.workflow-page-adapter") },
+        values, handoff }), /Generated Workflow page adapter is required/);
+    const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+    const writeRequest = async (request) => {
+        const { integrity: _old, ...payload } = request;
+        request.integrity = digest(JSON.stringify(payload));
+        await writeFile(requestPath, JSON.stringify(request));
+    };
+    for (const change of [
+        (request) => request.workflowPage.assets.pop(),
+        (request) => { request.workflowPage.assets[3].hash = ""; },
+        (request) => { request.workflowPage.assets[3].name = "../missing"; },
+        (request) => {
+            const asset = request.workflowPage.assets[3];
+            asset.content = "";
+            asset.hash = digest("");
+        },
+        (request) => {
+            const asset = request.workflowPage.assets[3];
+            const bytes = Buffer.alloc(32 * 1024 + 1, " ");
+            asset.content = bytes.toString("base64");
+            asset.hash = digest(bytes);
+        },
+    ]) {
+        const request = structuredClone(original);
+        change(request);
+        await writeRequest(request);
+        await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+            /Invalid frozen Workflow page assets/);
+    }
+    const legacy = structuredClone(original);
+    const definition = legacy.workflowPage.assets[0];
+    const document = JSON.parse(Buffer.from(definition.content, "base64"));
+    delete document.adapter;
+    delete document.badgeDestinations;
+    document.schemaVersion = 1;
+    const legacyBytes = Buffer.from(JSON.stringify(document));
+    definition.content = legacyBytes.toString("base64");
+    definition.hash = digest(legacyBytes);
+    await writeRequest(legacy);
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+        /Frozen Workflow page definition differs/);
+
+    const windowsRequest = structuredClone(original);
+    const asset = windowsRequest.workflowPage.assets[3];
+    const windowsBytes = Buffer.from(Buffer.from(asset.content, "base64").toString("utf8")
+        .replace(/\r?\n/g, "\r\n"));
+    assert.ok(windowsBytes.length <= 32 * 1024);
+    asset.content = windowsBytes.toString("base64");
+    asset.hash = digest(windowsBytes);
+    await writeRequest(windowsRequest);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const adapterPath = join(sdk, "pages", `${asset.name}.mjs`);
+    assert.deepEqual(await readFile(adapterPath), windowsBytes);
+    const configPath = join(sdk, "canvas-config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    assert.equal(readConfig().workflowPage.pageAdapterHash, digest(windowsBytes));
+    assert.match(renderHtml(config), /data-page-module="\/pages\/generated-workflow-page-adapter.mjs"/);
+    assert.doesNotMatch(renderHtml(config), /id="instance-collection"|id="setup-surface"|id="constitution-card"/);
+    for (const change of [
+        (page) => { delete page.pageAdapter; },
+        (page) => { delete page.pageAdapterHash; },
+        (page) => { page.pageAdapter = "../missing"; },
+        (page) => { page.pageAdapterHash = "bad"; },
+    ]) {
+        const invalid = structuredClone(config);
+        change(invalid.workflowPage);
+        await writeFile(configPath, JSON.stringify(invalid));
+        assert.throws(readConfig, /Invalid generated canvas configuration/);
+        assert.throws(() => renderHtml(invalid), /Invalid generated canvas configuration/);
+    }
+    await writeFile(configPath, JSON.stringify(config));
+    await rename(adapterPath, adapterPath + ".unavailable");
+    assert.throws(readConfig, /ENOENT/);
+    await rename(adapterPath + ".unavailable", adapterPath);
+});
+
 test("a preset-style Workflow page adapter freezes independently and detects packaged tampering", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
@@ -1824,7 +1910,10 @@ test("optional artifact folder slug previews only when enabled and binds the act
         assert.doesNotMatch(collection, /Nothing has been created yet|id="workflow-draft-note"/);
         const ui = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js", import.meta.url), "utf8");
         assert.match(ui, /function slugError\(\)/);
-        assert.match(ui, /\$\("workflow-pipeline"\)\.hidden = !workflowPhases\(\)\.length/);
+        assert.doesNotMatch(ui, /function renderCollection|function renderSetup|function renderValues/);
+        const pageAdapter = await readFile(join(project, ".github", "extensions", "my-workflow",
+            "pages", config.workflowPage.pageAdapter + ".mjs"), "utf8");
+        assert.match(pageAdapter, /pipeline\.hidden = !phases\.length/);
         assert.match(collection, /<h2 id="workflow-heading">Workflows/);
         assert.match(stockMarkup({ ...config, phases: ["constitution"] }), /id="workflow-name"/);
         const skill = join(project, ".github", "skills", "speckit-specify");
