@@ -79,7 +79,8 @@ async function fixture(t, { installed = empty, selections = empty,
                 : args[2] === "pirate" ? "pirate-full" : "extension-canvas-design";
             const version = name === "pirate-full" ? "1.1.0" : "1.0.0";
             const item = { id: name, version, priority: 10, enabled: true,
-                source: { kind: "local" } };
+                source: local ? { kind: "local" }
+                    : { kind: "catalog", catalog: name === "pirate-full" ? "community" : "copilot" } };
             const old = packages[kind].findIndex((entry) => entry.id === name);
             if (old !== -1) {
                 if (group === "preset") throw new Error(`Preset '${name}' is already installed`);
@@ -267,6 +268,143 @@ test("selected catalog key may install a different manifest ID", async (t) => {
         && args[2] === "pirate"));
     assert.equal(f.packages.presets[0].id, "pirate-full");
     assert.ok(installed.warnings.some((warning) => /pirate-full version drift/.test(warning)));
+    assert.equal((await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, f.deps)).stage, "ready");
+    const record = JSON.parse(await readFile(join(f.root, "speckit-canvas-designer",
+        "handoffs", f.id, "setup-record.json"), "utf8"));
+    assert.deepEqual(record.selections.presets, [{
+        catalogId: "pirate", source: "community", id: "pirate-full", version: "1.1.0",
+        installedSource: "community",
+    }]);
+    f.packages.presets[0].source = { kind: "catalog", catalog: "other" };
+    await assert.rejects(finalizeDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
+        /differs from the approved catalog source/);
+    f.packages.presets[0].source = { kind: "catalog", catalog: "community" };
+    f.packages.presets[0].version = "1.2.0";
+    await writeFile(join(f.project, ".specify", "presets", "pirate-full", "preset.yml"),
+        "preset:\n  id: pirate-full\n  name: Test\n  version: 1.2.0\n");
+    await assert.rejects(finalizeDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
+        /changed after installation/);
+});
+
+test("selected alias already installed by a bundle is removed by manifest ID", async (t) => {
+    const selections = { extensions: [], presets: [{
+        id: "pirate", source: "community", approved: true,
+        version: "1.0.0", downloadUrl: "https://example.org/pirate.zip",
+    }], bundles: [{
+        id: "kit", source: "community", approved: true,
+        version: "2.0.0", downloadUrl: "https://example.org/kit.zip",
+    }] };
+    const f = await fixture(t, { selections });
+    const run = async (binary, args, options) => {
+        if (args[0] === "preset" && args[1] === "remove" && args[2] !== "pirate-full") {
+            throw new Error("Attempted to remove a catalog alias instead of its manifest ID");
+        }
+        const result = await f.run(binary, args, options);
+        if (args[0] === "bundle" && args[1] === "install") {
+            f.packages.presets.push({ id: "pirate-full", version: "1.0.0",
+                priority: 10, enabled: true, source: { kind: "local" } });
+            const folder = join(f.project, ".specify", "presets", "pirate-full");
+            await mkdir(folder, { recursive: true });
+            await writeFile(join(folder, "preset.yml"),
+                "preset:\n  id: pirate-full\n  name: Test\n  version: 1.0.0\n");
+        }
+        return result;
+    };
+    const deps = { ...f.deps, run, download: async (_url, path) => writeFile(path, "zip") };
+    const installed = await installDesignerSetup(f.project, f.root, f.id, f.hash, deps);
+    assert.equal(installed.stage, "installed");
+    assert.ok(f.calls.some((args) => args[0] === "preset" && args[1] === "remove"
+        && args[2] === "pirate-full"));
+    assert.equal((await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps)).stage, "ready");
+});
+
+test("a URL-approved selection retains its local CLI provenance across stages", async (t) => {
+    const selections = { extensions: [], bundles: [], presets: [{
+        id: "pirate", source: "community", approved: true,
+        version: "1.1.0", downloadUrl: "https://example.org/pirate.zip",
+    }] };
+    const f = await fixture(t, { selections });
+    const run = async (binary, args, options) => {
+        const result = await f.run(binary, args, options);
+        if (args[0] === "preset" && args[1] === "add") {
+            f.packages.presets[0].source = { kind: "local" };
+        }
+        return result;
+    };
+    const deps = { ...f.deps, run };
+    assert.equal((await installDesignerSetup(f.project, f.root, f.id, f.hash, deps)).stage, "installed");
+    assert.equal((await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps)).stage, "ready");
+    f.packages.presets[0].source = { kind: "catalog", catalog: "community" };
+    await assert.rejects(finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps),
+        /changed after installation/);
+});
+
+test("a selected extension alias overwritten in place resolves to its manifest ID", async (t) => {
+    const selections = { presets: [], bundles: [{
+        id: "kit", source: "community", approved: true,
+        version: "2.0.0", downloadUrl: "https://example.org/kit.zip",
+    }], extensions: [{
+        id: "pirate", source: "community", approved: true,
+        version: "1.1.0", downloadUrl: "https://example.org/pirate.zip",
+    }] };
+    const f = await fixture(t, { selections });
+    const run = async (binary, args, options) => {
+        const result = await f.run(binary, args, options);
+        if (args[0] === "bundle" && args[1] === "install") {
+            f.packages.extensions.push({ id: "pirate-full", version: "1.1.0",
+                priority: 10, enabled: true, source: { kind: "local" } });
+        }
+        if (args[0] === "extension" && args[1] === "add" && args[2] === "pirate") {
+            f.packages.extensions.find((entry) => entry.id === "pirate-full").source = { kind: "local" };
+        }
+        return result;
+    };
+    const deps = { ...f.deps, run, download: async (_url, path) => writeFile(path, "zip") };
+    assert.equal((await installDesignerSetup(f.project, f.root, f.id, f.hash, deps)).stage, "installed");
+    const record = JSON.parse(await readFile(join(f.root, "speckit-canvas-designer",
+        "handoffs", f.id, "setup-record.json"), "utf8"));
+    assert.equal(record.selections.extensions[0].id, "pirate-full");
+    assert.equal(record.selections.extensions[0].installedSource, "local");
+    assert.equal((await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps)).stage, "ready");
+});
+
+test("ambiguous preinstalled aliases stop instead of guessing a manifest ID", async (t) => {
+    const selections = { presets: [], bundles: [{
+        id: "kit", source: "community", approved: true,
+        version: "2.0.0", downloadUrl: "https://example.org/kit.zip",
+    }], extensions: [{
+        id: "pirate", source: "community", approved: true,
+        version: "1.1.0", downloadUrl: "https://example.org/pirate.zip",
+    }] };
+    const f = await fixture(t, { selections });
+    const run = async (binary, args, options) => {
+        const result = await f.run(binary, args, options);
+        if (args[0] === "bundle" && args[1] === "install") {
+            for (const id of ["pirate-full", "other-full"]) {
+                f.packages.extensions.push({ id, version: "1.1.0",
+                    priority: 10, enabled: true, source: { kind: "catalog", catalog: "community" } });
+            }
+        }
+        return result;
+    };
+    await assert.rejects(installDesignerSetup(f.project, f.root, f.id, f.hash, {
+        ...f.deps, run, download: async (_url, path) => writeFile(path, "zip"),
+    }), /Cannot identify installed extensions manifest for selected catalog pirate/);
+    await assert.rejects(access(join(f.root, "speckit-canvas-designer", "handoffs",
+        f.id, "setup-record.json")), { code: "ENOENT" });
+});
+
+test("finalize rejects missing or incompatible setup records", async (t) => {
+    const f = await fixture(t);
+    await assert.rejects(finalizeDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
+        /setup record is missing/);
+    await installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps);
+    const path = join(f.root, "speckit-canvas-designer", "handoffs", f.id, "setup-record.json");
+    const record = JSON.parse(await readFile(path, "utf8"));
+    record.handoffHash = "0".repeat(64);
+    await writeFile(path, JSON.stringify(record));
+    await assert.rejects(finalizeDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
+        /does not match the frozen handoff/);
 });
 
 test("incompatible catalog configuration and absent CLI stop before installation", async (t) => {

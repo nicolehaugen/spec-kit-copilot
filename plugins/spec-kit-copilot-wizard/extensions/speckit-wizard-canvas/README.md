@@ -317,8 +317,15 @@ addition to) the hosted registry entry:
   successfully. Specify's artifact inventory must resolve the composed
   load-page command, and the installed Canvas Design verifier resolves its
   registered template names through Specify before opening Designer. This
-  ordering applies only to Designer launch, not the Wizard's Catalogs install actions or a
-  generated canvas opened independently as a standard plugin.
+  setup records the resolved manifest ID, version, and CLI source for each
+  selected standalone preset or extension in a bounded, handoff-bound file
+  beside the child session's `handoff.json`. Finalize requires that record
+  and rechecks the same installed packages; a missing or changed record
+  blocks launch. When a bundle has already installed a selected catalog
+  alias, the runner resolves its actual manifest ID before replacing it,
+  or stops if that identity is ambiguous. This ordering applies only to
+  Designer launch, not the Wizard's Catalogs install actions or a generated
+  canvas opened independently as a standard plugin.
 - Before installing, the child-side runner prepares the session-root handoff:
   it accepts
   the exact launch-hashed bytes or strips one trailing LF/CRLF only when the

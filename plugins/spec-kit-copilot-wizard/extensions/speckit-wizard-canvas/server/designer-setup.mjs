@@ -169,6 +169,65 @@ function standalone(handoff, kind) {
     return [...entries.values()];
 }
 
+function selectedPackages(handoff, kind) {
+    return standalone(handoff, kind).filter((item) => item.selected && !item.local);
+}
+
+function setupRecordPath(root, id) {
+    return join(root, "speckit-canvas-designer", "handoffs", id, "setup-record.json");
+}
+
+async function writeSetupRecord(root, id, hash, selections) {
+    const path = setupRecordPath(root, id);
+    const parent = dirname(path);
+    const [canonical, parentStat] = await Promise.all([realpath(parent), lstat(parent)]);
+    const temporary = join(parent, `.setup-record-${randomUUID()}.json`);
+    try {
+        await writeFile(temporary, JSON.stringify({ schemaVersion: 1, handoffId: id,
+            handoffHash: hash, selections }), { flag: "wx", mode: 0o600 });
+        const [current, currentStat] = await Promise.all([realpath(parent), lstat(parent)]);
+        if (current !== canonical || currentStat.dev !== parentStat.dev
+            || currentStat.ino !== parentStat.ino) {
+            throw new Error("Designer setup record directory changed");
+        }
+        await rename(temporary, path);
+    } finally {
+        await rm(temporary, { force: true });
+    }
+}
+
+async function readSetupRecord(root, id, hash, handoff) {
+    let record;
+    try {
+        record = JSON.parse(await readBoundedFile(setupRecordPath(root, id), 16384,
+            "Designer setup record"));
+    } catch (error) {
+        if (error.code === "ENOENT") {
+            throw new Error("Designer setup record is missing; rerun the install stage", { cause: error });
+        }
+        throw error;
+    }
+    if (record?.schemaVersion !== 1 || record.handoffId !== id || record.handoffHash !== hash
+        || !record.selections || Object.keys(record.selections).sort().join() !== "extensions,presets") {
+        throw new Error("Designer setup record does not match the frozen handoff");
+    }
+    for (const kind of ["extensions", "presets"]) {
+        const expected = selectedPackages(handoff, kind);
+        const entries = record.selections[kind];
+        if (!Array.isArray(entries) || entries.length !== expected.length
+            || entries.some((entry, index) => entry?.catalogId !== expected[index].locator.catalogId
+                || entry.source !== expected[index].locator.source
+                || typeof entry.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(entry.id)
+                || typeof entry.version !== "string"
+                || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(entry.version)
+                || ![entry.source, ...(expected[index].locator.downloadUrl ? ["local"] : [])]
+                    .includes(entry.installedSource))) {
+            throw new Error(`Designer setup record has incompatible ${kind} selections`);
+        }
+    }
+    return record.selections;
+}
+
 async function inspectPackage(project, kind, item, command, warnings) {
     const id = item.locator.installedId;
     const listed = (await inventory(project, kind, command)).find((entry) => entry.id === id);
@@ -180,6 +239,10 @@ async function inspectPackage(project, kind, item, command, warnings) {
     }
     if (item.locator.source === "local" && listed.source !== "local") {
         throw new Error(`Approved local ${kind} ${id} is not a local installation`);
+    }
+    if (item.selected && !item.local && listed.source !== item.locator.source
+        && !(item.locator.downloadUrl && listed.source === "local")) {
+        throw new Error(`Selected ${kind} ${id} differs from the approved catalog source`);
     }
     if (item.locator.source === "default" && !item.locator.downloadUrl
         && listed.source !== "default") {
@@ -196,7 +259,7 @@ async function inspectPackage(project, kind, item, command, warnings) {
     return listed;
 }
 
-async function installPackage(project, kind, item, command, warnings, verifyLocal) {
+async function installPackage(project, kind, item, command, warnings, verifyLocal, reserved = new Set()) {
     const group = GROUP[kind];
     const { locator, installed } = item;
     let args;
@@ -211,18 +274,39 @@ async function installPackage(project, kind, item, command, warnings, verifyLoca
         if (kind === "extensions") args.push("--force");
     }
     if (installed) args.push("--priority", String(installed.priority));
-    const before = !installed && !item.local
-        ? new Set((await inventory(project, kind, command)).map((entry) => entry.id)) : null;
+    const before = !installed && !item.local ? await inventory(project, kind, command) : null;
+    const resolveExisting = (error) => {
+        const candidates = before.filter((entry) => !reserved.has(entry.id)
+            && entry.version === item.selected?.version
+            && error.message.includes(entry.id));
+        if (candidates.length !== 1) {
+            throw new Error(`Cannot identify installed ${kind} manifest for selected catalog ${locator.catalogId}`);
+        }
+        locator.installedId = candidates[0].id;
+    };
     try { await command(args); }
     catch (error) {
         if (kind !== "presets" || !/already installed|already exists/i.test(error.message)) throw error;
+        if (before) resolveExisting(error);
         await command(["preset", "remove", locator.installedId]);
         await command(args);
     }
     if (before) {
-        const added = (await inventory(project, kind, command)).filter((entry) => !before.has(entry.id));
+        const after = await inventory(project, kind, command);
+        const previous = new Set(before.map((entry) => entry.id));
+        const added = after.filter((entry) => !previous.has(entry.id));
         if (added.length === 1 && added[0].id !== locator.installedId) {
             locator.installedId = added[0].id;
+        } else if (!added.length && !after.some((entry) => entry.id === locator.installedId)
+            && !before.some((entry) => entry.id === locator.installedId)) {
+            const candidates = after.filter((entry) => !reserved.has(entry.id)
+                && (entry.source === locator.source
+                    || (locator.downloadUrl && entry.source === "local"))
+                && entry.version === item.selected?.version);
+            if (candidates.length !== 1) {
+                throw new Error(`Cannot identify installed ${kind} manifest for selected catalog ${locator.catalogId}`);
+            }
+            locator.installedId = candidates[0].id;
         }
     }
     const actual = await inspectPackage(project, kind, item, command, warnings);
@@ -239,6 +323,7 @@ async function installPackage(project, kind, item, command, warnings, verifyLoca
         }
     }
     if (item.local) await verifyLocal(project, kind, item.local.id);
+    return actual;
 }
 
 async function bundleSource(locator, download) {
@@ -437,6 +522,7 @@ export async function installDesignerSetup(project, root, id, hash, {
     }
     timings.preflight = elapsed(start);
     const handoff = await readHandoff(root, id, undefined, hash);
+    await rm(setupRecordPath(root, id), { force: true });
     if (!state.initialized) {
         start = performance.now();
         await command(["init", "--here", "--force", "--non-interactive", "--ignore-agent-tools",
@@ -473,11 +559,22 @@ export async function installDesignerSetup(project, root, id, hash, {
         ? await verifyBase(project, handoff, safeRun) : null;
     warnings.push(...(baseResult?.warnings ?? []));
     timings.bundles = elapsed(start);
+    const selections = { extensions: [], presets: [] };
     for (const kind of ["extensions", "presets"]) {
         start = performance.now();
         if (kind === "presets" && localBase) await materializeDevSkills(project, localBase.path);
+        const reserved = new Set();
         for (const item of standalone(handoff, kind)) {
-            await installPackage(project, kind, item, command, warnings, verify);
+            const actual = await installPackage(project, kind, item, command, warnings, verify, reserved);
+            if (item.selected && !item.local) {
+                if (reserved.has(actual.id)) {
+                    throw new Error(`Selected ${kind} manifest ${actual.id} belongs to multiple catalog entries`);
+                }
+                reserved.add(actual.id);
+                selections[kind].push({ catalogId: item.locator.catalogId,
+                    source: item.locator.source, id: actual.id, version: actual.version,
+                    installedSource: actual.source });
+            }
         }
         timings[kind] = elapsed(start);
     }
@@ -489,6 +586,7 @@ export async function installDesignerSetup(project, root, id, hash, {
         }
     }
     await verifyComposedLoadPage(project, command);
+    await writeSetupRecord(root, id, hash, selections);
     timings.inventory = elapsed(start);
     return { stage: "installed", timings, warnings: uniqueWarnings(warnings) };
 }
@@ -501,12 +599,25 @@ export async function finalizeDesignerSetup(project, root, id, hash, {
     const safeRun = directRun(run);
     await check(project, root, id, hash, safeRun);
     const handoff = await readHandoff(root, id, undefined, hash);
+    const selections = await readSetupRecord(root, id, hash, handoff);
     const command = (args) => runSpecify(project, args, run);
     const warnings = [];
     await verifyRuntime(project, handoff, command, warnings);
     for (const kind of ["extensions", "presets"]) {
         for (const local of handoff.localSelections?.[kind] ?? []) {
             await verifyLocal(project, handoff, kind, local.id, safeRun);
+        }
+        for (const selected of selections[kind]) {
+            const approved = handoff.selections[kind].find((entry) =>
+                entry.id === selected.catalogId && entry.source === selected.source);
+            const actual = await inspectPackage(project, kind, {
+                selected: approved,
+                locator: { installedId: selected.id, catalogId: selected.catalogId,
+                    source: selected.source, downloadUrl: approved.downloadUrl },
+            }, command, warnings);
+            if (actual.version !== selected.version || actual.source !== selected.installedSource) {
+                throw new Error(`Selected ${kind} ${selected.id} changed after installation`);
+            }
         }
     }
     const base = handoff.localSelections?.extensions?.some((entry) => entry.id === BASE);
