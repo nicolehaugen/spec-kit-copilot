@@ -216,6 +216,28 @@ test("restart reconnects a message-less dispatch to its exact prompt and live tu
         confirmation: "discard" });
 });
 
+test("refresh reconnects a message-less dispatch when its live turn arrives after reopening", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Request sent", artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    assert.equal((await runtime.snapshot()).items.find((row) => row.id === itemId).status, "Unconfirmed");
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "late-message", interactionId: "run",
+            content: 'report with {phaseRunId:"interrupted"}' } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    const snapshot = await runtime.refresh();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Running");
+    assert.equal(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0].messageId, "late-message");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+});
+
 test("many attempts share one verified directory inventory per snapshot", async (t) => {
     const fixture = await setup(t);
     const itemId = await prepareNewWorkflow(fixture.runtime);

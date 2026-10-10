@@ -1778,10 +1778,10 @@ test("legacy result state stays on disk but is not evaluated or shown", async (t
         { type: "assistant.turn_end", data: { turnId: "turn-legacy" } },
     ];
     const completed = await runtime.refresh();
-    assert.equal(completed.statuses.specify.status, "Completed");
+    assert.equal(completed.statuses.specify.status, "Run output unconfirmed");
     assert.equal(Object.hasOwn(completed.statuses.specify, "result"), false);
     assert.equal(JSON.parse(await readFile(join(stateDir, "state.json"), "utf8"))
-        .runs.find((entry) => entry.runId === run.runId).status, "Completed");
+        .runs.find((entry) => entry.runId === run.runId).status, "Run output unconfirmed");
     assert.deepEqual(JSON.parse(await readFile(join(stateDir, "state.json"), "utf8")).tagMatches,
         old.tagMatches);
 });

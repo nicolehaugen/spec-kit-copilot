@@ -1170,7 +1170,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         }));
     }
     async function refresh() {
-        if (state.runs.some((entry) => entry.sessionId === session.sessionId && entry.messageId && !["Completed", "Failed"].includes(entry.status))) {
+        if (state.runs.some((entry) => requiresRecovery(entry)
+            && (entry.messageId || recoveryRuns.has(entry.runId)))) {
             reconcile = reconcile.then(capture);
             try { await reconcile; } catch (error) { reconcile = Promise.resolve(); throw error; }
         }
