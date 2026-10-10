@@ -73,6 +73,47 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
         } };
 }
 
+test("pending recovery includes earlier attempts and unsafe checks after a retry", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    const attempt = (runId, before) => ({ runId, before, item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel",
+        args: "", status: "Failed", artifact: null, messageId: null, error: null });
+    saved.runs = [
+        attempt("first", []),
+        attempt("second", []),
+        attempt("retry", ["specs/001-demo"]),
+    ];
+    await mkdir(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    const snapshot = await runtime.snapshot();
+    const row = snapshot.items.find((entry) => entry.id === itemId);
+    assert.equal(row.workflowRecoveryMessage,
+        "New workflow directory: specs/001-demo. Select it in the workflow list to inspect it.");
+    assert.equal(row.status, "Failed");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /A workflow directory appeared: specs\/001-demo/);
+
+    saved.runs.splice(1, 0, attempt("unsafe", ["specs/invalid/path"]));
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const unsafe = await (await fixture.restart()).snapshot();
+    const recovery = unsafe.items.find((entry) => entry.id === itemId).workflowRecoveryMessage;
+    assert.match(recovery, /New workflow directory: specs\/001-demo/);
+    assert.match(recovery, /cannot reliably check/);
+    assert.equal(recovery.split("specs/001-demo").length - 1, 1);
+
+    saved.runs = [attempt("first", []), attempt("retry", [])];
+    await rm(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const emptyRuntime = await fixture.restart();
+    const empty = await emptyRuntime.snapshot();
+    assert.equal(empty.items.find((entry) => entry.id === itemId).workflowRecoveryMessage, null);
+    await emptyRuntime.removePending({ itemId, revision: empty.revision, confirmation: "discard" });
+    assert.equal((await emptyRuntime.snapshot()).items.some((entry) => entry.id === itemId), false);
+});
+
 test("Autopilot refuses dialog-bound phases before dispatch or mode changes", async (t) => {
     const { runtime, sent, session } = await setup(t, true,
         [{ phase: "speckit.plan", dialog: "confirm-plan" }]);

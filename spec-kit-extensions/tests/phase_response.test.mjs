@@ -10,7 +10,7 @@ test("saved recovery status accepts existing state and rejects incompatible valu
     state.runs.push({ runId: "run", phase: "specify", item: "__new__:1", sessionId: "session",
         instanceId: "canvas", args: "", before: [], status: "Completed", artifact: null, messageId: "msg" });
     assert.equal(validateWorkflowState(state, phases, []), state);
-    state.runs[0].status = "Needs review";
+    state.runs[0].status = "Run output unconfirmed";
     assert.equal(validateWorkflowState(state, phases, []), state);
     state.runs[0].status = "Needs deletion";
     assert.throws(() => validateWorkflowState(state, phases, []), /Saved canvas state is invalid/);

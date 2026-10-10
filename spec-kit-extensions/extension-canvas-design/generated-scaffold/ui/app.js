@@ -953,18 +953,18 @@ function renderCollection() {
             select.append(badge);
         }
         if (badge) { badge.textContent = entry.status ?? "Not started"; badge.hidden = !entry.pending; }
-        if (entry.pending) select.title = entry.recovery ?? "";
+        if (entry.pending) select.title = entry.workflowRecoveryMessage ?? "";
         let recovery = select.querySelector(".recovery-note");
-        if (entry.pending && entry.recovery && !recovery) {
+        if (entry.pending && entry.workflowRecoveryMessage && !recovery) {
             recovery = document.createElement("span");
             recovery.className = "recovery-note";
             select.append(recovery);
         }
-        if (recovery) { recovery.textContent = entry.recovery ?? ""; recovery.hidden = !entry.recovery; }
+        if (recovery) { recovery.textContent = entry.workflowRecoveryMessage ?? ""; recovery.hidden = !entry.workflowRecoveryMessage; }
         const remove = row.querySelector(".instance-delete");
-        remove.hidden = entry.id === "__new__" || entry.pending && entry.hasRuns
-            && !["Completed", "Failed", "Needs review"].includes(entry.status);
-        remove.textContent = entry.pending ? entry.hasRuns ? "Discard pending row" : "Remove" : "Delete";
+        remove.hidden = entry.id === "__new__" || entry.pending && entry.hasWorkflowRunHistory
+            && !["Completed", "Failed", "Run output unconfirmed"].includes(entry.status);
+        remove.textContent = entry.pending ? entry.hasWorkflowRunHistory ? "Discard pending row" : "Remove" : "Delete";
         remove.setAttribute("aria-label", `${remove.textContent} ${entry.label}`);
     }
     const editor = workflowIdentity;
@@ -1114,12 +1114,12 @@ async function deleteFeature(itemId) {
     const item = model.items.find((entry) => entry.id === itemId);
     if (!item) throw new Error("This workflow is no longer available. Refresh and try again.");
     if (item.pending) {
-        if (item.hasRuns && !window.confirm(
+        if (item.hasWorkflowRunHistory && !window.confirm(
             `Discard pending row ${item.label}? This removes its draft and run history only. No workflow directory will be deleted.`
         )) return;
         await flush();
         await retryRevision("/api/workflow/pending/remove", { itemId,
-            ...(item.hasRuns ? { confirmation: "discard" } : {}) });
+            ...(item.hasWorkflowRunHistory ? { confirmation: "discard" } : {}) });
         await refresh();
         message(`Removed ${item.label}. No directory was created.`);
         return;

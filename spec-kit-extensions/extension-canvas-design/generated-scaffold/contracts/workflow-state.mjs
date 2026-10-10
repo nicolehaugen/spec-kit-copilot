@@ -42,7 +42,7 @@ export function validateWorkflowState(state, phases, valueFields) {
             || typeof run.instanceId !== "string" || typeof run.args !== "string" || !Array.isArray(run.before)
             || (run.name !== undefined && (typeof run.name !== "string" || run.name.length > 120
                 || /[\x00-\x1f\x7f]/.test(run.name)))
-            || !["Request sent", "Running", "Unconfirmed", "Needs review", "Completed", "Failed"].includes(run.status)
+            || !["Request sent", "Running", "Unconfirmed", "Run output unconfirmed", "Completed", "Failed"].includes(run.status)
             || (run.artifact !== null && typeof run.artifact !== "string")
             || (run.artifacts !== undefined && (!Array.isArray(run.artifacts)
                 || run.artifacts.length > 100 || run.artifacts.some((path) => typeof path !== "string")))

@@ -723,18 +723,18 @@ test("externally restarted turn stays Running, then permits confirmed metadata-o
         await canvas.restart();
         await page.goto(canvas.url);
         await expect(page.locator("#workflow-list .phase-notice")).toHaveText("Running");
-        await expect(page.getByRole("button", { name: /Discard pending row/ })).toHaveCount(0);
+        await expect(page.getByRole("button", { name: /^Discard pending row/ })).toHaveCount(0);
         canvas.events.push(
             { type: "assistant.turn_end", data: { interactionId: "run", turnId: "turn" } },
             { type: "session.task_complete", data: { success: true, summary: "Done" } },
         );
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#workflow-list .phase-notice")).toContainText("Needs review");
+        await expect(page.locator("#workflow-list .phase-notice")).toContainText("Run output unconfirmed");
         const before = await canvas.runtime.snapshot();
         await expect(canvas.runtime.removePending({ itemId: pending.id, revision: before.revision }))
             .rejects.toThrow(/Confirm Discard pending row/);
         page.once("dialog", (dialog) => dialog.accept());
-        await page.getByRole("button", { name: /Discard pending row/ }).click();
+        await page.getByRole("button", { name: /^Discard pending row/ }).click();
         await expect(page.locator(`[data-workflow-id="${pending.id}"]`)).toHaveCount(0);
         const saved = JSON.parse(await readFile(canvas.statePath, "utf8"));
         expect(saved.runs).toHaveLength(0);
@@ -762,14 +762,14 @@ test("a legacy Completed run without a report is reviewed after restart", async 
         await writeFile(canvas.statePath, JSON.stringify(saved));
         await canvas.restart();
         const state = await canvas.runtime.snapshot();
-        expect(state.items.find((item) => item.id === pending.id)?.status).toBe("Needs review");
+        expect(state.items.find((item) => item.id === pending.id)?.status).toBe("Run output unconfirmed");
         await canvas.runtime.removePending({ itemId: pending.id,
             revision: state.revision, confirmation: "discard" });
         expect((await canvas.runtime.snapshot()).items.some((item) => item.id === pending.id)).toBe(false);
     } finally { await canvas.close(); }
 });
 
-test("empty new directory blocks discard and appears in the pending-row warning", async () => {
+test("empty new directory blocks discard and appears in the pending-row warning", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false, ["specify"]);
     try {
         const skill = join(canvas.root, ".github", "skills", "speckit-specify");
@@ -784,14 +784,21 @@ test("empty new directory blocks discard and appears in the pending-row warning"
             { type: "session.task_complete", data: { success: true, summary: "Done" } },
         );
         const checked = await canvas.runtime.refresh();
-        expect(checked.items.find((item) => item.id === pending.id)?.status).toBe("Needs review");
+        expect(checked.items.find((item) => item.id === pending.id)?.status).toBe("Run output unconfirmed");
         await mkdir(join(canvas.root, "specs", "001-created"), { recursive: true });
         const state = await canvas.runtime.snapshot();
-        expect(state.items.find((item) => item.id === pending.id)?.recovery)
+        expect(state.items.find((item) => item.id === pending.id)?.workflowRecoveryMessage)
             .toContain("specs/001-created");
+        await page.goto(canvas.url);
+        const row = page.locator(`[data-workflow-id="${pending.id}"]`);
+        await expect(row.locator(".recovery-note")).toContainText("specs/001-created");
+        await expect(row.locator(".instance-select")).toHaveAttribute("title", /specs\/001-created/);
         await expect(canvas.runtime.removePending({ itemId: pending.id,
             revision: checked.revision, confirmation: "discard" })).rejects.toThrow(/specs\/001-created/);
         expect((await canvas.runtime.snapshot()).items.some((item) => item.id === pending.id)).toBe(true);
+        await rm(join(canvas.root, "specs", "001-created"), { recursive: true });
+        await page.locator("#refresh-state").click();
+        await expect(row.locator(".recovery-note")).not.toContainText("specs/001-created");
     } finally { await canvas.close(); }
 });
 

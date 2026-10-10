@@ -133,9 +133,13 @@ The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff retains the saved revision but starts a fresh form
-from template defaults when its resolved pages are unchanged. Saved output
-additions and viewer selections are not restored on reopen; a subsequent Save
-or Generate replaces them with the handoff defaults.
+from current template defaults, even when the resolved pages have changed.
+Reopen and Save safely read the prior file and validate its schema version,
+handoff identity, and revision, not its discarded model revision, fields,
+outputs, or badges. Saved values, output additions, viewer selections, and badges
+are not restored on reopen; a subsequent Save or Generate replaces them with
+the current draft. New drafts remain fully validated on Save, and Generate also
+validates the saved content against the current model before freezing it.
 Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
 blank retains the current color in that mode, while invalid hex blocks Generate
 without preventing an incomplete draft from being saved. The generated canvas

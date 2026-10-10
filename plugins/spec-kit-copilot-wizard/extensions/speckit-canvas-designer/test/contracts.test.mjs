@@ -6,7 +6,8 @@ import { GENERATION_EXISTS as SERVER_EXISTS, GENERATION_PENDING as SERVER_PENDIN
     generationAvailability as serverAvailability } from "../contracts/generation-request.mjs";
 import { validateGenerationRequestIntegrity } from "../../../../../spec-kit-extensions/extension-canvas-design/scripts/contracts/generation-request.mjs";
 import { normalizeObservedVersions } from "../contracts/specify-inventory.mjs";
-import { validateSaveRequest, validateSavedSettings } from "../contracts/designer-settings.mjs";
+import { validateSaveRequest, validateSavedSettings,
+    validateSavedSettingsMetadata } from "../contracts/designer-settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput, validateLastOpen } from "../contracts/host-open.mjs";
 import { checkSchema } from "../contracts/design-contributions.mjs";
 import { validateDesignerAdapterExports } from "../contracts/control-adapter.mjs";
@@ -87,6 +88,24 @@ test("changed preset composition identifies affected badge dependencies without 
     assert.throws(() => validateSavedSettings(record, handoff, model),
         (error) => /Saved Designer settings do not match/.test(error.message)
             && !error.message.includes("saved badges:"));
+});
+
+test("discarded settings metadata checks identity and revision without requiring current content", () => {
+    const handoff = { handoffId: "handoff-1" };
+    const metadata = { schemaVersion: 1, handoffId: handoff.handoffId, revision: 3 };
+    assert.doesNotThrow(() => validateSavedSettingsMetadata(metadata, handoff));
+    assert.doesNotThrow(() => validateSavedSettingsMetadata({ ...metadata,
+        modelRevision: "obsolete", values: null, outputs: false, badges: "obsolete",
+        oldField: true }, handoff));
+    for (const invalid of [
+        null, [], { ...metadata, schemaVersion: 2 },
+        { ...metadata, handoffId: "another-handoff" },
+        ...[undefined, 0, -1, 0.5, "3", Number.MAX_SAFE_INTEGER + 1]
+            .map((revision) => ({ ...metadata, revision })),
+    ]) {
+        assert.throws(() => validateSavedSettingsMetadata(invalid, handoff),
+            /Saved Designer settings do not match/);
+    }
 });
 
 test("Designer handoff and generation contracts include badges without accepting unrelated fields", () => {

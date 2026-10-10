@@ -210,7 +210,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             || before.some((id) => typeof id !== "string"
                 || !roots.some((root) => id.startsWith(`${root}/`)
                     && slugPattern.test(id.slice(root.length + 1))))) {
-            throw new UserError("The pre-run directory snapshot is incomplete. Inspect the checkout before discarding.", 409);
+            throw new UserError("The app cannot reliably check whether this run created a workflow folder. Check the project files before abandoning this workflow.", 409);
         }
         const discovered = [];
         for (const root of roots) {
@@ -220,7 +220,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             catch (error) {
                 if (error.code !== "ENOENT") throw error;
                 if (before.some((id) => id.startsWith(`${root}/`))) {
-                    throw new UserError("A workflow root disappeared. Inspect the checkout before discarding.", 409);
+                    throw new UserError("A folder used to store workflows is missing. Check the project files before abandoning this workflow.", 409);
                 }
                 continue;
             }
@@ -249,7 +249,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
             if (before.some((id) => id.startsWith(`${root}/`)
                 && !entries.some((entry) => `${root}/${entry.name}` === id))) {
-                throw new UserError("A pre-run workflow directory disappeared. Inspect the checkout.", 409);
+                throw new UserError("A workflow folder that existed before this run is missing. Check the project files.", 409);
             }
         }
         return discovered;
@@ -437,22 +437,29 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (badges) badges.selected = badges.items[item] ?? [];
         const project = phases.find((phase) => phase.project);
         const pending = await Promise.all((view.pendingWorkflows ?? []).map(async ({ id, name, slug }) => {
-            const run = view.runs.findLast((entry) => entry.item === id);
+            const runs = view.runs.filter((entry) => entry.item === id);
+            const run = runs.at(-1);
             let recovery = run?.error ?? null;
-            if (run && ["Completed", "Failed", "Needs review"].includes(run.status)) {
+            const discovered = new Set(), errors = new Set();
+            for (const attempt of runs) {
+                if (!["Completed", "Failed", "Run output unconfirmed"].includes(attempt.status)) continue;
                 try {
-                    const discovered = await compareDirectories(run.before);
-                    if (discovered.length) recovery = `New workflow directory: ${discovered.join(", ")}. Select it in the workflow list to inspect it.`;
+                    for (const path of await compareDirectories(attempt.before)) discovered.add(path);
                 } catch (error) {
                     if (!(error instanceof UserError)) throw error;
-                    recovery = error.message;
+                    errors.add(error.message);
                 }
             }
+            const findings = [
+                ...(discovered.size ? [`New workflow directory: ${[...discovered].join(", ")}. Select it in the workflow list to inspect it.`] : []),
+                ...errors,
+            ];
+            if (findings.length) recovery = findings.join(" ");
             if (id === item && run && recovery) statuses[run.phase].error = recovery;
             return { id, slug: config.userProvidesSlug ? slug : "",
                 label: name.trim() || "Unstarted workflow", pending: true,
                 status: run?.status ?? "Not started",
-                hasRuns: Boolean(run), recovery };
+                hasWorkflowRunHistory: Boolean(run), workflowRecoveryMessage: recovery };
         }));
         const legacyDraft = (view.name || view.slug
             || Object.keys(view.drafts).some((key) => key.startsWith('["__new__",')))
@@ -560,7 +567,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             if (!runs.length && input.confirmation !== undefined) {
                 throw new UserError("This row has no run to discard.", 409);
             }
-            if (runs.some((run) => !["Completed", "Failed", "Needs review"].includes(run.status)
+            if (runs.some((run) => !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)
                 || run.messageId === null && run.status !== "Failed")) {
                 throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
             }
@@ -1070,17 +1077,17 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 const response = phaseResponse(events, run.messageId);
                 const turn = phaseTurnState(events, run.messageId);
                 if (!response || response.success === undefined) {
-                    run.status = turn.active ? "Running" : turn.ended ? "Needs review" : "Unconfirmed";
+                    run.status = turn.active ? "Running" : turn.ended ? "Run output unconfirmed" : "Unconfirmed";
                     run.error = turn.active ? null : turn.ended
-                        ? "The agent turn ended without a verified report. Inspect the workflow directories."
+                        ? "This run ended without confirmed output. Retry the phase, close and reopen the app, or choose Discard pending row to remove this unfinished workflow without deleting files."
                         : "No completed response is associated with this request yet. Check chat or refresh.";
                     continue;
                 }
                 const reported = run.artifact || run.confirmedSlug || phaseFor(run.phase).project;
-                run.status = response.success ? reported || !newItem(run.item) ? "Completed" : "Needs review" : "Failed";
+                run.status = response.success ? reported || !newItem(run.item) ? "Completed" : "Run output unconfirmed" : "Failed";
                 if (response.success) run.completedAt ??= new Date().toISOString();
-                run.error = run.status === "Needs review"
-                    ? "The agent finished without reporting a workflow directory or artifact. Inspect the checkout before discarding."
+                run.error = run.status === "Run output unconfirmed"
+                    ? "This run ended without confirmed output. Retry the phase, close and reopen the app, or choose Discard pending row to remove this unfinished workflow without deleting files."
                     : response.error ?? null;
             }
             const automation = next.autopilot;

@@ -39,7 +39,16 @@ export function validateValues(values, constraints) {
     }
 }
 
+export function validateSavedSettingsMetadata(record, handoff) {
+    if (!record || typeof record !== "object" || Array.isArray(record)
+        || record.schemaVersion !== 1 || record.handoffId !== handoff.handoffId
+        || !Number.isSafeInteger(record.revision) || record.revision < 1) {
+        throw new Error("Saved Designer settings do not match the current handoff or pages");
+    }
+}
+
 export function validateSavedSettings(record, handoff, model) {
+    validateSavedSettingsMetadata(record, handoff);
     if (record?.modelRevision !== undefined && record.modelRevision !== model.revision
         && record?.handoffId === handoff.handoffId) {
         const affected = Array.isArray(record.badges)

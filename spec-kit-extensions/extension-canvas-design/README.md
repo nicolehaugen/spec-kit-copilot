@@ -167,7 +167,12 @@ Specify runs; its scripts may add a numeric prefix to the actual directory name.
 New stays available while editing, and Remove discards an unstarted row without
 deleting any directory. Pending rows and their phase drafts survive a reload.
 An external extension reload during a phase can interrupt reporting. A live turn
-remains Running; a finished turn without a reported directory is marked Needs review.
+remains Running; a finished turn without a reported directory is marked Run output unconfirmed.
+The host-to-Workflow-page contract in `generated-scaffold/contracts/host-adapter.mjs`
+defines pending rows' `hasWorkflowRunHistory` (boolean), `workflowRecoveryMessage`
+(string or null), and `status` (Not started, Request sent, Running, Unconfirmed,
+Run output unconfirmed, Completed, or Failed). Recovery messages explain discovered
+folders or inconclusive checks; they do not authorize deletion.
 After the turn ends, a run-backed row offers a confirmed Discard pending row action.
 This checks all configured workflow roots against the pre-run snapshot, including
 empty directories, and removes only the pending row, drafts, and run history when
