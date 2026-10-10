@@ -10,7 +10,7 @@ test("Wizard-selected canvas-design test preset edits, saves and reopens its vis
         expect(journey.composedSkill).toContain("- `canvas-settings-pr1-test`");
         expect(journey.composedSkill).toContain("- `canvas-contribution-pr1-toggle`");
         expect(journey.pages.map((entry) => entry.name)).toEqual([
-            "designer-essentials", "designer-artifacts", "designer-badges",
+            "designer-essentials", "designer-badges",
             "designer-appearance", "canvas-settings-pr1-test",
         ]);
         expect(journey.templates).toEqual(expect.arrayContaining([
@@ -20,7 +20,7 @@ test("Wizard-selected canvas-design test preset edits, saves and reopens its vis
                 sourceId: "copilot-canvas-design-test" }),
         ]));
         expect(journey.resolved.pages.map((entry) => entry.title)).toEqual([
-            "Essentials", "Outputs", "Badges", "Appearance", "Test settings",
+            "Essentials", "Badges", "Appearance", "Test settings",
         ]);
         await expect(page.getByRole("tab")).toHaveText([
             "Essentials", "Badges", "Appearance", "Test settings", "Generate",
@@ -63,7 +63,7 @@ test("Wizard-selected minimal Essentials preset opens a savable but generation-d
     try {
         expect(journey.composedSkill).not.toContain("designer-badges");
         expect(journey.pages.map((entry) => entry.name)).toEqual([
-            "designer-essentials", "designer-artifacts", "designer-appearance",
+            "designer-essentials", "designer-appearance",
         ]);
         expect(journey.templates.map((entry) => entry.name))
             .not.toContain("generated-workflow-page-adapter");

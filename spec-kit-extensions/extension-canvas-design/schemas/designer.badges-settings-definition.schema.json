@@ -19,6 +19,7 @@
           "title": {"type": "string", "minLength": 1, "maxLength": 120},
           "description": {"type": "string", "minLength": 1, "maxLength": 1000},
           "rule": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"},
+          "replacementGroup": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,79}$"},
           "defaultText": {"type": "string", "minLength": 1, "maxLength": 120},
           "defaultColor": {"type": "string", "pattern": "^(?:theme|red|green|amber|blue|purple|pink|orange|#[0-9a-fA-F]{6})$"},
           "enabled": {"type": "boolean"}

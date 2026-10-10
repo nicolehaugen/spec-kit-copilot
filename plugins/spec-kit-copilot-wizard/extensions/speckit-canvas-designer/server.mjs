@@ -44,7 +44,7 @@ const ASSETS = {
     "/ui/generation-state.js": ["generation-state.js", "text/javascript"],
     "/ui/generated-output-state.js": ["generated-output-state.js", "text/javascript"],
     "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
-    "/ui/outputs-control.js": ["outputs-control.js", "text/javascript"],
+    "/ui/output-evidence.js": ["output-evidence.js", "text/javascript"],
     "/ui/control-adapter-contract.js": ["control-adapter-contract.js", "text/javascript"],
     "/ui/badges-control.js": ["badges-control.js", "text/javascript"],
     "/ui/badge-duplicates.js": ["badge-duplicates.js", "text/javascript"],

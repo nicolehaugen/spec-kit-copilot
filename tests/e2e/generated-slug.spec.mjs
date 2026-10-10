@@ -1191,6 +1191,27 @@ test("confirmed phase outputs disclose extra files and View output opens the sel
     } finally { await canvas.close(); }
 });
 
+test("a phase with no default viewer still links its declared output file", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"], undefined, undefined,
+        undefined, undefined, false, {
+            specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+            plan: { outputs: ["specs/<slug>/notes.md"], view: null },
+        });
+    try {
+        const folder = join(canvas.root, "specs", "sample-feature");
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "notes.md"), "# Notes");
+        await page.goto(canvas.url);
+        await page.getByRole("button", { name: "sample-feature", exact: true }).click();
+        await page.locator("#next-phase").click();
+        await expect(page.locator("#view-artifact")).toBeHidden();
+        await expect(page.locator("#phase-output-toggle")).toHaveText(/\+1 more/);
+        await page.locator("#phase-output-toggle").click();
+        await page.locator('#phase-other-outputs [data-output="specs/<slug>/notes.md"]').click();
+        await expect(page.locator("#artifact-path")).toHaveText("specs/sample-feature/notes.md");
+    } finally { await canvas.close(); }
+});
+
 test("artifact viewer matches the Wizard full-page layout and returns to the canvas", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {

@@ -242,6 +242,9 @@ The Canvas Designer launch dialog (Design tab → Open Designer) lets you
 choose hosted presets, extensions, and bundles before launching the child
 session that installs them. Hosted catalogs remain the primary, default way
 to pick what gets installed.
+The new Designer child starts in interactive mode. When the vertical phase
+control is installed, its managed Autopilot action switches modes for the run
+and restores the previous mode afterward.
 
 There is one collapsed **Local development** `<details>` section, rendered
 as a sibling of the Presets/Extensions/Bundles tabpanels rather than inside

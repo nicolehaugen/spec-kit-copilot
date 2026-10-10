@@ -64,7 +64,6 @@ the generic `create-canvas` browser/server protocol.
 | `generated-control-adapter-text` | Generated app | Render visible text in authorized placements |
 | `shared-controls-checkbox` | Shared control | Boolean value contract and Designer adapter name |
 | `designer-control-adapter-checkbox` | Designer | Edit boolean settings |
-| `designer-artifacts` | Outputs | Review fixed pipeline artifacts, add viewer links, and select the default viewer target |
 | `designer-badges` | Badges | Add opt-in result badges to workflow rows, summaries, phase cards, and individual phase outputs |
 | `designer-appearance` | Appearance | Logos and per-mode palette colors |
 
@@ -72,8 +71,9 @@ The Essentials core template lives in `designer-host/tabs/essentials.json`; its
 `designer-essentials` is the template ID used for preset resolution.
 Its required Canvas ID and Title are rendered by the fixed identity control,
 while optional text contributions use the registered `stock.text` adapter.
-The Outputs definition retains a separate fixed phase-artifacts control, but
-the Outputs tab is hidden in the current Designer UI. The Designer
+There is no Outputs page: Wizard-inferred artifacts and viewer defaults remain
+host-owned evidence, while badge controls may declare additional expected
+Markdown output files directly. The Designer
 validates each supplied page without requiring every default tab to open;
 presets can still contribute to the `essentials.options` slot. An empty or
 partial composition opens with inline diagnostics, but Generate requires
@@ -152,6 +152,9 @@ blocks Generate, but incomplete drafts may be saved. There is no color preview
 or contrast warning; choose contrasting text and surfaces. Existing generated
 canvases are not updated. A newly opened Badges tab has no configured badges;
 no badge is evaluated or rendered until one is explicitly added.
+Generated phase and pending-workflow status notices keep in-progress and error states,
+but do not show a built-in Completed badge; add a completion badge explicitly in
+Designer to show one.
 
 The Workflow header names the collection with the description just below it.
 The generated canvas keeps New workflow in the header and shows a bordered,
@@ -159,7 +162,9 @@ searchable workflow list immediately. When there are workflow phases but no
 workflows, opening the canvas automatically creates and selects a **Not started**
 **Workflow 1** row. Existing workflows remain untouched; the empty list shows
 "No workflows yet" when no workflow phases are available. New adds another
-selected **Not started** row (Workflow 2, and so on). Its editable Workflow name comes
+selected **Not started** row (Workflow 2, and so on) at the top of the list.
+Newly created workflow directories remain above older rows after Specify reports them.
+Its editable Workflow name comes
 before the optional Artifact directory slug, shown only when enabled in Essentials.
 The name labels the list row; a supplied slug previews artifact output paths.
 Without one, Specify chooses the artifact directory. No directory is created until
@@ -188,17 +193,18 @@ Rerunning a completed or failed phase, or a phase with an available artifact,
 asks for overwrite confirmation as in the Wizard; in-flight retries do not.
 View output opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
-The hidden Outputs definition models one phase at a time, except Constitution. Wizard-inferred
-pipeline artifacts cannot be edited or removed; users can add and remove separate
-Markdown artifact links and choose the View artifact default. Adding a link does
-not create the file or change what the pipeline produces. Removing a selected
-addition restores the phase's original viewer default, or selects the first
-remaining link when there is no original default. The generated phase card shows the default output first and collapses additional
-links behind a count; View output is hidden when a phase has none. Running
+Wizard-inferred pipeline artifacts and viewer defaults are not editable.
+Badge input controls may declare extra Markdown files as expected phase outputs
+when inference missed them; declaring one does not immediately create it or
+change the inferred View target. The phase run receives the full expected output
+list, and the generated phase card offers additional output links.
+The generated phase card shows the default output first and collapses additional
+links behind a count; the primary View output button is hidden when a phase has
+no default viewer target, even if it has additional output links. Running
 Specify creates the workflow. Constitution always
 opens `.specify/memory/constitution.md` and cannot
-be changed in the Designer. The existing Save preserves previously configured
-viewer selections and additional links even while Outputs is hidden.
+be changed in the Designer. Existing saved viewer selections and additional
+links remain readable; a fresh Designer form starts with Wizard-inferred defaults.
 
 ## Generated app project setup
 
@@ -253,7 +259,7 @@ confirmation and a separate `workflow.actions` button; it is not a runtime
 package or a catalog release.
 The Badges tab offers **Value match**, **Artifact current**,
 **Artifact stale**, **Checklist progress**, **Checklist complete**,
-**Markdown files**, **Work complete**, **Phase run complete**, and **Phase artifact complete**. It starts empty; the new rule does not create default instances. Use
+**Markdown files**, **Phase run complete**, and **Phase artifact complete**. It starts empty; no badge is added until you choose one. Use
 **+ Add badge** to open a separate type picker. The focused editor shows
 badge color first, then phase checkboxes with outputs nested under
 each selected phase. Selecting a phase starts with its View output; the rule
@@ -261,8 +267,11 @@ determines whether one output or several can be selected. Placement offers Workf
 placement has its own editable badge text: Workflow-list text (`text`) and
 phase-card text (`phaseText`) accept the rule's per-workflow placeholders;
 summary text (`summaryText`) accepts `{workflows}` for the aggregate count
-instead of per-workflow placeholders. Phase shows the badge on each selected
-evidence phase's card and follows changes to that selection.
+instead of per-workflow placeholders. Badge outlines use the same color as their
+text in the Designer preview and generated canvas. Phase shows the badge on each selected
+evidence phase's card for stock controls; a registered input control can
+select a different target phase. Checklist badges can use evidence from one
+phase on another phase's card without changing their workflow-list or summary placements.
 Previously saved custom phase/output placements remain visible and are
 preserved when edited; select Phase to replace them with evidence-phase cards
 or remove the saved placements explicitly. Unavailable saved placements can
@@ -274,24 +283,46 @@ The same badge type can be added again with different placement text or rule inp
 even at the same placement. Only the same type, placement texts, inputs, and overlapping
 phase/output target (or untargeted badge) are rejected as duplicates by
 Save and Generate.
-Work complete requires both
-checked checklist items and a completed run of a separately chosen phase.
 **Markdown files** uses the selected confirmed output as a folder anchor,
 counting regular `.md` files in that folder for each workflow, including
 when the selected file is absent. Its Workflow summary counts workflows with
 at least one matching file (not the total number of files); individual badges
 can still show the file count using `{count}`. It does not count checklist items;
-**Checklist progress** continues to count Markdown checkboxes.
-**Checklist complete** requires a second, earlier confirmed output. It matches
-only when the checklist contains at least one item, every item is checked, and
-the checklist file is at least as recent as that earlier output. Existing saved
-Checklist complete badges must select the earlier output before saving or
-generating again; frozen generated apps are not changed automatically.
+**Checklist progress** and **Checklist complete** each select a checklist
+file from the evidence phase's declared Outputs and at least one earlier
+output for currentness. If the checklist path is not listed, expand
+**Use a Markdown file not listed** and add one safe relative `.md`
+path to that evidence phase. The file need not exist yet, and adding it does
+not change the inferred View artifact. This is not a folder or multi-checklist
+aggregate. The Designer host owns file declaration: the registered adapter
+may call `onDeclareFile(phase, path)` while its editor is active; the host
+validates the phase, path, duplicate and output limit, updates draft output evidence,
+and returns the updated output snapshot. A missing callback, stale editor,
+rejected path, or incompatible returned snapshot must show an error rather
+than claim the file was added. Their registered checklist input control
+selects a separate target phase and an ordered currentness chain (for example,
+draft.md → review.md → checklist.md). Every file must exist and each timestamp must
+be at least its predecessor's; equal timestamps pass. No separate evidence-phase badge
+nor a completed phase run is required. Missing or stale files do not match;
+unsafe or unreadable evidence produces a diagnostic. A current, nonempty
+checklist shows Progress with `{completed}`, `{total}`, and `{percent}` even
+when all boxes are checked. Complete appears only if every box is checked.
+The editor places each field's help beneath that field and shows a live
+phase-and-file sequence for the selected upstream artifacts and checklist.
+Their optional summaries count matching workflows independently. The two
+badges may select the same file and chain, but each saves its own selections;
+changing one does not update the other. Old saved Designer checklist badges
+use incompatible rule inputs and must be removed and recreated; already
+generated apps retain their frozen behavior.
 **Phase artifact complete** checks one target phase and its selected output
 against an optional ordered chain of outputs from earlier selected workflow
 phases. Each checked prerequisite phase contributes exactly one declared
-output, evaluated in workflow phase order; the target is checked last. All
-chosen outputs must be regular files, and each later modification time must
+output, evaluated in workflow phase order; the target is checked last.
+The editor shows help under Target phase and Required output, an inline
+**Use an output file not listed** disclosure for declaring a Markdown file
+on the target phase, and a live selected phase-and-file sequence. It keeps
+the inferred View artifact unchanged. All chosen outputs must be regular
+files, and each later modification time must
 be at least the preceding one (equal times pass). A missing output does not
 match; unsafe or unavailable metadata produces a diagnostic. Intervening
 phases that were not checked are not prerequisites, and no completed phase run
@@ -301,6 +332,26 @@ prerequisite's card. Workflow list and Workflow summary can be checked
 independently, each with its own editable text separate from the phase-card
 text. The summary counts matching **workflows**, including zero; it does not
 count files or phase runs.
+
+Phase artifact complete badges share the `phase-completion` replacement group.
+For each workflow, the furthest matching target phase shows on each enabled
+display location (workflow list and phase card); ties at that phase remain
+visible. Each location selects independently, so a phase-card-only badge does
+not hide an earlier workflow-list badge. Other badge types remain independent,
+and every matching instance still contributes to its Workflow summary count,
+including earlier phases after a later phase becomes current.
+
+**Artifact stale** uses a required ordered chain of at least one earlier
+declared output and a selected target output. It shows only when the target
+exists and a selected earlier output is missing, or a predecessor in the
+chain is newer than its successor; equal timestamps are current. A missing
+target does not show a stale badge. Unsafe or unreadable evidence produces
+a diagnostic instead of a match. An omitted earlier phase is not checked:
+select the full chain for SDD-style staleness, such as
+`spec.md → plan.md → tasks.md`. Unlike **Artifact current**, this rule does
+not inspect the target phase's run timestamp. Existing saved Designer
+Artifact stale badges have incompatible inputs and must be recreated;
+previously generated apps retain their frozen behavior.
 Constitution can provide badge evidence for workflow badges. Selecting Phase
 with Constitution evidence places a matching badge on its project-wide
 Constitution card, even before any workflow exists; a saved target may also

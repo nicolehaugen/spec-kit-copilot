@@ -952,7 +952,10 @@ function renderCollection() {
             badge.className = "phase-notice";
             select.append(badge);
         }
-        if (badge) { badge.textContent = entry.status ?? "Not started"; badge.hidden = !entry.pending; }
+        if (badge) {
+            badge.textContent = entry.status === "Completed" ? "" : entry.status ?? "Not started";
+            badge.hidden = !entry.pending || entry.status === "Completed";
+        }
         const remove = row.querySelector(".instance-delete");
         remove.hidden = entry.id === "__new__";
         remove.textContent = entry.pending ? "Remove" : "Delete";

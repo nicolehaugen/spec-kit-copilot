@@ -32,7 +32,6 @@ const style = `<style>
 .vertical-phase-select { display: block; width: 100%; text-align: left; padding: 0; border: 0; color: var(--text-color-default); background: transparent; font-weight: 600; cursor: pointer; }
 .vertical-phase-select[aria-current="step"] { color: var(--accent-color); }
 .vertical-phase-status { display: block; color: var(--text-color-muted); font-size: 12px; }
-.vertical-phase-status[data-status="Completed"] { color: var(--success-color); }
 .vertical-phase-status[data-status="Failed"], .vertical-phase-status[data-status="Blocked"] { color: var(--danger-color); }
 .vertical-phase-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .vertical-phase-detail { margin-top: 1rem; }
@@ -95,7 +94,7 @@ function render(state, definition) {
                         ${index === current ? 'aria-current="step"' : ""}
                         aria-label="Step ${index}: ${escapeHtml(item.label)}">Step ${index} · ${escapeHtml(item.label)}
                         ${item.output ? `→ ${escapeHtml(item.output)}` : ""}</button>
-                    <span class="vertical-phase-status" data-status="${escapeHtml(itemStatus)}">${escapeHtml(itemStatus === "Completed" ? "done" : itemStatus === "Not run" ? "pending" : itemStatus.toLowerCase())}</span>
+                    ${itemStatus === "Completed" ? "" : `<span class="vertical-phase-status" data-status="${escapeHtml(itemStatus)}">${escapeHtml(itemStatus === "Not run" ? "pending" : itemStatus.toLowerCase())}</span>`}
                     ${badgeSlots.has("phase.card")
                         ? `<span class="canvas-badges" data-phase-badge-slot="phase.card">${badgeMarkup(badgesForTarget(
                             state.badgeModels ?? [], item.id))}</span>` : ""}
@@ -112,7 +111,7 @@ function render(state, definition) {
     </nav>
     <section class="phase-card vertical-phase-detail" aria-label="Selected phase">${phase ? `
         <header class="workflow-header"><div class="workflow-header-main">
-            <div class="phase-heading"><h2>${escapeHtml(phase.label)}</h2><span class="phase-notice">${escapeHtml(status)}</span></div>
+            <div class="phase-heading"><h2>${escapeHtml(phase.label)}</h2>${status === "Completed" ? "" : `<span class="phase-notice">${escapeHtml(status)}</span>`}</div>
             ${badgeSlots.has("phase.card")
                 ? `<div class="canvas-badges" data-phase-badge-slot="phase.card" aria-label="Phase badges">${badgeMarkup(badgesForTarget(
                     state.badgeModels ?? [], phase.id))}</div>` : ""}

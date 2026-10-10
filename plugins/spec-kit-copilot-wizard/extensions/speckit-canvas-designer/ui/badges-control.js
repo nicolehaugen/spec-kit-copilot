@@ -80,8 +80,7 @@ function evidencePhases(rule, inputs) {
     for (const descriptor of rule.inputs ?? []) {
         const value = inputs[descriptor.id];
         if (descriptor.type === "phase" && value) selected.add(value);
-        else if (descriptor.type === "artifact" && value?.phase
-            && !(rule.id === "checklist-complete" && descriptor.id === "prerequisite")) {
+        else if (descriptor.type === "artifact" && value?.phase) {
             selected.add(value.phase);
         }
         else if (descriptor.type === "artifact-set") {
@@ -194,7 +193,7 @@ function updatePreview(preview, badge) {
 }
 
 export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRules,
-    draftBadges, onChange, controlMount }) {
+    draftBadges, onChange, controlMount, onDeclareFile }) {
     let outputsSnapshot = JSON.stringify(outputs);
     const types = badgeTypes.filter((type) => type.enabled);
     for (const [first, second] of [
@@ -310,9 +309,13 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 const label = badge.showIn.includes("workflow-list") ? badge.text
                     : badge.targets?.length || badge.showIn.includes("phase-card")
                         ? badge.phaseText ?? badge.text : badge.summaryText ?? badge.text;
+                const typeName = type?.title ?? badge.type;
+                const instanceName = label || typeName;
                 const detail = element("div");
-                detail.append(element("strong", label || type?.title || badge.type),
-                    element("p", placementSummary(badge, phases), "settings-note"));
+                const placements = placementSummary(badge, phases);
+                detail.append(element("strong", instanceName),
+                    element("p", instanceName === typeName ? placements
+                        : `${typeName} · ${placements}`, "settings-note"));
                 if (!available) detail.append(element("p",
                     "This badge type is unavailable. Ask your agent to restore it, or remove this badge before saving.",
                     "settings-field-error"));
@@ -358,8 +361,11 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             ? "Edit" : "Add"} ${type.title}`));
         const preview = element("span", undefined, "badge-preview");
         updatePreview(preview, pending);
-        editor.append(heading, element("p", rule.description, "settings-note"));
-        const error = element("p", undefined, "settings-field-error");
+        const ordered = (rule.inputs ?? []).find(({ type }) => type === "ordered-artifacts");
+        editor.append(heading);
+        if (ordered) editor.append(element("h3", "When this badge appears"));
+        editor.append(element("p", rule.description, "settings-note"));
+        const error = element("p", undefined, "settings-field-error badge-editor-error");
         error.setAttribute("role", "alert");
         error.tabIndex = -1;
         error.hidden = true;
@@ -406,11 +412,16 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             updatePreview(preview, pending);
         });
         colorGroup.append(field("Color", named), customColor, previewField);
-        const ordered = (rule.inputs ?? []).find(({ type }) => type === "ordered-artifacts");
         editor.append(colorGroup, element("h3", ordered
             ? "Phase and output to check" : "Phases and outputs"));
         let phasePlacement;
         let refreshLegacy = () => {};
+        const phaseCardPhases = () => {
+            const selected = typeof control?.selectedPhases === "function"
+                ? control.selectedPhases() : evidencePhases(rule, pending.inputs);
+            return Array.isArray(selected) ? [...new Set(selected)].filter((phase) =>
+                phases.includes(phase)) : [];
+        };
         const syncPhasePlacement = () => {
             if (!phasePlacement?.checked) return;
             const selected = phaseCardPhases();
@@ -434,7 +445,23 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         try {
             control = controlMount?.({ root: controlRoot, rule: structuredClone(rule),
                 inputs: structuredClone(pending.inputs), phases: structuredClone(phases),
-                outputs: structuredClone(outputs), onChange(nextInputs) {
+                outputs: structuredClone(outputs), onDeclareFile: onDeclareFile && ((phase, path) => {
+                    if (renderId !== editorRenderId || pending !== editorPending) {
+                        throw new Error("This badge editor is no longer active.");
+                    }
+                    if (!phases.includes(phase) || typeof path !== "string" || !path.endsWith(".md")) {
+                        throw new Error("Choose a valid phase and Markdown file.");
+                    }
+                    const expected = structuredClone(outputs);
+                    expected[phase].outputs.push(path);
+                    const next = onDeclareFile(phase, path);
+                    if (!jsonSafe(next) || JSON.stringify(next) !== JSON.stringify(expected)) {
+                        throw new Error("File declaration returned incompatible outputs.");
+                    }
+                    outputs = structuredClone(next);
+                    outputsSnapshot = JSON.stringify(outputs);
+                    return structuredClone(outputs);
+                }), onChange(nextInputs) {
                     if (renderId !== editorRenderId || pending !== editorPending) return;
                     try {
                         if (!hasDeclaredInputs(nextInputs) || !jsonSafe(nextInputs)
@@ -504,8 +531,6 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         const phaseLabel = element("label", undefined, "badge-check");
         phasePlacement = element("input");
         phasePlacement.type = "checkbox";
-        const phaseCardPhases = () => evidencePhases(rule, pending.inputs)
-            .filter((phase) => phases.includes(phase));
         const followsEvidence = () => {
             const selected = new Set(phaseCardPhases());
             return pending.targets.length === selected.size

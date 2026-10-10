@@ -274,6 +274,7 @@ test("Designer fixed-shell theme toggle follows preference, persists choice and 
 
 test("dark badge text and accent buttons meet small-text contrast", async () => {
     const css = await readFile(new URL("../ui/styles.css", import.meta.url), "utf8");
+    assert.match(css, /\.badge-preview\s*\{[^}]*border:\s*1px solid currentColor;/);
     const dark = css.match(/\[data-theme="dark"\]\s*\{([^}]+)\}/)?.[1];
     assert.ok(dark);
     const systemDark = css.match(/@media \(prefers-color-scheme: dark\)\s*\{\s*:root:not\(\[data-theme\]\)\s*\{([^}]+)\}/)?.[1];

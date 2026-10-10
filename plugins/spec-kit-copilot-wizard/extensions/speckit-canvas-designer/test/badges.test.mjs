@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { validateBadges } from "../contracts/badges.mjs";
+import { validateBadgeSettings } from "../contracts/badge-definitions.mjs";
 
 const model = {
     phases: ["specify", "plan"],
@@ -72,27 +73,53 @@ test("Value match requires a confirmed output and bounded nonblank literal text"
     config), /invalid artifact input/);
 });
 
-test("Checklist complete requires a different confirmed output from an earlier phase", () => {
+test("Checklist complete requires a declared, ordered currentness chain and independent target", () => {
     const config = { ...model, badgeRules: [...model.badgeRules,
         { id: "checklist-complete", inputs: [{ id: "artifact", type: "artifact" },
-            { id: "prerequisite", type: "artifact" }], textPlaceholders: [] }],
+            { id: "prerequisites", type: "ordered-artifacts", scope: "metadata",
+                before: "artifact", minItems: 1 },
+            { id: "targetphase", type: "phase" }], textPlaceholders: [] }],
     badgeTypes: [...model.badgeTypes,
         { id: "checklist-complete", rule: "checklist-complete", enabled: true }] };
     const complete = { ...artifact, type: "checklist-complete", text: "Complete",
         inputs: { artifact: { phase: "plan", output: "specs/<slug>/plan.md" },
-            prerequisite: { phase: "specify", output: "specs/<slug>/spec.md" } } };
+            prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" }],
+            targetphase: "plan" } };
     assert.deepEqual(validateBadges([complete], config), [complete]);
     assert.throws(() => validateBadges([{ ...complete,
         inputs: { artifact: complete.inputs.artifact } }], config), /rule inputs/);
     assert.throws(() => validateBadges([{ ...complete, inputs: { ...complete.inputs,
-        prerequisite: { phase: "plan", output: "specs/<slug>/plan.md" } } }], config),
-    /earlier phase/);
+        prerequisites: [] } }], config), /ordered outputs/);
     assert.throws(() => validateBadges([{ ...complete, inputs: { ...complete.inputs,
-        prerequisite: { phase: "plan", output: "specs/<slug>/spec.md" } } }], config),
-    /invalid artifact input/);
+        prerequisites: [complete.inputs.artifact] } }], config), /workflow order/);
     assert.throws(() => validateBadges([{ ...complete, inputs: { ...complete.inputs,
-        artifact: { phase: "specify", output: "specs/<slug>/spec.md" } } }], config),
-    /earlier phase/);
+        targetphase: "missing" } }], config), /invalid phase input/);
+    assert.throws(() => validateBadges([{ ...complete, inputs: {
+        artifact: complete.inputs.artifact,
+        prerequisite: complete.inputs.prerequisites[0],
+    } }], config), /rule inputs/);
+});
+
+test("Artifact stale requires an ordered declared upstream chain", () => {
+    const config = { ...model, badgeRules: [...model.badgeRules,
+        { id: "artifact-stale", inputs: [{ id: "artifact", type: "artifact", scope: "metadata" },
+            { id: "prerequisites", type: "ordered-artifacts", scope: "metadata",
+                before: "artifact", minItems: 1 }], textPlaceholders: [] }],
+    badgeTypes: [...model.badgeTypes,
+        { id: "artifact-stale", rule: "artifact-stale", enabled: true }] };
+    const stale = { ...artifact, type: "artifact-stale", text: "Stale",
+        inputs: { artifact: { phase: "plan", output: "specs/<slug>/plan.md" },
+            prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" }] } };
+    assert.deepEqual(validateBadges([stale], config), [stale]);
+    assert.throws(() => validateBadges([{ ...stale,
+        inputs: { artifact: stale.inputs.artifact } }], config), /rule inputs/);
+    for (const prerequisites of [[], [stale.inputs.artifact],
+        [{ phase: "specify", output: "missing.md" }],
+        [stale.inputs.prerequisites[0], stale.inputs.prerequisites[0]]]) {
+        assert.throws(() => validateBadges([{ ...stale,
+            inputs: { ...stale.inputs, prerequisites } }], config),
+        /Invalid Designer badge/);
+    }
 });
 
 test("Phase artifact complete accepts one declared earlier output per phase in order", () => {
@@ -127,6 +154,28 @@ test("Phase artifact complete accepts one declared earlier output per phase in o
     assert.throws(() => validateBadges([{ ...badge,
         targets: [{ phase: "plan", output: null }] }], config),
     /target phase/);
+});
+
+test("replacement group is optional type metadata and requires a target-phase rule", () => {
+    const type = { id: "phase-artifact-complete", title: "Phase artifact complete",
+        description: "Complete", rule: "phase-artifact-complete",
+        defaultText: "Complete", defaultColor: "green", enabled: true };
+    assert.doesNotThrow(() => validateBadgeSettings({
+        schemaVersion: 1, types: [type],
+    }, "badge settings"));
+    assert.doesNotThrow(() => validateBadgeSettings({
+        schemaVersion: 1, types: [{ ...type, replacementGroup: "phase-completion" }],
+    }, "badge settings"));
+    for (const replacementGroup of ["", "Phase Completion", 42, null]) {
+        assert.throws(() => validateBadgeSettings({
+            schemaVersion: 1, types: [{ ...type, replacementGroup }],
+        }, "badge settings"), /invalid badge type definition/);
+    }
+    const grouped = { ...model,
+        badgeTypes: model.badgeTypes.map((entry) => entry.id === "artifact"
+            ? { ...entry, replacementGroup: "phase-completion" } : entry) };
+    assert.throws(() => validateBadges([artifact], grouped),
+        /replacement group requires a target phase artifact/);
 });
 
 test("badge validation checks identity, placeholders, color, placements, and cap", () => {

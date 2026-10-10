@@ -81,7 +81,7 @@ async function readSettings(path, handoff, model, openFile = open) {
     }
     validateSavedSettings(record, handoff, model);
     if (record.outputs !== undefined) {
-        validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases);
+        validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases, true);
     }
     if (record.badges !== undefined) {
         const pipeline = initialOutputs(handoff);

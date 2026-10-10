@@ -4,7 +4,7 @@ const { GENERATION_PENDING, GENERATION_EXISTS } = await import(
 const { validateCanvasId, validateOutputStatusResponse, validateRevealResponse,
     validateOpenResponse, validateGenerateResponse, validateOutputError } = await import(
     `/ui/generated-output-state.js?token=${encodeURIComponent(token)}`);
-let mountIdentity, mountOutputs, mountBadges, adapterContract;
+let mountIdentity, declareMarkdownOutput, mountBadges, adapterContract;
 const root = document.getElementById("settings-page");
 const tabs = document.querySelector(".tabs");
 const errorBox = document.getElementById("page-error");
@@ -526,17 +526,16 @@ function renderPage(pageId, invalidFieldId) {
         root.setAttribute("aria-busy", "false");
         return true;
     }
-    if (page.fixedControl === "designer.outputs") {
-        mountOutputs({ root, page, phases: model.phases, draftOutputs,
-            pipelineOutputs: model.pipelineOutputs, onChange: updateSave });
-        root.setAttribute("aria-busy", "false");
-        return true;
-    }
     if (page.fixedControl === "designer.badges") {
         badgeView = mountBadges({ root, page, phases: model.phases, outputs: draftOutputs,
             badgeTypes: model.badgeTypes ?? [], badgeRules: model.badgeRules ?? [],
             draftBadges, onChange: updateSave,
-            controlMount({ root: mount, rule, inputs, phases, outputs, onChange }) {
+            onDeclareFile(phase, path) {
+                const next = declareMarkdownOutput(draftOutputs, model.phases, phase, path);
+                updateSave();
+                return next;
+            },
+            controlMount({ root: mount, rule, inputs, phases, outputs, onChange, onDeclareFile }) {
                 const binding = model.badgeInputControls?.find((item) => item.rule === rule.id);
                 if (!binding) throw new Error(`Missing Designer badge input control for ${rule.id}`);
                 const adapter = badgeInputAdapters.get(binding.adapter);
@@ -546,7 +545,8 @@ function renderPage(pageId, invalidFieldId) {
                     || typeof adapter.mount !== "function") {
                     throw new Error(`Incompatible Designer badge input adapter ${binding.adapter}`);
                 }
-                return adapter.mount({ root: mount, rule, inputs, phases, outputs, onChange });
+                return adapter.mount({ root: mount, rule, inputs, phases, outputs, onChange,
+                    onDeclareFile });
             } });
         root.setAttribute("aria-busy", "false");
         return true;
@@ -694,8 +694,7 @@ function applyState(next) {
         draftBadges = structuredClone(model.badges ?? []);
         tabs.replaceChildren();
         setMessage(compositionError, (model.compositionErrors ?? []).join("; "));
-        const visiblePages = model.pages.filter((page) => page.fixedControl !== "designer.outputs");
-        for (const page of visiblePages) {
+        for (const page of model.pages) {
             const tab = element("button", page.error ? `${page.title} (error)` : page.title,
                 `tab${page.error ? " tab-error" : ""}`);
             tab.type = "button";
@@ -714,9 +713,9 @@ function applyState(next) {
             tab.setAttribute("aria-controls", "settings-page");
             tabs.append(tab);
         }
-        const selected = visiblePages.find((page) => page.page === currentPage)
-            ?? visiblePages.find((page) => page.page === "designer-essentials")
-            ?? visiblePages[0];
+        const selected = model.pages.find((page) => page.page === currentPage)
+            ?? model.pages.find((page) => page.page === "designer-essentials")
+            ?? model.pages[0];
         if (selected) renderPage(selected.page);
         else if (model.pages.length && !model.preview) renderPage("designer-generate");
         else {
@@ -797,9 +796,10 @@ async function checkConnection(forceAvailability = false) {
 const connectionTimer = setInterval(() => { void checkConnection(); }, 10000);
 window.addEventListener("pagehide", () => clearInterval(connectionTimer));
 try {
-    [{ mountIdentity }, { mountOutputs }, { mountBadges }, adapterContract] = await Promise.all([
+    [{ mountIdentity }, { declareMarkdownOutput }, { mountBadges },
+        adapterContract] = await Promise.all([
         import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
-        import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/output-evidence.js?token=${encodeURIComponent(token)}`),
         import(`/ui/badges-control.js?token=${encodeURIComponent(token)}`),
         import(`/ui/control-adapter-contract.js?token=${encodeURIComponent(token)}`),
     ]);

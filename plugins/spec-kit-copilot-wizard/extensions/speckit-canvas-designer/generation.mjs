@@ -168,16 +168,20 @@ export function validBadgeEvidence(instance, rule, phaseIds, declared) {
                 && instance.phase !== instance.inputs[rule.placementPhaseInput]?.phase)) return false;
     for (const input of rule.inputs) {
         if (input.type !== "ordered-artifacts") {
-            if (input.before !== undefined || input.scope !== undefined
+            if (input.before !== undefined || input.minItems !== undefined
+                || input.scope !== undefined
                 && !(input.type === "artifact" && ["directory", "metadata"].includes(input.scope))) return false;
             continue;
         }
         if (input.scope !== "metadata"
             || !rule.inputs.some((entry) => entry.id === input.before
-                && entry.type === "artifact" && entry.scope === "metadata")) return false;
+                && entry.type === "artifact" && entry.scope !== "directory")
+            || input.minItems !== undefined && (!Number.isInteger(input.minItems)
+                || input.minItems < 1 || input.minItems > 100)) return false;
         const prior = instance.inputs[input.id];
         const target = instance.inputs[input.before];
-        if (!Array.isArray(prior) || prior.length > 100 || !declared(target)
+        if (!Array.isArray(prior) || prior.length > 100
+            || prior.length < (input.minItems ?? 0) || !declared(target)
             || prior.some((entry) => !entry || typeof entry !== "object"
                 || Object.keys(entry).sort().join() !== "output,phase" || !declared(entry))) return false;
         const chain = [...prior, target];
@@ -474,7 +478,9 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
                     if (inputType === "text") return typeof value !== "string" || !value.trim()
                         || value.length > 256 || /[\x00-\x1f\x7f]/.test(value);
                     if (inputType === "ordered-artifacts") return !Array.isArray(value)
-                        || value.length > 100 || value.some((entry) => !source(entry));
+                        || value.length > 100 || value.length < (rule.inputs.find((input) =>
+                            input.id === id)?.minItems ?? 0)
+                        || value.some((entry) => !source(entry));
                     return inputType !== "artifact-set" || !Array.isArray(value)
                         || !value.length || value.length > 100
                         || value.some((item) => !phaseIds.includes(item?.phase)
@@ -483,13 +489,6 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
                             || item.outputs.some((output) =>
                                 !source({ phase: item.phase, output })));
                 })
-                || (rule.id === "checklist-complete"
-                    && rule.inputs.some((input) => input.id === "prerequisite")
-                    && (phaseIds.indexOf(instance.inputs.prerequisite?.phase) < 0
-                        || phaseIds.indexOf(instance.inputs.prerequisite.phase)
-                            >= phaseIds.indexOf(instance.inputs.artifact?.phase)
-                        || instance.inputs.prerequisite.output.toLowerCase()
-                            === instance.inputs.artifact.output.toLowerCase()))
                 || !textValid(instance.text, rule.textPlaceholders)
                 || (instance.phaseText !== undefined
                     && (!(instance.targets?.length || instance.showIn?.includes("phase-card"))

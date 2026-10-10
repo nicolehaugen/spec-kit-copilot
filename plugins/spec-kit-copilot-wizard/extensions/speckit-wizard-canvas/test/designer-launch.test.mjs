@@ -208,6 +208,7 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.deepEqual(response.body, { queued: true });
     assert.equal(sent.length, 1);
     assert.match(sent[0].prompt, /no base_branch \(the project default\)/);
+    assert.match(sent[0].prompt, /create_session with .*kickoff\.mode "interactive"/);
     assert.match(sent[0].prompt, /ONE read-only preflight: node .*designer-launch-check\.mjs" preflight/);
     assert.match(sent[0].prompt, /designer-launch-check\.mjs" prepare <child-checkout> <session-root>/);
     assert.ok(sent[0].prompt.indexOf('" prepare <child-checkout>')

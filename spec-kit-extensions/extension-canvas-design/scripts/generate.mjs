@@ -28,7 +28,26 @@ const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.desc
 
 export async function renameDirectoryWithoutReplacement(source, destination) {
     if (process.platform === "win32") {
-        await rename(source, destination);
+        const staged = await lstat(source);
+        for (let attempt = 0; ; attempt++) {
+            try { await rename(source, destination); break; }
+            catch (error) {
+                if (error.code !== "EPERM" || attempt >= 5) throw error;
+                // Windows can briefly deny a directory rename after generated files are read.
+                await new Promise((done) => setTimeout(done, 100 * (attempt + 1)));
+                const current = await lstat(source);
+                if (!current.isDirectory() || current.isSymbolicLink()
+                    || current.dev !== staged.dev || current.ino !== staged.ino) {
+                    throw new Error("Canvas staging directory changed before publication");
+                }
+                try {
+                    await lstat(destination);
+                    throw new Error("Canvas destination changed before publication");
+                } catch (lookupError) {
+                    if (lookupError.code !== "ENOENT") throw lookupError;
+                }
+            }
+        }
         return;
     }
     // POSIX rename replaces an existing empty directory; reserve the destination first.
@@ -199,8 +218,13 @@ export function frozenBadges(badges, workflow) {
         const parsed = badgeSettings.types.find((item) => item.id === type.id);
         if (!parsed || type.name !== settings.name || type.sourceId !== settings.sourceId
             || type.schemaVersion !== 1
-            || !isDeepStrictEqual(parsed, Object.fromEntries(typeKeys.map((key) => [key, type[key]])))
+            || !isDeepStrictEqual(parsed, Object.fromEntries([
+                ...typeKeys, ...(parsed.replacementGroup === undefined ? [] : ["replacementGroup"]),
+            ].map((key) => [key, type[key]])))
             || !parsed.enabled || !name.test(parsed.rule)
+            || (parsed.replacementGroup !== undefined
+                && (!name.test(parsed.replacementGroup)
+                    || !ruleMap.get(parsed.rule)?.placementPhaseInput))
             || !ruleMap.has(parsed.rule) || typeof parsed.title !== "string"
             || !parsed.title.trim() || typeof parsed.description !== "string"
             || typeof parsed.defaultText !== "string"
@@ -220,7 +244,8 @@ export function frozenBadges(badges, workflow) {
                 && !parsed.inputs.some((input) => input.id === parsed.placementPhaseInput
                     && input.type === "artifact"))
             || parsed.inputs.some((input) => !input || typeof input !== "object"
-                || Object.keys(input).some((key) => !["id", "type", "scope", "before", "label"].includes(key))
+                || Object.keys(input).some((key) =>
+                    !["id", "type", "scope", "before", "minItems", "label"].includes(key))
                 || !name.test(input.id)
                 || !["artifact", "artifact-set", "ordered-artifacts", "phase", "text"].includes(input.type)
                 || (input.label !== undefined
@@ -230,9 +255,11 @@ export function frozenBadges(badges, workflow) {
                         || input.type === "ordered-artifacts" && input.scope === "metadata"))
                 || input.type === "ordered-artifacts"
                     && (input.scope !== "metadata" || typeof input.before !== "string")
+                || input.minItems !== undefined && (input.type !== "ordered-artifacts"
+                    || !Number.isInteger(input.minItems) || input.minItems < 1 || input.minItems > 100)
                 || input.before !== undefined && (input.type !== "ordered-artifacts"
                     || !parsed.inputs.some((target) => target.id === input.before
-                        && target.type === "artifact" && target.scope === "metadata")))
+                        && target.type === "artifact" && target.scope !== "directory")))
             || !Array.isArray(parsed.textPlaceholders)
             || new Set(parsed.textPlaceholders).size !== parsed.textPlaceholders.length
             || parsed.textPlaceholders.some((placeholder) => !name.test(placeholder))) {
@@ -275,7 +302,8 @@ export function frozenBadges(badges, workflow) {
             if (input.type === "ordered-artifacts") {
                 const target = instance.inputs[input.before];
                 const chain = [...(Array.isArray(value) ? value : []), target];
-                return Array.isArray(value) && value.length <= 100 && declared(target)
+                return Array.isArray(value) && value.length <= 100
+                    && value.length >= (input.minItems ?? 0) && declared(target)
                     && value.every((entry) => entry && typeof entry === "object"
                         && Object.keys(entry).sort().join() === "output,phase" && declared(entry))
                     && chain.every((entry, index) => index === 0
@@ -306,12 +334,6 @@ export function frozenBadges(badges, workflow) {
         if (!type || !rule || typeof instance.id !== "string"
             || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(instance.id)
             || ids.has(instance.id) || !validInputs(instance, rule)
-            || (rule.id === "checklist-complete"
-                && rule.inputs.some((input) => input.id === "prerequisite")
-                && (workflow.selectedPhases.indexOf(instance.inputs.prerequisite.phase)
-                    >= workflow.selectedPhases.indexOf(instance.inputs.artifact.phase)
-                    || instance.inputs.prerequisite.output.toLowerCase()
-                        === instance.inputs.artifact.output.toLowerCase()))
             || (rule.placementPhaseInput
                 && (instance.targets?.length
                     ? instance.targets.length !== 1 || instance.targets[0].output !== null
@@ -1728,14 +1750,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
             if (displaced.dev !== original.dev || displaced.ino !== original.ino) {
                 throw new Error("Existing canvas changed during replacement");
             }
-            // Windows can briefly retain handles from the renderer subprocess after exit.
-            for (let attempt = 0; ; attempt++) {
-                try { await renameDirectoryWithoutReplacement(target, output); break; }
-                catch (error) {
-                    if (process.platform !== "win32" || error.code !== "EPERM" || attempt >= 5) throw error;
-                    await new Promise((done) => setTimeout(done, 100 * (attempt + 1)));
-                }
-            }
+            await renameDirectoryWithoutReplacement(target, output);
         } catch (error) {
             if (moved) {
                 try {

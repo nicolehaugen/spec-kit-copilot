@@ -19,7 +19,7 @@ export function fixedConstitutionOutputs(outputs, phases) {
 }
 
 export function validateConfirmedOutputs(outputs, phases, pipelineOutputs) {
-    validatePhaseOutputs(outputs, phases);
+    validatePhaseOutputs(outputs, phases, true);
     const id = phases.find((phase) => phase.replace(/^speckit\./, "") === "constitution");
     if (id && (outputs[id].outputs.length !== 1
         || outputs[id].outputs[0] !== CONSTITUTION_OUTPUT
@@ -30,10 +30,14 @@ export function validateConfirmedOutputs(outputs, phases, pipelineOutputs) {
         (path, index) => outputs[phase].outputs[index] !== path))) {
         throw new Error("Pipeline artifacts cannot be changed");
     }
+    if (pipelineOutputs && phases.some((phase) =>
+        pipelineOutputs[phase]?.view !== null && outputs[phase].view === null)) {
+        throw new Error("Pipeline viewer defaults cannot be removed");
+    }
     return outputs;
 }
 
-export function validatePhaseOutputs(value, phases) {
+export function validatePhaseOutputs(value, phases, allowUnviewed = false) {
     if (!record(value) || Object.keys(value).length !== phases.length
         || Object.keys(value).some((id) => !phases.includes(id))) {
         throw new Error("Invalid Designer phase outputs");
@@ -50,7 +54,8 @@ export function validatePhaseOutputs(value, phases) {
                 || path.split("/").filter((part) => part === "<slug>").length > 1
                 || path.startsWith("<slug>/"))
             || new Set(entry.outputs.map((path) => path.toLowerCase())).size !== entry.outputs.length
-            || (entry.outputs.length ? !entry.outputs.includes(entry.view) : entry.view !== null)) {
+            || (entry.view !== null && !entry.outputs.includes(entry.view))
+            || (entry.view === null && entry.outputs.length > 0 && !allowUnviewed)) {
             throw new Error(`Invalid outputs for phase ${id}`);
         }
     }

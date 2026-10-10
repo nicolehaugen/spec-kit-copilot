@@ -237,7 +237,8 @@ export function mount({ root, definition, state, actions }) {
                 notice.className = "phase-notice";
                 select.append(notice);
             }
-            if (notice) { notice.textContent = entry.status ?? "Not started"; notice.hidden = !entry.pending; }
+            if (notice) { notice.textContent = entry.status === "Completed" ? "" : entry.status ?? "Not started";
+                notice.hidden = !entry.pending || entry.status === "Completed"; }
             const remove = row.querySelector(".instance-delete");
             remove.hidden = entry.id === "__new__";
             remove.textContent = entry.pending ? "Remove" : "Delete";

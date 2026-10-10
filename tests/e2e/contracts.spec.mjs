@@ -105,8 +105,7 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
         await writeFile(join(folder, "handoff.json"), json);
         expect(await readHandoff(child, handoff.handoffId)).toEqual(handoff);
         const model = { pages: [{ id: "designer-essentials", page: "designer-essentials",
-            title: "Essentials", fields: [] }, { id: "designer-artifacts", page: "designer-artifacts",
-            title: "Outputs", fields: [], fixedControl: "designer.outputs" }],
+            title: "Essentials", fields: [] }],
             constraints: {}, values: {}, revision: "test", outputs: handoff.workflow.outputEvidence };
         shell = await startShell(handoff, model, { workspace: child });
         await page.goto(shell.url);

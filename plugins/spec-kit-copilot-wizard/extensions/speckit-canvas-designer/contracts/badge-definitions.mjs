@@ -23,9 +23,13 @@ export function validateBadgeText(text, placeholders, name) {
 function validateBadgeType(value, name) {
     if (!record(value) || Object.hasOwn(value, "$schema")
         || !keys(value, ["id", "title", "description",
-            "rule", "defaultText", "defaultColor", "enabled"])
+            "rule", "defaultText", "defaultColor", "enabled",
+            ...(Object.hasOwn(value, "replacementGroup") ? ["replacementGroup"] : [])])
         || typeof value.id !== "string" || !BADGE_ID.test(value.id)
         || typeof value.rule !== "string" || !BADGE_ID.test(value.rule)
+        || (value.replacementGroup !== undefined
+            && (typeof value.replacementGroup !== "string"
+                || !BADGE_ID.test(value.replacementGroup)))
         || typeof value.title !== "string" || !value.title.trim() || value.title.length > 120
         || typeof value.description !== "string" || !value.description.trim()
         || value.description.length > 1000 || typeof value.enabled !== "boolean"
@@ -60,6 +64,7 @@ export function validateBadgeRule(value, name) {
         || value.inputs.some((input) => !record(input) || !keys(input, ["id", "type",
             ...(Object.hasOwn(input, "scope") ? ["scope"] : []),
             ...(Object.hasOwn(input, "before") ? ["before"] : []),
+            ...(Object.hasOwn(input, "minItems") ? ["minItems"] : []),
             ...(Object.hasOwn(input, "label") ? ["label"] : [])])
             || typeof input.id !== "string" || !BADGE_ID.test(input.id)
             || !["artifact", "artifact-set", "ordered-artifacts", "phase", "text"].includes(input.type)
@@ -70,9 +75,11 @@ export function validateBadgeRule(value, name) {
                     || input.type === "ordered-artifacts" && input.scope === "metadata"))
             || (input.type === "ordered-artifacts"
                 && (input.scope !== "metadata" || typeof input.before !== "string"))
+            || (input.minItems !== undefined && (input.type !== "ordered-artifacts"
+                || !Number.isInteger(input.minItems) || input.minItems < 1 || input.minItems > 100))
             || (input.before !== undefined && (input.type !== "ordered-artifacts"
                 || !value.inputs.some((candidate) => candidate.id === input.before
-                    && candidate.type === "artifact" && candidate.scope === "metadata"))))
+                    && candidate.type === "artifact" && candidate.scope !== "directory"))))
         || new Set(value.inputs.map((input) => input.id)).size !== value.inputs.length
         || (value.placementPhaseInput !== undefined
             && !value.inputs.some((input) =>

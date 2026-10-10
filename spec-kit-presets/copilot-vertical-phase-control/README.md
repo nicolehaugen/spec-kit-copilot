@@ -35,6 +35,8 @@ frozen into generated configuration. The server verifies both packaged hashes
 without executing the browser module.
 The replacement control also declares the phase-card and output badge slots,
 so Designer badge placements remain available with the vertical layout.
+The replacement control retains running and error notices but does not show a
+built-in completed status; add a completion badge explicitly in Designer.
 
 This preset depends on the Copilot Canvas Design runtime and its Copilot
 session APIs. Its packaged adapter requires `workflow.rows.v1` and

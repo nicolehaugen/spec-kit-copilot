@@ -396,13 +396,21 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             ? [{ id: "__new__", slug: config.userProvidesSlug ? view.slug : "",
                 label: view.name?.trim() || (config.userProvidesSlug && view.slug)
                     || "Unstarted workflow", pending: true }] : [];
+        const creationOrder = new Map();
+        view.runs.forEach((run, index) => {
+            if (!newItem(run.item) && !run.before.includes(run.item)) {
+                creationOrder.set(run.item, index);
+            }
+        });
+        const listed = entries.toSorted((left, right) =>
+            (creationOrder.get(right.id) ?? -1) - (creationOrder.get(left.id) ?? -1));
         return { ...view, userProvidesSlug: config.userProvidesSlug,
             constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
             autopilot: automation, showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             name: pendingFor(item, view)?.name ?? view.name,
             slug: config.userProvidesSlug ? pendingFor(item, view)?.slug ?? view.slug : "",
-            phases, items: [...entries, ...legacyDraft, ...pending],
+            phases, items: [...pending.toReversed(), ...legacyDraft, ...listed],
             statuses, valueFields: visibleValues, pageValues, valueErrors,
             ...(badges ? { badges } : {}),
             setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
