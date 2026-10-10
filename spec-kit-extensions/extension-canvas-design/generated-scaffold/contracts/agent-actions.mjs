@@ -1,5 +1,20 @@
 export const RESPONSE_LIMIT = 64 * 1024;
 
+export function phaseTurnState(events, messageId) {
+    let interaction, turn, active = false, ended = false;
+    for (const event of events) {
+        const data = event.data ?? {};
+        if (event.agentId || data.parentToolCallId) continue;
+        if (event.type === "user.message" && data.messageId === messageId) interaction = data.interactionId;
+        if (!interaction) continue;
+        if (event.type === "assistant.turn_start" && data.interactionId === interaction) {
+            turn = data.turnId; active = true;
+        }
+        if (event.type === "assistant.turn_end" && data.turnId === turn) { active = false; ended = true; }
+    }
+    return { active, ended };
+}
+
 export const agentActionSchemas = Object.freeze({
     run_phase: { type: "object", additionalProperties: false, required: ["phase", "args"],
         properties: { phase: { type: "string" }, itemId: { type: "string" },

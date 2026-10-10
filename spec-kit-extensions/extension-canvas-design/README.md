@@ -166,6 +166,14 @@ Without one, Specify chooses the artifact directory. No directory is created unt
 Specify runs; its scripts may add a numeric prefix to the actual directory name.
 New stays available while editing, and Remove discards an unstarted row without
 deleting any directory. Pending rows and their phase drafts survive a reload.
+An external extension reload during a phase can interrupt reporting. A live turn
+remains Running; a finished turn without a reported directory is marked Needs review.
+After the turn ends, a run-backed row offers a confirmed Discard pending row action.
+This checks all configured workflow roots against the pre-run snapshot, including
+empty directories, and removes only the pending row, drafts, and run history when
+no directory appeared. A new or unsafe directory blocks discard and its path is
+shown for inspection in the workflow list. The app cannot prevent externally
+initiated extension reloads; its existing skill reload behavior is unchanged.
 Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
 Deletion verifies the directory and its parent, moves it to a temporary

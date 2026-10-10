@@ -678,7 +678,7 @@ test("new workflow run follows its confirmed slug and blocks deletion while acti
         const before = await canvas.runtime.snapshot();
         expect(before.items.find((item) => item.id === pending.id)?.status).toBe("Request sent");
         await expect(canvas.runtime.removePending({ itemId: pending.id,
-            revision: before.revision })).rejects.toThrow(/may have created a workflow directory/);
+            revision: before.revision, confirmation: "discard" })).rejects.toThrow(/agent turn has not ended/);
         await expect(canvas.runtime.deleteWorkflow({
             itemId: "specs/new-feature", confirmation: "new-feature", revision: before.revision,
         })).rejects.toThrow(/unfinished phase/);
@@ -699,6 +699,121 @@ test("new workflow run follows its confirmed slug and blocks deletion while acti
     } finally {
         await canvas.close();
     }
+});
+
+test("externally restarted turn stays Running, then permits confirmed metadata-only discard", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify"]);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        const pending = await canvas.runtime.createPending({ revision: 0 });
+        await canvas.runtime.run({ phase: "specify", itemId: pending.id, args: "Draft" }, "slug-test");
+        canvas.events.push(
+            { type: "user.message", data: { messageId: "sent-message-id", interactionId: "run" } },
+            { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+        );
+        await page.goto(canvas.url);
+        await expect(page.locator("#workflow-list .phase-notice")).toHaveText("Request sent");
+        await page.goto("about:blank");
+        await canvas.runtime.refresh();
+        await page.goto(canvas.url);
+        await expect(page.locator("#workflow-list .phase-notice")).toHaveText("Running");
+        await page.goto("about:blank");
+        await canvas.restart();
+        await page.goto(canvas.url);
+        await expect(page.locator("#workflow-list .phase-notice")).toHaveText("Running");
+        await expect(page.getByRole("button", { name: /Discard pending row/ })).toHaveCount(0);
+        canvas.events.push(
+            { type: "assistant.turn_end", data: { interactionId: "run", turnId: "turn" } },
+            { type: "session.task_complete", data: { success: true, summary: "Done" } },
+        );
+        await page.locator("#refresh-state").click();
+        await expect(page.locator("#workflow-list .phase-notice")).toContainText("Needs review");
+        const before = await canvas.runtime.snapshot();
+        await expect(canvas.runtime.removePending({ itemId: pending.id, revision: before.revision }))
+            .rejects.toThrow(/Confirm Discard pending row/);
+        page.once("dialog", (dialog) => dialog.accept());
+        await page.getByRole("button", { name: /Discard pending row/ }).click();
+        await expect(page.locator(`[data-workflow-id="${pending.id}"]`)).toHaveCount(0);
+        const saved = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        expect(saved.runs).toHaveLength(0);
+        expect(Object.keys(saved.drafts).some((key) => key.includes(pending.id))).toBe(false);
+    } finally { await canvas.close(); }
+});
+
+test("a legacy Completed run without a report is reviewed after restart", async () => {
+    const canvas = await openGeneratedCanvas(false, ["specify"]);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        const pending = await canvas.runtime.createPending({ revision: 0 });
+        await canvas.runtime.run({ phase: "specify", itemId: pending.id, args: "Draft" }, "slug-test");
+        canvas.events.push(
+            { type: "user.message", data: { messageId: "sent-message-id", interactionId: "run" } },
+            { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+            { type: "assistant.turn_end", data: { interactionId: "run", turnId: "turn" } },
+            { type: "session.task_complete", data: { success: true, summary: "Done" } },
+        );
+        await canvas.stop();
+        const saved = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        saved.runs[0].status = "Completed";
+        await writeFile(canvas.statePath, JSON.stringify(saved));
+        await canvas.restart();
+        const state = await canvas.runtime.snapshot();
+        expect(state.items.find((item) => item.id === pending.id)?.status).toBe("Needs review");
+        await canvas.runtime.removePending({ itemId: pending.id,
+            revision: state.revision, confirmation: "discard" });
+        expect((await canvas.runtime.snapshot()).items.some((item) => item.id === pending.id)).toBe(false);
+    } finally { await canvas.close(); }
+});
+
+test("empty new directory blocks discard and appears in the pending-row warning", async () => {
+    const canvas = await openGeneratedCanvas(false, ["specify"]);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        const pending = await canvas.runtime.createPending({ revision: 0 });
+        await canvas.runtime.run({ phase: "specify", itemId: pending.id, args: "Draft" }, "slug-test");
+        canvas.events.push(
+            { type: "user.message", data: { messageId: "sent-message-id", interactionId: "run" } },
+            { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+            { type: "assistant.turn_end", data: { interactionId: "run", turnId: "turn" } },
+            { type: "session.task_complete", data: { success: true, summary: "Done" } },
+        );
+        const checked = await canvas.runtime.refresh();
+        expect(checked.items.find((item) => item.id === pending.id)?.status).toBe("Needs review");
+        await mkdir(join(canvas.root, "specs", "001-created"), { recursive: true });
+        const state = await canvas.runtime.snapshot();
+        expect(state.items.find((item) => item.id === pending.id)?.recovery)
+            .toContain("specs/001-created");
+        await expect(canvas.runtime.removePending({ itemId: pending.id,
+            revision: checked.revision, confirmation: "discard" })).rejects.toThrow(/specs\/001-created/);
+        expect((await canvas.runtime.snapshot()).items.some((item) => item.id === pending.id)).toBe(true);
+    } finally { await canvas.close(); }
+});
+
+test("invalid workflow root blocks run-history discard without changing the saved row", async () => {
+    const canvas = await openGeneratedCanvas(false, ["specify"]);
+    try {
+        const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+        await mkdir(skill, { recursive: true });
+        await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+        const pending = await canvas.runtime.createPending({ revision: 0 });
+        await canvas.runtime.run({ phase: "specify", itemId: pending.id, args: "Draft" }, "slug-test");
+        canvas.events.push(
+            { type: "user.message", data: { messageId: "sent-message-id", interactionId: "run" } },
+            { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+            { type: "assistant.turn_end", data: { interactionId: "run", turnId: "turn" } },
+        );
+        await writeFile(join(canvas.root, "specs"), "not a directory");
+        const state = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        await expect(canvas.runtime.removePending({ itemId: pending.id,
+            revision: state.revision, confirmation: "discard" })).rejects.toThrow();
+        expect(JSON.parse(await readFile(canvas.statePath, "utf8")).runs).toHaveLength(1);
+    } finally { await canvas.close(); }
 });
 
 test("enabled slug previews the View target folder and persists across phases", async ({ page }) => {

@@ -239,9 +239,10 @@ export function mount({ root, definition, state, actions }) {
             }
             if (notice) { notice.textContent = entry.status ?? "Not started"; notice.hidden = !entry.pending; }
             const remove = row.querySelector(".instance-delete");
-            remove.hidden = entry.id === "__new__";
-            remove.textContent = entry.pending ? "Remove" : "Delete";
-            remove.setAttribute("aria-label", `${remove.textContent} ${entry.label}`);
+            remove.hidden = entry.id === "__new__" || entry.pending && entry.hasRuns
+                && !["Completed", "Failed", "Needs review"].includes(entry.status);
+            remove.textContent = entry.pending ? entry.hasRuns ? "Discard pending row" : "Remove" : "Delete";
+            remove.ariaLabel = `${remove.textContent} ${entry.label}`;
         }
         const editor = workflowIdentity;
         editor.hidden = !model.items.some((item) => item.id === model.selected && item.pending);
