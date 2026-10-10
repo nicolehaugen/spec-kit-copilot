@@ -1749,6 +1749,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         const backupDir = await mkdtemp(join(parent, `.${config.canvas.id}-backup-`));
         const backup = join(backupDir, "previous");
         let moved = false;
+        let published = false;
         try {
             await rename(output, backup);
             moved = true;
@@ -1757,6 +1758,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
                 throw new Error("Existing canvas changed during replacement");
             }
             await renameDirectoryWithoutReplacement(target, output);
+            published = true;
         } catch (error) {
             if (moved) {
                 try {
@@ -1770,11 +1772,14 @@ export async function materialize(project, workspace, handoffId, requestId, repl
             throw error;
         } finally {
             // Retain the backup if a rollback failed.
-            if (await lstat(backup).then(() => false, (error) => error.code === "ENOENT")) {
+            if (!published && await lstat(backup).then(() => false, (error) => error.code === "ENOENT")) {
                 await rm(backupDir, { recursive: true, force: true });
             }
         }
-        await rm(backupDir, { recursive: true, force: true });
+        try { await rm(backupDir, { recursive: true, force: true }); }
+        catch (error) {
+            warnings.push(`Canvas replacement was published, but the prior backup could not be removed at ${backupDir}: ${error.message}. Inspect and remove any remaining files manually.`);
+        }
     } else {
         try { await lstat(output); throw new Error(`Canvas extension already exists: ${output}`); }
         catch (error) { if (error.code !== "ENOENT") throw error; }

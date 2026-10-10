@@ -1033,7 +1033,9 @@ test("agent phase reply is reconciled from the fake session after a browser run"
             { type: "assistant.turn_end", data: { interactionId: "interaction-1", turnId: "turn-1" } },
         );
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#phase-card .phase-notice")).toHaveText("Completed");
+        await expect.poll(async () => (await canvas.runtime.snapshot()).statuses.specify.status)
+            .toBe("Completed");
+        await expect(page.locator("#phase-card .phase-notice")).toBeHidden();
         await expect(page.locator("#phase-message")).toBeEmpty();
         await expect(page.locator("#view-artifact")).toBeVisible();
         await page.locator("#view-artifact").click();

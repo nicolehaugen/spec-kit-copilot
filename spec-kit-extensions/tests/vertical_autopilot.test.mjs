@@ -184,6 +184,52 @@ test("a later active turn overrides an earlier ended turn for recovery and disca
         confirmation: "discard" }), /agent turn has not ended/);
 });
 
+test("unrelated activity does not confirm a recovered pending turn", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "unmatched", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Running", artifact: null, messageId: "message" }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    const runtime = await fixture.restart();
+    assert.equal((await runtime.snapshot()).items.find((row) => row.id === itemId).status, "Running");
+    await assert.rejects(runtime.reportSlug({ phaseRunId: "unmatched", slug: "demo" }, "other-panel"),
+        /Unknown or stale phase reporting request/);
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "other-message", interactionId: "other" } },
+        { type: "assistant.turn_start", data: { interactionId: "other", turnId: "other-turn" } },
+    ]);
+    fixture.active();
+    const snapshot = await runtime.refresh();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Unconfirmed");
+    assert.equal(snapshot.statuses.specify.status, "Unconfirmed");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+});
+
+test("a pending run from another session is not displayed as live", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "other-session-run", before: [], item: itemId,
+        phase: "specify", sessionId: "other-session", instanceId: "panel", args: "",
+        status: "Running", artifact: null, messageId: "message" }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Unconfirmed");
+    assert.equal(snapshot.statuses.specify.status, "Unconfirmed");
+});
+
 test("restart reconnects a message-less dispatch to its exact prompt and live turn", async (t) => {
     const fixture = await setup(t);
     const itemId = await prepareNewWorkflow(fixture.runtime);

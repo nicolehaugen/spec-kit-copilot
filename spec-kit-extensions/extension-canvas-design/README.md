@@ -593,7 +593,9 @@ or assume reset registered the provider. Generation accepts an optional
 `--replace-existing=<prior-request-id>` fifth argument only after the Designer server authorizes
 replacement for the same handoff and existing target's provenance. The exported
 generator rejects a bare `true` in place of that request-bound token; no
-replacement permission is stored in the frozen request.
+replacement permission is stored in the frozen request. Once the staged canvas
+is published, a locked prior backup does not undo that success: Generate returns
+a warning with the remaining backup location for manual inspection and cleanup.
 The generated `canvas-config.json` records the versions observed in the child
 checkout's Specify inventory at Generate; changed versions produce warnings
 without blocking. Unavailable package versions are marked `unverified` instead
