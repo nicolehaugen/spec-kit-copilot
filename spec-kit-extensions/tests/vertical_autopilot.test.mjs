@@ -104,6 +104,31 @@ test(`restart recovers message-less ${status} only after idle and retains folder
 });
 }
 
+test("interrupted dispatch recovery does not announce again on repeated state reads", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Unconfirmed", artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    let announcements = 0;
+    fixture.options.notify = () => { announcements++; };
+    const runtime = await fixture.restart();
+    await runtime.snapshot();
+    assert.equal(announcements, 1);
+    const recovered = await readFile(fixture.stateFile, "utf8");
+    for (let index = 0; index < 5; index++) await runtime.snapshot();
+    assert.equal(announcements, 1);
+    assert.equal(await readFile(fixture.stateFile, "utf8"), recovered);
+    fixture.idle();
+    const snapshot = await runtime.snapshot();
+    await runtime.removePending({ itemId, revision: snapshot.revision, confirmation: "discard" });
+    const afterDiscard = announcements;
+    for (let index = 0; index < 5; index++) await runtime.snapshot();
+    assert.equal(announcements, afterDiscard);
+});
+
 test("restart leaves terminal message-less attempts unchanged", async (t) => {
     const fixture = await setup(t);
     const itemId = await prepareNewWorkflow(fixture.runtime);

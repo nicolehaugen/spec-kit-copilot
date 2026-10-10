@@ -130,7 +130,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const interruptedDispatches = new Set(state.runs.filter((run) =>
         untrackedDispatch(run)).map((run) => run.runId));
     let idleAfterRestart = false;
-    let recoverOnOpen = state.runs.some((run) => run.messageId
+    let recoverOnOpen = interruptedDispatches.size > 0 || state.runs.some((run) => run.messageId
         && (!["Completed", "Failed"].includes(run.status)
             || run.status === "Completed" && newItem(run.item) && !run.artifact && !run.confirmedSlug));
     let deleting = false;
@@ -354,7 +354,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
     }
     async function snapshot() {
-        if (recoverOnOpen || interruptedDispatches.size) { await capture(); recoverOnOpen = false; }
+        if (recoverOnOpen) {
+            recoverOnOpen = false;
+            try { await capture(); }
+            catch (error) { recoverOnOpen = true; throw error; }
+        }
         const view = structuredClone(state);
         const entries = await items(view);
         const item = view.selected;
