@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, readdir, symlink } from 'node:fs/promises';
+import { mkdir, readFile, symlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { prepareDistribution, validateDistribution } from '../../dev-tools/prepare-distribution.mjs';
@@ -22,7 +22,7 @@ test('distribution preview/apply updates only owned metadata, preserves formatti
   assert.equal(preview.applied, false);
   assert.deepEqual(await Promise.all([marketplacePath, presetsPath, extensionsPath].map(path => readFile(path, 'utf8'))), original);
   assert.match(preview.commands[0], /\.git#feature\/catalogs/);
-  assert.match(preview.commands[4], /catalog add https:.* --name spec-kit-copilot --install-allowed/);
+  assert.match(preview.commands[4], /catalog add https:.* --name \S+ --install-allowed/);
   const applied = await prepareDistribution(config, { apply: true, expect: preview.expect }, { repositoryRoot: root });
   assert.equal(applied.backups.length, 3);
   for (let i = 0; i < original.length; i++) assert.equal(await readFile(applied.backups[i], 'utf8'), [original[0], original[2], original[1]][i]);
@@ -127,22 +127,25 @@ test('file write preflight rejects directory junction ancestors without changing
   assert.equal(await readFile(resolve(target, 'settings.json'), 'utf8'), 'original');
 });
 
-test('checked-in upstream/fork examples preview without writes and fork config is currently idempotent', async t => {
+test('checked-in distribution examples preview without writes and become idempotent when applied', async t => {
   const root = await distributionFixture(t);
   for (const variant of ['upstream', 'fork']) {
     const selected = await readJson(resolve(repositoryRoot, 'config', `distribution.${variant}.example.json`));
     const result = await prepareDistribution(selected, {}, { repositoryRoot: root });
     assert.equal(result.applied, false);
-    if (variant === 'fork') assert.equal(result.changed, false);
+    await prepareDistribution(selected, { apply: true, expect: result.expect }, { repositoryRoot: root });
+    assert.equal((await prepareDistribution(selected, {}, { repositoryRoot: root })).changed, false);
   }
-  assert.equal((await readdir(resolve(root, 'spec-kit-presets'))).some(name => name.includes('backup')), false);
 });
 
-test('preset publisher validates exact target asset, manifest identity/version and catalog version', async () => {
+test('preset publisher validates exact target asset, manifest identity/version and catalog version', () => {
   const id = 'copilot-vertical-phase-control';
-  const catalog = await readJson(resolve(repositoryRoot, 'spec-kit-presets', 'catalog.json'));
-  const manifest = await readFile(resolve(repositoryRoot, 'spec-kit-presets', id, 'preset.yml'), 'utf8');
-  const input = { id, version: catalog.presets[id].version, repository: 'nicolehaugen/spec-kit-copilot', manifest, catalog };
+  const repository = 'example/package-releases';
+  const version = '1.2.3';
+  const catalog = { presets: { [id]: { id, version,
+    download_url: `https://github.com/${repository}/releases/download/${id}-v${version}/${id}.zip` } } };
+  const manifest = `preset:\n  id: ${id}\n  version: ${version}\n`;
+  const input = { id, version, repository, manifest, catalog };
   assert.equal(validatePresetCatalog(input), catalog.presets[id].download_url);
   assert.throws(() => validatePresetCatalog({ ...input, repository: 'example/fork' }), /download URL/);
   assert.throws(() => validatePresetCatalog({ ...input, version: '99.0.0' }), /ID and version/);

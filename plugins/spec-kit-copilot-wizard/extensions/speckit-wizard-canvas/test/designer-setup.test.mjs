@@ -11,6 +11,7 @@ import { finalizeDesignerSetup, installDesignerSetup, runSpecify,
 import { designerOpenInputSchema, validateDesignerOpenInput } from
     "../../speckit-canvas-designer/contracts/host-open.mjs";
 import { checkSchema } from "../../speckit-canvas-designer/contracts/design-contributions.mjs";
+import { runtimeSettings } from "../env/runtime-settings.mjs";
 
 const baseUrl = "https://example.org/canvas.zip?x=1&y=2";
 const baseCatalog = {
@@ -410,7 +411,7 @@ test("finalize rejects missing or incompatible setup records", async (t) => {
 test("incompatible catalog configuration and absent CLI stop before installation", async (t) => {
     const f = await fixture(t);
     await writeFile(join(f.project, ".specify", "extension-catalogs.yml"),
-        "catalogs:\n- name: spec-kit-copilot\n  url: https://example.org/other.json\n  install_allowed: true\n");
+        `catalogs:\n- name: ${runtimeSettings.copilotCatalogName}\n  url: https://example.org/other.json\n  install_allowed: true\n`);
     await assert.rejects(installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
         /differs from the approved source/);
     assert.ok(!f.calls.some((args) => args[1] === "add"));

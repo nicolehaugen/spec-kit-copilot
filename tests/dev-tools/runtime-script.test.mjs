@@ -127,7 +127,8 @@ test('fork repository example is usable and does not change settings without app
   const home = await workspace(t);
   const preview = await configureRuntime('use-fork', {}, { home, env: {} });
   assert.equal(preview.applied, false);
-  assert.match(preview.settings.catalogs.copilot.extensions, /nicolehaugen/);
+  const example = await readJson(resolve(repositoryRoot, 'config', 'runtime-settings.fork.example.json'));
+  assert.equal(preview.settings.catalogs.copilot.extensions, example.catalogs.copilot.extensions);
   assert.deepEqual(await readdir(home), []);
 });
 
