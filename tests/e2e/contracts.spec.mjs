@@ -34,7 +34,7 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
         return { stdout: responses[args[0]] };
     };
     const snapshot = {
-        workspacePath: checkout, featureFlags: { generateCanvas: true }, currentPhase: "constitution",
+        workspacePath: checkout, currentPhase: "constitution",
         setup: { pluginInstalled: true, cliInstalled: true, projectInitialized: true, skillsReloaded: true },
         boot: { phase: "ready", steps: [] }, phases: {}, commands: [],
         pipeline: [{ id: "speckit.constitution" }, { id: "speckit.specify" }],

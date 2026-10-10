@@ -21,8 +21,8 @@ const exec = promisify(execFile);
 const CLI = process.platform === "win32" ? "specify.exe" : "specify";
 const BASE = "extension-canvas-design";
 const CATALOGS = [
-    ["extension", "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json"],
-    ["preset", "https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-presets/catalog.json"],
+    ["extension", "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-extensions/catalog.json"],
+    ["preset", "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-presets/catalog.json"],
 ];
 const GROUP = { presets: "preset", extensions: "extension", bundles: "bundle" };
 const WARNING = /(?:^|\n)[^\n]*(?:no base command layer|composition[^\n]*\b(?:warning|incomplete|failed)\b)[^\n]*/i;
@@ -429,7 +429,7 @@ async function registerCatalog(project, kind, url, command) {
     if (text !== undefined) {
         const parsed = load(text, { schema: JSON_SCHEMA });
         if (!Array.isArray(parsed?.catalogs)) throw new Error(`Invalid ${kind} catalog configuration`);
-        const existing = parsed.catalogs.find((entry) => entry.name === "spec-kit-copilot");
+        const existing = parsed.catalogs.find((entry) => entry.name === "spec-kit-staging");
         if (existing) {
             if (existing.url !== url || existing.install_allowed !== true) {
                 throw new Error(`Existing ${kind} catalog differs from the approved source`);
@@ -437,7 +437,7 @@ async function registerCatalog(project, kind, url, command) {
             return;
         }
     }
-    await command([kind, "catalog", "add", url, "--name", "spec-kit-copilot", "--install-allowed"]);
+    await command([kind, "catalog", "add", url, "--name", "spec-kit-staging", "--install-allowed"]);
 }
 
 export async function verifyComposedLoadPage(project, command) {

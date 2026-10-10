@@ -5,7 +5,7 @@ and separate commands to generate and open workflow canvases for the Copilot Des
 
 ## What It Does
 
-Canvas Design **0.1.19** registers four JSON page templates, fifteen ordered
+Canvas Design **0.1.20** registers four JSON page templates, fifteen ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition, phase control definition with its required placement,
@@ -421,21 +421,20 @@ compatibility.
 discovery-only by default; `--install-allowed` permits installation:
 
 ```powershell
-specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json --name spec-kit-copilot --install-allowed
+specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-extensions/catalog.json --name spec-kit-staging --install-allowed
 specify extension add extension-canvas-design
 ```
 
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.19/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.20/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
-The current 0.1.19 catalog still advertises two commands; the hosted archive
-has not been verified to include `open-generated`. This worktree-only split is not ready
-for the default hosted Generate/Open path until a coordinated release is
-published and verified against the catalog-selected archive.
+The staging catalog advertises all three commands. Verify the published
+archive selected by the staging catalog before treating hosted Generate/Open
+as release-ready.
 For a new Copilot project, initialize it first:
 
 ```powershell

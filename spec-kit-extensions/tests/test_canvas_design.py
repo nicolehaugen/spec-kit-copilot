@@ -212,7 +212,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
     def test_copilot_catalog_matches_package(self):
         self.assertEqual(self.catalog["schema_version"], "1.0")
         catalog_url = (
-            "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/"
+            "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/"
             "spec-kit-extensions/catalog.json"
         )
         self.assertEqual(self.catalog["catalog_url"], catalog_url)
@@ -222,8 +222,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertEqual(entry[field], self.manifest["extension"][field])
         self.assertEqual(entry["requires"], self.manifest["requires"])
-        # The hosted catalog still advertises two commands until release.
-        self.assertEqual(entry["provides"], {"commands": 2, "hooks": 0})
+        self.assertEqual(entry["provides"], {"commands": 3, "hooks": 0})
         self.assertEqual(len(self.manifest["provides"]["commands"]), 3)
         self.assertEqual(entry["tags"], ["copilot", "canvas-design"])
         self.assertEqual(self.manifest["tags"], entry["tags"])
@@ -244,7 +243,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                 readme = path.read_text("utf-8")
                 self.assertIn(
                     f"specify extension catalog add {catalog_url} "
-                    "--name spec-kit-copilot --install-allowed", readme,
+                    "--name spec-kit-staging --install-allowed", readme,
                 )
                 self.assertIn(f"specify extension add {EXTENSION_ID}\n", readme)
 

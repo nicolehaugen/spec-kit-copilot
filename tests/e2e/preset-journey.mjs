@@ -69,7 +69,7 @@ export async function startPresetJourney(page, {
         downloadUrl: published.download_url, source: "copilot", tags: published.tags,
     };
     const snapshot = {
-        workspacePath: checkout, featureFlags: { generateCanvas: true },
+        workspacePath: checkout,
         currentPhase: "constitution",
         setup: { pluginInstalled: true, cliInstalled: true, projectInitialized: true,
             skillsReloaded: true },

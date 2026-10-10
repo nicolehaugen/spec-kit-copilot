@@ -43,8 +43,8 @@ discovery-only by default, so `--install-allowed` is required to install from th
 (and `--name` is required):
 
 ```bash
-specify preset catalog add https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-presets/catalog.json \
-  --name spec-kit-copilot --install-allowed
+specify preset catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-presets/catalog.json \
+  --name spec-kit-staging --install-allowed
 
 # then add by id — the normal way:
 specify preset add copilot-sub-agents

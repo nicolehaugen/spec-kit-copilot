@@ -10,7 +10,6 @@ if (!releasedBase?.version || !releasedBase.download_url) {
 }
 const snapshot = {
     workspacePath: process.cwd(),
-    featureFlags: { generateCanvas: true },
     currentPhase: "constitution",
     setup: {
         pluginInstalled: true,

@@ -513,8 +513,8 @@ export function renderSetupBody(_p) {
         {
             key: "pluginInstalled",
             title: "Install Spec Kit Copilot plugin",
-            sub: "This step only verifies the plugin is present and reports its version. Manual install required: install the spec-kit-marketplace and spec-kit-copilot skills plugin. See installation instructions ↗.",
-            subHtml: `<p>This step only verifies the plugin is present and reports its version.</p><p><strong>Manual install required:</strong> install the <strong>spec-kit-marketplace</strong> and <strong>spec-kit-copilot</strong> skills plugin, then <strong>restart the GitHub Copilot app</strong>. <a href="https://github.com/github/spec-kit-copilot#installation" target="_blank" rel="noopener noreferrer">See installation instructions ↗</a>.</p>`,
+            sub: "This step only verifies the plugin is present and reports its version. Manual install required: install the spec-kit-staging marketplace and spec-kit-copilot skills plugin. See installation instructions ↗.",
+            subHtml: `<p>This step only verifies the plugin is present and reports its version.</p><p><strong>Manual install required:</strong> install the <strong>spec-kit-staging</strong> marketplace and <strong>spec-kit-copilot</strong> skills plugin, then <strong>restart the GitHub Copilot app</strong>. <a href="https://github.com/nicolehaugen/spec-kit-copilot/tree/staging-canvas#installation" target="_blank" rel="noopener noreferrer">See installation instructions ↗</a>.</p>`,
         },
         {
             key: "cliInstalled",
@@ -584,4 +584,3 @@ export function collectSetupValues() {
     if (vals.here === undefined) vals.here = true;
     return vals;
 }
-
