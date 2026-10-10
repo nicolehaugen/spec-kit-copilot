@@ -461,18 +461,13 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 status: run?.status ?? "Not started",
                 hasWorkflowRunHistory: Boolean(run), workflowRecoveryMessage: recovery };
         }));
-        const legacyDraft = (view.name || view.slug
-            || Object.keys(view.drafts).some((key) => key.startsWith('["__new__",')))
-            ? [{ id: "__new__", slug: config.userProvidesSlug ? view.slug : "",
-                label: view.name?.trim() || (config.userProvidesSlug && view.slug)
-                    || "Unstarted workflow", pending: true }] : [];
         return { ...view, userProvidesSlug: config.userProvidesSlug,
             constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
             autopilot: automation, showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             name: pendingFor(item, view)?.name ?? view.name,
             slug: config.userProvidesSlug ? pendingFor(item, view)?.slug ?? view.slug : "",
-            phases, items: [...entries, ...legacyDraft, ...pending],
+            phases, items: [...entries, ...pending],
             statuses, valueFields: visibleValues, pageValues, valueErrors,
             ...(badges ? { badges } : {}),
             setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()

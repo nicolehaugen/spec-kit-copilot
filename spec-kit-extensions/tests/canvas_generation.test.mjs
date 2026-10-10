@@ -1935,11 +1935,18 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     const runtime = await createRuntime({ config, cwd: project, workspace, session });
     t.after(() => runtime.close());
     assert.deepEqual((await runtime.snapshot()).items, []);
-    const first = await runtime.createPending({ revision: 0 });
+    await runtime.save({ revision: 0, name: "Draft without a row", slug: "draft",
+        draft: { item: "__new__", phase: "specify", value: "Draft" } });
+    assert.deepEqual((await runtime.snapshot()).items, []);
+    const first = await runtime.createPending({ revision: (await runtime.snapshot()).revision });
     assert.equal(first.id, "__new__:1");
     let snapshot = await runtime.snapshot();
     assert.deepEqual(snapshot.items.map(({ label, slug, pending }) => ({ label, slug, pending })),
         [{ label: "Workflow 1", slug: "", pending: true }]);
+    const { validateWorkflowPageState } = await import(
+        "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs");
+    assert.equal(validateWorkflowPageState({ model: snapshot,
+        phaseState: { slugEditable: snapshot.userProvidesSlug } }).model, snapshot);
     assert.equal(snapshot.statuses.specify.output, null);
     await assert.rejects(readdir(join(project, "specs")), { code: "ENOENT" });
     await runtime.save({ revision: snapshot.revision, name: "Customer dashboard", slug: "customer-dashboard",
@@ -1958,7 +1965,10 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     assert.equal(snapshot.drafts[JSON.stringify([first.id, "specify"])], "Dashboard scope");
     const result = await reopened.run({ phase: "specify", itemId: first.id, args: "Dashboard scope" }, "pending-panel");
     await assert.rejects(reopened.removePending({ itemId: first.id, revision: (await reopened.snapshot()).revision }),
-        /may have created a workflow directory/);
+        /Confirm Discard pending row/);
+    await assert.rejects(reopened.removePending({ itemId: first.id,
+        revision: (await reopened.snapshot()).revision, confirmation: "discard" }),
+        /The agent turn has not ended/);
     const directory = join(project, "specs", "001-customer-dashboard");
     await mkdir(directory, { recursive: true });
     await reopened.reportSlug({ phaseRunId: result.runId, slug: "001-customer-dashboard" }, "pending-panel");
