@@ -35,15 +35,18 @@ packages or run workflow phases. Creation does not register or open the app.
    paths or URLs, then validates the extension. The full install locators stay
    in the session-scoped handoff and request. Without validated replacement it
    never overwrites an existing target.
-   Source-fingerprint differences and installed-version drift are reported in
-   the command's `warnings` output; report them to the user, but proceed with the intact frozen request
-   when checkout, target, workflow, and installed inventory checks pass.
-   Files are written directly into the final directory, with the entry point
-   written only after validation. Confirmed regeneration clears the existing
-   contents in place; there is no backup or rollback.
-   On failure, report the error unchanged. The generator removes its failed
-   output so Generate can be retried; any previous canvas is not restored.
-   If cleanup fails, report the target path and cleanup error for inspection.
+   Source-fingerprint differences, installed-version drift, and any failure to
+   remove a prior backup after publication are reported in the command's
+   `warnings` output; report them to the user. The generator proceeds with the
+   intact frozen request when checkout, target, workflow, and installed inventory
+   checks pass. Files are validated in a staging directory, with the entry point
+   written only after validation. Confirmed replacement moves the old canvas
+   to a backup before publishing the staged one. A publication failure restores
+   the old canvas; after successful publication, a locked backup is retained
+   for manual inspection and cleanup without failing Generate.
+   On failure before publication, report the error. The generator
+   removes its failed staging directory; if rollback or cleanup fails, report
+   the retained path and error for inspection.
    Do not create an alternative implementation or retry.
 4. Report the exact generated target, canvas ID, request ID, and any warnings
    or error in the child session chat. On success say the app was created but

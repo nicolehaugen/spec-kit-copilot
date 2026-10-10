@@ -130,7 +130,9 @@ export function mount({ root, definition, state, actions }) {
         const input = $("#phase-args");
         if (changed || document.activeElement !== input) input.value = next.draft;
         input.readOnly = Boolean(next.setupPending);
-        $(".phase-notice").textContent = status?.status ?? "Not run";
+        const phaseNotice = $(".phase-notice");
+        phaseNotice.textContent = status?.status === "Completed" ? "" : status?.status ?? "Not run";
+        phaseNotice.hidden = status?.status === "Completed";
         if (badgeSlots.has("phase.card")) {
             $("#phase-badges").innerHTML = badgeMarkup(badgesForTarget(next.badgeModels ?? [], phase.id));
         }

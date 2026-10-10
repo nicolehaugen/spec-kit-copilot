@@ -105,6 +105,14 @@ method is called with the control as its receiver and must return literal
 `validationError`, optional `dispose`, and disposal/readiness failure handling
 remain in the editor; no new method is required.
 
+Badge controls with the `declare-markdown-output` capability must export the
+literal `declaresMarkdownOutput = true` and return a handle with
+`handlesOutputDeclaration = true`. Only those controls receive
+`onDeclareFile(phase, path)` at mount; the host validates and records a new
+expected Markdown output without changing the inferred View target.
+Missing or incompatible declarations and handles fail before that action is
+available. Controls without the capability never receive the callback.
+
 ### Workflow and phase adapters
 
 Workflow adapters export `pageId = "workflow"`, `contractVersion = 1`, and

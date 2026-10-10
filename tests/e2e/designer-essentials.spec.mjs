@@ -106,7 +106,7 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
         } else if (path === "/" || path === "/ui/app.js" || path === "/ui/styles.css"
             || path === "/ui/generation-state.js"
             || path === "/ui/generated-output-state.js"
-            || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js"
+            || path === "/ui/identity-control.js" || path === "/ui/output-evidence.js"
             || path === "/ui/external-control-adapter-contract.js"
             || path === "/ui/badges-control.js" || path === "/ui/badge-duplicates.js") {
             const file = path === "/" ? "index.html" : path.slice(4);

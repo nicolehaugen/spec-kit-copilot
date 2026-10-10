@@ -35,6 +35,35 @@ export function validateBadgeInputAdapter(adapter, binding) {
     }
 }
 
+export function mountBadgeInputAdapter(adapter, binding, context) {
+    if (binding.capabilities !== undefined
+        && (!Array.isArray(binding.capabilities) || binding.capabilities.length !== 1
+            || binding.capabilities[0] !== "declare-markdown-output")) {
+        throw new Error(`Incompatible Designer badge input capabilities ${binding.adapter}`);
+    }
+    const canDeclare = binding.capabilities?.includes("declare-markdown-output") === true;
+    validateBadgeInputAdapter(adapter, binding);
+    if (adapter.declaresMarkdownOutput !== (canDeclare ? true : undefined)) {
+        throw new Error(`Incompatible Designer badge input adapter ${binding.adapter}`);
+    }
+    const { onDeclareFile: declareFile, ...options } = context;
+    if (canDeclare && typeof declareFile !== "function") {
+        throw new Error("Designer output declaration is unavailable in this host.");
+    }
+    let mounted = false;
+    const onDeclareFile = canDeclare ? (phase, path) => {
+        if (!mounted) throw new Error("File declaration is unavailable before control mount.");
+        return declareFile(phase, path);
+    } : undefined;
+    const handle = adapter.mount(canDeclare ? { ...options, onDeclareFile } : options);
+    if (handle?.handlesOutputDeclaration !== (canDeclare ? true : undefined)) {
+        context.root.replaceChildren();
+        throw new Error(`Incompatible Designer badge input declaration handle ${binding.adapter}`);
+    }
+    mounted = true;
+    return handle;
+}
+
 export function hasDeclaredBadgeInputs(value, inputIds) {
     return value && typeof value === "object"
         && !Array.isArray(value) && Object.keys(value).sort().join() === inputIds;

@@ -73,13 +73,19 @@ export function validateBadges(config, phases = []) {
                 || type === "ordered-artifacts" && (before === undefined || scope !== "metadata")
                 || before !== undefined && (type !== "ordered-artifacts"
                     || !rule.inputs.some((input) => input.id === before && input.type === "artifact"
-                        && input.scope === "metadata"))))
+                        && input.scope !== "directory")))
+            || rule.inputs.some(({ type, minItems }) => minItems !== undefined
+                && (type !== "ordered-artifacts" || !Number.isInteger(minItems)
+                    || minItems < 1 || minItems > 100)))
             throw new Error("Invalid generated badge rule");
     }
     for (const type of config.types) {
         if (!type || !identifier.test(type.id) || !config.rules.some((rule) => rule.id === type.rule)
             || typeof type.title !== "string" || typeof type.description !== "string"
             || typeof type.defaultText !== "string" || type.defaultText.length > 160
+            || (type.replacementGroup !== undefined
+                && (!adapterId.test(type.replacementGroup)
+                    || !config.rules.find((rule) => rule.id === type.rule)?.placementPhaseInput))
             || !colors(type.defaultColor) || typeof type.enabled !== "boolean")
             throw new Error("Invalid generated badge type");
     }
@@ -122,7 +128,8 @@ export function validateBadges(config, phases = []) {
                     || value.length > 256 || /[\x00-\x1f\x7f]/.test(value)
                 : input.type === "artifact" ? !validArtifact(value) || !declared(value)
                 : input.type === "ordered-artifacts"
-                    ? !Array.isArray(value) || value.length > 100 || value.some((entry) =>
+                    ? !Array.isArray(value) || value.length > 100
+                        || value.length < (input.minItems ?? 0) || value.some((entry) =>
                         !validArtifact(entry) || Object.keys(entry).sort().join() !== "output,phase"
                             || !declared(entry))
                     : !Array.isArray(value) || value.length > 100 || value.some((entry) =>
@@ -212,6 +219,48 @@ function text(template, values) {
     return template.replace(/\{([A-Za-z][A-Za-z0-9_.-]*)\}/g, (placeholder, name) =>
         Object.hasOwn(values, name) && ["number", "string"].includes(typeof values[name])
             ? String(values[name]).slice(0, 80) : placeholder).slice(0, 160);
+}
+
+function selectVisibleBadges(rendered, instances, types, rules, phases) {
+    const byId = new Map(instances.map((instance) => [instance.id, instance]));
+    const typeById = new Map(types.map((type) => [type.id, type]));
+    const ruleById = new Map(rules.map((rule) => [rule.id, rule]));
+    const candidates = rendered.map((badge) => {
+        const instance = byId.get(badge.id);
+        const type = typeById.get(instance.type);
+        if (!type.replacementGroup) return null;
+        const rule = ruleById.get(type.rule);
+        return { group: type.replacementGroup,
+            rank: phases.findIndex((phase) =>
+                phase.id === instance.inputs[rule.placementPhaseInput].phase),
+            list: badge.showIn.includes("workflow-list"),
+            card: badge.targets
+                ? badge.targets.some((target) => target.output === null)
+                : badge.showIn.includes("phase-card") };
+    });
+    const furthest = new Map();
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        for (const location of ["list", "card"]) {
+            if (!candidate[location]) continue;
+            const key = JSON.stringify([candidate.group, location]);
+            furthest.set(key, Math.max(furthest.get(key) ?? -1, candidate.rank));
+        }
+    }
+    return rendered.map((badge, index) => {
+        const candidate = candidates[index];
+        if (!candidate) return badge;
+        const showList = !candidate.list || candidate.rank
+            === furthest.get(JSON.stringify([candidate.group, "list"]));
+        const showCard = !candidate.card || candidate.rank
+            === furthest.get(JSON.stringify([candidate.group, "card"]));
+        if (showList && showCard) return badge;
+        if ((!candidate.list || !showList) && (!candidate.card || !showCard)) return null;
+        return { ...badge,
+            ...(!showList ? { showIn: badge.showIn.filter((place) =>
+                place !== "workflow-list") } : {}),
+            ...(!showCard ? { targets: [] } : {}) };
+    }).filter((badge) => badge !== null);
 }
 
 export async function evaluateBadges(badges, { cwd, workflows, phases, outputPath, runFor,
@@ -363,8 +412,9 @@ export async function evaluateBadges(badges, { cwd, workflows, phases, outputPat
                 log(warning);
             }
         }
-        if (project) result.project = rendered;
-        else result.items[workflow] = rendered;
+        const visible = selectVisibleBadges(rendered, badges.instances, badges.types, badges.rules, phases);
+        if (project) result.project = visible;
+        else result.items[workflow] = visible;
     }
     result.summary = result.summary.map(({ title, template, count, ...item }) =>
         ({ ...item, count, text: template ? text(template, { workflows: count })

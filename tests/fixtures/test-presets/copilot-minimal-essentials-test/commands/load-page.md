@@ -13,7 +13,6 @@ do not guess or select another session's handoff.
 Load these default pages:
 
 - Essentials (`designer-essentials`)
-- `designer-artifacts`
 - `designer-appearance`
 
 Use **Essentials** in progress messages and other user-facing descriptions of

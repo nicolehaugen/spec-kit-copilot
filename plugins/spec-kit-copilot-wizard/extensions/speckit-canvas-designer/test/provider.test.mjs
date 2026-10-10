@@ -165,6 +165,15 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
     handoff.sourceFingerprint = fingerprint({
         workflow: handoff.workflow, selections: handoff.selections,
     });
+    const incompatibleHandoff = structuredClone(handoff);
+    incompatibleHandoff.workflow.outputEvidence.plan = {
+        outputs: ["specs/<slug>/notes.md"], view: null,
+    };
+    incompatibleHandoff.sourceFingerprint = fingerprint({
+        workflow: incompatibleHandoff.workflow, selections: incompatibleHandoff.selections,
+    });
+    assert.throws(() => validateHandoff(incompatibleHandoff, incompatibleHandoff.handoffId),
+        /Invalid outputs for phase plan/);
     await saveHandoff(workspace, handoff);
     const model = { revision: "outputs-test", constraints: {}, values: {},
         badgeTypes: [{ id: "artifact", rule: "artifact", enabled: true }],
@@ -187,44 +196,54 @@ test("Outputs persist with Designer settings and reject unsafe or stale edits", 
     assert.deepEqual(saved.badges, badges);
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, outputs);
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).badges, badges);
+    const watched = { ...outputs, plan: { outputs: ["specs/<slug>/notes.md"], view: null } };
+    const withWatchedFile = await saveDesignerSettings(workspace, handoff, saved, {
+        modelRevision: model.revision, revision: 1, values: {}, outputs: watched, badges,
+    });
+    assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, watched);
+    assert.deepEqual(withWatchedFile.outputs.plan, watched.plan);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, withWatchedFile, {
+        modelRevision: model.revision, revision: 2, values: {},
+        outputs: { ...outputs, specify: { ...outputs.specify, view: null } },
+    }), /Pipeline viewer defaults cannot be removed/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 1, values: {},
+        modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, specify: { outputs: ["specs/<slug>/spec.md"],
             view: "specs/<slug>/spec.md" } }, badges,
     }), /invalid artifact input/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 1, values: {},
+        modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, specify: { outputs: ["specs/<slug>/research.md"],
             view: "specs/<slug>/research.md" } },
     }), /Pipeline artifacts cannot be changed/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 1, values: {},
+        modelRevision: model.revision, revision: 2, values: {},
         outputs: { ...outputs, specify: { outputs: [
             "specs/<slug>/SPEC.md", "specs/<slug>/research.md"],
         view: "specs/<slug>/research.md" } },
     }), /Pipeline artifacts cannot be changed/);
     const removed = { ...outputs, specify: { outputs: ["specs/<slug>/spec.md"],
         view: "specs/<slug>/spec.md" } };
-    const restored = await saveDesignerSettings(workspace, handoff, saved,
-        { modelRevision: model.revision, revision: 1, values: {}, outputs: removed, badges: [] });
+    const restored = await saveDesignerSettings(workspace, handoff, withWatchedFile,
+        { modelRevision: model.revision, revision: 2, values: {}, outputs: removed, badges: [] });
     assert.deepEqual(restored.outputs, removed);
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).outputs, removed);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 2, values: {},
+        modelRevision: model.revision, revision: 3, values: {},
         outputs: { ...outputs, constitution: { outputs: [], view: null } },
     }), /Constitution output is fixed/);
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 2, values: {},
+        modelRevision: model.revision, revision: 3, values: {},
         outputs: { ...outputs, plan: { outputs: ["../outside.md"], view: "../outside.md" } },
     }), /Invalid outputs for phase plan/);
     for (const path of [".GitHub/private.md", ".SPECIFY/templates/private.md"]) {
         await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-            modelRevision: model.revision, revision: 2, values: {},
+            modelRevision: model.revision, revision: 3, values: {},
             outputs: { ...outputs, plan: { outputs: [path], view: path } },
         }), /Invalid outputs for phase plan/);
     }
     await assert.rejects(saveDesignerSettings(workspace, handoff, saved, {
-        modelRevision: model.revision, revision: 2, values: {},
+        modelRevision: model.revision, revision: 3, values: {},
         outputs: { ...outputs, plan: { outputs: Array.from({ length: 101 },
             (_, index) => `specs/<slug>/output-${index}.md`),
         view: "specs/<slug>/output-0.md" } },
@@ -341,12 +360,12 @@ async function projectFixture(t, workspace) {
     await copyFile(join(source, "schemas", "external-designer.tab-definition.schema.json"),
         join(installed, "schemas", "external-designer.tab-definition.schema.json"));
     await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
-    const pages = ["essentials", "outputs", "badges", "appearance"];
+    const pages = ["essentials", "badges", "appearance"];
     const entries = [];
     for (const filename of pages) {
         const path = join(installed, "designer-host", "tabs", `${filename}.json`);
         await copyFile(join(source, "designer-host", "tabs", `${filename}.json`), path);
-        entries.push({ name: filename === "outputs" ? "designer-artifacts" : `designer-${filename}`, path,
+        entries.push({ name: `designer-${filename}`, path,
             kind: "designer.tab-definition", strategy: "replace" });
     }
     const scalar = [];
@@ -414,8 +433,20 @@ async function badgeTemplates(project) {
     for (const [name, relative, kind] of [
         ["designer-badge-input-stock", "control.json", "designer.badge-input-control"],
         ["designer-badge-input-stock-adapter", "designer.mjs", "designer.badge-input-adapter"],
+        ["designer-badge-input-checklist", join("..", "checklist", "control.json"),
+            "designer.badge-input-control"],
+        ["designer-badge-input-checklist-adapter", join("..", "checklist", "designer.mjs"),
+            "designer.badge-input-adapter"],
+        ["designer-badge-input-phase-artifact", join("..", "phase-artifact", "control.json"),
+            "designer.badge-input-control"],
+        ["designer-badge-input-phase-artifact-adapter", join("..", "phase-artifact", "designer.mjs"),
+            "designer.badge-input-adapter"],
+        ["designer-badge-input-ordered-stale", join("..", "ordered-stale", "control.json"),
+            "designer.badge-input-control"],
+        ["designer-badge-input-ordered-stale-adapter", join("..", "ordered-stale", "designer.mjs"),
+            "designer.badge-input-adapter"],
         ...["value-match", "artifact-current", "artifact-stale", "markdown-file-count",
-            "checklist-progress", "checklist-complete", "work-complete",
+            "checklist-progress", "checklist-complete",
             "phase-run-complete", "phase-artifact-complete"].map((id) =>
             [`designer-badge-binding-${id}`, join("bindings", `${id}.json`),
                 "designer.badge-input-binding"]),
@@ -442,18 +473,37 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
     const load = (inventory = templates) => loadResolvedDesignerPages(validHandoff(),
         project, entries, inventory, badgeRegistration);
     const model = await load();
-    assert.equal(model.badgeTypes.length, 9);
-    assert.equal(model.badgeRules.length, 9);
-    assert.equal(model.badgeInputControls.length, 9);
-    assert.ok(model.badgeInputControls.every((item) =>
-        item.control === "stock.badge-inputs"
-        && item.adapter === "designer-badge-input-stock-adapter"));
+    assert.equal(model.badgeTypes.length, 8);
+    assert.equal(model.badgeRules.length, 8);
+    assert.equal(model.badgeInputControls.length, 8);
+    assert.ok(model.badgeInputControls.every((item) => {
+        const control = ["checklist-progress", "checklist-complete"].includes(item.rule)
+            ? ["stock.checklist-inputs", "designer-badge-input-checklist-adapter"]
+            : item.rule === "artifact-stale"
+                ? ["stock.ordered-stale-inputs", "designer-badge-input-ordered-stale-adapter"]
+                : item.rule === "phase-artifact-complete"
+                    ? ["stock.phase-artifact-inputs", "designer-badge-input-phase-artifact-adapter"]
+                : ["stock.badge-inputs", "designer-badge-input-stock-adapter"];
+        return item.control === control[0] && item.adapter === control[1]
+            && (item.capabilities?.includes("declare-markdown-output") === true)
+                === (item.rule !== "artifact-stale");
+    }));
     assert.ok(model.badgeRules.some((rule) => rule.id === "value-match"
         && rule.inputs[0].type === "artifact" && rule.inputs[1].type === "text"));
     assert.ok(model.badgeRules.some((rule) => rule.id === "markdown-file-count"
         && rule.inputs[0].scope === "directory"));
     assert.equal(model.badgeTypes.find((item) => item.id === "value-match").title,
         "Value match");
+    assert.equal(model.badgeTypes.find((item) => item.id === "checklist-progress").defaultText,
+        "Checklist: {completed}/{total} complete");
+    assert.equal(model.badgeTypes.find((item) => item.id === "checklist-complete").defaultText,
+        "Checklist complete");
+    assert.equal(model.badgeTypes.find((item) =>
+        item.id === "phase-artifact-complete").replacementGroup, "phase-completion");
+    const phaseArtifactAdapter = templates.find((item) =>
+        item.name === "designer-badge-input-phase-artifact-adapter");
+    await assert.rejects(load(templates.filter((item) => item !== phaseArtifactAdapter)),
+        /missing Designer badge input adapter designer-badge-input-phase-artifact-adapter/);
     const rule = templates.find((item) => item.name === "badge-rule-value-match");
     const binding = templates.find((item) => item.name === "designer-badge-binding-value-match");
     await assert.rejects(load(templates.filter((item) => item !== binding)),
@@ -468,6 +518,12 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
         item.rule === "value-match"), false);
     assert.equal(withoutUnusedBinding.badgeTypes.find((item) =>
         item.id === "value-match").enabled, false);
+    await writeFile(typeEntry.path, typeBytes);
+    const invalidGroup = JSON.parse(typeBytes);
+    invalidGroup.types.find((item) => item.id === "value-match")
+        .replacementGroup = "phase-completion";
+    await writeFile(typeEntry.path, JSON.stringify(invalidGroup));
+    await assert.rejects(load(), /replacement group requires a target phase artifact/);
     await writeFile(typeEntry.path, typeBytes);
     const control = templates.find((item) => item.name === "designer-badge-input-stock");
     await assert.rejects(load(templates.filter((item) => item !== control)),
@@ -490,7 +546,16 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
     await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
         "contractVersion = 1", "contractVersion = 2"));
     await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        "export const declaresMarkdownOutput = true;", ""));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
     await writeFile(inputAdapter.path, inputAdapterOriginal);
+    const controlOriginal = await readFile(control.path, "utf8");
+    const withoutCapability = JSON.parse(controlOriginal);
+    delete withoutCapability.capabilities;
+    await writeFile(control.path, JSON.stringify(withoutCapability));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(control.path, controlOriginal);
     const original = await readFile(rule.path, "utf8");
     const { adapter: legacyAdapter, ...withoutAdapter } = JSON.parse(original);
     await writeFile(rule.path, JSON.stringify({ ...withoutAdapter, module: legacyAdapter }));
@@ -595,8 +660,8 @@ export function mount({ root, inputs, phases, onChange }) {
                 layer: preset ? "preset" : "extension", strategy: "replace" }] };
         });
     const model = await load();
-    assert.equal(model.badgeTypes.length, 10);
-    assert.equal(model.badgeRules.length, 10);
+    assert.equal(model.badgeTypes.length, 9);
+    assert.equal(model.badgeRules.length, 9);
     assert.equal(model.badgeTypes.find((item) => item.id === "preset-extra").name, "badges-settings");
     assert.equal(model.badgeRules.find((item) => item.id === "preset-extra").name, addedRule.name);
     assert.deepEqual(model.badgeInputControls.find((item) => item.rule === "preset-extra"),
@@ -746,14 +811,20 @@ test("Designer badge save and reopen freezes registered assets into generated co
     assert.deepEqual(model.badges, []);
     const values = { ...model.values, "canvas.id": "badge-canvas",
         "canvas.displayName": "Badge canvas" };
+    const outputs = { ...model.outputs, plan: {
+        outputs: [...model.outputs.plan.outputs, "specs/<slug>/plan.md"],
+        view: "specs/<slug>/plan.md",
+    } };
     const badges = [{ id: "checklist-progress-1", type: "checklist-progress",
-        inputs: { artifact: { phase: "specify", output: "specs/<slug>/spec.md" } },
+        inputs: { artifact: { phase: "plan", output: "specs/<slug>/plan.md" },
+            prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" }],
+            targetphase: "plan" },
         text: "{completed}/{total} complete", color: "blue",
         showIn: ["workflow-list"], phase: null,
         targets: [{ phase: "specify", output: "specs/<slug>/spec.md" },
             { phase: "plan", output: null }] }];
     const saved = await saveDesignerSettings(workspace, handoff, model, {
-        modelRevision: model.revision, revision: 0, values, outputs: model.outputs, badges,
+        modelRevision: model.revision, revision: 0, values, outputs, badges,
     });
     assert.equal(saved.settingsRevision, 1);
     const reopened = await loadDesignerSettings(workspace, handoff, pages);
@@ -799,9 +870,10 @@ test("Generate accepts Constitution card and declared output destinations", asyn
     const model = await loadDesignerSettings(workspace, handoff, pages);
     const values = { ...model.values, "canvas.id": "constitution-badge",
         "canvas.displayName": "Constitution badge" };
-    const global = { id: "constitution-evidence", type: "checklist-progress",
-        inputs: { artifact: { phase: "constitution", output: ".specify/memory/constitution.md" } },
-        text: "{completed}/{total} complete", color: "blue",
+    const global = { id: "constitution-evidence", type: "value-match",
+        inputs: { artifact: { phase: "constitution", output: ".specify/memory/constitution.md" },
+            value: "adopted" },
+        text: "Value matched", color: "amber",
         showIn: ["workflow-list"], phase: null };
     const options = { model, values, outputs: model.outputs, handoff, project, workspace };
     await assert.doesNotReject(freezeGeneration({ ...options, badges: [global] }));
@@ -814,6 +886,7 @@ test("Generate accepts Constitution card and declared output destinations", asyn
     }
     const workflowEvidence = { ...global, inputs: {
         artifact: { phase: "specify", output: "specs/<slug>/spec.md" },
+        value: "adopted",
     } };
     await assert.doesNotReject(freezeGeneration({ ...options, badges: [workflowEvidence] }));
     for (const badge of [
@@ -1182,6 +1255,7 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
     const root = {
         childNodes: [],
         replaceChildren(...children) { this.childNodes = children; },
+        append(...children) { this.childNodes.push(...children); },
         setAttribute() {},
     };
     const pageViews = new Map();
@@ -1191,12 +1265,12 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
     const renderPage = runInNewContext(`${source.slice(start, end)}\nrenderPage`, {
         model: { revision: "same", phases: [], outputs: {}, pages: [
             { page: "designer-badges", fields: [], fixedControl: "designer.badges" },
-            { page: "designer-outputs", fields: [], fixedControl: "designer.outputs" },
+            { page: "designer-appearance", fields: [] },
         ] },
         root, pageViews, currentPage: null,
         generate: { hidden: false }, openGenerated: { hidden: false },
         tabs: { children: [{ dataset: { page: "designer-badges" }, setAttribute() {} },
-            { dataset: { page: "designer-outputs" }, setAttribute() {} }] },
+            { dataset: { page: "designer-appearance" }, setAttribute() {} }] },
         mountBadges: () => {
             badgeMounts++;
             root.replaceChildren({ draft: "", choices: ["spec.md"] });
@@ -1205,13 +1279,15 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
                 root.childNodes[0].choices = [...outputs.specify.outputs];
             } };
         },
-        mountOutputs: () => root.replaceChildren({ output: true }),
+        element: (tag, text) => ({ tag, text, children: [],
+            append(...nodes) { this.children.push(...nodes); },
+            addEventListener() {} }),
         draftBadges: [], draftOutputs, updateSave() {},
     });
     renderPage("designer-badges");
     const editor = root.childNodes[0];
     editor.draft = "still editing";
-    renderPage("designer-outputs");
+    renderPage("designer-appearance");
     draftOutputs.specify.outputs.push("new.md");
     renderPage("designer-badges");
     assert.equal(root.childNodes[0], editor);
@@ -1219,7 +1295,7 @@ test("switching tabs preserves an unsubmitted badge editor", async () => {
     assert.deepEqual(root.childNodes[0].choices, ["spec.md", "new.md"]);
     assert.equal(badgeMounts, 1);
     assert.equal(badgeUpdates, 1);
-    assert.ok(pageViews.has("designer-outputs"));
+    assert.ok(pageViews.has("designer-appearance"));
 });
 
 test("Designer readiness checks controls on previously visited tabs", async () => {
@@ -1779,12 +1855,22 @@ test("stock contributions retain the optional slug setting and minimal replaced 
     }
     const legacyPages = await loadResolvedDesignerPages(handoff, project, entries);
     assert.equal(legacyPages.pages[0].fixedControl, "designer.identity");
-    assert.equal(legacyPages.pages[1].fixedControl, "designer.outputs");
+    assert.equal(legacyPages.pages[1].fixedControl, "designer.badges");
     assert.equal(legacyPages.pages.find((page) => page.page === "designer-badges")
         .fixedControl, "designer.badges");
     for (const [index, contents] of originalPages.entries()) {
         await writeFile(entries[index].path, contents);
     }
+    const obsoletePath = join(project, ".specify", "obsolete-outputs.json");
+    await writeFile(obsoletePath, JSON.stringify({
+        schemaVersion: 1, id: "designer-artifacts", title: "Outputs",
+        order: 20, fixedControl: "designer.outputs", fields: [],
+    }));
+    const obsoletePages = await loadResolvedDesignerPages(handoff, project, [
+        ...entries, { name: "designer-artifacts", path: obsoletePath,
+            kind: "designer.tab-definition", strategy: "replace" },
+    ]);
+    assert.ok(obsoletePages.pages.find((page) => page.page === "designer-artifacts").error);
     const withoutSlug = await loadResolvedDesignerPages(handoff, project, entries, templates.slice(0, 2));
     assert.equal(Object.hasOwn(withoutSlug.values, "workflowSlug.userProvided"), false);
     await writeFile(templates[0].path, JSON.stringify({
@@ -1802,19 +1888,19 @@ test("stock contributions retain the optional slug setting and minimal replaced 
         values: { ...minimum, "canvas.displayName": " " }, handoff, project, workspace }),
     /Canvas ID and Title must be valid/);
     const broken = JSON.parse(await readFile(entries[1].path, "utf8"));
-    broken.fields.push({ id: "billing.required", label: "Required", type: "boolean" });
+    broken.fixedControl = "designer.identity";
     await writeFile(entries[1].path, JSON.stringify(broken));
     const incomplete = await loadResolvedDesignerPages(handoff, project, entries);
     assert.match(incomplete.pages[1].error.reason, /required fixed Designer control/);
     await assert.rejects(freezeGeneration({ model: incomplete,
         values: { ...incomplete.values, ...minimum },
         handoff, project, workspace }),
-    /Cannot generate: designer-artifacts:/);
+    /Cannot generate: designer-badges:/);
     await writeFile(entries[1].path, "{invalid");
     const invalid = await loadResolvedDesignerPages(handoff, project, entries);
     assert.ok(invalid.pages[1].error);
     await assert.rejects(freezeGeneration({ model: invalid, values: minimum,
-        handoff, project, workspace }), /Cannot generate: designer-artifacts:/);
+        handoff, project, workspace }), /Cannot generate: designer-badges:/);
     const replaced = JSON.parse(await readFile(entries[0].path, "utf8"));
     replaced.fields = [{ id: "canvas.id", label: "ID" }];
     await writeFile(entries[0].path, JSON.stringify(replaced));
@@ -3338,6 +3424,19 @@ test("empty shell renders without a handoff and keeps the token gate", async (t)
     assert.equal((await fetch(url.origin)).status, 404);
 });
 
+test("preview checklist progress matches the shipping badge type and rule", async () => {
+    const root = new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
+    const types = JSON.parse(await readFile(new URL("designer-host/badges-settings/badge-types.json", root)));
+    const rule = JSON.parse(await readFile(new URL("generated-host/badges/rules/checklist-progress.json", root)));
+    const preview = previewModel();
+    const expected = types.types.find((entry) => entry.id === "checklist-progress");
+    const actual = preview.badgeTypes.find((entry) => entry.id === "checklist-progress");
+    assert.equal(actual.description, expected.description);
+    assert.equal(actual.defaultText, expected.defaultText);
+    assert.equal(preview.badgeRules.find((entry) => entry.id === rule.id).description,
+        rule.description);
+});
+
 test("sample-only preview renders badges without a handoff and rejects writes", async (t) => {
     const shell = await startShell(null, previewModel(), { preview: true });
     t.after(() => shell.close());
@@ -3431,7 +3530,7 @@ test("reads the complete effective page set from the child checkout without a sn
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.tab-definition", strategy: "replace" }]);
     assert.equal(withExtra.pages[0].title, "Extra");
-    assert.equal(withExtra.pages.length, 5);
+    assert.equal(withExtra.pages.length, 4);
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.default-tab-definition", strategy: "replace" }]),
@@ -3443,13 +3542,13 @@ test("reads the complete effective page set from the child checkout without a sn
         title: "Extra", order: 5, enabled: false, fields: [] }));
     assert.equal((await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
-            kind: "designer.tab-definition", strategy: "replace" }])).pages.length, 4);
+            kind: "designer.tab-definition", strategy: "replace" }])).pages.length, 3);
     await writeFile(extra, JSON.stringify({ schemaVersion: 1, id: "extra-settings",
         enabled: false, order: "invalid", fields: "invalid" }));
     const disabled = await loadResolvedDesignerPages(handoff, project,
         [...effective, { name: "extra-settings", path: extra,
             kind: "designer.tab-definition", strategy: "replace" }]);
-    assert.equal(disabled.pages.length, 4);
+    assert.equal(disabled.pages.length, 3);
     assert.equal(disabled.pages.some((page) => page.error), false);
     const disabledValues = { ...disabled.values, "canvas.id": "disabled-page",
         "canvas.displayName": "Disabled page" };
@@ -3535,12 +3634,12 @@ test("registered contributions validate slots, sources, references and determini
             await t.test(slot, async () => {
                 await writeFile(contributionPath, JSON.stringify({ ...contribution, slot }));
                 const unregistered = await loadResolvedDesignerPages(handoff, project, entries);
-                assert.equal(unregistered.pages.length, 4);
+                assert.equal(unregistered.pages.length, 3);
                 assert.equal(unregistered.values["billing.costCode"], undefined);
                 const model = await loadResolvedDesignerPages(handoff, project,
                     [...entries, pageEntry], templates);
                 assert.deepEqual(model.pages.map((page) => page.title),
-                    ["Essentials", "Outputs", "Badges", "Appearance", "Billing"]);
+                    ["Essentials", "Badges", "Appearance", "Billing"]);
                 assert.equal(model.pages.find((page) => page.fields.some((field) =>
                     field.id === "billing.costCode")).page,
                 slot === "essentials.options" ? "designer-essentials" : "canvas-settings-billing");
@@ -3583,7 +3682,7 @@ test("registered contributions validate slots, sources, references and determini
                 assert.match(missingSlot.compositionErrors.join(" "),
                     /canvas-contributions-billing \(from copilot-billing-canvas-test\):.*unknown Designer slot billing.options/);
                 assert.ok(!missingSlot.values["billing.costCode"]);
-                assert.equal(model.pages.length, 5);
+                assert.equal(model.pages.length, 4);
                 await rm(join(workspace, "speckit-canvas-designer", "handoffs", handoff.handoffId,
                     "settings.json"));
             }
@@ -3635,7 +3734,7 @@ test("registered contributions validate slots, sources, references and determini
         ["billing.alpha", "billing.beta"]);
     assert.equal(model.constraints["billing.alpha"].maxLength, 1000);
     assert.equal(model.values["billing.alpha"], "");
-    assert.equal(model.pages.length, 4);
+    assert.equal(model.pages.length, 3);
     const defaultModel = await loadResolvedDesignerPages(handoff, project, entries);
     assert.deepEqual(defaultModel.contributions, []);
     assert.equal(defaultModel.pages[0].fields.length, 2);
@@ -3693,7 +3792,7 @@ test("registered contributions validate slots, sources, references and determini
             ...tab, slots: [{ id: "artifacts.options", ...obsolete }],
         }));
         assert.ok((await loadResolvedDesignerPages(handoff, project, entries, paths))
-            .pages.find((page) => page.page === "designer-artifacts").error);
+            .pages.find((page) => page.page === "designer-badges").error);
     }
     await writeFile(entries[1].path, originalTab);
     const modulePath = join(directory, "new-control.mjs");
@@ -3775,7 +3874,7 @@ test("page errors retain healthy fields and never accept unsafe or incomplete in
     assert.match(broken.pages[0].error.reason, /Invalid Designer JSON/);
     assert.equal(broken.pages[0].error.path, entries[0].path);
     assert.equal(Object.hasOwn(broken.values, "canvas.id"), false);
-    assert.equal(broken.pages[1].title, "Outputs");
+    assert.equal(broken.pages[1].title, "Badges");
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries.map((entry, i) =>
         ({ ...entry, path: join(project, ".specify", `missing-${i}.json`) }))), /ENOENT/);
     await assert.rejects(loadResolvedDesignerPages(handoff, project,
@@ -3950,7 +4049,7 @@ test("generated-only page validates typed assets, freezes winners and packages w
     const model = await load([...pages, { name: "canvas-contributions-billing",
         path: billingPath, sourceId: "copilot-billing-canvas-test",
         kind: "designer.setting-definition", strategy: "replace" }]);
-    assert.equal(model.pages.length, 4);
+    assert.equal(model.pages.length, 3);
     assert.ok(model.pages[0].fields.some((field) => field.id === "billing.costCode"));
     const values = { ...model.values, "canvas.id": "generated-only",
         "canvas.displayName": "Generated Only", "billing.costCode": "CC-481" };
@@ -4903,7 +5002,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     await writeFile(entries[0].path, "{broken");
     const model = await loadResolvedDesignerPages(validHandoff(), project, entries);
     assert.match(model.pages[0].error.reason, /Invalid Designer JSON/);
-    assert.equal(model.pages[1].title, "Outputs");
+    assert.equal(model.pages[1].title, "Badges");
 });
 
 test("canvas opens with a partial inventory and rebuilds on reopening", async (t) => {
@@ -4973,7 +5072,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     }
     await mkdir(join(extension, "ui"));
     for (const file of ["index.html", "app.js", "generation-state.js", "generated-output-state.js",
-        "identity-control.js", "outputs-control.js",
+        "identity-control.js", "output-evidence.js",
         "external-control-adapter-contract.js", "badges-control.js", "badge-duplicates.js",
         "preview-badge-input.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
@@ -5097,7 +5196,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         const stateUrl = new URL(filled.url);
         stateUrl.pathname = "/api/state";
         const initial = await (await fetch(stateUrl)).json();
-        assert.equal(initial.pages.length, 4);
+        assert.equal(initial.pages.length, 3);
         assert.equal((await fetch(new URL("/api/reload", filled.url), { method: "POST" })).status, 404);
         await canvas.onClose({ instanceId: "same" });
         const resumed = await canvas.open({ instanceId: "resumed", input: {} });
@@ -5207,7 +5306,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         const brokenStateUrl = new URL(broken.url);
         brokenStateUrl.pathname = "/api/state";
         const brokenState = await (await fetch(brokenStateUrl)).json();
-        assert.equal(brokenState.pages.length, 4);
+        assert.equal(brokenState.pages.length, 3);
         assert.match(brokenState.pages[1].error.reason, /Invalid Designer JSON/);
         assert.notEqual(brokenState.revision, updated.revision);
         const saveUrl = new URL(broken.url);

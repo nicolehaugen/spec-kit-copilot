@@ -1033,7 +1033,9 @@ test("agent phase reply is reconciled from the fake session after a browser run"
             { type: "assistant.turn_end", data: { interactionId: "interaction-1", turnId: "turn-1" } },
         );
         await page.locator("#refresh-state").click();
-        await expect(page.locator("#phase-card .phase-notice")).toHaveText("Completed");
+        await expect.poll(async () => (await canvas.runtime.snapshot()).statuses.specify.status)
+            .toBe("Completed");
+        await expect(page.locator("#phase-card .phase-notice")).toBeHidden();
         await expect(page.locator("#phase-message")).toBeEmpty();
         await expect(page.locator("#view-artifact")).toBeVisible();
         await page.locator("#view-artifact").click();
@@ -1310,6 +1312,27 @@ test("confirmed phase outputs disclose extra files and View output opens the sel
         await expect(page.locator("#view-artifact")).toBeHidden();
         await expect(page.locator("#phase-output-toggle")).toBeHidden();
         await expect(page.locator("#phase-other-outputs [data-output]")).toHaveCount(0);
+    } finally { await canvas.close(); }
+});
+
+test("a phase with no default viewer still links its declared output file", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false, ["specify", "plan"], undefined, undefined,
+        undefined, undefined, false, {
+            specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+            plan: { outputs: ["specs/<slug>/notes.md"], view: null },
+        });
+    try {
+        const folder = join(canvas.root, "specs", "sample-feature");
+        await mkdir(folder, { recursive: true });
+        await writeFile(join(folder, "notes.md"), "# Notes");
+        await page.goto(canvas.url);
+        await page.getByRole("button", { name: "sample-feature", exact: true }).click();
+        await page.locator("#next-phase").click();
+        await expect(page.locator("#view-artifact")).toBeHidden();
+        await expect(page.locator("#phase-output-toggle")).toHaveText(/\+1 more/);
+        await page.locator("#phase-output-toggle").click();
+        await page.locator('#phase-other-outputs [data-output="specs/<slug>/notes.md"]').click();
+        await expect(page.locator("#artifact-path")).toHaveText("specs/sample-feature/notes.md");
     } finally { await canvas.close(); }
 });
 

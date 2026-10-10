@@ -1,5 +1,6 @@
 export const controlId = "stock.badge-inputs";
 export const contractVersion = 1;
+export const declaresMarkdownOutput = true;
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -75,13 +76,60 @@ function initializeInputs(rule, inputs, phases, outputs) {
     }
 }
 
-export function mount({ root, rule, inputs, phases, outputs, onChange }) {
+export function mount({ root, rule, inputs, phases, outputs, onChange, onDeclareFile }) {
     initializeInputs(rule, inputs, phases, outputs);
     const pending = { inputs, id: globalThis.crypto?.randomUUID?.() ?? `badge-${Date.now()}` };
     const emitChange = () => onChange(structuredClone(pending.inputs));
     emitChange();
     const editor = root;
     const phaseChoices = phaseOptions(phases);
+    const fileDeclaration = (phase, onAdded) => {
+        const disclosure = element("details", undefined, "badge-custom-file-disclosure");
+        disclosure.append(element("summary", "Use a Markdown file not listed"),
+            element("h4", "Add a Markdown file to the list"));
+        const form = element("div", undefined, "badge-custom-file");
+        const path = element("input");
+        path.type = "text";
+        path.maxLength = 1000;
+        path.placeholder = "specs/<slug>/notes.md";
+        form.append(field("Markdown file path", path));
+        const add = element("button", "Add file");
+        add.type = "button";
+        const error = element("p", undefined, "badge-declaration-error");
+        error.setAttribute("role", "alert");
+        const declare = () => {
+            try {
+                if (typeof onDeclareFile !== "function") {
+                    throw new Error("File declaration is unavailable in this Designer host.");
+                }
+                const id = phase();
+                const selected = path.value.trim();
+                const next = onDeclareFile(id, selected);
+                if (!next?.[id]?.outputs?.includes(selected)) {
+                    throw new Error("File declaration returned incompatible outputs.");
+                }
+                outputs = next;
+                onAdded(id, selected);
+                disclosure.open = false;
+                path.value = "";
+                error.textContent = "";
+            } catch (cause) {
+                error.textContent = cause instanceof Error ? cause.message : "File declaration failed.";
+            }
+        };
+        add.addEventListener("click", declare);
+        path.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                declare();
+            }
+        });
+        form.append(add);
+        disclosure.append(form, element("p",
+            "Adds an expected phase output for badges and additional output links, without changing the default View target.",
+            "settings-note"), error);
+        return disclosure;
+    };
     const ordered = (rule.inputs ?? []).find(({ type }) => type === "ordered-artifacts");
     if (ordered) {
         const target = pending.inputs[ordered.before];
@@ -89,7 +137,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
         const targetOutput = select(artifactOptions(outputs, target.phase),
             target.output, "Target output");
         const targetWarning = element("p",
-            "This phase has no confirmed matching output. Choose an output on the Outputs page or select a different phase.",
+            "This phase has no confirmed matching output. Declare a Markdown file or select a different phase.",
             "settings-field-error");
         const earlierGroup = element("div", undefined, "badge-artifact-set");
         const explanation = element("div", undefined, "settings-note");
@@ -143,7 +191,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                 earlierGroup.append(label);
                 if (checkbox.disabled) {
                     earlierGroup.append(element("p",
-                        `No confirmed outputs for ${title}. Add one on the Outputs page.`,
+                        `No confirmed outputs for ${title}. Declare a Markdown file in a badge editor for this phase.`,
                         "settings-note"));
                 }
                 if (!selected) continue;
@@ -190,7 +238,11 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
             emitChange();
         });
         editor.append(field("Target phase", targetPhase), field("Required output", targetOutput),
-            targetWarning,
+            targetWarning, fileDeclaration(() => target.phase, (_id, path) => {
+                target.output = path;
+                refresh();
+                emitChange();
+            }),
             element("h3", "Which earlier outputs must be current?"), earlierGroup,
             element("h3", "When this badge appears"), explanation);
         refresh();
@@ -246,7 +298,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                     outputList.setAttribute("aria-label", `${title} outputs`);
                     outputList.hidden = !checkbox.checked;
                     const outputChoices = [];
-                    for (const [path] of artifactOptions(outputs, id)) {
+                    const addChoice = (path) => {
                         const item = element("label", undefined, "badge-check");
                         const output = element("input");
                         output.type = "checkbox";
@@ -266,9 +318,10 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                         outputChoices.push([path, output]);
                         item.append(output, element("span", path));
                         outputList.append(item);
-                    }
+                    };
+                    for (const [path] of artifactOptions(outputs, id)) addChoice(path);
                     if (!outputChoices.length) outputList.append(element("p",
-                        "No confirmed outputs. Add one on the Outputs page.", "settings-note"));
+                        "No confirmed outputs. Declare a Markdown file below.", "settings-note"));
                     checkbox.addEventListener("change", () => {
                         value.phase = checkbox.checked ? id : "";
                         value.output = checkbox.checked ? outputs[id]?.view ?? outputs[id]?.outputs?.[0] ?? "" : "";
@@ -281,11 +334,28 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                         }
                         emitChange();
                     });
-                    choices.push([id, checkbox, outputList, outputChoices]);
+                    choices.push([id, checkbox, outputList, outputChoices, addChoice]);
                     label.append(checkbox, element("span", title));
                     group.append(label, outputList);
                 }
-                editor.append(group);
+                editor.append(group, fileDeclaration(() => value.phase, (id, path) => {
+                    const choice = choices.find(([phase]) => phase === id);
+                    if (!choice) throw new Error("Choose an evidence phase before declaring a file.");
+                    const [, checkbox, list, options, addChoice] = choice;
+                    if (!options.length) list.replaceChildren();
+                    addChoice(path);
+                    value.output = path;
+                    checkbox.checked = true;
+                    list.hidden = false;
+                    for (const [otherId, other, otherList, otherOptions] of choices) {
+                        other.checked = otherId === id;
+                        otherList.hidden = !other.checked;
+                        for (const [otherPath, input] of otherOptions) {
+                            input.checked = otherId === id && otherPath === path;
+                        }
+                    }
+                    emitChange();
+                }));
             } else if (descriptor.type === "artifact-set") {
                 const group = element("div", undefined, "badge-artifact-set");
                 const chosen = new Set((pending.inputs[descriptor.id] ?? [])
@@ -305,6 +375,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                     ? "Some selected evidence outputs are no longer confirmed. Choose a current output to replace them."
                     : "", "settings-field-error");
                 warning.hidden = !stale.length;
+                const choices = [];
                 for (const [id, title] of phaseChoices) {
                     const label = element("label", undefined, "badge-check");
                     const phase = element("input");
@@ -316,7 +387,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                     outputList.setAttribute("aria-label", `${title} outputs`);
                     outputList.hidden = !phase.checked;
                     const outputChecks = [];
-                    for (const [path] of artifactOptions(outputs, id)) {
+                    const addCheck = (path) => {
                         const item = element("label", undefined, "badge-check");
                         const checkbox = element("input");
                         checkbox.type = "checkbox";
@@ -334,9 +405,10 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                         outputChecks.push([key, checkbox]);
                         item.append(checkbox, element("span", path));
                         outputList.append(item);
-                    }
+                    };
+                    for (const [path] of artifactOptions(outputs, id)) addCheck(path);
                     if (!outputChecks.length) outputList.append(element("p",
-                        "No confirmed outputs. Add one on the Outputs page.", "settings-note"));
+                        "No confirmed outputs. Declare a Markdown file below.", "settings-note"));
                     phase.addEventListener("change", () => {
                         for (const oldKey of stale) chosen.delete(oldKey);
                         warning.hidden = true;
@@ -354,10 +426,24 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
                     });
                     label.append(phase, element("span", title));
                     group.append(label, outputList);
+                    choices.push([id, phase, outputList, outputChecks, addCheck]);
                 }
-                if (!available.length) {
-                    group.append(element("p", "Add a confirmed output on the Outputs page first.", "settings-note"));
-                }
+                const addPhase = select(phaseOptions(phases.filter((id) =>
+                    id.replace(/^speckit\./, "") !== "constitution")), "", "File evidence phase");
+                group.append(field("Evidence phase for new file", addPhase),
+                    fileDeclaration(() => addPhase.value, (id, path) => {
+                        const choice = choices.find(([phase]) => phase === id);
+                        if (!choice) throw new Error("Choose an evidence phase before declaring a file.");
+                        const [, phase, list, checks, addCheck] = choice;
+                        if (!checks.length) list.replaceChildren();
+                        addCheck(path);
+                        for (const oldKey of stale) chosen.delete(oldKey);
+                        warning.hidden = true;
+                        chosen.add(JSON.stringify([id, path]));
+                        phase.checked = true;
+                        list.hidden = false;
+                        updateInputs();
+                    }));
                 group.append(warning);
                 editor.append(group);
             }
@@ -427,5 +513,6 @@ export function mount({ root, rule, inputs, phases, outputs, onChange }) {
         return "";
     };
     return { isReady: () => !validationError(), validationError, selectedPhases,
+        handlesOutputDeclaration: true,
         dispose() { root.replaceChildren(); } };
 }

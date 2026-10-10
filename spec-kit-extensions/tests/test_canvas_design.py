@@ -17,8 +17,8 @@ from jsonschema import Draft202012Validator, ValidationError
 EXTENSIONS = Path(__file__).resolve().parents[1]
 EXTENSION_ID = "extension-canvas-design"
 PACKAGE = EXTENSIONS / EXTENSION_ID
-PAGE_NAMES = ("essentials", "outputs", "badges", "appearance")
-PAGE_IDS = ("essentials", "artifacts", "badges", "appearance")
+PAGE_NAMES = ("essentials", "badges", "appearance")
+PAGE_IDS = ("essentials", "badges", "appearance")
 FILES = {
     "extension.yml",
     "README.md",
@@ -58,18 +58,21 @@ FILES = {
     "designer-host/badges-settings/badge-types.json",
     "designer-host/badge-input-controls/stock/control.json",
     "designer-host/badge-input-controls/stock/designer.mjs",
+    *(f"designer-host/badge-input-controls/{name}/{filename}" for name in (
+        "checklist", "ordered-stale", "phase-artifact",
+    ) for filename in ("control.json", "designer.mjs")),
     *(f"designer-host/badge-input-controls/stock/bindings/{name}.json" for name in (
         "value-match", "artifact-current", "artifact-stale", "markdown-file-count",
-        "checklist-progress", "checklist-complete", "work-complete",
+        "checklist-progress", "checklist-complete",
         "phase-run-complete", "phase-artifact-complete",
     )),
     *(f"generated-host/badges/rules/{name}.json" for name in (
         "value-match", "artifact-current", "checklist-progress", "markdown-file-count",
-        "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
+        "checklist-complete", "phase-run-complete", "artifact-stale",
         "phase-artifact-complete",
     )),
     *(f"generated-host/badges/adapters/{name}.mjs" for name in (
-        "content", "artifact-state", "run", "phase-artifact-complete",
+        "content", "artifact-state", "ordered-stale", "run", "phase-artifact-complete",
     )),
     "shared-controls/stock-image/control.json",
     "shared-controls/stock-image/designer.mjs",
@@ -174,21 +177,27 @@ class CanvasDesignPackageTests(unittest.TestCase):
             + [("badges-settings", "designer-host/badges-settings/badge-types.json")]
             + [(f"badge-rule-{name}", f"generated-host/badges/rules/{name}.json")
                for name in ("value-match", "artifact-current", "checklist-progress",
-                            "markdown-file-count", "checklist-complete", "work-complete",
+                            "markdown-file-count", "checklist-complete",
                             "phase-run-complete", "phase-artifact-complete", "artifact-stale")]
             + [(f"badge-rule-{name}-adapter", f"generated-host/badges/adapters/{name}.mjs")
-               for name in ("content", "artifact-state", "run")]
+               for name in ("content", "artifact-state", "ordered-stale", "run")]
             + [("badge-rule-phase-artifact-complete-adapter",
                 "generated-host/badges/adapters/phase-artifact-complete.mjs")]
             + [("designer-badge-input-stock",
                 "designer-host/badge-input-controls/stock/control.json"),
                ("designer-badge-input-stock-adapter",
                 "designer-host/badge-input-controls/stock/designer.mjs")]
+            + [(name, f"designer-host/badge-input-controls/{control}/{filename}")
+               for control in ("checklist", "phase-artifact", "ordered-stale")
+               for name, filename in (
+                   (f"designer-badge-input-{control}", "control.json"),
+                   (f"designer-badge-input-{control}-adapter", "designer.mjs"),
+               )]
             + [(f"designer-badge-binding-{name}",
                 f"designer-host/badge-input-controls/stock/bindings/{name}.json")
                for name in ("value-match", "artifact-current", "artifact-stale",
                             "markdown-file-count", "checklist-progress",
-                            "checklist-complete", "work-complete", "phase-run-complete",
+                            "checklist-complete", "phase-run-complete",
                             "phase-artifact-complete")]
             + [(name, f"shared-controls/stock-{control}/{filename}")
                for control in ("image", "text", "checkbox")
@@ -259,11 +268,11 @@ class CanvasDesignPackageTests(unittest.TestCase):
             with self.subTest(page=page["id"]):
                 self.validator.validate(page)
                 self.assertEqual(page["id"], f"designer-{PAGE_IDS[index]}")
-                self.assertEqual(page["order"], (10, 20, 25, 30)[index])
+                self.assertEqual(page["order"], (10, 25, 30)[index])
                 self.assertTrue(page["enabled"])
         self.assertEqual(
             [page["title"] for page in self.pages],
-            ["Essentials", "Outputs", "Badges", "Appearance"],
+            ["Essentials", "Badges", "Appearance"],
         )
         self.assertEqual(
             self.pages[0]["fields"],
@@ -597,6 +606,20 @@ class CanvasDesignPackageTests(unittest.TestCase):
         ):
             with self.subTest(contract=required):
                 self.assertIn(required, normalized)
+
+    def test_base_command_registers_every_manifest_template(self):
+        section = self.command.split("## Canvas Design templates\n", 1)[1].split("## Steps\n", 1)[0]
+        declarations = re.findall(
+            r"^- `([a-z][a-z0-9-]*)` — `([^`]+)`, `replace`$",
+            section, re.M,
+        )
+        manifest_names = [
+            template["name"] for template in self.manifest["provides"]["templates"]
+        ]
+        self.assertCountEqual(
+            [name for name, _kind in declarations],
+            manifest_names[len(PAGE_IDS):],
+        )
 
     def test_documented_normal_install_and_provider_boundary(self):
         readme = (PACKAGE / "README.md").read_text("utf-8")

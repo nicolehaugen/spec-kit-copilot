@@ -128,9 +128,18 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     let deleting = false;
     let closed = false;
     const liveRuns = new Set();
+    // Recovered turn evidence controls display, not report authorization.
+    const recoveredActiveRuns = new Set();
     const busy = { value: false };
     const subscriptions = [];
     const observedMessages = new Set();
+    function pendingRunStatus(run) {
+        if (!run) return "Not started";
+        const active = recoveryRuns.has(run.runId)
+            ? recoveredActiveRuns.has(run.runId) : liveRuns.has(run.runId);
+        return !active && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)
+            ? "Unconfirmed" : run.status;
+    }
     function runActivity(run, events) {
         if (recoveryRuns.has(run.runId) && idleAfterRestart && !busy.value) return "ended";
         if (idleAfterRestart && busy.value) return "active";
@@ -427,7 +436,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                     await diagnostic(`Generated canvas artifact availability failed: ${artifactError}`);
                 }
             }
-            const status = run?.status ?? "Not run";
+            const status = run ? newItem(item) ? pendingRunStatus(run) : run.status : "Not run";
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
@@ -477,16 +486,24 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             if (id === item && run && recovery) statuses[run.phase].error = recovery;
             return { id, slug: config.userProvidesSlug ? slug : "",
                 label: name.trim() || "Unstarted workflow", pending: true,
-                status: run?.status ?? "Not started",
+                status: pendingRunStatus(run),
                 hasWorkflowRunHistory: Boolean(run), workflowRecoveryMessage: recovery };
         }));
+        const creationOrder = new Map();
+        view.runs.forEach((run, index) => {
+            if (!newItem(run.item) && !run.before.includes(run.item)) {
+                creationOrder.set(run.item, index);
+            }
+        });
+        const listed = entries.toSorted((left, right) =>
+            (creationOrder.get(right.id) ?? -1) - (creationOrder.get(left.id) ?? -1));
         return { ...view, userProvidesSlug: config.userProvidesSlug,
             constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
             autopilot: automation, showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             name: pendingFor(item, view)?.name ?? view.name,
             slug: config.userProvidesSlug ? pendingFor(item, view)?.slug ?? view.slug : "",
-            phases, items: [...entries, ...pending],
+            phases, items: [...pending.toReversed(), ...listed],
             statuses, valueFields: visibleValues, pageValues, valueErrors,
             ...(badges ? { badges } : {}),
             setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
@@ -1085,6 +1102,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
     async function capture() {
         const events = await session.getEvents();
         let finishedAutomation;
+        const activeRecovered = new Set();
         await update((next) => {
             for (const run of next.runs) {
                 if (run.autopilotId) continue;
@@ -1102,6 +1120,9 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                         run.error = "The app restarted before this request could be tracked. Check chat. Once the session is idle, you can confirm Discard pending row if no workflow folder appeared.";
                     }
                 }
+                if (recoveryRuns.has(run.runId) && run.messageId
+                    && phaseTurnState(events, run.messageId).active
+                    && runActivity(run, events) === "active") activeRecovered.add(run.runId);
                 if (run.sessionId !== session.sessionId || !run.messageId || run.status === "Failed"
                     || run.status === "Completed" && (!newItem(run.item) || run.artifact || run.confirmedSlug)) continue;
                 const response = phaseResponse(events, run.messageId);
@@ -1138,6 +1159,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 }
             }
         });
+        recoveredActiveRuns.clear();
+        for (const runId of activeRecovered) recoveredActiveRuns.add(runId);
         if (finishedAutomation) {
             liveRuns.delete(finishedAutomation);
             for (const run of state.runs.filter((run) => run.autopilotId === finishedAutomation)) {

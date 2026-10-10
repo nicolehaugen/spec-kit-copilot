@@ -68,7 +68,7 @@ Each contribution has a stable ID, contract version, target host (`designer`, `g
 
 A tagged preset can register a **control type previously unknown to either canvas**. To render in both, it supplies a Designer adapter, a generated adapter, and a compatible typed value or action contract. A Designer adapter does not automatically render in the generated host. Missing adapters, incompatible schemas, or unavailable host capabilities produce clear errors—not an unrelated fallback widget.
 
-The **Canvas Design Specify Extension is the base contributor to declarative fields, slots, and values**. Its stock text, checkbox, and image types each have a replace-only definition and Designer adapter. A generated adapter is registered for a visual placement, not for a behavior-only setting. Canvas ID and Title use a fixed Designer identity control rather than a replaceable stock text adapter; Outputs uses a fixed phase-artifacts control. The shell enforces their presence and validity. Presets can reuse stock contracts and supply their own types, such as the risk matrix, through the same resolution path.
+The **Canvas Design Specify Extension is the base contributor to declarative fields, slots, and values**. Its stock text, checkbox, and image types each have a replace-only definition and Designer adapter. A generated adapter is registered for a visual placement, not for a behavior-only setting. Canvas ID and Title use a fixed Designer identity control rather than a replaceable stock text adapter; output evidence is validated and persisted by the shell without a page. The shell enforces these invariants. Presets can reuse stock contracts and supply their own types, such as the risk matrix, through the same resolution path.
 
 **Specify’s role:** Specify already supports overriding and composing **commands, scripts, and templates**, but `specify preset resolve <name>` resolves named **templates**, not native script artifacts. First-version executable Canvas Design adapters and generated page/presentation modules are `.mjs` files declared as named `provides.templates` entries (`type: template`), not `type: script` entries. Extension-provided templates have implicit replace semantics; preset-provided executable templates explicitly set `strategy: replace`. Specify applies named-file precedence and whole-file replacement; a winning `replace` replaces the lower-layer file in full. Registering a **new logical name** adds to the resolved inventory regardless of replace semantics, which affect only layers sharing that name. The **Canvas Design integration** interprets only final resolved files as slots, fields, controls, and adapter registrations; it does not replay preset stacks or arbitrate preset precedence. Specify does not need a native “slot” or “control” feature.
 
@@ -197,6 +197,14 @@ placements fail validation before generation. The separate badge capability
 evaluates frozen adapters against declared evidence, computes per-workflow
 matches and matching-workflow summary counts, and passes presentation-ready
 results to the page. The page does not read files or decide badge outcomes.
+
+An optional `replacementGroup` on a badge type requires a rule with a target
+phase artifact. After all instances match and summary totals are counted, the
+generated badge host displays only matching group members at the furthest
+workflow phase independently for workflow-list and phase-card placements;
+same-phase ties remain visible. The group is a presentation rule rather than
+an exclusive physical slot, and ungrouped badges are unaffected.
+
 The host-to-Workflow-page state requires a boolean `model.userProvidesSlug`
 (except before the first model arrives), matching the boolean
 `phaseState.slugEditable` passed to the phase control. False hides custom slug
@@ -345,7 +353,6 @@ spec-kit-extensions/extension-canvas-design/
   commands/load-page.md
   commands/generate.md
   designer-host/tabs/essentials.json        required identity fields and an optional-field slot
-  designer-host/tabs/outputs.json           Outputs page definition
   designer-host/tabs/appearance.json        Appearance slot for logo and palette contributions
   designer-host/essentials-settings/*.json  optional Essentials fields
   designer-host/appearance-settings/*.json  optional per-mode palette fields
@@ -377,7 +384,6 @@ spec-kit-extensions/extension-canvas-design/
     generate.md
   designer-host/tabs/
     essentials.json                    fixed identity control; optional-field slot
-    outputs.json                       fixed phase-artifacts control
     appearance.json                    palette/theme slot
   designer-host/essentials-settings/
     stock-essentials.json              optional Essentials fields
@@ -620,9 +626,6 @@ provides:
     - name: designer-essentials
       file: designer-host/tabs/essentials.json
       description: Required canvas identity fields and Essentials slot.
-    - name: designer-artifacts
-      file: designer-host/tabs/outputs.json
-      description: Outputs page with fixed phase-artifacts control.
     - name: designer-appearance
       file: designer-host/tabs/appearance.json
       description: Appearance page and palette slot.
@@ -697,43 +700,42 @@ tags:
 
 The appended command matches the base `load-page` command by its `type: command` and `name`, then names what that command must resolve; no `replaces` key is involved. Logical template names have no file extension even when the backing file is `.mjs`. Billing's new logical names add a page, field definition, and generated renderer to the inventory while reusing base stock-text adapters; their `strategy: replace` determines the winner only if another layer declares the **same name**. The later risk preset supplies its own two adapters shown in section 14. The `canvas-design` tag makes the preset discoverable in the Wizard Canvas; it does **not** activate Billing by itself. **Specify resolves effective templates; the Canvas Design integration interprets them.** Native script-kind adapters and `wrap` are deferred until Specify offers a CLI resolve/materialize interface for executable artifacts.
 
-## 16. How Outputs and Appearance fit
+## 16. How phase evidence and Appearance fit
 
-The `designer-artifacts` template ID remains stable, but its visible Designer
-page is **Outputs**. Its fixed phase-artifacts control renders the phase rows
-while the shell owns validation and persistence. Essentials has a fixed identity
+There is no Outputs page. The shell owns validation and persistence for
+Wizard-inferred phase artifacts and additional Markdown outputs declared while
+configuring badges. Essentials has a fixed identity
 control and an `essentials.options` slot for added fields.
 `designer-appearance` has a slot for optional light/dark palette fields and
 two logos. These are Designer pages, not automatically pages in the generated app.
 
 | Page | Proposed stock Designer contribution | What Generate packages into the app |
 | --- | --- | --- |
-| **Outputs** | Read-only Wizard-inferred pipeline artifacts, removable additional Markdown links, and a selected viewer target. Adding links does not create files or change pipeline outputs. | Validated links and one selected default per nonempty phase. The generated shell still owns artifact-path authorization, placeholder resolution, and file reads. |
 | **Appearance** | Optional per-mode accent, page background, card surface, secondary surface, and main text hex fields plus Header/Main page logos. | Validated per-mode palette overrides and packaged logo assets; blank fields preserve each existing color. |
 
-### Outputs: confirmed handoff
+### Phase artifacts: confirmed handoff
 
 The Wizard already infers `artifactEvidence`. Launch includes its Markdown file
 candidates and primary choice in the fingerprinted Designer handoff, without
 rerunning inference or changing the Wizard UI. Folder-only and no-file evidence
-produce empty phase sections; an output can still be added in Designer.
-
-The Outputs control shows **expected files**, not files that necessarily exist already. For each Wizard-selected phase except Constitution, the person configuring the Designer can:
-
-- Review pipeline artifacts without editing or removing them.
-- Add and remove extra viewer links, subject to path/type validation.
-- Select **one default reader target** from the listed artifacts.
-
-Removing a selected addition returns to the phase's original default. An empty
-phase shows a warning that the generated phase will have no View output button.
-The existing header Save persists edits and Generate writes the confirmed
-`phaseArtifacts` (`outputs` plus `view`), including explicit empty lists that
-must not fall back to canonical defaults. Each output appears as a viewer link
-on the generated phase card; the viewer button opens the selected default.
+produce empty phase evidence. Badge input adapters may declare an additional
+Markdown output for a non-Constitution phase using the host-validated declaration
+action when inference missed an expected file. Declaring a file does not create
+it immediately or change the inferred default viewer target. Phase runs receive
+the full expected output list, and generated phase cards offer additional output
+links. The header Save persists edits and Generate
+writes the confirmed `phaseArtifacts` (`outputs` plus `view`), including explicit
+empty lists that must not fall back to canonical defaults. A phase with watched
+files but no inferred viewer has `view: null` and no primary View button. The
+generated phase card retains the inferred default when one exists.
 The generated shell confines paths to the checkout and reports when a confirmed
 expected file has not yet been created.
 
-**Acceptance:** Outputs displays the existing Wizard evidence rather than independently inventing one in Designer or Generate. Additional links and per-phase defaults survive Generate. The generated reader opens the selected default when it exists; unsafe paths or a default not in the phase’s output list are rejected.
+**Acceptance:** Designer preserves the Wizard evidence rather than independently inventing it.
+Badge-declared expected files survive Save and Generate without changing the
+default View target.
+The generated reader opens the inferred default when it exists; unsafe paths or
+a non-null default outside the phase's output list are rejected.
 
 ### Appearance: palette and existing light/dark button
 
@@ -751,7 +753,7 @@ These details extend the implementation sequence in section 9; they do not repla
 2. Publish slot contracts so contributors know which IDs exist, what they accept, and how items are ordered. Reject unknown or incompatible targets.
 3. Use Specify’s command composition and replace-only named-template resolution for executable adapters, including its native project overrides; do not recheck each winner's package or layer against handoff approvals. Reject native script-kind adapters and non-replace executable contributions; defer `wrap` until Specify provides a CLI resolve/materialize interface. Have Canvas Design validate normal content/path safety, semantic conflicts, and effective JSON and module contracts among surviving files; do not assume Specify structurally merges JSON fields or repeat its precedence logic. For generated pages, the resolved artifact's declared kind, replace-only strategy, and winning template registration are acceptance gates: they establish which definition and renderer can be frozen and packaged. Other artifact metadata remains diagnostic, not a general import or packaging gate.
 4. Freeze **resolved module bytes and declared transitive assets**, not only paths or preset IDs. Validate hashes when generating.
-5. Treat the Wizard output-list PR as an **interface dependency for the later Artifacts milestone only**, not the initial two-preset slice. Keep Wizard and its handoff unchanged in this plan's early milestones. Integrate handed-off output data after that PR's contract lands; do not substitute fixtures or generator defaults and call them production Wizard output.
+5. Keep the Wizard output handoff authoritative. Do not substitute fixtures or generator defaults and call them production Wizard output.
 6. Test the generated app with design-time Canvas Design Specify Extension and tagged presets **absent**, while testing Specify CLI/Workflow Runtime Package readiness separately.
 
-**Expanded architectural completion test:** Select a `canvas-design`-tagged Billing preset in the Wizard Canvas; resolve it in the Designer child; edit Cost code in the Designer Canvas; review and correct Wizard-handoff outputs on Artifacts; choose a palette on Appearance; Generate. The Generated Workflow Canvas app then renders its **packaged** Billing control, confirmed viewer defaults, and selected palette without installing the Billing or Canvas Design design-time packages in the project where it opens.
+**Expanded architectural completion test:** Select a `canvas-design`-tagged Billing preset in the Wizard Canvas; resolve it in the Designer child; edit Cost code, declare any missing expected output files while configuring badges, choose a palette on Appearance, and Generate. The Generated Workflow Canvas app then renders its **packaged** Billing control, Wizard-inferred viewer defaults, additional output links and selected palette without installing the Billing or Canvas Design design-time packages in the project where it opens.
