@@ -1,5 +1,29 @@
 # speckit-wizard
 
+## Runtime settings
+
+Catalog locations are read from packaged `config/runtime-defaults.json`, with
+optional overrides in `~/.copilot/spec-kit/runtime-settings.json`. Set
+`SPECKIT_CONFIG_FILE` to an absolute settings-file path to select a different
+override instead. Explicit missing files, malformed JSON, unknown keys, and
+invalid values fail startup with an error rather than reverting to defaults.
+
+Overrides support `catalogs.copilot.presets/extensions`,
+`catalogs.default.presets/extensions/bundles`,
+`catalogs.community.presets/extensions/bundles`, `copilotCatalogName`, and
+boolean `generateCanvasEnabled`. URLs must be HTTPS without credentials or
+fragments. Restart/reload the provider after editing; no rebuild is needed.
+Use the repository's fork example and project-level local development skills
+for setup. A shell selector affects newly launched processes, not an app
+already running; the user-level file is the reliable desktop/child-session
+choice. Explicit selectors must also reach child processes when used there.
+
+Generate defaults off. A `generateCanvas: true` canvas open explicitly enables
+it for that instance; omitted input preserves the value on reopening. The
+server rejects disabled launch requests as well as hiding the UI button.
+Marketplace identity and release ZIP metadata are distribution configuration,
+not runtime settings. Existing handoffs retain their approved install URLs.
+
 A **visual, guided wizard** that brings Spec-Driven Development into an
 interactive canvas — a showcase of both the [Spec Kit `specify`
 CLI](https://github.com/github/spec-kit) and the
@@ -529,7 +553,7 @@ npm reconfiguration.
 | `canvas-runtime/` | Long-lived per-instance state: `instances.mjs`, `snapshot-builder.mjs` (pure state → snapshot), `snapshot.mjs` (broadcast), `watchers.mjs` (fs), `dispatch.mjs` (SDK action router), `wizard-phases.mjs` (phase list + `SKILL_BY_KIND`), `composition-apply.mjs`. |
 | `pipeline/` | Pipeline math: `canonical.mjs` (canonical phase vocabulary), `effective-phases.mjs`, `active-artifacts.mjs` (per-phase resolved artifacts), `validate.mjs`. |
 | `composition/` | Composition graph: `assembler.mjs` (composes preset/extension/bundle layers), `preset-loader.mjs`, `preset-order.mjs`, `collect.mjs` (companion CLI). |
-| `catalog/` | Catalog hydration for the Setup → Catalogs page: `sources.mjs` (hardcoded catalog URL table + `fetchCatalogJson`), `presets.mjs`, `extensions.mjs`, `bundles.mjs`, `shared.mjs`. |
+| `catalog/` | Catalog hydration for the Setup → Catalogs page: `sources.mjs` (runtime-configured catalog URL table + `fetchCatalogJson`), `presets.mjs`, `extensions.mjs`, `bundles.mjs`, `shared.mjs`. |
 | `env/` | Environment probe + PATH resolution: `probe.mjs`, `probe-cache.mjs`, `resolve-path.mjs` (locates `copilot`/`specify` binaries when the SDK dir isn't on `PATH`), `deps-check.mjs`, `workspace.mjs`. |
 | `state/` | `.speckit-wizard/state.json` read / write / normalize: `store.mjs`, `normalize.mjs`, `execution-reports.mjs`. |
 | `ui/` | Dashboard UI served to the canvas iframe: `index.html`, `app.js`, `client.js`, plus per-page modules (`setup.js`, `catalog.js`, `composition.js`, `composition-artifacts.js`, `phase-card.js`, `phase-contributors.js`, `phase-runtime.js`, `state.js`, `modals.js`). |

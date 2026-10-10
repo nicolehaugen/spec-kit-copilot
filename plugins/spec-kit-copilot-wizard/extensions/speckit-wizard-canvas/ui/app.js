@@ -1,6 +1,7 @@
 // Consolidated app.js entrypoint + log + cwd renderers.
 
 import { parseClarifications } from "../pipeline/canonical.mjs";
+import { readGenerateCanvas } from "../contracts/generate-feature.mjs";
 import {
     state,
     TOKEN,
@@ -238,6 +239,7 @@ async function refreshState() {
         const res = await fetch(`/api/state?token=${encodeURIComponent(TOKEN)}`, { headers: HEADERS });
         if (!res.ok) throw new Error(`state ${res.status}`);
         const snap = await res.json();
+        readGenerateCanvas(snap);
         state.snapshot = snap;
         reconcileCompositionRefresh(snap);
         // Seed boot overlay from initial snapshot so the panel reflects

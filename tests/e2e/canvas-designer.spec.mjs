@@ -14,6 +14,10 @@ const LOCAL_CANVAS_DESIGN_PATH = fileURLToPath(
 ).replace(/[\\/]$/, "");
 const localPreset = await validateLocalSource("presets", LOCAL_PRESET_PATH);
 const localCanvasDesign = await validateLocalSource("extensions", LOCAL_CANVAS_DESIGN_PATH);
+const LOCAL_VERTICAL_CONTROL_PATH = fileURLToPath(
+    new URL("../../spec-kit-presets/copilot-vertical-phase-control", import.meta.url),
+).replace(/[\\/]$/, "");
+const localVerticalControl = await validateLocalSource("presets", LOCAL_VERTICAL_CONTROL_PATH);
 
 async function expectQueuedLaunch(response) {
     const body = await response.json();
@@ -264,6 +268,29 @@ test("checked worktree Canvas Design extension is included in the launch request
     await expectQueuedLaunch(response);
     expect(response.request().postDataJSON().localSelections).toEqual({
         extensions: [{ id: "extension-canvas-design", path: LOCAL_CANVAS_DESIGN_PATH }],
+    });
+
+});
+
+test("local Generate carries both Canvas Design and vertical phase control selections", async ({ page }) => {
+    const dialog = page.getByRole("dialog", { name: "Canvas Designer setup" });
+    const localSection = dialog.locator("[data-designer-local]");
+    await localSection.locator("summary").click();
+    for (const path of [LOCAL_CANVAS_DESIGN_PATH, LOCAL_VERTICAL_CONTROL_PATH]) {
+        await localSection.locator("[data-designer-local-path]").fill(path);
+        await localSection.locator("[data-designer-local-add]").click();
+        await expect(localSection.locator("[data-designer-local-add]")).toBeEnabled();
+    }
+    await expect(localSection.locator(".designer-local-item")).toHaveCount(2);
+    await expect(localSection).toContainText(`${localVerticalControl.id} · v${localVerticalControl.version}`);
+    const responsePromise = page.waitForResponse((response) =>
+        response.url().includes("/api/designer/launch") && response.request().method() === "POST");
+    await dialog.getByRole("button", { name: "Launch designer" }).click();
+    const response = await responsePromise;
+    await expectQueuedLaunch(response);
+    expect(response.request().postDataJSON().localSelections).toEqual({
+        extensions: [{ id: "extension-canvas-design", path: LOCAL_CANVAS_DESIGN_PATH }],
+        presets: [{ id: "copilot-vertical-phase-control", path: LOCAL_VERTICAL_CONTROL_PATH }],
     });
 });
 
