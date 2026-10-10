@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { materialize, readBoundedSessionFile, renameDirectoryWithoutReplacement } from "../extension-canvas-design/scripts/generate.mjs";
+import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
 import { freezeGeneration } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
 import { addDesignerAdapterFixture } from "./designer_adapter_fixture.mjs";
@@ -33,7 +35,7 @@ handoff.sourceFingerprint = createHash("sha256").update(JSON.stringify({
     workflow: handoff.workflow, selections: handoff.selections,
 })).digest("hex");
 
-async function fixture(t) {
+async function fixture(t, generate = true) {
     const root = await mkdtemp(join(process.cwd(), ".guarded-regeneration-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const project = join(root, "project"), workspace = join(root, "workspace");
@@ -51,30 +53,23 @@ async function fixture(t) {
     const sdk = join(project, ".github", "extensions", values["canvas.id"]);
     const next = await freezeGeneration({ project, workspace, model,
         values: { ...values, "canvas.displayName": "Second" }, handoff });
-    await materialize(project, workspace, handoff.handoffId, first.requestId);
+    if (generate) await materialize(project, workspace, handoff.handoffId, first.requestId);
     const regenerate = (replaceExisting) =>
         materialize(project, workspace, handoff.handoffId, next.requestId, replaceExisting);
     return { project, workspace, sdk, first, next, regenerate };
 }
 
-test("directory publication refuses occupied empty targets without losing either directory", async (t) => {
-    const root = await mkdtemp(join(process.cwd(), ".guarded-publication-"));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const staged = join(root, "staged"), output = join(root, "canvas");
-    await mkdir(staged);
-    await writeFile(join(staged, "extension.mjs"), "export {};");
-    await mkdir(output);
-    await assert.rejects(renameDirectoryWithoutReplacement(staged, output),
-        /EEXIST|EPERM|EACCES/);
-    assert.deepEqual(await readdir(output), []);
-    assert.equal(await readFile(join(staged, "extension.mjs"), "utf8"), "export {};");
-    await rm(output, { recursive: true });
-    await renameDirectoryWithoutReplacement(staged, output);
-    assert.equal(await readFile(join(output, "extension.mjs"), "utf8"), "export {};");
+test("direct generation refuses occupied empty targets without changing them", async (t) => {
+    const { project, workspace, sdk, first } = await fixture(t, false);
+    await mkdir(sdk, { recursive: true });
+    await assert.rejects(materialize(project, workspace, handoff.handoffId, first.requestId),
+        /Canvas extension already exists/);
+    assert.deepEqual(await readdir(sdk), []);
 });
 
 test("replacement requires explicit confirmation and preserves the old app on cancellation", async (t) => {
     const { sdk, first, regenerate } = await fixture(t);
+    const directory = await lstat(sdk);
     const before = await readFile(join(sdk, "canvas-config.json"), "utf8");
     await assert.rejects(regenerate(false), /already exists/);
     assert.equal(await readFile(join(sdk, "canvas-config.json"), "utf8"), before);
@@ -84,6 +79,7 @@ test("replacement requires explicit confirmation and preserves the old app on ca
         /Canvas changed since replacement was confirmed/);
     assert.equal(await readFile(join(sdk, "canvas-config.json"), "utf8"), before);
     await regenerate(`--replace-existing=${first.requestId}`);
+    assert.equal((await lstat(sdk)).ino, directory.ino);
     assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.displayName, "Second");
     assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
 });
@@ -159,28 +155,64 @@ test("replacement refuses symlinked canvas and symlinked contents", async (t) =>
     assert.ok((await lstat(join(sdk, "manual-link.mjs"))).isSymbolicLink());
 });
 
-test("renderer failure during staging rolls back without touching the prior app", async (t) => {
-    const { sdk, workspace, first, regenerate } = await fixture(t);
-    const previous = await readFile(join(sdk, "extension.mjs"));
-    const preload = join(workspace, "fail-renderer.cjs");
-    await writeFile(preload, `if (process.execArgv.includes("-e")
-        && process.argv[1]?.endsWith("/server.mjs")) {
-        throw new Error("Renderer fixture failure");
-    }`);
-    const previousOptions = process.env.NODE_OPTIONS;
-    process.env.NODE_OPTIONS = [previousOptions,
-        `--require="${preload.replaceAll("\\", "\\\\")}"`]
-        .filter(Boolean).join(" ");
+test("failed direct creation or regeneration removes its output and can be retried", async (t) => {
+    for (const generate of [false, true]) {
+        const { project, sdk, workspace, first, next, regenerate } = await fixture(t, generate);
+        const preload = join(workspace, "fail-renderer.cjs");
+        await writeFile(preload, `if (process.execArgv.includes("-e")
+            && process.argv[1]?.endsWith("/server.mjs")) {
+            const { existsSync } = require("node:fs");
+            const { fileURLToPath } = require("node:url");
+            const { dirname, join } = require("node:path");
+            if (existsSync(join(dirname(fileURLToPath(process.argv[1])), "extension.mjs"))) {
+                throw new Error("Entry point exposed before render validation");
+            }
+            throw new Error("Renderer fixture failure");
+        }`);
+        const previousOptions = process.env.NODE_OPTIONS;
+        process.env.NODE_OPTIONS = [previousOptions,
+            `--require="${preload.replaceAll("\\", "\\\\")}"`]
+            .filter(Boolean).join(" ");
+        try {
+            const run = generate ? regenerate(`--replace-existing=${first.requestId}`)
+                : materialize(project, workspace, handoff.handoffId, next.requestId);
+            await assert.rejects(run, (error) => {
+                assert.match(error.message, /Workflow renderer failed:/);
+                assert.match(error.message, /Renderer fixture failure/);
+                return true;
+            });
+        } finally {
+            if (previousOptions === undefined) delete process.env.NODE_OPTIONS;
+            else process.env.NODE_OPTIONS = previousOptions;
+        }
+        await assert.rejects(lstat(sdk), /ENOENT/);
+        assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
+        await materialize(project, workspace, handoff.handoffId, next.requestId);
+        assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.displayName, "Second");
+    }
+});
+
+test("failed cleanup reports both errors and the target path", async (t) => {
+    const { sdk, first, regenerate } = await fixture(t);
+    const originalRm = fs.rm;
+    fs.rm = async (path, options) => {
+        if (path === join(sdk, "extension.mjs") || path === sdk) {
+            throw Object.assign(new Error("Locked canvas fixture"), { code: "EPERM" });
+        }
+        return originalRm(path, options);
+    };
+    syncBuiltinESMExports();
     try {
         await assert.rejects(regenerate(`--replace-existing=${first.requestId}`), (error) => {
-            assert.match(error.message, /Workflow renderer failed:/);
-            assert.match(error.message, /Renderer fixture failure/);
+            assert.ok(error instanceof AggregateError);
+            assert.equal(error.errors.length, 2);
+            assert.ok(error.message.includes(sdk));
+            assert.match(error.message, /Locked canvas fixture/);
             return true;
         });
     } finally {
-        if (previousOptions === undefined) delete process.env.NODE_OPTIONS;
-        else process.env.NODE_OPTIONS = previousOptions;
+        fs.rm = originalRm;
+        syncBuiltinESMExports();
     }
-    assert.deepEqual(await readFile(join(sdk, "extension.mjs")), previous);
-    assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
+    assert.ok((await lstat(sdk)).isDirectory());
 });

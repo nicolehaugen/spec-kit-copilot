@@ -46,6 +46,8 @@ test("the entry point becomes visible only after generated syntax and rendering 
     const published = source.indexOf('await writeFile(join(target, "extension.mjs"), files.at(-1)[1]');
     assert.ok(checked > 0 && checked < rendered && rendered < published);
     assert.equal(source.match(/writeFile\(join\(target, "extension\.mjs"\)/g)?.length, 1);
+    assert.match(source, /const target = output;/);
+    assert.doesNotMatch(source, /\b(?:rename|mkdtemp|publishStagedDirectory)\(/);
 });
 
 const model = {

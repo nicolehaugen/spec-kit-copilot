@@ -232,8 +232,10 @@ Generation requires both separate Generate and Open skills and a complete
 Wizard handoff; a hosted package with only the older combined Generate command
 is blocked rather than silently reloading Designer.
 For a verified same-handoff target, **Regenerate canvas** confirms that all
-files, including manual edits, will be overwritten. The generator stages and
-validates replacement, then swaps directories with rollback; foreign or
+files, including manual edits, will be overwritten. The generator clears and
+rebuilds the final directory in place without staging, backup, or rollback.
+It writes the entry point only after validation and removes failed output so
+Generate can be retried; cleanup failures require folder inspection. Foreign or
 incomplete output is not replaceable. The server rejects replacement fields
 when the target is absent; creation must be submitted without replacement,
 and replacement requires the matching verified prior request ID. If a target
@@ -245,7 +247,8 @@ the generated folder afterward.
 An accepted regeneration waits for its own verified output before enabling
 Open or Share, so the previous published version cannot disconnect Designer
 while replacement is pending. If regeneration fails or stalls, reopen Designer
-to clear that panel-local wait and recheck the previously published files.
+to clear that panel-local wait and recheck the target. Failed regeneration does
+not preserve the previous files; when cleanup succeeds, Generate can start again.
 Before dispatch, the Open step warns that registration disconnects Designer
 and shows the child-chat guidance. Generate and Open stay disabled after the
 opening request is accepted; an error before acceptance restores them. The

@@ -627,11 +627,15 @@ and packaged workflow UI, theme, routes, and runtime modules into a new
 `.github/extensions/<canvas-id>/` directory, alongside the frozen configuration.
 The entry point uses `joinSession` and `createCanvas` to register actions and a
 loopback HTTP server with open/close lifecycle handling. Generation does not call
-`create-canvas` or rewrite an SDK scaffold. It stages and validates the completed extension before moving it into place.
+`create-canvas` or rewrite an SDK scaffold. It writes directly into the final
+directory without staging-directory renames.
 An existing target stops generation unless the Designer confirms a recognizable
 same-handoff target and passes its prior request ID; confirmed regeneration
-replaces that folder, including manual edits, with rollback on failure. Publishing
-and rollback refuse an occupied destination, including an empty directory.
+clears and rebuilds that directory in place, including manual edits, without
+backup or rollback. New creation refuses any occupied destination, including an
+empty directory. Failed generation removes its owned output so Generate can be
+retried; failed regeneration does not restore the previous canvas. Cleanup
+failures report the target path and error for inspection.
 Designer saves settings before dispatching Generate, then restores editing
 after the bounded submission. The entry point is written only after syntax
 and render validation succeeds. Generate does not reload or open the canvas.
