@@ -101,8 +101,8 @@ versioned shape without importing the separately packaged provider at runtime.
 1. Register the marketplace and install it (see [Install](#install)):
 
 ```bash
-  copilot plugin marketplace add OWNER/spec-kit-copilot
-   copilot plugin install spec-kit-copilot-wizard@spec-kit-staging
+copilot plugin marketplace add https://github.com/nicolehaugen/spec-kit-copilot.git#staging-canvas
+copilot plugin install spec-kit-copilot-wizard@spec-kit-staging
 ```
 2. Ask Copilot in chat: **"Open the Spec Kit Wizard"**.
 
