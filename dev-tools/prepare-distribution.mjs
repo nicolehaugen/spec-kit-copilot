@@ -16,7 +16,10 @@ function exactObject(value, keys, label) {
 }
 
 export function validateDistribution(value) {
-  exactObject(value, ['repository', 'catalogRef', 'marketplace'], 'distribution settings');
+  exactObject(value, ['repository', 'catalogRef', 'copilotCatalogName', 'marketplace'], 'distribution settings');
+  if (typeof value.copilotCatalogName !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.copilotCatalogName)) {
+    throw new Error('Invalid Copilot catalog name.');
+  }
   if (typeof value.repository !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value.repository) ||
       value.repository.split('/').some(part => part === '.' || part === '..')) throw new Error('Invalid GitHub repository.');
   if (typeof value.catalogRef !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value.catalogRef) ||
@@ -94,8 +97,8 @@ export async function prepareDistribution(config, options = {}, { repositoryRoot
       `copilot plugin marketplace update ${config.marketplace.name}`,
       `copilot plugin install spec-kit-copilot-wizard@${config.marketplace.name}`,
       `copilot plugin install spec-kit-copilot@${config.marketplace.name}`,
-      `specify extension catalog add ${locators.catalogs.extensions} --name spec-kit-copilot --install-allowed`,
-      `specify preset catalog add ${locators.catalogs.presets} --name spec-kit-copilot --install-allowed`,
+      `specify extension catalog add ${locators.catalogs.extensions} --name ${config.copilotCatalogName} --install-allowed`,
+      `specify preset catalog add ${locators.catalogs.presets} --name ${config.copilotCatalogName} --install-allowed`,
     ],
     notice: 'Only local marketplace and two catalog entries are prepared. Versions, requirements, unrelated packages and workflows are unchanged. Commands are NOT executed; commit, push, tags, releases and documentation updates are separate authorized operations.',
   };

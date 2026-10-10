@@ -1,6 +1,7 @@
 {
   "repository": "nicolehaugen/spec-kit-copilot",
   "catalogRef": "staging-canvas",
+  "copilotCatalogName": "spec-kit-staging",
   "marketplace": {
     "name": "spec-kit-staging",
     "ownerName": "Spec Kit Staging",

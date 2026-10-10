@@ -84,6 +84,11 @@ Personal skills remain untouched. Run `/skills reload` and verify project discov
 
 ### Distribution and releases
 
+Distribution configuration requires `copilotCatalogName` for the printed
+extension/preset registration commands. Set it to the same registration name
+as the runtime settings used for that distribution; preparation does not
+change runtime settings or migrate existing registrations.
+
 Metadata changes are staged before application. If an apply fails, earlier
 writes are rolled back and the error lists retained backups. A rollback conflict
 or filesystem failure is reported explicitly for manual recovery; this is not a

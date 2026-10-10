@@ -9,6 +9,7 @@ import { distributionFixture, readJson, repositoryRoot, workspace, write } from 
 
 const config = {
   repository: 'example/spec-kit-fork', catalogRef: 'feature/catalogs',
+  copilotCatalogName: 'test-copilot-catalog',
   marketplace: { name: 'fork-marketplace', ownerName: 'Fork Maintainer', description: 'Fork description' },
 };
 
@@ -22,7 +23,9 @@ test('distribution preview/apply updates only owned metadata, preserves formatti
   assert.equal(preview.applied, false);
   assert.deepEqual(await Promise.all([marketplacePath, presetsPath, extensionsPath].map(path => readFile(path, 'utf8'))), original);
   assert.match(preview.commands[0], /\.git#feature\/catalogs/);
-  assert.match(preview.commands[4], /catalog add https:.* --name \S+ --install-allowed/);
+  for (const [index, kind] of [[4, 'extensions'], [5, 'presets']]) {
+    assert.ok(preview.commands[index].includes(`catalog add ${preview.locators.catalogs[kind]} --name ${config.copilotCatalogName} --install-allowed`));
+  }
   const applied = await prepareDistribution(config, { apply: true, expect: preview.expect }, { repositoryRoot: root });
   assert.equal(applied.backups.length, 3);
   for (let i = 0; i < original.length; i++) assert.equal(await readFile(applied.backups[i], 'utf8'), [original[0], original[2], original[1]][i]);
@@ -79,6 +82,10 @@ test('custom fields and changed inputs are preserved; stale apply and incompatib
 test('distribution settings reject unsupported fields, unsafe locators and invalid metadata', () => {
   for (const value of [
     { ...config, automaticPublish: true },
+    { ...config, copilotCatalogName: undefined },
+    { ...config, copilotCatalogName: '' },
+    { ...config, copilotCatalogName: 'Invalid Name' },
+    { ...config, copilotCatalogName: 'catalog;publish' },
     { ...config, repository: '../invalid' },
     { ...config, repository: 'https://github.com/example/repo' },
     { ...config, catalogRef: 'main; publish' },

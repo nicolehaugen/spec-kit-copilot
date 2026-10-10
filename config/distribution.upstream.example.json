@@ -1,6 +1,7 @@
 {
   "repository": "github/spec-kit-copilot",
   "catalogRef": "main",
+  "copilotCatalogName": "spec-kit-copilot",
   "marketplace": {
     "name": "spec-kit-marketplace",
     "ownerName": "Spec Kit",
