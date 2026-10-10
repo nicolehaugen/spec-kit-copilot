@@ -140,6 +140,14 @@ jobs:
       - name: Install Designer test dependencies
         run: npm ci --omit=dev --no-audit --no-fund --prefix plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer
 
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install Specify CLI
+        run: |
+          uv tool install specify-cli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/specify" --version
+
       - name: Test Wizard Designer handoff against the catalog
         run: |
           npm ci --omit=dev --no-audit --no-fund --prefix plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas

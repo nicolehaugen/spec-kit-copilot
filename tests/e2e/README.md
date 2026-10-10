@@ -10,7 +10,15 @@ effects.
 
 Routine Playwright tests do not run a Copilot model. Use the real Wizard UI and
 record its `session.send` launch prompt, including the exact `HANDOFF_JSON`
-bytes. A test driver stands in only for the child agent's orchestration:
+bytes.
+
+Generate journeys explicitly opt in with `featureFlags: { generateCanvas: true }`
+in their Wizard snapshot and `generateCanvas: true` on the server-side instance.
+Both are required: the snapshot controls button visibility, while the instance
+controls launch authorization. Other Wizard journeys keep Generate disabled by
+default; do not rely on a developer's local runtime settings.
+
+A test driver stands in only for the child agent's orchestration:
 
 1. Write those bytes unchanged to the child session's handoff artifact, check
    its SHA-256, and load it through the Designer's handoff reader. Do not

@@ -127,6 +127,7 @@ async function generate(page, journey, dispatched, id, {
         await route.fulfill({ json: state });
     });
     await page.reload();
+    await expect(page.locator("#workflow-rows [data-workflow-id]").first()).toBeVisible();
     return { request, ...served };
 }
 
