@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { UserError } from "../extension-canvas-design/generated-scaffold/files.mjs";
 import { errorPayload } from "../extension-canvas-design/generated-scaffold/server.mjs";
+import * as controlBoundary from "../extension-canvas-design/generated-scaffold/contracts/external-generated-controls.mjs";
 
 const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
     import.meta.url), "utf8").then((text) => text.replaceAll("\r\n", "\n"));
@@ -617,6 +618,7 @@ function harness({ placements, fields = [], pageSlots = [], adapter = null }) {
     const state = { revision: 1, valueFields: fields, valueErrors: {}, pageValues: {},
         phases: [], statuses: {}, items: [], selected: "__new__", drafts: {} };
     const context = {
+        ...controlBoundary,
         document, JSON, Map, Set, Object, Boolean, String, Promise,
         token: "test", renderStockImage: async (root, field, asset) => {
             images.push({ field, asset });

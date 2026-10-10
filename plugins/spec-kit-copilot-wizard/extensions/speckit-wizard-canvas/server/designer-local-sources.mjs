@@ -284,7 +284,7 @@ export async function readDesignerContract(path) {
         || await realpath(schemas) !== schemas) {
         throw new Error("Canvas Design schemas must be a real directory in the local package");
     }
-    const file = "designer.tab-definition.schema.json";
+    const file = "external-designer.tab-definition.schema.json";
     const text = await readBoundedManifest(join(schemas, file),
         { file }, schemas);
     let contract;

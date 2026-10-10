@@ -56,3 +56,33 @@ export function checkSchema(value, schema, location) {
         throw new Error(`${location}: out of range`);
     }
 }
+
+export function validateTemplateRegistration(inventory, item, executable = false) {
+    const info = inventory.get(`template:${item.name}`);
+    const layers = info?.stack;
+    const winner = layers?.find((layer) => layer?.active === true);
+    const sourceLayer = item.sourceId === undefined ? undefined
+        : item.sourceId === "project" ? "project"
+            : item.sourceId.startsWith("extension:") ? "extension" : "preset";
+    const sourceId = sourceLayer === "project" ? "_"
+        : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
+    if (info?.id !== `template:${item.name}` || info.kind !== "template"
+        || info.name !== item.name || !Array.isArray(layers) || !layers.length
+        || layers.some((layer) => !layer || layer.strategy !== "replace")
+        || layers.filter((layer) => layer.active === true).length !== 1
+        || !winner || (sourceLayer !== undefined
+            && (winner.sourceId !== sourceId || winner.layer !== sourceLayer))
+        || typeof winner.sourcePath !== "string" || !winner.sourcePath) {
+        throw new Error(`${item.name}: registration must be a replace-only Specify template from ${item.sourceId}`);
+    }
+    if (typeof winner.sourceId !== "string"
+        || !(winner.layer === "project" && winner.sourceId === "_"
+            || winner.layer === "extension" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId)
+            || winner.layer === "preset" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId))) {
+        throw new Error(`${item.name}: invalid active Specify template layer`);
+    }
+    if (executable && inventory.has(`script:${item.name}`)) {
+        throw new Error(`${item.name}: native Specify script registrations are not supported for executable adapters/renderers`);
+    }
+    return winner;
+}

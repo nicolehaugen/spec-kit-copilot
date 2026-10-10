@@ -10,7 +10,7 @@ import { validateConfirmedOutputs } from "./handoff.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 import { serializeGenerationRequest } from "./contracts/generation-request.mjs";
 import { normalizeObservedVersions } from "./contracts/specify-inventory.mjs";
-import { validateDesignerAdapterExports } from "./contracts/control-adapter.mjs";
+import { validateDesignerAdapterExports } from "./contracts/external-control-adapter.mjs";
 import { findDuplicateBadge } from "./ui/badge-duplicates.js";
 
 const required = ["canvas.id", "canvas.displayName"];

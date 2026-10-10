@@ -1,5 +1,5 @@
 {
-  "$schema": "../../schemas/designer.tab-definition.schema.json",
+  "$schema": "../../schemas/external-designer.tab-definition.schema.json",
   "schemaVersion": 1,
   "id": "designer-badges",
   "title": "Badges",
