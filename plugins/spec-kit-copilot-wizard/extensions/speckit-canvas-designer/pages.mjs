@@ -326,17 +326,16 @@ function validateGeneratedPage(document, name) {
 function validateWorkflowPage(document, name) {
     schemaMetadata(document, name);
     if (!document || typeof document !== "object" || Array.isArray(document)
-        || !["id,order,schemaVersion,slots,title",
-            "adapter,badgeDestinations,id,order,schemaVersion,slots,title"].includes(
-            contractKeys(document).sort().join())
-        || document.schemaVersion !== (document.adapter ? 2 : 1)
-        || (document.adapter !== undefined && (typeof document.adapter !== "string"
+        || contractKeys(document).sort().join()
+            !== "adapter,badgeDestinations,id,order,schemaVersion,slots,title"
+        || document.schemaVersion !== 2
+        || (typeof document.adapter !== "string"
             || !PAGE_PATTERN.test(document.adapter) || isWindowsDeviceName(document.adapter)
             || !Array.isArray(document.badgeDestinations)
             || document.badgeDestinations.length > 4
             || new Set(document.badgeDestinations).size !== document.badgeDestinations.length
             || document.badgeDestinations.some((destination) =>
-                !["workflow.list", "workflow.summary", "phase.card", "phase.output"].includes(destination))))
+                !["workflow.list", "workflow.summary", "phase.card", "phase.output"].includes(destination)))
         || document.id !== "workflow" || name !== "generated-workflow"
         || typeof document.title !== "string" || !document.title.trim()
         || document.title.length > 120 || document.order !== 0

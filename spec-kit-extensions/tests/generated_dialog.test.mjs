@@ -63,7 +63,7 @@ test("generated host mounts synchronous and asynchronous dialog and button adapt
     const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
         import.meta.url), "utf8");
     const start = source.indexOf("async function showGeneratedDialog(");
-    const end = source.indexOf("function renderSetup()", start);
+    const end = source.indexOf("function confirmSetup(", start);
     assert.ok(start >= 0 && end > start);
     const host = source.slice(start, end)
         .replace("await import(`/dialogs/${registration.adapter}.mjs?token=${encodeURIComponent(token)}`)",

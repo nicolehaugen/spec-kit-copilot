@@ -182,7 +182,14 @@ bindings keep the existing phase Run and View behavior unchanged. Setup uses
 a dedicated setup adapter with a replaceable label and presentation, but
 its `project.setup` operation is not replaceable by a dialog definition.
 
-The generated Workflow page is a replaceable, frozen presentation adapter. It
+The generated Workflow page requires a replaceable, frozen presentation adapter.
+Its definition and adapter are always packaged, with required
+`workflowPage.pageAdapter` and `pageAdapterHash` configuration. Missing or
+incompatible adapters fail explicitly; there is no host-rendered alternative
+and no legacy adapter-less configuration support. Contributed generated pages
+likewise require their renderer and display renderer failures rather than an
+alternate page. Optional-content defaults and shared stock controls remain
+unchanged. The Workflow adapter
 owns setup and constitution panels, workflow rows and summary, phase-control
 composition, dialogs, and contributed slots; the host retains privileged
 operations, persistence, validation, and safe project access. A replacement

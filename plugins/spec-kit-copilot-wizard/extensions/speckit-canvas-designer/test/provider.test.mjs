@@ -1285,6 +1285,13 @@ test("stock scalar definitions mount required fields and reject incomplete visua
     await writeFile(workflowFile, JSON.stringify(reordered));
     await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
         /invalid Workflow page definition/);
+    const legacyWorkflow = JSON.parse(originalWorkflow);
+    delete legacyWorkflow.adapter;
+    delete legacyWorkflow.badgeDestinations;
+    legacyWorkflow.schemaVersion = 1;
+    await writeFile(workflowFile, JSON.stringify(legacyWorkflow));
+    await assert.rejects(loadResolvedDesignerPages(handoff, project, entries, fields),
+        /invalid Workflow page definition/);
     await writeFile(workflowFile, originalWorkflow);
     const controlFile = scalar.find((item) => item.name === "generated-phase-control").path;
     const originalControl = await readFile(controlFile, "utf8");

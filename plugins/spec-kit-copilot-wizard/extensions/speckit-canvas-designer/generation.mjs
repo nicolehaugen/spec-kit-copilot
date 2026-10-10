@@ -43,6 +43,11 @@ export function generationBlockers(model) {
         entry.kind === "generated.workflow-page-definition")) {
         blockers.push("Generated Workflow page definition is required");
     }
+    if (!model.workflowPage?.adapter || !model.templates?.some((entry) =>
+        entry.kind === "generated.workflow-page-adapter"
+        && entry.name === model.workflowPage.adapter)) {
+        blockers.push("Generated Workflow page adapter is required");
+    }
     if (!model.templates?.some((entry) => entry.name === "generated-phase-control"
         && entry.kind === "generated.phase-control-definition")
         || !model.templates?.some((entry) => entry.kind === "generated.phase-control-adapter")) {
@@ -347,7 +352,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     catch { throw new Error("Invalid frozen phase control definition"); }
     const adapter = model.templates?.find((item) =>
         item.name === phaseControl?.adapter && item.kind === "generated.phase-control-adapter");
-    if (!workflowDefinition || (model.workflowPage?.adapter && !workflowAdapter)
+    if (!workflowDefinition || !workflowAdapter
         || !controlDefinition || !adapter
         || phaseControl?.id !== "workflow-phases"
         || phaseControl?.placement?.page !== "workflow"
@@ -361,7 +366,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         order: model.workflowPage.order, slots: model.workflowPage.slots,
         managedRun: model.workflowPage.managedRun,
         assets: await Promise.all([workflowDefinition, controlDefinition, adapter,
-            ...(workflowAdapter ? [workflowAdapter] : [])].map(asset)) };
+            workflowAdapter].map(asset)) };
     const namedTemplate = (name, kind) => {
         const match = model.templates?.find((item) => item.name === name && item.kind === kind);
         if (!match) throw new Error(`${name}: missing validated ${kind} asset`);

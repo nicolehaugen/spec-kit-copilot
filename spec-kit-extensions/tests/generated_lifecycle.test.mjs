@@ -8,16 +8,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readWorkflowPage } from "../extension-canvas-design/generated-scaffold/contracts/packaged-contributions.mjs";
 
 test("schema-v1 packaged phase control retains and verifies its frozen slots", async () => {
-    const workflow = Buffer.from(JSON.stringify({
-        schemaVersion: 1, id: "workflow", title: "Workflow", order: 1, slots: ["workflow.phases"],
-    }));
+    const workflow = await readFile(new URL("../extension-canvas-design/generated-host/workflow-page/workflow.json", import.meta.url));
+    const definition = JSON.parse(workflow);
     const control = await readFile(new URL("../extension-canvas-design/generated-host/phase-control/phase-control.json", import.meta.url));
     const adapter = await readFile(new URL("../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs", import.meta.url));
     const registration = JSON.parse(control);
     const files = new Map([["workflow.json", workflow], ["phase-control.json", control],
         ["generated-phase-adapter.mjs", adapter]]);
     const page = {
-        title: "Workflow", order: 1, slots: ["workflow.phases"],
+        title: definition.title, order: definition.order, slots: definition.slots,
+        pageAdapter: definition.adapter, badgeDestinations: definition.badgeDestinations,
         adapter: registration.adapter, managedRun: false, placement: registration.placement,
         viewLabels: {}, phaseSlots: registration.slots,
         definitionHash: createHash("sha256").update(workflow).digest("hex"),
