@@ -48,6 +48,12 @@ sibling backups. Writes require `--apply` and the matching `--expect` digest;
 stale previews are rejected. Keep backups, but do not commit personal settings
 or backup files.
 
+These local maintainer helpers do not lock files against other writers. Avoid
+settings or metadata edits from other sessions, Copilot or editors during apply.
+Checks detect changes before the final replacement, but a write between that
+check and replacement can be overwritten; post-write verification does not
+detect it, and backups contain the earlier contents.
+
 Settings resolve at provider startup: reload/restart and verify **both** installed
 providers after changes. A successful file write is not proof of reload. Prefer
 the default user-level location for desktop/Designer children; do not assume a
@@ -361,7 +367,8 @@ where needed. It backs up settings and clears only
 `extensions.disabledExtensions`, preserving every other entry.
 
 Only approved, unused marketplace registrations are removed, without forced
-removal. Approved runtime override files are reset using the existing
+removal. Unapproved installed dependents block removal; plugins merely offered
+in a marketplace catalog do not. Approved runtime override files are reset using the existing
 preview/digest configuration helper, retaining backups and `{}` files needed by
 explicit selectors. Unrelated plugins, personal skills, existing projects and
 their Specify installations/catalog registrations, source folders, and backups

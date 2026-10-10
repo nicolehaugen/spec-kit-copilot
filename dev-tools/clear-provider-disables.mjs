@@ -53,6 +53,7 @@ export async function clearProviderDisables(options = {}, { home = homedir() } =
   result.notice = options.apply
     ? 'Persisted disable entries checked; providers have NOT reloaded or been verified running. Reload and inspect both providers separately.'
     : 'Preview only; no settings or providers changed. Confirm this exact diff before --apply --expect.';
+  result.notice += ' Avoid concurrent settings writes during apply: checks do not lock the final check-to-replacement window; an intervening save can be overwritten and backups predate it.';
   return result;
 }
 

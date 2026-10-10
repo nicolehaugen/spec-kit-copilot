@@ -30,8 +30,10 @@ requested `dev-tools-speckit-distribution` action.
    `plugin:spec-kit-copilot-wizard:speckit-canvas-designer`.
 2. **Preview exact cleanup and blockers.** Show exact uninstall identifiers,
    roots/provenance, marketplace names and all installed dependents. A shared
-   marketplace with any plugin outside approved Wizard/core targets is a blocker:
+   marketplace with any installed dependent outside approved Wizard/core targets is a blocker:
    preserve it and its dependents; do not describe the requested reset as complete.
+   Plugins merely offered in its catalog are not installed dependents and do not
+   block removal of an otherwise unused marketplace.
    Inspect `~\.copilot\settings.json` and preview removal of only the two exact
    IDs from `extensions.disabledExtensions`, preserving all other entries.
    Use `node dev-tools\clear-provider-disables.mjs` to obtain the exact diff
@@ -50,7 +52,8 @@ requested `dev-tools-speckit-distribution` action.
    Include backup destinations and a preservation list: unrelated plugins,
    personal skills, existing projects and their Specify packages/catalog
    registrations, source folders, unrelated settings, and existing backups.
-   Stop before mutation on ambiguous targets, shared marketplaces, malformed
+   Stop before mutation on ambiguous targets, marketplaces with unapproved
+   installed dependents, malformed
    settings, unsupported tools or locked files; report concrete blockers.
 3. **Require explicit confirmation before mutation.** Ask the user to approve
    the exact plugins, unused marketplace registrations, runtime destinations
@@ -75,6 +78,7 @@ requested `dev-tools-speckit-distribution` action.
 6. **Reset approved runtime overrides with the existing helper.** Repeat each
    confirmed `use-defaults --file "<absolute path>"` command with
    `--apply --expect "<that preview digest>"`. Retain its dated sibling backups.
+   Avoid other settings writes during apply; preview checks are not a lock.
    This writes `{}` and preserves an explicit `SPECKIT_CONFIG_FILE` selector;
    do not edit machine-wide environment settings or source example files.
    Re-preview conflicts and obtain fresh confirmation; do not force overwrite.
@@ -82,7 +86,7 @@ requested `dev-tools-speckit-distribution` action.
 7. **Remove only approved unused marketplaces.** Refresh plugin inventory and
    require no remaining installed dependents before
    `copilot plugin marketplace remove <exact-name>`. Never use `--force` or `-f`:
-   forced removal can uninstall unrelated plugins. A shared marketplace or
+   forced removal can uninstall unrelated plugins. A remaining installed dependent or
    failed removal remains a blocker; preserve it and report partial cleanup.
 8. **Verify cleanup, then stop.** Call `extensions_reload`; re-list plugins and
    marketplaces and require approved targets absent. Inspect/list providers and

@@ -61,8 +61,12 @@ skipping stale disable entries or changing the two allowed IDs.
    The script backs up original bytes to an exclusive dated sibling file before
    writing, removes **only these two exact IDs** (including duplicates), and
    preserves unrelated settings, disabled entries, similarly named IDs and
-   their order. It rejects stale previews instead of overwriting concurrent
-   edits. Retain all returned backup paths. Re-preview conflicts and obtain
+   their order. It rejects changes detected by preview/pre-write checks, but
+   does not lock against other writers between the final check and replacement.
+   For this local maintainer workflow, avoid settings edits from other sessions,
+   Copilot or editors during apply. A write in that final window can be lost;
+   post-write verification does not detect it, and the backup predates it.
+   Retain all returned backup paths. Re-preview detected conflicts and obtain
    fresh confirmation; never fall back to a manual edit or broader removal.
 3. The script re-reads persisted settings and verifies the exact expected bytes.
    Stop on backup, write, locked-file, conflict or verification failure; report
