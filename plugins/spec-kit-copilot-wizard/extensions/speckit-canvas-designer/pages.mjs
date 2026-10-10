@@ -13,6 +13,7 @@ import { fingerprint } from "./handoff.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 import { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
 import { RULES, resolvedField, checkSchema, validateTemplateRegistration } from "./contracts/external-design-contributions.mjs";
+import { validateAppearanceField } from "./contracts/appearance.mjs";
 import { validateBadgeText, validateBadgeSettings, validateBadgeRule } from "./contracts/external-badge-definitions.mjs";
 import { validateBadgeInputBinding, validateBadgeInputControl,
     resolveBadgeInputControls, validateBadgeInputAdapterIdentity } from "./contracts/external-badge-input-control.mjs";
@@ -128,6 +129,7 @@ function buildModel(entries, schema) {
             }
             const ids = new Set();
             for (const field of document.fields) {
+                validateAppearanceField(field.id);
                 const type = field.type ?? "string";
                 const scalarControl = type === "boolean" ? "stock.checkbox" : "stock.text";
                 if (ids.has(field.id) || (Object.hasOwn(field, "default") && type !== "boolean")

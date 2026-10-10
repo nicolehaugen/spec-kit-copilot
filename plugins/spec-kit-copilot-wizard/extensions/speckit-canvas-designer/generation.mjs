@@ -12,6 +12,7 @@ import { serializeGenerationRequest } from "./contracts/generation-request.mjs";
 import { normalizeObservedVersions } from "./contracts/specify-inventory.mjs";
 import { validateDesignerAdapterExports } from "./contracts/external-control-adapter.mjs";
 import { findDuplicateBadge } from "./ui/badge-duplicates.js";
+import { validateAppearanceField } from "./contracts/appearance.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
@@ -54,6 +55,7 @@ export function generationBlockers(model) {
 }
 
 export function validateEssentials(model, values) {
+    for (const id of Object.keys(values ?? {})) validateAppearanceField(id);
     const setup = model.pages.find((page) => page.page === "designer-essentials");
     if (!setup || setup.error || !Array.isArray(setup.fields)
         || required.some((id) => !setup.fields.some((field) => field.id === id))) {

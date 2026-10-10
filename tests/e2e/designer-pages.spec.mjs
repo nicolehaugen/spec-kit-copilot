@@ -663,12 +663,18 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         await page.getByRole("tab", { name: "Appearance" }).click();
         const light = page.getByRole("textbox", { name: "Light mode accent" });
         const dark = page.getByRole("textbox", { name: "Dark mode accent" });
+        const lightBackground = page.getByRole("textbox", { name: "Light page background" });
+        const darkBackground = page.getByRole("textbox", { name: "Dark page background" });
+        await expect(page.getByRole("textbox")).toHaveCount(4);
+        await expect(page.getByRole("textbox", { name: /surface|main text/i })).toHaveCount(0);
         await light.fill("not-a-color");
         await generateFromTab(page);
         await expect(page.locator("#page-error")).toContainText(
             "Invalid Light mode accent (canvas.accentLight)");
         await light.fill("123aBc");
         await dark.fill("#ABC123");
+        await lightBackground.fill("E8F8E9");
+        await darkBackground.fill("#11142A");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await expect(page.locator("#action-message")).toHaveText("Settings saved.");
         const saved = await loadDesignerSettings(workspace, handoff,
@@ -676,12 +682,16 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         expect(saved.values["billing.costCode"]).toBe("CC-481");
         expect(saved.values["canvas.accentLight"]).toBe("123aBc");
         expect(saved.values["canvas.accentDark"]).toBe("#ABC123");
+        expect(saved.values["canvas.backgroundLight"]).toBe("E8F8E9");
+        expect(saved.values["canvas.backgroundDark"]).toBe("#11142A");
         await journey.reopenDesigner();
         await page.getByRole("tab", { name: costPage.title }).click();
         await expect(page.getByRole("textbox", { name: "Cost code" })).toHaveValue("CC-481");
         await page.getByRole("tab", { name: "Appearance" }).click();
         await expect(page.getByRole("textbox", { name: "Light mode accent" })).toHaveValue("123aBc");
         await expect(page.getByRole("textbox", { name: "Dark mode accent" })).toHaveValue("#ABC123");
+        await expect(page.getByRole("textbox", { name: "Light page background" })).toHaveValue("E8F8E9");
+        await expect(page.getByRole("textbox", { name: "Dark page background" })).toHaveValue("#11142A");
         await page.getByRole("tab", { name: "Generate" }).click();
         await page.locator("#generate-canvas").click();
         await expect(page.locator("#conn-status")).toHaveText("Live");
@@ -698,8 +708,9 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
             label: "Cost code", value: "CC-481",
             section: { id: "billing", title: "Billing" } }]);
-        expect(config.appearance).toMatchObject({
-            light: { accent: "#123aBc" }, dark: { accent: "#ABC123" },
+        expect(config.appearance).toEqual({
+            light: { accent: "#123aBc", background: "#E8F8E9" },
+            dark: { accent: "#ABC123", background: "#11142A" },
         });
         await page.goto(journey.shell.url);
         await page.getByRole("tab", { name: "Generate" }).click();
@@ -734,6 +745,34 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         await expect.poll(() => prompts.length).toBe(2);
         expect((await readdir(join(folder, "generations"))).length).toBe(2);
         await journey.serveGenerated("billing-canvas", { token: "billing-token" });
+        const themeToggle = page.locator("#theme-toggle");
+        await expect(themeToggle).toBeVisible();
+        if (await page.locator("html").getAttribute("data-theme") === "dark") {
+            await themeToggle.click();
+        }
+        for (const [theme, accent, background, surface, secondary, text, bodyBackground] of [
+            ["light", "#123aBc", "#E8F8E9", "#fff", "#f3f1ea", "#171a2c", "rgb(232, 248, 233)"],
+            ["dark", "#ABC123", "#11142A", "#1a1d3a", "#232748", "#e8eaf7", "rgb(17, 20, 42)"],
+        ]) {
+            await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+            const colors = await page.evaluate(() => {
+                const style = getComputedStyle(document.documentElement);
+                return {
+                    accent: style.getPropertyValue("--accent-color").trim(),
+                    background: style.getPropertyValue("--background-color-default").trim(),
+                    surface: style.getPropertyValue("--background-color-elevated").trim(),
+                    secondary: style.getPropertyValue("--background-color-secondary").trim(),
+                    text: style.getPropertyValue("--text-color-default").trim(),
+                };
+            });
+            expect(colors.accent).toBe(accent);
+            expect(colors.background).toBe(background);
+            expect(colors.surface).toBe(surface);
+            expect(colors.secondary).toBe(secondary);
+            expect(colors.text).toBe(text);
+            await expect(page.locator("body")).toHaveCSS("background-color", bodyBackground);
+            if (theme === "light") await themeToggle.click();
+        }
         await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
         await expect(page.locator('[data-field-id="billing.costCode"]')).toHaveText("CC-481");

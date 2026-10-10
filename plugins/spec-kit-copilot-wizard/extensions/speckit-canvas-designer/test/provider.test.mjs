@@ -1838,7 +1838,7 @@ test("Appearance palette colors persist and style both runtime themes without re
     await mkdir(folder, { recursive: true });
     const templates = [];
     for (const mode of ["light", "dark"]) {
-        for (const color of ["accent", "background", "surface", "secondary", "text"]) {
+        for (const color of ["accent", "background"]) {
             const filename = `${mode}-${color}.json`;
             const path = join(folder, filename);
             await copyFile(join(source, "designer-host", "appearance-settings", filename), path);
@@ -1864,21 +1864,16 @@ test("Appearance palette colors persist and style both runtime themes without re
     assert.deepEqual(model.pages.find((page) => page.page === "designer-appearance")
         .fields.map((field) => field.id),
         ["canvas.logo", "canvas.mainPageLogo",
-            "canvas.accentLight", "canvas.backgroundLight", "canvas.surfaceLight",
-            "canvas.secondaryLight", "canvas.textLight",
-            "canvas.accentDark", "canvas.backgroundDark", "canvas.surfaceDark",
-            "canvas.secondaryDark", "canvas.textDark"]);
+            "canvas.accentLight", "canvas.backgroundLight",
+            "canvas.accentDark", "canvas.backgroundDark"]);
     assert.deepEqual(model.pages.find((page) => page.page === "designer-essentials")
         .fields.map((field) => field.id), ["canvas.id", "canvas.displayName"]);
     assert.equal(model.values["canvas.accentLight"], "");
     assert.equal(model.values["canvas.accentDark"], "");
     const values = { ...model.values, "canvas.id": "colored-canvas",
         "canvas.displayName": "Colored canvas", "canvas.accentLight": "123aBc",
-        "canvas.backgroundLight": "E8F8E9", "canvas.surfaceLight": "#F7FFF0",
-        "canvas.secondaryLight": "CCF0D0", "canvas.textLight": "#233044",
-        "canvas.accentDark": "#ABC123", "canvas.backgroundDark": "#11142A",
-        "canvas.surfaceDark": "252942", "canvas.secondaryDark": "#303550",
-        "canvas.textDark": "F8ECDB" };
+        "canvas.backgroundLight": "E8F8E9",
+        "canvas.accentDark": "#ABC123", "canvas.backgroundDark": "#11142A" };
     const saved = await saveDesignerSettings(workspace, handoff, model,
         { modelRevision: model.revision, revision: 0, values });
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).values, values);
@@ -1890,17 +1885,16 @@ test("Appearance palette colors persist and style both runtime themes without re
     const target = join(project, prepared.target);
     const config = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
     assert.deepEqual(config.appearance, {
-        light: { accent: "#123aBc", background: "#E8F8E9", surface: "#F7FFF0",
-            secondary: "#CCF0D0", text: "#233044" },
-        dark: { accent: "#ABC123", background: "#11142A", surface: "#252942",
-            secondary: "#303550", text: "#F8ECDB" },
+        light: { accent: "#123aBc", background: "#E8F8E9" },
+        dark: { accent: "#ABC123", background: "#11142A" },
     });
     const { renderHtml, readConfig } = await import(pathToFileURL(join(target, "server.mjs")).href);
     const html = renderHtml(config);
     assert.match(html, /:root\[data-theme="light"\] \{ --accent-color: #123aBc;/);
     assert.match(html, /:root\[data-theme="dark"\] \{ --accent-color: #ABC123;/);
-    assert.match(html, /--background-color-default: #E8F8E9; --background-color-elevated: #F7FFF0; --background-color-secondary: #CCF0D0; --text-color-default: #233044;/);
-    assert.match(html, /--background-color-default: #11142A; --background-color-elevated: #252942; --background-color-secondary: #303550; --text-color-default: #F8ECDB;/);
+    assert.match(html, /:root\[data-theme="light"\] \{ --accent-color: #123aBc; --background-color-default: #E8F8E9;/);
+    assert.match(html, /:root\[data-theme="dark"\] \{ --accent-color: #ABC123; --background-color-default: #11142A;/);
+    assert.doesNotMatch(html, /:root\[data-theme="(?:light|dark)"\] \{[^}]*--(?:background-color-elevated|background-color-secondary|text-color-default):/);
     assert.match(html, /@media \(prefers-color-scheme: dark\).*:root:not\(\[data-theme\]\)/);
     assert.match(html, /id="theme-toggle"/);
     assert.deepEqual(readConfig().appearance, config.appearance);
@@ -1924,6 +1918,17 @@ test("Appearance palette colors persist and style both runtime themes without re
     assert.match(backgroundOnly, /:root\[data-theme="light"\] \{ --background-color-default: #E8F8E9;/);
     assert.doesNotMatch(backgroundOnly, /--grad-primary: linear-gradient\(135deg, #E8F8E9/);
     assert.doesNotMatch(backgroundOnly, /:root\[data-theme="dark"\] \{ --background-color-default:/);
+    for (const key of ["surface", "secondary", "text"]) {
+        for (const [mode, suffix] of [["light", "Light"], ["dark", "Dark"]]) {
+            const id = `canvas.${key}${suffix}`;
+            assert.throws(() => renderHtml({ ...config,
+                appearance: { [mode]: { [key]: "#123456" } } }),
+            /Invalid generated canvas configuration/);
+            await assert.rejects(freezeGeneration({ model,
+                values: { ...values, [id]: "#123456" }, handoff, project, workspace }),
+            new RegExp(`Unsupported appearance field: ${id.replace(".", "\\.")}`));
+        }
+    }
 
     const incomplete = { ...values, "canvas.accentDark": "#123" };
     await saveDesignerSettings(workspace, handoff, saved,
@@ -1939,7 +1944,7 @@ test("Appearance palette colors persist and style both runtime themes without re
         handoff, project, workspace }), /Invalid Dark page background \(canvas.backgroundDark\)/);
     const defaults = { ...values, "canvas.id": "default-accent" };
     for (const id of Object.keys(defaults)) {
-        if (/^canvas\.(?:accent|background|surface|secondary|text)(?:Light|Dark)$/.test(id)) {
+        if (/^canvas\.(?:accent|background)(?:Light|Dark)$/.test(id)) {
             defaults[id] = "";
         }
     }
@@ -1948,6 +1953,27 @@ test("Appearance palette colors persist and style both runtime themes without re
     const plainConfig = JSON.parse(await readFile(join(project, plain.target, "canvas-config.json")));
     assert.equal(plainConfig.appearance, undefined);
     assert.doesNotMatch(renderHtml(plainConfig), /:root\[data-theme="light"\] \{ --accent-color:/);
+});
+
+test("Appearance rejects removed palette fields in inline page definitions", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const { project, entries } = await projectFixture(t, workspace);
+    const appearance = entries.find((entry) => entry.name === "designer-appearance");
+    const original = JSON.parse(await readFile(appearance.path, "utf8"));
+    for (const suffix of ["Light", "Dark"]) {
+        for (const key of ["surface", "secondary", "text"]) {
+            const id = `canvas.${key}${suffix}`;
+            await writeFile(appearance.path, JSON.stringify({ ...original, fields: [{
+                id, label: "Removed palette field", control: "stock.text",
+            }] }));
+            const model = await loadResolvedDesignerPages(handoff, project, entries);
+            assert.equal(model.pages.find((page) => page.page === "designer-appearance")
+                .error.reason, `Unsupported appearance field: ${id}`);
+            assert.equal(Object.hasOwn(model.constraints, id), false);
+            assert.equal(Object.hasOwn(model.values, id), false);
+        }
+    }
 });
 
 test("stock Logo validates, persists, freezes and packages a portable header image with fallback", async (t) => {

@@ -15,6 +15,54 @@ import { validateBadgeEvaluator, badgeEvidence, validateBadgeEvaluatorResult } f
     "../extension-canvas-design/generated-scaffold/contracts/external-badge-evaluator.mjs";
 import { providerEvaluationScript, validateProviderSerializedResult, validateValue } from
     "../extension-canvas-design/generated-scaffold/contracts/external-value-provider.mjs";
+import { APPEARANCE_RULES, validAppearance, validateAppearanceField } from
+    "../extension-canvas-design/generated-scaffold/contracts/appearance.mjs";
+import { validateContribution } from
+    "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/external-definitions.mjs";
+import { validateValues } from
+    "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/designer-settings.mjs";
+
+test("independently shipped appearance contracts agree and reject removed palette overrides", async () => {
+    const generated = await readFile(new URL(
+        "../extension-canvas-design/generated-scaffold/contracts/appearance.mjs", import.meta.url), "utf8");
+    const designer = await readFile(new URL(
+        "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/appearance.mjs",
+        import.meta.url), "utf8");
+    assert.equal(generated, designer);
+    assert.deepEqual(Object.keys(APPEARANCE_RULES),
+        ["canvas.accentLight", "canvas.backgroundLight", "canvas.accentDark", "canvas.backgroundDark"]);
+    for (const valid of [undefined, { light: { accent: "#123aBc", background: "#E8F8E9" },
+        dark: { accent: "#ABC123", background: "#11142A" } },
+    { light: { background: "#123456" } }, { dark: "#123456" }]) {
+        assert.equal(validAppearance(valid), true);
+    }
+    for (const invalid of [null, [], {}, { blue: { accent: "#123456" } }, { light: {} },
+        { light: { accent: "123456" } }, { dark: { background: "red" } },
+        { light: { background: "#12345g" } }, { dark: { accent: null } }]) {
+        assert.equal(validAppearance(invalid), false);
+    }
+    const slots = new Map([["appearance.options", { slot: { id: "appearance.options" } }]]);
+    for (const [id, rule] of Object.entries(APPEARANCE_RULES)) {
+        assert.doesNotThrow(() => validateAppearanceField(id));
+        assert.doesNotThrow(() => validateContribution({
+            schemaVersion: 1, id: "test.color", host: "designer", slot: "appearance.options",
+            order: 10, field: { id, label: "Color", type: "string", control: "stock.text" },
+        }, "test-color", slots, new Map()));
+        assert.doesNotThrow(() => validateValues({ [id]: "#123" }, { [id]: rule }));
+    }
+    for (const key of ["surface", "secondary", "text"]) {
+        for (const [mode, suffix] of [["light", "Light"], ["dark", "Dark"]]) {
+            const id = `canvas.${key}${suffix}`;
+            assert.equal(validAppearance({ [mode]: { accent: "#123456", [key]: "#123456" } }), false);
+            assert.throws(() => validateContribution({
+                schemaVersion: 1, id: "test.removed", host: "designer", slot: "appearance.options",
+                order: 10, field: { id, label: "Removed", type: "string", control: "stock.text" },
+            }, "test-removed", slots, new Map()), /Unsupported appearance field/);
+            assert.throws(() => validateValues({ [id]: "" }, { [id]: { type: "string" } }),
+                /Unsupported appearance field/);
+        }
+    }
+});
 
 test("Workflow and phase checks retain distinct version, capability and handle requirements", () => {
     const mount = () => {};

@@ -1,4 +1,5 @@
 import { isWindowsDeviceName } from "./host-open.mjs";
+import { validateAppearanceField } from "./appearance.mjs";
 
 export const SETTINGS_LIMIT = 1024 * 1024;
 export const SAVE_REQUEST_LIMIT = SETTINGS_LIMIT - 8 * 1024;
@@ -24,6 +25,7 @@ export function validateValues(values, constraints) {
         throw new Error("Designer settings contain unexpected or missing fields");
     }
     for (const [key, rule] of Object.entries(constraints)) {
+        validateAppearanceField(key);
         const value = values[key];
         const invalidType = rule.type === "boolean" ? typeof value !== "boolean"
             : rule.type === "string" ? typeof value !== "string"

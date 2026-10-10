@@ -281,6 +281,26 @@ async function fixture(t, selectedHandoff = handoff, selectedValues = values, ru
     return { project, workspace, prepared, sdk };
 }
 
+test("materialization rejects removed palette fields even in an integrity-valid frozen request", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    const path = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", prepared.requestId, "request.json");
+    const original = JSON.parse(await readFile(path, "utf8"));
+    for (const suffix of ["Light", "Dark"]) {
+        for (const key of ["surface", "secondary", "text"]) {
+            const request = structuredClone(original);
+            const id = `canvas.${key}${suffix}`;
+            request.values[id] = "#123456";
+            request.fieldConstraints[id] = { type: "string", maxLength: 7 };
+            delete request.integrity;
+            request.integrity = createHash("sha256").update(JSON.stringify(request)).digest("hex");
+            await writeFile(path, JSON.stringify(request));
+            await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
+                /Unsupported appearance field/);
+        }
+    }
+});
+
 test("generation cannot omit the handoff runtime setup when Show setup is off", async (t) => {
     const selectedHandoff = structuredClone(handoff);
     selectedHandoff.workflow.runtimeSetup = { presets: [], extensions: [], bundles: [] };

@@ -43,6 +43,7 @@ host's checks for another's.
 | --- | --- | --- | --- | --- |
 | Registration/composition / both | The appropriate schema below; no new registration schema | `D/contracts/external-design-contributions.mjs`, `external-definitions.mjs`, `external-executable-modules.mjs` | `D/pages.mjs`; Wizard `server/designer-setup.mjs`; `scripts/verify-launch.mjs` still resolves Specify inventory | `DT/provider.test.mjs`, `external-executable-modules.test.mjs`; `RT/canvas_launch.test.mjs`, `test_canvas_design.py`; `E2E/contracts.spec.mjs`, preset journeys |
 | Designer tabs/settings / Designer | `external-designer.tab-definition.schema.json`, `external-designer.setting-definition.schema.json` | `D/contracts/external-design-contributions.mjs`, `external-definitions.mjs`; `D/external-designer-contract.json` records supported tab schema versions | `D/pages.mjs`; Wizard setup, launch and local-source checks | `DT/contracts.test.mjs`, `provider.test.mjs`; Wizard `test/designer-setup.test.mjs`, `designer-local-sources.test.mjs`; `E2E/preset-designer.spec.mjs`, `designer-pages.spec.mjs` |
+| Appearance palette / both | Existing setting definitions; optional generated `appearance.light` / `appearance.dark` | `D/contracts/appearance.mjs`, `R/contracts/appearance.mjs` | `D/pages.mjs`, `settings.mjs`, `generation.mjs`; `scripts/generate.mjs`; `R/server.mjs` | `RT/external_contracts.test.mjs`, `canvas_generation.test.mjs`; `DT/provider.test.mjs`; Billing E2E journey |
 | Shared typed controls / both | `external-shared.control-definition.schema.json` | `D/external-control-contract.mjs`, `D/contracts/external-control-adapter.mjs`, `D/ui/external-control-adapter-contract.js`; `R/external-control-contract.mjs`, `R/contracts/external-generated-controls.mjs` | `D/pages.mjs`, `generation.mjs`, `ui/app.js`; `scripts/generate.mjs`; `R/ui/app.js`, `ui/page-assets.mjs` | `DT/external-controls.test.mjs`, `provider.test.mjs`; `RT/control_contract.test.mjs`, `external_contracts.test.mjs`, image/text/slot tests; `E2E/preset-generated.spec.mjs` |
 | Badge types/settings / Designer | `external-designer.badges-settings-definition.schema.json` | `D/contracts/external-badge-definitions.mjs`, `external-badges.mjs` | `D/pages.mjs`, `settings.mjs`, `generation.mjs`, `ui/badges-control.js` | `DT/badges.test.mjs`, `badges-control.test.mjs`, `provider.test.mjs`; `E2E/designer-pages.spec.mjs` |
 | Badge input editors / Designer | `external-designer.badge-input-control.schema.json`, `external-designer.badge-input-binding.schema.json` | `D/contracts/external-badge-input-control.mjs`, `external-executable-modules.mjs`; `D/ui/external-control-adapter-contract.js` | `D/pages.mjs`, `ui/app.js`, `ui/badges-control.js` | `DT/badge-input-control.test.mjs`, `badges-control.test.mjs`, `external-controls.test.mjs`, `provider.test.mjs`; Badge Input fixture journey |
@@ -61,6 +62,25 @@ surface in [the E2E README](../../tests/e2e/README.md). Python package tests val
 the shipping file inventory, all definition schemas, and fixture registrations.
 
 ## Registration and inspection
+
+Appearance supports only `accent` and `background` per mode, represented in
+Designer by `canvas.accentLight`, `canvas.backgroundLight`, `canvas.accentDark`,
+and `canvas.backgroundDark`. Designer allows blank or incomplete string drafts;
+Generate requires blank or six-digit hex with optional `#`, then normalizes
+nonempty values to `#RRGGBB`. An omitted override retains the theme default.
+Generated mode objects allow only nonempty normalized accent/background colors;
+the existing accent-only string representation is unchanged.
+The former `surface`, `secondary`, and `text` overrides and their six reserved
+Designer IDs are rejected rather than migrated or silently ignored. Their JSON
+definitions and template registrations are deleted. Logos and base theme
+surface/text colors are unchanged.
+
+Because Designer and Canvas Design ship independently, each carries the same
+environment-neutral `contracts/appearance.mjs`; a byte-equality boundary test
+guards against drift. Generation packages the runtime copy through
+`featureFiles`. Existing `stock.text` definition and adapter pairs render the
+four retained settings; palette application is nonvisual host configuration,
+not a new contributed renderer.
 
 Executable contributions are named Specify **templates**, not native script
 registrations. Existing replace-only winner, source, ownership, reference,

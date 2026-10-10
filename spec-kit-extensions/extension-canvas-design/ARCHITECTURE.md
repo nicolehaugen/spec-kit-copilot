@@ -709,7 +709,7 @@ two logos. These are Designer pages, not automatically pages in the generated ap
 | Page | Proposed stock Designer contribution | What Generate packages into the app |
 | --- | --- | --- |
 | **Outputs** | Read-only Wizard-inferred pipeline artifacts, removable additional Markdown links, and a selected viewer target. Adding links does not create files or change pipeline outputs. | Validated links and one selected default per nonempty phase. The generated shell still owns artifact-path authorization, placeholder resolution, and file reads. |
-| **Appearance** | Optional per-mode accent, page background, card surface, secondary surface, and main text hex fields plus Header/Main page logos. | Validated per-mode palette overrides and packaged logo assets; blank fields preserve each existing color. |
+| **Appearance** | Optional per-mode accent and page background hex fields plus Header/Main page logos. | Validated per-mode accent/background overrides and packaged logo assets; blank fields preserve each existing color. |
 
 ### Outputs: confirmed handoff
 
@@ -739,7 +739,17 @@ expected file has not yet been created.
 
 The **Generated Workflow Canvas app already has a light/dark button in its header**. That is an end-user runtime theme choice, not an Appearance page setting.
 
-The Appearance editor lets the canvas creator enter optional six-digit accent, page background, card surface, secondary surface, and main text colors for light and dark modes with or without `#`. It validates the hex syntax at Generate, saves incomplete drafts, and packages valid overrides as `#RRGGBB` under `appearance.light` and `appearance.dark` in `canvas-config.json` alongside the existing independent logos. Blank fields preserve the current per-mode colors. The existing viewer button still switches modes; the MVP has no preview or contrast gate, so creators must select readable text and surface combinations.
+The Appearance editor has four color inputs: optional six-digit accent and page
+background colors for light and dark modes, with or without `#`. It validates
+hex syntax at Generate, saves incomplete drafts, and packages valid overrides
+as `#RRGGBB` under `appearance.light` and `appearance.dark` in
+`canvas-config.json` alongside the existing independent logos. Blank fields
+preserve the current per-mode colors. Card surfaces, secondary surfaces, and
+text retain the base theme colors; their former definitions and registrations
+are deleted and their palette overrides are unsupported, without migration.
+The existing theme button still switches modes. The MVP has no preview or
+contrast gate, so creators must choose backgrounds readable against the fixed
+theme text and surfaces.
 
 **Acceptance:** Accent choices survive Generate and reopen, apply to their respective modes without changing an unselected mode's default, and do not require Canvas Design in the project running the finished app.
 

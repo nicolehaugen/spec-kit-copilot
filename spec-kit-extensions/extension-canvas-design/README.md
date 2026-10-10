@@ -49,14 +49,8 @@ the generic `create-canvas` browser/server protocol.
 | `designer-essentials-main-page-logo` | Appearance slot | Optional larger main-page logo (existing template name retained) |
 | `designer-appearance-light-accent` | Appearance slot | Optional light-mode accent hex |
 | `designer-appearance-light-background` | Appearance slot | Optional light-mode page background |
-| `designer-appearance-light-surface` | Appearance slot | Optional light-mode card surface |
-| `designer-appearance-light-secondary` | Appearance slot | Optional light-mode secondary surface |
-| `designer-appearance-light-text` | Appearance slot | Optional light-mode main text |
 | `designer-appearance-dark-accent` | Appearance slot | Optional dark-mode accent hex |
 | `designer-appearance-dark-background` | Appearance slot | Optional dark-mode page background |
-| `designer-appearance-dark-surface` | Appearance slot | Optional dark-mode card surface |
-| `designer-appearance-dark-secondary` | Appearance slot | Optional dark-mode secondary surface |
-| `designer-appearance-dark-text` | Appearance slot | Optional dark-mode main text |
 | `generated-workflow` | Generated Workflow page | Required page metadata, adapter reference, badge destinations, and named slots |
 | `generated-workflow-page-adapter` | Generated Workflow page | Replaceable setup, constitution, list, summary, phase composition, values, and contribution presentation |
 | `generated-phase-control` | Generated Workflow page | Phase identity, placement, adapter reference, and per-phase view labels |
@@ -104,6 +98,14 @@ does not remove the required Canvas ID and Title. If absent, generated descripti
 defaults to `Spec Kit workflow canvas.` and heading to `Workflows`.
 Generate validates all enabled Designer pages, including custom fields;
 an invalid page blocks generation until repaired.
+Appearance exposes only four color inputs: accent and page background for light
+and dark modes. Accent colors change emphasis and the primary gradient; page
+background colors change the canvas background. Optional `RRGGBB` or `#RRGGBB`
+values become normalized `#RRGGBB` overrides at Generate; blank inputs keep the
+theme defaults. Card surfaces, secondary surfaces, and text keep their default
+theme colors. Their former JSON settings and registrations are removed, and
+their reserved field IDs and generated palette keys are rejected without
+migration. Presets using those overrides must remove them before generating.
 Appearance's independent Header logo and Main page logo controls accept PNG, JPEG, GIF,
 or WebP images up to 32 KiB each. They appear before palette colors.
 Upload, preview, replace, and remove are
@@ -147,14 +149,15 @@ The package includes the page schema and workflow feature modules, but not the
 Designer provider. Generate uses Essentials, selected phases and verified
 runtime package inventory from the Wizard handoff. Designer-only `canvas-design`
 selections are not runtime canvas configuration.
-Appearance exposes per-mode accent, page background, card surface, secondary
-surface, and main text colors. Each optional setting accepts `RRGGBB` or
+Appearance exposes only per-mode accent and page background colors.
+Each optional setting accepts `RRGGBB` or
 `#RRGGBB` (case-insensitive), or blank. Generate validates and freezes nonblank
 values as `#RRGGBB` under `appearance.light` and `appearance.dark` in the
 generated canvas's `canvas-config.json`. Each blank setting retains its existing
 theme color. Viewers can still switch between light and dark mode. Invalid hex
 blocks Generate, but incomplete drafts may be saved. There is no color preview
-or contrast warning; choose contrasting text and surfaces. Existing generated
+or contrast warning; choose backgrounds readable against the default text and
+surfaces. Existing generated
 canvases are not updated. A newly opened Badges tab has no configured badges;
 no badge is evaluated or rendered until one is explicitly added.
 

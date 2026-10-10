@@ -1,5 +1,6 @@
 import { PAGE_NAME, isWindowsDeviceName } from "./host-open.mjs";
 import { RULES } from "./external-design-contributions.mjs";
+import { validateAppearanceField } from "./appearance.mjs";
 import { validControlContract } from "./external-control-adapter.mjs";
 
 const PAGE_PATTERN = new RegExp(PAGE_NAME);
@@ -26,6 +27,7 @@ export function validateContribution(document, name, slots, fieldOrigins) {
         throw new Error(`${name}: invalid Canvas Design contribution`);
     }
     const field = document.field;
+    validateAppearanceField(field?.id);
     if (!field || typeof field !== "object" || Array.isArray(field)
         || Object.keys(field).some((key) =>
             !["id", "label", "description", "type", "default", "control", "maxLength", "required"].includes(key))
