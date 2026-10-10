@@ -125,24 +125,27 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     let writes = Promise.resolve();
     let dispatching = false;
-    const untrackedDispatch = (run) => run.sessionId === session.sessionId
-        && !run.autopilotId && !run.messageId && !["Completed", "Failed"].includes(run.status);
-    const interruptedDispatches = new Set(state.runs.filter((run) =>
-        untrackedDispatch(run)).map((run) => run.runId));
+    const requiresRecovery = (run) => run.sessionId === session.sessionId && !run.autopilotId
+        && run.status !== "Failed" && (run.status !== "Completed"
+            || newItem(run.item) && !run.artifact && !run.confirmedSlug);
+    const recoveryRuns = new Set(state.runs.filter(requiresRecovery).map((run) => run.runId));
     let idleAfterRestart = false;
-    const recoveredRuns = new Set(state.runs.filter((run) => run.sessionId === session.sessionId
-        && !run.autopilotId && !["Completed", "Failed"].includes(run.status)).map((run) => run.runId));
-    const recoveredTurnEnded = (run) => recoveredRuns.has(run.runId)
-        && idleAfterRestart && !busy.value;
-    let recoverOnOpen = interruptedDispatches.size > 0 || state.runs.some((run) => run.messageId
-        && (!["Completed", "Failed"].includes(run.status)
-            || run.status === "Completed" && newItem(run.item) && !run.artifact && !run.confirmedSlug));
+    let recoverOnOpen = recoveryRuns.size > 0;
     let deleting = false;
     let closed = false;
     const liveRuns = new Set();
     const busy = { value: false };
     const subscriptions = [];
     const observedMessages = new Set();
+    function runActivity(run, events) {
+        if (recoveryRuns.has(run.runId) && idleAfterRestart && !busy.value) return "ended";
+        if (idleAfterRestart && busy.value) return "active";
+        if (!run.messageId) return run.status === "Failed" ? "ended" : "unknown";
+        const turn = phaseTurnState(events, run.messageId);
+        if (turn.active) return "active";
+        if (turn.ended || phaseResponse(events, run.messageId)?.success !== undefined) return "ended";
+        return busy.value ? "active" : "unknown";
+    }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
     const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
@@ -584,19 +587,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             if (!runs.length && input.confirmation !== undefined) {
                 throw new UserError("This row has no run to discard.", 409);
             }
-            if (runs.some((run) => !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)
-                || run.messageId === null && run.status !== "Failed"
-                    && !(untrackedDispatch(run) && interruptedDispatches.has(run.runId)
-                        && recoveredTurnEnded(run)))) {
-                throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
-            }
+            const events = runs.length ? await session.getEvents() : [];
             for (const run of runs) {
-                if (run.messageId) {
-                    const events = await session.getEvents();
-                    if (!phaseResponse(events, run.messageId) && !phaseTurnState(events, run.messageId).ended
-                        && !recoveredTurnEnded(run)) {
-                        throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
-                    }
+                if (runActivity(run, events) !== "ended") {
+                    throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
                 }
                 const discovered = await compareDirectories(run.before);
                 if (discovered.length) throw new UserError(
@@ -1092,7 +1086,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         await update((next) => {
             for (const run of next.runs) {
                 if (run.autopilotId) continue;
-                if (interruptedDispatches.has(run.runId) && !run.messageId) {
+                if (recoveryRuns.has(run.runId) && !run.messageId) {
                     const matches = events.filter((event) => event.type === "user.message"
                         && !event.agentId && !event.data?.parentToolCallId
                         && typeof event.data?.content === "string"
@@ -1100,18 +1094,19 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     if (matches.length === 1 && matches[0].data.messageId) {
                         run.messageId = matches[0].data.messageId;
                     } else {
-                        run.status = "Run output unconfirmed";
+                        const activity = runActivity(run, events);
+                        run.status = activity === "active" ? "Running"
+                            : activity === "ended" ? "Run output unconfirmed" : "Unconfirmed";
                         run.error = "The app restarted before this request could be tracked. Check chat. Once the session is idle, you can confirm Discard pending row if no workflow folder appeared.";
                     }
                 }
                 if (run.sessionId !== session.sessionId || !run.messageId || run.status === "Failed"
                     || run.status === "Completed" && (!newItem(run.item) || run.artifact || run.confirmedSlug)) continue;
                 const response = phaseResponse(events, run.messageId);
-                const turn = recoveredTurnEnded(run) ? { active: false, ended: true }
-                    : phaseTurnState(events, run.messageId);
-                if (!response || response.success === undefined) {
-                    run.status = turn.active ? "Running" : turn.ended ? "Run output unconfirmed" : "Unconfirmed";
-                    run.error = turn.active ? null : turn.ended
+                const activity = runActivity(run, events);
+                if (activity === "active" || !response || response.success === undefined) {
+                    run.status = activity === "active" ? "Running" : activity === "ended" ? "Run output unconfirmed" : "Unconfirmed";
+                    run.error = activity === "active" ? null : activity === "ended"
                         ? "This run ended without confirmed output. Retry the phase, close and reopen the app, or choose Discard pending row to remove this unfinished workflow without deleting files."
                         : "No completed response is associated with this request yet. Check chat or refresh.";
                     continue;
@@ -1165,6 +1160,9 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }).catch(() => diagnostic("Could not persist the phase's running status. Check chat."));
         }));
         subscriptions.push(session.on("tool.execution_start", () => { busy.value = true; }));
+        subscriptions.push(session.on("assistant.turn_start", () => {
+            busy.value = true;
+        }));
         subscriptions.push(session.on("session.idle", () => {
             busy.value = false;
             idleAfterRestart = true;

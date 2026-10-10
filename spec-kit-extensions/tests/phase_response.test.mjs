@@ -37,6 +37,9 @@ test("a live turn is distinguished from a completed or missing turn", () => {
     assert.deepEqual(phaseTurnState(events, "other"), { active: false, ended: false });
     events.push({ type: "assistant.turn_end", data: { turnId: "turn" } });
     assert.deepEqual(phaseTurnState(events, "sent"), { active: false, ended: true });
+    events.push({ type: "assistant.turn_start",
+        data: { interactionId: "run", turnId: "next-turn" } });
+    assert.deepEqual(phaseTurnState(events, "sent"), { active: true, ended: false });
 });
 
 test("task completion after a tool-using turn records success", () => {

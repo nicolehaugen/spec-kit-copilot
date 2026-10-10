@@ -8,7 +8,7 @@ export function phaseTurnState(events, messageId) {
         if (event.type === "user.message" && data.messageId === messageId) interaction = data.interactionId;
         if (!interaction) continue;
         if (event.type === "assistant.turn_start" && data.interactionId === interaction) {
-            turn = data.turnId; active = true;
+            turn = data.turnId; active = true; ended = false;
         }
         if (event.type === "assistant.turn_end" && data.turnId === turn) { active = false; ended = true; }
     }
