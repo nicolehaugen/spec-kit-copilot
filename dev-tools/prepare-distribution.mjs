@@ -23,7 +23,8 @@ export function validateDistribution(value) {
   if (typeof value.repository !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value.repository) ||
       value.repository.split('/').some(part => part === '.' || part === '..')) throw new Error('Invalid GitHub repository.');
   if (typeof value.catalogRef !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value.catalogRef) ||
-      value.catalogRef.includes('..') || value.catalogRef.includes('//') || /[/.]$/.test(value.catalogRef)) throw new Error('Invalid catalog ref.');
+      value.catalogRef.includes('..') || value.catalogRef.includes('//') || /[/.]$/.test(value.catalogRef) ||
+      value.catalogRef.split('/').some(part => part.startsWith('.') || part.endsWith('.lock'))) throw new Error('Invalid catalog ref.');
   exactObject(value.marketplace, ['name', 'ownerName', 'description'], 'marketplace settings');
   if (typeof value.marketplace.name !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.marketplace.name)) throw new Error('Invalid marketplace name.');
   for (const field of ['ownerName', 'description']) {

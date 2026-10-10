@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, readdir, rename, symlink } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, symlink, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { prepareDistribution, validateDistribution, manifestIdentity } from '../../dev-tools/prepare-distribution.mjs';
@@ -90,10 +90,16 @@ test('distribution settings reject unsupported fields, unsafe locators and inval
     { ...config, repository: 'https://github.com/example/repo' },
     { ...config, catalogRef: 'main; publish' },
     { ...config, catalogRef: 'branch/../main' },
+    { ...config, catalogRef: 'feature/.hidden' },
+    { ...config, catalogRef: 'release.lock' },
+    { ...config, catalogRef: 'release.lock/catalogs' },
     { ...config, marketplace: { ...config.marketplace, name: 'Invalid Name' } },
     { ...config, marketplace: { ...config.marketplace, description: '\nunsafe' } },
   ]) assert.throws(() => validateDistribution(value));
   assert.deepEqual(validateDistribution(config), config);
+  for (const catalogRef of ['main', 'release/v1.2.3', 'feature/catalog-lock']) {
+    assert.equal(validateDistribution({ ...config, catalogRef }).catalogRef, catalogRef);
+  }
 });
 
 test('JSON patching preserves unrelated exact bytes and rejects missing/duplicate owned fields', () => {
@@ -168,6 +174,56 @@ test('rollback removes newly created targets when a later commit fails', async t
   assert.equal(await readFile(existing, 'utf8'), 'original');
   await assert.rejects(readFile(created), { code: 'ENOENT' });
   assert.equal((await readdir(root)).some(name => name.includes('.stage-')), false);
+});
+
+test('cleanup attempts every staged file and retains commit and rollback failures', async t => {
+  const root = await workspace(t);
+  const paths = ['first.json', 'second.json', 'third.json'].map(name => resolve(root, name));
+  for (const path of paths) await write(path, 'original');
+  const changes = paths.map(path => ({ path, before: 'original', after: 'updated' }));
+  const attempted = [];
+  const commitError = new Error('injected commit failure');
+  await assert.rejects(applyChanges(changes, fingerprint(changes), {
+    move: async (source, destination) => {
+      if (destination === paths[1]) {
+        await write(paths[0], 'concurrent edit');
+        throw commitError;
+      }
+      await rename(source, destination);
+    },
+    removeStaged: async path => {
+      attempted.push(path);
+      if (path.startsWith(`${paths[1]}.stage-`)) throw new Error('injected cleanup failure');
+      await unlink(path);
+    },
+  }), error => {
+    assert.ok(error instanceof AggregateError);
+    assert.match(error.message, /rollback incomplete.*staged-file cleanup incomplete/);
+    assert.equal(error.errors[0].errors[0], commitError);
+    assert.match(error.errors[0].errors[1].message, /Rollback conflict/);
+    assert.match(error.errors[1].message, /injected cleanup failure/);
+    return true;
+  });
+  assert.equal(attempted.length, 3);
+  assert.equal(await readFile(paths[0], 'utf8'), 'concurrent edit');
+  assert.deepEqual((await readdir(root)).filter(name => name.includes('.stage-')),
+    [attempted[1].slice(root.length + 1)]);
+});
+
+test('cleanup failures after a successful commit are reported without undoing writes', async t => {
+  const root = await workspace(t);
+  const path = resolve(root, 'owned.json');
+  await write(path, 'original');
+  const changes = [{ path, before: 'original', after: 'updated' }];
+  await assert.rejects(applyChanges(changes, fingerprint(changes), {
+    removeStaged: async () => { throw new Error('injected cleanup failure'); },
+  }), error => {
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.errors.length, 1);
+    assert.match(error.message, /staged-file cleanup incomplete/);
+    return true;
+  });
+  assert.equal(await readFile(path, 'utf8'), 'updated');
 });
 
 test('checked-in distribution examples preview without writes and become idempotent when applied', async t => {

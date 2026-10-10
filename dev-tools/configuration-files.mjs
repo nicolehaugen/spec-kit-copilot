@@ -116,7 +116,7 @@ export function preview(changes) {
   }).join('\n');
 }
 
-export async function applyChanges(changes, expected, { move = rename } = {}) {
+export async function applyChanges(changes, expected, { move = rename, removeStaged = unlink } = {}) {
   if (expected !== fingerprint(changes)) throw new Error('Conflict: preview has changed or --expect is missing; preview again before applying.');
   for (const change of changes) {
     if (await readOptional(change.path) !== change.before) throw new Error(`Conflict: file changed since preview: ${change.path}`);
@@ -124,6 +124,7 @@ export async function applyChanges(changes, expected, { move = rename } = {}) {
   const backups = [];
   const staged = [];
   const committed = [];
+  let primaryError;
   try {
     for (const { path, before, after } of changes) {
       if (before === after) continue;
@@ -154,14 +155,19 @@ export async function applyChanges(changes, expected, { move = rename } = {}) {
       } catch (rollbackError) { failures.push(rollbackError); }
     }
     const detail = backups.length ? ` Backups: ${backups.join(', ')}` : '';
-    throw new AggregateError([error, ...failures],
+    primaryError = new AggregateError([error, ...failures],
       `${error.message}; ${failures.length ? 'rollback incomplete' : 'applied changes restored'}.${detail}`);
-  } finally {
-    for (const { temporary } of staged) {
-      try { await unlink(temporary); } catch (error) {
-        if (error.code !== 'ENOENT') throw new Error(`Unable to remove staged file ${temporary}: ${error.message}. Backups: ${backups.join(', ')}`, { cause: error });
-      }
+  }
+  const cleanupFailures = [];
+  for (const { temporary } of staged) {
+    try { await removeStaged(temporary); } catch (error) {
+      if (error.code !== 'ENOENT') cleanupFailures.push(new Error(`Unable to remove staged file ${temporary}: ${error.message}. Backups: ${backups.join(', ')}`, { cause: error }));
     }
   }
+  if (cleanupFailures.length) {
+    throw new AggregateError([...(primaryError ? [primaryError] : []), ...cleanupFailures],
+      `${primaryError ? `${primaryError.message}; ` : ''}staged-file cleanup incomplete: ${cleanupFailures.map(error => error.message).join('; ')}`);
+  }
+  if (primaryError) throw primaryError;
   return backups;
 }

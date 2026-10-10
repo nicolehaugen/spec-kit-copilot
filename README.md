@@ -93,6 +93,9 @@ Metadata changes are staged before application. If an apply fails, earlier
 writes are rolled back and the error lists retained backups. A rollback conflict
 or filesystem failure is reported explicitly for manual recovery; this is not a
 crash-safe transaction across files.
+Staged-file cleanup attempts every file and reports cleanup failures alongside
+the original apply/rollback error. Catalog refs must also pass local syntax
+validation; preparation does not check whether the ref exists remotely.
 
 Select `config\distribution.upstream.example.json`,
 `config\distribution.fork.example.json`, or custom JSON explicitly:
