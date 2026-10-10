@@ -17,7 +17,8 @@ import { shellHtml, startShell } from "../server.mjs";
 import { previewModel } from "../preview.mjs";
 import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAsset } from "../pages.mjs";
 import {
-    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
+    freshDesignerSettings, initialOutputs, loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings,
+    SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
 import { freezeGeneration, generationBlockers, validateEssentials } from "../generation.mjs";
 import { generationAvailability, GENERATION_EXISTS, GENERATION_PENDING } from "../contracts/generation-request.mjs";
@@ -2695,6 +2696,104 @@ test("Save persists incomplete drafts beside the handoff and rejects stale or ma
     await writeFile(join(folder, "settings.json"), "{broken");
     await assert.rejects(loadDesignerSettings(workspace, handoff, model),
         /Invalid saved Designer settings JSON/);
+});
+
+test("fresh Designer ignores discarded content and model revisions while Save replaces it safely", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const path = join(folder, "settings.json");
+    const model = { revision: "current", constraints: { "canvas.id": { type: "string" } },
+        values: { "canvas.id": "default" } };
+    const old = { schemaVersion: 1, handoffId: handoff.handoffId, revision: 7,
+        modelRevision: "old", values: { removed: true }, outputs: { removed: null },
+        badges: [{ id: "removed", type: "missing", inputs: { obsolete: true } }] };
+    for (const discarded of [
+        { modelRevision: old.modelRevision },
+        { values: old.values },
+        { outputs: old.outputs },
+        { badges: old.badges },
+        { ...old, unknownOldField: true },
+    ]) {
+        const record = { ...old, modelRevision: model.revision, values: model.values,
+            outputs: initialOutputs(handoff), badges: [], ...discarded };
+        const bytes = JSON.stringify(record);
+        await writeFile(path, bytes);
+        const fresh = await freshDesignerSettings(workspace, handoff, model);
+        assert.deepEqual(fresh.values, model.values);
+        assert.deepEqual(fresh.outputs, initialOutputs(handoff));
+        assert.deepEqual(fresh.badges, []);
+        assert.equal(fresh.settingsRevision, 7);
+        assert.equal(fresh.persisted, false);
+        assert.equal(await readFile(path, "utf8"), bytes);
+        await assert.rejects(loadDesignerSettings(workspace, handoff, model));
+        const request = { modelRevision: model.revision, revision: 7,
+            values: { "canvas.id": "replacement" } };
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, modelRevision: "old" }), /Invalid Designer save request/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, values: old.values }), /unexpected or missing fields/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, outputs: old.outputs }), /Invalid Designer phase outputs/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, badges: old.badges }), /badge/i);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, revision: 6 }), /settings changed elsewhere/);
+        assert.equal(await readFile(path, "utf8"), bytes);
+        const saved = await saveDesignerSettings(workspace, handoff, fresh, request);
+        assert.equal(saved.settingsRevision, 8);
+        assert.equal(saved.persisted, true);
+        assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).values,
+            request.values);
+        assert.equal(JSON.parse(await readFile(path, "utf8")).modelRevision, model.revision);
+        const reopened = await freshDesignerSettings(workspace, handoff, model);
+        assert.deepEqual(reopened.values, model.values);
+        assert.equal(reopened.settingsRevision, 8);
+    }
+});
+
+test("fresh Designer and Save still reject unsafe files and invalid saved metadata", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const path = join(folder, "settings.json");
+    const model = { revision: "current", constraints: {}, values: {} };
+    const request = { modelRevision: model.revision, revision: 1, values: {} };
+    const metadata = { schemaVersion: 1, handoffId: handoff.handoffId, revision: 1 };
+    assert.equal((await freshDesignerSettings(workspace, handoff, model)).settingsRevision, 0);
+    for (const content of [
+        "{broken", "null", "[]",
+        JSON.stringify({ ...metadata, handoffId: "different" }),
+        JSON.stringify({ ...metadata, schemaVersion: 2 }),
+        ...[undefined, 0, -1, 1.5, "1", Number.MAX_SAFE_INTEGER + 1]
+            .map((revision) => JSON.stringify({ ...metadata, revision })),
+        "x".repeat(SETTINGS_LIMIT + 1),
+    ]) {
+        await writeFile(path, content);
+        await assert.rejects(freshDesignerSettings(workspace, handoff, model),
+            /Invalid saved Designer settings|Saved Designer settings/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, request),
+            /Invalid saved Designer settings|Saved Designer settings/);
+        assert.equal(await readFile(path, "utf8"), content);
+    }
+    await rm(path);
+    await mkdir(path);
+    await assert.rejects(freshDesignerSettings(workspace, handoff, model));
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, request));
+    await rm(path, { recursive: true });
+    const target = join(folder, "other-settings.json");
+    await writeFile(target, JSON.stringify(metadata));
+    try {
+        await symlink(target, path, "file");
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; settings symlink assertion skipped");
+        return;
+    }
+    await assert.rejects(freshDesignerSettings(workspace, handoff, model),
+        /Invalid saved Designer settings file|ELOOP/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, request),
+        /Invalid saved Designer settings file|ELOOP/);
 });
 
 test("token-gated Save endpoint reports errors without losing the current values", async (t) => {

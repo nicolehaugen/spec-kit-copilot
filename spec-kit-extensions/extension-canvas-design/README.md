@@ -166,6 +166,38 @@ Without one, Specify chooses the artifact directory. No directory is created unt
 Specify runs; its scripts may add a numeric prefix to the actual directory name.
 New stays available while editing, and Remove discards an unstarted row without
 deleting any directory. Pending rows and their phase drafts survive a reload.
+An external extension reload during a phase can interrupt reporting. A live turn
+remains Running; a finished turn without a reported directory is marked Run output unconfirmed.
+Recovered runs can report directories and artifacts only while their matched
+turn is active; reporting rechecks that evidence and rejects ended turns.
+An ended Run output unconfirmed does not block the existing confirmed Delete
+action for a discovered workflow directory. Metadata-only discard still refuses
+to remove a row when a directory appeared.
+The host-to-Workflow-page contract in `generated-scaffold/contracts/host-adapter.mjs`
+defines pending rows' `hasWorkflowRunHistory` (boolean), `workflowRecoveryMessage`
+(string or null), and `status` (Not started, Request sent, Running, Unconfirmed,
+Run output unconfirmed, Completed, or Failed). Recovery messages explain discovered
+folders or inconclusive checks; they do not authorize deletion.
+If a restart loses the dispatch message ID, the host first tries to recover it
+from the unique run ID in the dispatched prompt. Otherwise it shows Run output
+unconfirmed and permits confirmed metadata discard only after observing session
+idle in the restarted host, while still requiring all directory safety checks.
+New session activity blocks discard again; the host never treats an untracked
+dispatch as proof that no prompt was sent.
+Recovered tracked runs also become Run output unconfirmed after an observed
+session idle when no terminal response or turn-end event is available. New
+activity blocks discard again. Recovery messages share one verified directory
+inventory per snapshot; discard always performs fresh directory safety checks.
+One restart eligibility rule includes unfinished runs and Completed pending runs
+without reported output. Reconciliation and discard share the same active,
+ended, or unknown activity decision; unknown activity blocks discard, and a
+new matching turn clears the previous turn's ended state.
+After the turn ends, a run-backed row offers a confirmed Discard pending row action.
+This checks all configured workflow roots against the pre-run snapshot, including
+empty directories, and removes only the pending row, drafts, and run history when
+no directory appeared. A new or unsafe directory blocks discard and its path is
+shown for inspection in the workflow list. The app cannot prevent externally
+initiated extension reloads; its existing skill reload behavior is unchanged.
 Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
 Deletion verifies the directory and its parent, moves it to a temporary
@@ -618,11 +650,15 @@ and packaged workflow UI, theme, routes, and runtime modules into a new
 `.github/extensions/<canvas-id>/` directory, alongside the frozen configuration.
 The entry point uses `joinSession` and `createCanvas` to register actions and a
 loopback HTTP server with open/close lifecycle handling. Generation does not call
-`create-canvas` or rewrite an SDK scaffold. It stages and validates the completed extension before moving it into place.
+`create-canvas` or rewrite an SDK scaffold. It writes directly into the final
+directory without staging-directory renames.
 An existing target stops generation unless the Designer confirms a recognizable
 same-handoff target and passes its prior request ID; confirmed regeneration
-replaces that folder, including manual edits, with rollback on failure. Publishing
-and rollback refuse an occupied destination, including an empty directory.
+clears and rebuilds that directory in place, including manual edits, without
+backup or rollback. New creation refuses any occupied destination, including an
+empty directory. Failed generation removes its owned output so Generate can be
+retried; failed regeneration does not restore the previous canvas. Cleanup
+failures report the target path and error for inspection.
 Designer saves settings before dispatching Generate, then restores editing
 after the bounded submission. The entry point is written only after syntax
 and render validation succeeds. Generate does not reload or open the canvas.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -53,6 +53,9 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
             runtime = await createRuntime(options);
             return runtime;
         },
+        setEvents: (value) => { events = value; },
+        idle: () => callbacks.get("session.idle")(),
+        active: () => callbacks.get("tool.execution_start")(),
         finish: async (success) => {
             events = [
                 { type: "user.message", data: { messageId: "message-1", interactionId: "turn-1" } },
@@ -72,6 +75,296 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
             throw new Error("Autopilot completion was not reconciled");
         } };
 }
+
+for (const status of ["Request sent", "Running", "Unconfirmed", "Run output unconfirmed"]) {
+test(`restart recovers message-less ${status} only after idle and retains folder checks`, async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status, artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    let snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Unconfirmed");
+    const discard = () => runtime.removePending({ itemId,
+        revision: snapshot.revision, confirmation: "discard" });
+    await assert.rejects(discard(), /agent turn has not ended/);
+    fixture.idle();
+    fixture.active();
+    await assert.rejects(discard(), /agent turn has not ended/);
+    fixture.idle();
+    await mkdir(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await assert.rejects(discard(), /workflow directory appeared/);
+    await rm(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    snapshot = await runtime.snapshot();
+    await discard();
+    assert.equal((await runtime.snapshot()).items.some((row) => row.id === itemId), false);
+});
+}
+
+test("interrupted dispatch recovery does not announce again on repeated state reads", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Unconfirmed", artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    let announcements = 0;
+    fixture.options.notify = () => { announcements++; };
+    const runtime = await fixture.restart();
+    await runtime.snapshot();
+    assert.equal(announcements, 1);
+    const recovered = await readFile(fixture.stateFile, "utf8");
+    for (let index = 0; index < 5; index++) await runtime.snapshot();
+    assert.equal(announcements, 1);
+    assert.equal(await readFile(fixture.stateFile, "utf8"), recovered);
+    fixture.idle();
+    const snapshot = await runtime.snapshot();
+    await runtime.removePending({ itemId, revision: snapshot.revision, confirmation: "discard" });
+    const afterDiscard = announcements;
+    for (let index = 0; index < 5; index++) await runtime.snapshot();
+    assert.equal(announcements, afterDiscard);
+});
+
+test("restart leaves conclusive terminal message-less attempts unchanged", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = ["Failed", "Completed"].map((status) => ({ runId: status,
+        before: [], item: itemId, phase: "specify", sessionId: "test-session",
+        instanceId: "panel", args: "", status, artifact: null, messageId: null,
+        ...(status === "Completed" ? { confirmedSlug: true } : {}) }));
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    await (await fixture.restart()).snapshot();
+    assert.deepEqual(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs
+        .map((run) => run.status), ["Failed", "Completed"]);
+});
+
+test("Completed pending output without event history recovers after idle", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "missing-output", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Completed", artifact: null, messageId: "missing-message" }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    let snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Unconfirmed");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+    fixture.idle();
+    await runtime.refresh();
+    snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Run output unconfirmed");
+    await runtime.removePending({ itemId, revision: snapshot.revision, confirmation: "discard" });
+});
+
+test("a later active turn overrides an earlier ended turn for recovery and discard", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "retry-turn", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Running", artifact: null, messageId: "message" }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "first" } },
+        { type: "assistant.turn_end", data: { turnId: "first" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "second" } },
+    ]);
+    const runtime = await fixture.restart();
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Running");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+});
+
+test("restart reconnects a message-less dispatch to its exact prompt and live turn", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Request sent", artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "recovered", interactionId: "run",
+            content: 'report with {phaseRunId:"interrupted"}' } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    const runtime = await fixture.restart();
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Running");
+    assert.equal(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0].messageId, "recovered");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+    fixture.idle();
+    await runtime.refresh();
+    const ended = await runtime.snapshot();
+    assert.equal(ended.items.find((row) => row.id === itemId).status, "Run output unconfirmed");
+    fixture.active();
+    await assert.rejects(runtime.removePending({ itemId, revision: ended.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+    fixture.idle();
+    await runtime.refresh();
+    await runtime.removePending({ itemId, revision: (await runtime.snapshot()).revision,
+        confirmation: "discard" });
+});
+
+test("refresh reconnects a message-less dispatch when its live turn arrives after reopening", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Request sent", artifact: null, messageId: null }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    assert.equal((await runtime.snapshot()).items.find((row) => row.id === itemId).status, "Unconfirmed");
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "late-message", interactionId: "run",
+            content: 'report with {phaseRunId:"interrupted"}' } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    const snapshot = await runtime.refresh();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Running");
+    assert.equal(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0].messageId, "late-message");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+});
+
+for (const kind of ["directory", "artifact"]) {
+test(`recovered active turn accepts its ${kind} report and rejects reports after ending`, async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Running", artifact: null, messageId: "recovered" }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const events = [
+        { type: "user.message", data: { messageId: "recovered", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ];
+    fixture.setEvents(events);
+    const runtime = await fixture.restart();
+    await runtime.snapshot();
+    await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+    await writeFile(join(fixture.project, "specs", "demo", "spec.md"), "Specification");
+    const report = (panel) => kind === "directory"
+        ? runtime.reportSlug({ phaseRunId: "interrupted", slug: "demo" }, panel)
+        : runtime.report({ phaseRunId: "interrupted", path: "specs/demo/spec.md" }, panel);
+    await assert.rejects(report("other-panel"), /Unknown or stale phase reporting request/);
+    assert.equal((await report("panel")).accepted, true);
+    fixture.setEvents([...events, { type: "assistant.turn_end", data: { turnId: "turn" } }]);
+    fixture.active();
+    const before = await readFile(fixture.stateFile, "utf8");
+    await assert.rejects(report("panel"), /Unknown or stale phase reporting request/);
+    assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+});
+}
+
+test("confirmed Delete removes a discovered directory after an unconfirmed run ends", async (t) => {
+    const fixture = await setup(t);
+    const { runtime } = fixture;
+    const itemId = await prepareNewWorkflow(runtime);
+    await runtime.run({ itemId, phase: "specify", args: "" }, "panel");
+    await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    await runtime.refresh();
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+        revision: (await runtime.snapshot()).revision }), /unfinished phase/);
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+        { type: "assistant.turn_end", data: { turnId: "turn" } },
+    ]);
+    const snapshot = await runtime.refresh();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Run output unconfirmed");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /workflow directory appeared/);
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "wrong",
+        revision: snapshot.revision }), /confirmation does not match/);
+    assert.deepEqual(await runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+        revision: snapshot.revision }), { deleted: "specs/demo" });
+    await assert.rejects(stat(join(fixture.project, "specs", "demo")), { code: "ENOENT" });
+    assert.equal((await runtime.snapshot()).items.some((row) => row.id === "specs/demo"), false);
+});
+
+test("many attempts share one verified directory inventory per snapshot", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = Array.from({ length: 100 }, (_, index) => ({ runId: `attempt-${index}`,
+        before: [], item: itemId, phase: "specify", sessionId: "test-session",
+        instanceId: "panel", args: "", status: "Failed", artifact: null, messageId: null }));
+    await mkdir(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const file = join(fixture.target, "runtime.mjs");
+    const source = await readFile(file, "utf8");
+    await writeFile(file, source.replace("async function inspectDirectories() {",
+        "async function inspectDirectories() { globalThis.inventoryScans++;"));
+    const { createRuntime } = await import(pathToFileURL(file).href + "?inventory-test");
+    globalThis.inventoryScans = 0;
+    t.after(() => { delete globalThis.inventoryScans; });
+    const runtime = await createRuntime(fixture.options);
+    t.after(() => runtime.close());
+    const snapshot = await runtime.snapshot();
+    assert.equal(globalThis.inventoryScans, 1);
+    assert.match(snapshot.items.find((row) => row.id === itemId).workflowRecoveryMessage,
+        /specs\/001-demo/);
+    await runtime.snapshot();
+    assert.equal(globalThis.inventoryScans, 2);
+});
+
+test("pending recovery includes earlier attempts and unsafe checks after a retry", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    const attempt = (runId, before) => ({ runId, before, item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel",
+        args: "", status: "Failed", artifact: null, messageId: null, error: null });
+    saved.runs = [
+        attempt("first", []),
+        attempt("second", []),
+        attempt("retry", ["specs/001-demo"]),
+    ];
+    await mkdir(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const runtime = await fixture.restart();
+    const snapshot = await runtime.snapshot();
+    const row = snapshot.items.find((entry) => entry.id === itemId);
+    assert.equal(row.workflowRecoveryMessage,
+        "New workflow directory: specs/001-demo. Select it in the workflow list to inspect it.");
+    assert.equal(row.status, "Failed");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /A workflow directory appeared: specs\/001-demo/);
+
+    saved.runs.splice(1, 0, attempt("unsafe", ["specs/invalid/path"]));
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const unsafe = await (await fixture.restart()).snapshot();
+    const recovery = unsafe.items.find((entry) => entry.id === itemId).workflowRecoveryMessage;
+    assert.match(recovery, /New workflow directory: specs\/001-demo/);
+    assert.match(recovery, /cannot reliably check/);
+    assert.equal(recovery.split("specs/001-demo").length - 1, 1);
+
+    saved.runs = [attempt("first", []), attempt("retry", [])];
+    await rm(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const emptyRuntime = await fixture.restart();
+    const empty = await emptyRuntime.snapshot();
+    assert.equal(empty.items.find((entry) => entry.id === itemId).workflowRecoveryMessage, null);
+    await emptyRuntime.removePending({ itemId, revision: empty.revision, confirmation: "discard" });
+    assert.equal((await emptyRuntime.snapshot()).items.some((entry) => entry.id === itemId), false);
+});
 
 test("Autopilot refuses dialog-bound phases before dispatch or mode changes", async (t) => {
     const { runtime, sent, session } = await setup(t, true,
@@ -94,6 +387,32 @@ async function startNewAutopilot(runtime) {
     const itemId = await prepareNewWorkflow(runtime);
     return { ...await runtime.startAutopilot({ itemId }, "panel"), itemId };
 }
+
+test("ended unconfirmed run rejects stale reports after unrelated activity", async (t) => {
+    const fixture = await setup(t);
+    const { runtime, project } = fixture;
+    const itemId = await prepareNewWorkflow(runtime);
+    await runtime.run({ itemId, phase: "specify", args: "" }, "panel");
+    const { runId: phaseRunId } = JSON.parse(await readFile(fixture.stateFile, "utf8")).runs.at(-1);
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message-1", interactionId: "turn-1" } },
+        { type: "assistant.turn_start", data: { interactionId: "turn-1", turnId: "reply" } },
+        { type: "assistant.turn_end", data: { turnId: "reply" } },
+        { type: "session.task_complete", data: { success: true, summary: "Finished" } },
+    ]);
+    await runtime.refresh();
+    assert.equal((await runtime.snapshot()).items.find((item) => item.id === itemId).status,
+        "Run output unconfirmed");
+    fixture.active();
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await writeFile(join(project, "specs", "demo", "spec.md"), "Late specification");
+    const before = await readFile(fixture.stateFile, "utf8");
+    await assert.rejects(runtime.reportSlug({ phaseRunId, slug: "demo" }, "panel"),
+        /Unknown or stale phase reporting request/);
+    await assert.rejects(runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel"),
+        /Unknown or stale phase reporting request/);
+    assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+});
 
 test("vertical Autopilot starts first, verifies each artifact and refuses skipped or repeated steps", async (t) => {
     const { runtime, project, sent, session, finish } = await setup(t);
