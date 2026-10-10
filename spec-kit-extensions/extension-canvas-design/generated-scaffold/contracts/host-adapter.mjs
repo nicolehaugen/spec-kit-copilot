@@ -23,6 +23,24 @@ export function validateWorkflowPageState(state) {
     if (state.model && state.model.userProvidesSlug !== state.phaseState.slugEditable) {
         throw new Error("Incompatible Workflow page state: slug settings disagree");
     }
+    if (state.model?.items !== undefined) {
+        if (!Array.isArray(state.model.items)) {
+            throw new Error("Incompatible Workflow page state: items must be an array");
+        }
+        for (const item of state.model.items) {
+            if (!item || typeof item !== "object" || Array.isArray(item)) {
+                throw new Error("Incompatible Workflow page state: invalid workflow row");
+            }
+            if (!item.pending) continue;
+            if (typeof item.hasWorkflowRunHistory !== "boolean"
+                || item.workflowRecoveryMessage !== null
+                    && typeof item.workflowRecoveryMessage !== "string"
+                || !["Not started", "Request sent", "Running", "Unconfirmed",
+                    "Run output unconfirmed", "Completed", "Failed"].includes(item.status)) {
+                throw new Error("Incompatible Workflow page state: invalid pending workflow recovery");
+            }
+        }
+    }
     const projectBadges = state.model?.badges?.project;
     if (projectBadges !== undefined && (!Array.isArray(projectBadges)
         || projectBadges.some((badge) => !badge || typeof badge !== "object"

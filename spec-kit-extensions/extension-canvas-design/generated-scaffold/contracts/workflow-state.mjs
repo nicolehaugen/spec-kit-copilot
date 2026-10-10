@@ -7,6 +7,16 @@ export const newItem = (id) => id === "__new__" || pendingId(id);
 export const freshState = () => ({ version: 1, revision: 0, selected: "__new__", phase: null, slug: "",
     name: "", names: {}, drafts: {}, runs: [], values: {}, pendingWorkflows: [], workflowSerial: 0 });
 
+export function validatePendingRemoval(input) {
+    if (!input || typeof input !== "object" || Array.isArray(input)
+        || Object.keys(input).some((key) => !["itemId", "revision", "confirmation"].includes(key))
+        || !pendingId(input.itemId) || !Number.isSafeInteger(input.revision)
+        || input.confirmation !== undefined && input.confirmation !== "discard") {
+        throw new UserError("Invalid unstarted workflow removal.");
+    }
+    return input;
+}
+
 export function validateWorkflowState(state, phases, valueFields) {
     if (!state || state.version !== 1 || !Number.isSafeInteger(state.revision) || !Array.isArray(state.runs)
         || typeof state.drafts !== "object" || !state.drafts || Array.isArray(state.drafts)
@@ -32,7 +42,7 @@ export function validateWorkflowState(state, phases, valueFields) {
             || typeof run.instanceId !== "string" || typeof run.args !== "string" || !Array.isArray(run.before)
             || (run.name !== undefined && (typeof run.name !== "string" || run.name.length > 120
                 || /[\x00-\x1f\x7f]/.test(run.name)))
-            || !["Request sent", "Running", "Unconfirmed", "Completed", "Failed"].includes(run.status)
+            || !["Request sent", "Running", "Unconfirmed", "Run output unconfirmed", "Completed", "Failed"].includes(run.status)
             || (run.artifact !== null && typeof run.artifact !== "string")
             || (run.artifacts !== undefined && (!Array.isArray(run.artifacts)
                 || run.artifacts.length > 100 || run.artifacts.some((path) => typeof path !== "string")))

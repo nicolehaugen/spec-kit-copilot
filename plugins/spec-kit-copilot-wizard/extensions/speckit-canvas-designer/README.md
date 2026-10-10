@@ -133,9 +133,13 @@ The existing header Save persists confirmed outputs with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff retains the saved revision but starts a fresh form
-from template defaults when its resolved pages are unchanged. Saved output
-additions and viewer selections are not restored on reopen; a subsequent Save
-or Generate replaces them with the handoff defaults.
+from current template defaults, even when the resolved pages have changed.
+Reopen and Save safely read the prior file and validate its schema version,
+handoff identity, and revision, not its discarded model revision, fields,
+outputs, or badges. Saved values, output additions, viewer selections, and badges
+are not restored on reopen; a subsequent Save or Generate replaces them with
+the current draft. New drafts remain fully validated on Save, and Generate also
+validates the saved content against the current model before freezing it.
 Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
 blank retains the current color in that mode, while invalid hex blocks Generate
 without preventing an incomplete draft from being saved. The generated canvas
@@ -232,8 +236,10 @@ Generation requires both separate Generate and Open skills and a complete
 Wizard handoff; a hosted package with only the older combined Generate command
 is blocked rather than silently reloading Designer.
 For a verified same-handoff target, **Regenerate canvas** confirms that all
-files, including manual edits, will be overwritten. The generator stages and
-validates replacement, then swaps directories with rollback; foreign or
+files, including manual edits, will be overwritten. The generator clears and
+rebuilds the final directory in place without staging, backup, or rollback.
+It writes the entry point only after validation and removes failed output so
+Generate can be retried; cleanup failures require folder inspection. Foreign or
 incomplete output is not replaceable. The server rejects replacement fields
 when the target is absent; creation must be submitted without replacement,
 and replacement requires the matching verified prior request ID. If a target
@@ -245,7 +251,8 @@ the generated folder afterward.
 An accepted regeneration waits for its own verified output before enabling
 Open or Share, so the previous published version cannot disconnect Designer
 while replacement is pending. If regeneration fails or stalls, reopen Designer
-to clear that panel-local wait and recheck the previously published files.
+to clear that panel-local wait and recheck the target. Failed regeneration does
+not preserve the previous files; when cleanup succeeds, Generate can start again.
 Before dispatch, the Open step warns that registration disconnects Designer
 and shows the child-chat guidance. Generate and Open stay disabled after the
 opening request is accepted; an error before acceptance restores them. The
