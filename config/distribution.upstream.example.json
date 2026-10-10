@@ -1,0 +1,9 @@
+{
+  "repository": "github/spec-kit-copilot",
+  "catalogRef": "main",
+  "marketplace": {
+    "name": "spec-kit-marketplace",
+    "ownerName": "Spec Kit",
+    "description": "Spec Kit integrations for GitHub Copilot CLI and the GitHub Copilot App."
+  }
+}

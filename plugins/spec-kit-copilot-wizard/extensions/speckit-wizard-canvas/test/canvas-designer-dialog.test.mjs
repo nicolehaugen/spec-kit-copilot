@@ -685,7 +685,7 @@ test("selection stays local, community confirmation can cancel, and reopen reset
     }
 });
 
-test("Phases header exposes Generate canvas even without steps", () => {
+test("Phases header exposes Generate canvas only when enabled, even without steps", () => {
     const previousDocument = globalThis.document;
     const previousTab = state.activeTab;
     const previousSnapshot = state.snapshot;
@@ -693,10 +693,13 @@ test("Phases header exposes Generate canvas even without steps", () => {
     globalThis.document = { getElementById: (id) => id === "pipeline-banner" ? banner : null };
     state.activeTab = "phases";
     try {
-        state.snapshot = { pipeline: [] };
+        state.snapshot = { pipeline: [], featureFlags: { generateCanvas: true } };
         renderPipelineBanner();
         assert.equal(banner.hidden, false);
         assert.match(banner.innerHTML, /pipeline-generate" aria-label="Generate canvas"[^>]*>Generate canvas<\/button>/);
+        state.snapshot.featureFlags.generateCanvas = false;
+        renderPipelineBanner();
+        assert.doesNotMatch(banner.innerHTML, /pipeline-generate/);
         assert.match(banner.innerHTML, /pipeline-clear" data-action="clear" disabled/);
         assert.match(banner.innerHTML, /pipeline-reset" data-action="reset"/);
         const dialogSource = readFileSync(new URL("../ui/canvas-designer-dialog.js", import.meta.url), "utf8");

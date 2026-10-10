@@ -10,6 +10,113 @@ Copilot experience around it.
 
 **Status:** active development.
 
+## Local Wizard configuration and distribution
+
+Runtime settings and distribution metadata are separate. Runtime settings select
+catalogs and the initial Generate flag without reinstalling provider code;
+marketplace/catalog distribution preparation changes local install metadata,
+not the configuration of a running Wizard.
+
+### Runtime settings
+
+The packaged defaults live in the Wizard provider at
+`config/runtime-defaults.json`. The optional desktop override is
+`%USERPROFILE%\.copilot\spec-kit\runtime-settings.json` (the home-directory
+equivalent on other platforms). `SPECKIT_CONFIG_FILE` selects an **absolute**
+JSON file exclusively; it is not merged with the desktop file. There are no
+per-value environment overrides. Malformed/unknown settings, invalid HTTPS
+catalog URLs and explicit missing files fail visibly. Only an absent optional
+desktop file selects defaults.
+
+From the current worktree, using PowerShell:
+
+```powershell
+node scripts\configure-runtime.mjs show
+node scripts\configure-runtime.mjs use-fork
+# Review the diff and effective settings; then use that preview's digest:
+node scripts\configure-runtime.mjs use-fork --apply --expect "<preview expect digest>"
+node scripts\configure-runtime.mjs use-defaults
+node scripts\configure-runtime.mjs use-defaults --apply --expect "<new preview digest>"
+```
+
+`use-fork` uses `config\runtime-settings.fork.example.json`, merging its overrides
+with other valid existing settings. Use `--source "<custom JSON>"` for custom
+overrides, or `--file "<destination JSON>"` to preview/apply an explicit location.
+`use-defaults` backs up the selected override and leaves `{}` rather than deleting
+a file still referenced by an explicit selector. Replaced files receive dated
+sibling backups. Writes require `--apply` and the matching `--expect` digest;
+stale previews are rejected. Keep backups, but do not commit personal settings
+or backup files.
+
+Settings resolve at provider startup: reload/restart and verify **both** installed
+providers after changes. A successful file write is not proof of reload. Prefer
+the default user-level location for desktop/Designer children; do not assume a
+shell's explicit selector is inherited by a child. Switching settings does not
+undo locally refreshed provider code; explicitly reinstall/update from the
+marketplace to restore published code.
+
+### Project development skills
+
+Canonical repository skills live in `.github\skills`, not the shipping core
+`skills` plugin:
+
+- `speckit-wizard-installed-refresh`: compare inventories, back up and hash-verify
+  both installed providers from this worktree; configure settings only on request.
+- `speckit-wizard-installed-open`: verify the exact installed plugin/provider and
+  persisted disabled settings; ordinary opening uses the configured Generate
+  default, explicit Generate requests enable it, focus-only reopening preserves it.
+- `speckit-wizard-local-generate-launch`: refresh, then explicitly enable Generate;
+  leave phase selection, Designer launch/settings and Generate submission to the user.
+- `speckit-distribution`: prepare local metadata, orchestrate explicitly authorized
+  releases, or verify published installations.
+
+Use one active installed Wizard/Designer pair; sample/session previews are not
+installed-provider or functional journey evidence. For local Generate testing,
+approve **both** this worktree's `spec-kit-extensions\extension-canvas-design` and
+`spec-kit-presets\copilot-vertical-phase-control` paths in Wizard Local development.
+Verify actual child installations, resolved contributions and generated output
+before claiming end-to-end success. Do not modify symlinked Specify development
+installations.
+
+The launcher replaces `speckit-wizard-local-generate` without a compatibility
+duplicate. Same-name/old personal skills remain untouched: explicitly authorize
+backing up/retiring duplicates, then `/skills reload` and verify project discovery.
+
+### Distribution and releases
+
+Select `config\distribution.upstream.example.json`,
+`config\distribution.fork.example.json`, or custom JSON explicitly:
+
+```powershell
+node scripts\prepare-distribution.mjs --config config\distribution.fork.example.json
+# Only after reviewing the affected-file diff:
+node scripts\prepare-distribution.mjs --config config\distribution.fork.example.json --apply --expect "<preview expect digest>"
+node --test tests\configuration\*.test.mjs
+```
+
+Configuration declares GitHub repository, catalog ref and marketplace display
+metadata. Preparation derives catalog, documentation, installation and exact
+versioned ZIP links. It changes only marketplace display fields, catalog self URLs,
+and Canvas Design/vertical-control URL fields, preserving unrelated entries,
+formatting, IDs, versions and requirements. Manifest/catalog version conflicts or
+changed preview inputs stop the operation; overwritten files receive backups.
+Printed marketplace/Specify commands are **not executed**. Preparation does not
+publish catalogs, change workflows, commit, push, tag, or bump versions.
+
+For an explicitly requested release, align only selected component versions and
+metadata/docs, validate, and commit/push only with authorization. Reuse the existing
+Release Extension Trigger and Release Preset Trigger from the prepared release
+commit/ref; publisher validation requires asset URLs matching `GITHUB_REPOSITORY`.
+Do not relocate unrelated upstream packages. Publish assets before promoting the
+served catalog/marketplace ref; publishing a ZIP does not update hosted catalogs.
+Never move an existing tag or replace a published ZIP for development testing.
+
+Hosted readiness requires the **actual published archives selected by the served
+catalogs**, installed without local-source overrides, and verified through
+Wizard/Designer/generated output. Local-source success is separate evidence;
+hosted incompatibility is a release-readiness concern, not a reason to routinely
+bump versions or publish development edits.
+
 > [!NOTE]
 > **Experience visual, Copilot-interactive Spec Kit canvases**
 >

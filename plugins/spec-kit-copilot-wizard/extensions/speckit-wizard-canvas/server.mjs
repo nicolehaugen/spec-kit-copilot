@@ -346,6 +346,9 @@ export function createHandler(deps) {
                     "/api/deps/diagnose": () => handleNpmDiagnose(res, body, { broadcast, getInstance }),
                     "/api/deps/retry": () => handleNpmRetry(res, body, { broadcast, getInstance }),
                     "/api/designer/launch": async () => {
+                        if (getInstance()?.generateCanvas !== true) {
+                            return jsonError(res, 403, "Generate canvas is disabled");
+                        }
                         const { handleDesignerLaunch } = await import("./server/handlers-designer.mjs");
                         return handleDesignerLaunch(res, body, {
                             getState, getInstance, session, log,

@@ -31,6 +31,15 @@ export function resolveWorkspace(instance, context, sessionRepoPath) {
     return instance?.workspacePath ?? null;
 }
 
+export function resolveGenerateCanvas(instance, context, defaultValue = false) {
+    const input = context?.input;
+    if (input && Object.hasOwn(input, "generateCanvas")) {
+        if (typeof input.generateCanvas !== "boolean") throw new Error("generateCanvas must be a boolean");
+        return input.generateCanvas;
+    }
+    return typeof instance?.generateCanvas === "boolean" ? instance.generateCanvas : defaultValue;
+}
+
 export async function fetchSessionRepoPath(session) {
     try {
         const snapshot = await session?.rpc?.metadata?.snapshot?.();
