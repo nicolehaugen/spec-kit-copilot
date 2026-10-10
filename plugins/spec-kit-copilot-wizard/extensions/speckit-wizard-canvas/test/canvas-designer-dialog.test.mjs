@@ -700,6 +700,12 @@ test("Phases header exposes Generate canvas only when enabled, even without step
         state.snapshot.featureFlags.generateCanvas = false;
         renderPipelineBanner();
         assert.doesNotMatch(banner.innerHTML, /pipeline-generate/);
+        delete state.snapshot.featureFlags;
+        renderPipelineBanner();
+        assert.doesNotMatch(banner.innerHTML, /pipeline-generate/);
+        state.snapshot.featureFlags = { generateCanvas: "true" };
+        assert.throws(() => renderPipelineBanner(), /boolean/);
+        delete state.snapshot.featureFlags;
         assert.match(banner.innerHTML, /pipeline-clear" data-action="clear" disabled/);
         assert.match(banner.innerHTML, /pipeline-reset" data-action="reset"/);
         const dialogSource = readFileSync(new URL("../ui/canvas-designer-dialog.js", import.meta.url), "utf8");

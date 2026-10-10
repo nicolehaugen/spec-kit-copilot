@@ -1,5 +1,10 @@
 # Generate canvas feature contract
 
+Executable schema and producer/consumer validators live in `generate-feature.mjs`.
+Malformed present flags are rejected explicitly; omitted flags from older
+snapshots remain disabled. The user explicitly approved this shared validation
+and incompatible-payload behavior in this implementation session.
+
 Wizard open input accepts optional boolean `generateCanvas`. For a new instance,
 omitting it uses runtime configuration `generateCanvasEnabled` (default false).
 On focus/reopen, omission preserves the instance's effective boolean. Explicit

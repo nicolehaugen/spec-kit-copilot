@@ -28,6 +28,7 @@ import { createBootTracker } from "./canvas-runtime/boot-progress.mjs";
 // skills and scanner.
 import { fetchSessionRepoPath, resolveWorkspace, resolveGenerateCanvas } from "./env/workspace.mjs";
 import { runtimeSettings } from "./env/runtime-settings.mjs";
+import { generateCanvasInputSchema } from "./contracts/generate-feature.mjs";
 import { fsDeps, sessionState, getInstance, allInstances, sessionAdapter, setSession, getSession } from "./canvas-runtime/instances.mjs";
 import { ensureEnvProbe } from "./env/probe-cache.mjs";
 import { startStateWatcher, stopStateWatcher, startArtifactWatcher, stopArtifactWatcher } from "./canvas-runtime/watchers.mjs";
@@ -362,7 +363,7 @@ setSession(await joinSession({
                 type: "object",
                 properties: {
                     cwd: { type: "string", description: "Workspace directory. Defaults to the session's cwd." },
-                    generateCanvas: { type: "boolean", description: "Enable experimental Generate canvas for this instance. Defaults to runtime settings, otherwise false." },
+                    generateCanvas: generateCanvasInputSchema,
                 },
             },
             actions: ACTIONS,

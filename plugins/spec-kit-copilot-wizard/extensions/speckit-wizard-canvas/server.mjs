@@ -58,7 +58,7 @@ const DEFAULT_SHARED_DIR = join(__dirname, "shared");
 // "../pipeline/canonical.mjs"). The browser resolves those to
 // absolute paths like /pipeline/*, /composition/*, so the
 // static router must expose them alongside /ui/*.
-const SHARED_ROOT_DIRS = ["pipeline", "composition"];
+const SHARED_ROOT_DIRS = ["pipeline", "composition", "contracts"];
 
 // ------------------------------------------------------------------------
 // deps bag:

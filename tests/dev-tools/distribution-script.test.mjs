@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, readdir, rename, symlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
-import { prepareDistribution, validateDistribution } from '../../dev-tools/prepare-distribution.mjs';
+import { prepareDistribution, validateDistribution, manifestIdentity } from '../../dev-tools/prepare-distribution.mjs';
 import { applyChanges, fingerprint, patchJson } from '../../dev-tools/configuration-files.mjs';
 import { validatePresetCatalog } from '../../dev-tools/validate-preset-catalog.mjs';
 import { distributionFixture, readJson, repositoryRoot, workspace, write } from './fixture-files.mjs';
@@ -193,7 +193,16 @@ test('preset publisher validates exact target asset, manifest identity/version a
   assert.throws(() => validatePresetCatalog({ ...input, repository: 'example/fork' }), /download URL/);
   assert.throws(() => validatePresetCatalog({ ...input, version: '99.0.0' }), /ID and version/);
   assert.throws(() => validatePresetCatalog({ ...input, manifest: manifest.replace(id, 'copilot-other') }), /ID and version/);
+  assert.throws(() => validatePresetCatalog({ ...input, manifest: `${manifest}\n${manifest}` }), /one top-level preset/);
   const changed = structuredClone(catalog);
   changed.presets[id].id = 'copilot-other';
   assert.throws(() => validatePresetCatalog({ ...input, catalog: changed }), /ID and version/);
+});
+
+test('manifest identity rejects duplicate top-level sections for both package kinds', () => {
+  for (const section of ['preset', 'extension']) {
+    const manifest = `${section}:\n  id: sample-package\n  version: 1.2.3\n`;
+    assert.deepEqual(manifestIdentity(manifest, section), { id: 'sample-package', version: '1.2.3' });
+    assert.throws(() => manifestIdentity(`${manifest}${manifest}`, section), /one top-level/);
+  }
 });

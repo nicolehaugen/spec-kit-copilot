@@ -10,6 +10,7 @@ import { test } from "node:test";
 import { resolveRuntimeConfig, runtimeDefaults, validateRuntimeSettings, DEFAULT_SETTINGS_PATH } from "../env/runtime-config.mjs";
 import { resolveGenerateCanvas } from "../env/workspace.mjs";
 import { createHandler } from "../server.mjs";
+import { createFeatureFlags, readGenerateCanvas, generateCanvasInputSchema, featureFlagsSchema } from "../contracts/generate-feature.mjs";
 
 test("optional absence uses defaults; explicit missing and invalid selectors fail", async () => {
     const read = async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); };
@@ -84,6 +85,20 @@ test("Generate has configured default, explicit overrides and focus preservation
     for (const generateCanvas of ["true", 1, null, undefined]) {
         assert.throws(() => resolveGenerateCanvas({}, { input: { generateCanvas } }), /boolean/);
     }
+});
+
+test("shared Generate contract validates host/UI exchanges and older snapshots", () => {
+    assert.equal(generateCanvasInputSchema.type, "boolean");
+    assert.equal(featureFlagsSchema.properties.generateCanvas.type, "boolean");
+    for (const value of [true, false]) {
+        assert.equal(readGenerateCanvas({ featureFlags: createFeatureFlags(value) }), value);
+    }
+    assert.equal(readGenerateCanvas({}), false);
+    for (const featureFlags of [null, [], {}, { generateCanvas: "true" },
+        { generateCanvas: true, unexpected: true }]) {
+        assert.throws(() => readGenerateCanvas({ featureFlags }));
+    }
+    assert.throws(() => createFeatureFlags("true"), /boolean/);
 });
 
 test("authenticated disabled launch is forbidden; enabled launch reaches normal input validation", async () => {

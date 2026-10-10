@@ -40,6 +40,9 @@ async function required(path) {
 
 // Only read identity/version from canonical manifests; never rewrite YAML.
 export function manifestIdentity(text, section) {
+  if ([...text.matchAll(new RegExp(`^${section}:`, 'gm'))].length !== 1) {
+    throw new Error(`Manifest must declare one top-level ${section} section.`);
+  }
   const block = text.match(new RegExp(`^${section}:\\s*\\r?\\n((?:[ \\t]+[^\\n]*\\n|\\r?\\n)*)`, 'm'))?.[1];
   const scalar = name => {
     const matches = [...(block ?? '').matchAll(new RegExp(`^  ${name}:\\s*(?:"([^"]+)"|'([^']+)'|([^\\s#]+))\\s*(?:#.*)?$`, 'gm'))];
