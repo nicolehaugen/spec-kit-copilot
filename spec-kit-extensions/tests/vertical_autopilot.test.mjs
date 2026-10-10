@@ -305,6 +305,32 @@ async function startNewAutopilot(runtime) {
     return { ...await runtime.startAutopilot({ itemId }, "panel"), itemId };
 }
 
+test("ended unconfirmed run rejects stale reports after unrelated activity", async (t) => {
+    const fixture = await setup(t);
+    const { runtime, project } = fixture;
+    const itemId = await prepareNewWorkflow(runtime);
+    await runtime.run({ itemId, phase: "specify", args: "" }, "panel");
+    const { runId: phaseRunId } = JSON.parse(await readFile(fixture.stateFile, "utf8")).runs.at(-1);
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message-1", interactionId: "turn-1" } },
+        { type: "assistant.turn_start", data: { interactionId: "turn-1", turnId: "reply" } },
+        { type: "assistant.turn_end", data: { turnId: "reply" } },
+        { type: "session.task_complete", data: { success: true, summary: "Finished" } },
+    ]);
+    await runtime.refresh();
+    assert.equal((await runtime.snapshot()).items.find((item) => item.id === itemId).status,
+        "Run output unconfirmed");
+    fixture.active();
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await writeFile(join(project, "specs", "demo", "spec.md"), "Late specification");
+    const before = await readFile(fixture.stateFile, "utf8");
+    await assert.rejects(runtime.reportSlug({ phaseRunId, slug: "demo" }, "panel"),
+        /Unknown or stale phase reporting request/);
+    await assert.rejects(runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel"),
+        /Unknown or stale phase reporting request/);
+    assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+});
+
 test("vertical Autopilot starts first, verifies each artifact and refuses skipped or repeated steps", async (t) => {
     const { runtime, project, sent, session, finish } = await setup(t);
     const { autopilotId } = await startNewAutopilot(runtime);

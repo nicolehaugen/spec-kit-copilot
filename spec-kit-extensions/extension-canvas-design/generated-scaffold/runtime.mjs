@@ -992,7 +992,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         const run = state.runs.find((entry) => entry.runId === input?.phaseRunId);
         if (!run || (!busy.value && !(run.autopilotId && liveRuns.has(run.autopilotId)))
             || !liveRuns.has(run.runId) || run.sessionId !== session.sessionId || run.instanceId !== instanceId
-            || ["Completed", "Failed"].includes(run.status)) throw new UserError("Unknown or stale phase reporting request.");
+            || ["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) throw new UserError("Unknown or stale phase reporting request.");
         return run;
     }
     async function reportSlug(input, instanceId) {
