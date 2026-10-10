@@ -43,7 +43,7 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) to get star
 | `spec-kit-copilot-assess` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the Spec Kit `assess` extension |
 | `spec-kit-copilot-bugfix` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the Spec Kit `bug` extension |
 | `spec-kit-copilot-sdd` | 0.1.0 | Copilot App canvas | Optional visual dashboard for the core spec-driven development workflow |
-| `spec-kit-copilot-wizard` | 0.4.23 | Copilot App canvases | Guided wizard and a composable Designer generator (under development) |
+| `spec-kit-copilot-wizard` | 0.4.24 | Copilot App canvases | Guided wizard and a composable Designer generator (under development) |
 
 The plugins are independently installable and versioned. Install the core skills,
 the assessment canvas, the bug fix canvas, the spec-driven development canvas, the
@@ -156,13 +156,18 @@ This repository ships a marketplace manifest at
 marketplace, then install any combination of the plugins:
 
 ```bash
-copilot plugin marketplace add OWNER/spec-kit-copilot
-copilot plugin install spec-kit-copilot@spec-kit-marketplace
-copilot plugin install spec-kit-copilot-assess@spec-kit-marketplace
-copilot plugin install spec-kit-copilot-bugfix@spec-kit-marketplace
-copilot plugin install spec-kit-copilot-sdd@spec-kit-marketplace
-copilot plugin install spec-kit-copilot-wizard@spec-kit-marketplace
+copilot plugin marketplace add https://github.com/nicolehaugen/spec-kit-copilot.git#staging-canvas
+copilot plugin install spec-kit-copilot@spec-kit-staging
+copilot plugin install spec-kit-copilot-assess@spec-kit-staging
+copilot plugin install spec-kit-copilot-bugfix@spec-kit-staging
+copilot plugin install spec-kit-copilot-sdd@spec-kit-staging
+copilot plugin install spec-kit-copilot-wizard@spec-kit-staging
 ```
+
+This fork's staging marketplace is served from `staging-canvas`; the default-branch
+marketplace is separate. Disable other installed Wizard providers while testing;
+the plugin and canvas IDs intentionally remain unchanged. The staging catalogs
+resolve to this fork's published release ZIPs.
 
 ### Local development loading
 

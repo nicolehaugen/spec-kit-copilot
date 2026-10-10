@@ -101,8 +101,8 @@ versioned shape without importing the separately packaged provider at runtime.
 1. Register the marketplace and install it (see [Install](#install)):
 
 ```bash
-  copilot plugin marketplace add OWNER/spec-kit-copilot
-   copilot plugin install spec-kit-copilot-wizard@spec-kit-marketplace
+copilot plugin marketplace add https://github.com/nicolehaugen/spec-kit-copilot.git#staging-canvas
+copilot plugin install spec-kit-copilot-wizard@spec-kit-staging
 ```
 2. Ask Copilot in chat: **"Open the Spec Kit Wizard"**.
 
@@ -357,10 +357,11 @@ addition to) the hosted registry entry:
   approved local-source override instead of treating the hosted package as ready.
   An approved local source may have a different version but must declare a
   compatible Designer tab schema version.
-  **Release readiness:** the catalog-selected published `0.1.19` archive
-  currently lacks `generated-phase-control` and `generated-phase-adapter`;
-  the hosted launch stops at `verify-base`. Local-source validation of these
-  development changes does not make that published archive compatible.
+  **Release readiness:** the earlier published `0.1.19` archive lacks
+  `generated-phase-control` and `generated-phase-adapter`; its hosted launch
+  stops at `verify-base`. The staging catalog selects the published `0.1.20`
+  archive, which passes `verify-base` after installation from that catalog.
+  This verifies base compatibility, not an entire hosted Designer journey.
 - After the child agent creates a default-branch worktree and writes the
   unchanged handoff JSON, it runs `designer-setup.mjs install` for conditional
   Specify initialization and ordered package setup. The runner returns explicit
@@ -390,12 +391,15 @@ addition to) the hosted registry entry:
 **Via marketplace (recommended):**
 
 ```bash
-copilot plugin marketplace add OWNER/spec-kit-copilot
-copilot plugin install spec-kit-copilot-wizard@spec-kit-marketplace
+copilot plugin marketplace add https://github.com/nicolehaugen/spec-kit-copilot.git#staging-canvas
+copilot plugin install spec-kit-copilot-wizard@spec-kit-staging
 ```
 
 The plugin manifest lives at `plugins/spec-kit-copilot-wizard/plugin.json`
 and declares this directory through its `extensions/` component path.
+For the fork's staging release, add the marketplace from
+`https://github.com/nicolehaugen/spec-kit-copilot.git#staging-canvas`;
+the default-branch marketplace is separate.
 
 **Anywhere else (gist):** share it as a private gist
 ("Share extension as gist…" in the command palette, or the

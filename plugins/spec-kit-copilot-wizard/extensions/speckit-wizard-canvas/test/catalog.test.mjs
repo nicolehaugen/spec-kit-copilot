@@ -6,7 +6,7 @@ import { orderPresetsByCliList, parsePresetListOutput } from "../composition/pre
 import { resolveHooksForCommand } from "../pipeline/active-artifacts.mjs";
 import { parseClarifications } from "../pipeline/canonical.mjs";
 import { hydrateFromCatalogSources } from "../catalog/shared.mjs";
-import { EXTENSION_CATALOG_URL } from "../catalog/sources.mjs";
+import { EXTENSION_CATALOG_URL, PRESET_CATALOG_URL } from "../catalog/sources.mjs";
 import { bundleSelectionMembers } from "../catalog/bundles.mjs";
 
 test("bundle selection mirrors preset and extension components without treating steps or workflows as choices", () => {
@@ -50,7 +50,9 @@ test("catalog hydration keeps only string tags for every item kind", async (t) =
             [["canvas-design", "appearance"], [], [], ["canvas-design"]]);
     }
     assert.equal(EXTENSION_CATALOG_URL.copilot,
-        "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json");
+        "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-extensions/catalog.json");
+    assert.equal(PRESET_CATALOG_URL.copilot,
+        "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-presets/catalog.json");
 });
 
 describe("preset-loader", () => {

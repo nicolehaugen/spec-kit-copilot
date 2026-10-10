@@ -66,7 +66,7 @@ async function withWizardCheckout(page, run, {
                 artifactPath: inst.state.phases?.constitution?.artifactPath ?? null, locked: false }],
             pipeline: inst.state.pipeline,
             composition: inst.cachedComposition,
-            catalog, featureFlags: { generateCanvas: false },
+            catalog,
             environment: inst.environment,
             scaffoldedSkills: ["speckit-constitution"], skillsReload: inst.skillsReload,
             refreshStatus: inst.refreshStatus?.status ?? "ready",
@@ -107,6 +107,7 @@ test("environment Recheck adopts the latest probe without reopening the Wizard",
         await expect(phases).toHaveAttribute("aria-disabled", "false");
         await phases.click();
         await expect(page.locator("#stepper")).toContainText("Constitution");
+        await expect(page.getByRole("button", { name: "Generate canvas" })).toBeVisible();
     }, {
         setup: { cliInstalled: false },
         environment: { cliInstalled: false },
@@ -569,7 +570,7 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         const getState = async () => {
             const snap = {
                 workspacePath: root, projectInitialized: true, currentPhase: "constitution",
-                setup, featureFlags: { generateCanvas: false },
+                setup,
                 boot: { phase: "ready", steps: [] }, phases: {},
                 pipeline: inst.state?.pipeline ?? null,
                 commands: [

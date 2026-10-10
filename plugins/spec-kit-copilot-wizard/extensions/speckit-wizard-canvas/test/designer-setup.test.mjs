@@ -410,7 +410,7 @@ test("finalize rejects missing or incompatible setup records", async (t) => {
 test("incompatible catalog configuration and absent CLI stop before installation", async (t) => {
     const f = await fixture(t);
     await writeFile(join(f.project, ".specify", "extension-catalogs.yml"),
-        "catalogs:\n- name: spec-kit-copilot\n  url: https://example.org/other.json\n  install_allowed: true\n");
+        "catalogs:\n- name: spec-kit-staging\n  url: https://example.org/other.json\n  install_allowed: true\n");
     await assert.rejects(installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
         /differs from the approved source/);
     assert.ok(!f.calls.some((args) => args[1] === "add"));

@@ -1,10 +1,16 @@
 name: Release Preset
 
-# Pushing a `<preset-id>-vX.Y.Z` tag builds that preset's zip inline and publishes it
-# as a release asset — matching the `download_url` entries in
-# spec-kit-presets/catalog.json.
+# Build and publish a preset zip from a tag push or a manual trigger call.
 
 on:
+  workflow_call:
+    inputs:
+      preset_id:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
   push:
     tags:
       - '*-v[0-9]+.[0-9]+.[0-9]+'
@@ -18,18 +24,29 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
-      - name: Parse tag
+      - name: Validate release
         id: parse
+        env:
+          SELECTED_PRESET: ${{ inputs.preset_id }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          # Extract preset id (everything before the last -vX.Y.Z)
-          PRESET_ID="${TAG%-v*}"
-          VERSION="${TAG#*-v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            PRESET_ID="${TAG%-v*}"
+            VERSION="${TAG##*-v}"
+          else
+            PRESET_ID="$SELECTED_PRESET"
+            VERSION="${REQUESTED_VERSION#v}"
+            TAG="${PRESET_ID}-v${VERSION}"
+          fi
 
-          # Validate version format
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Error: Invalid version format '$VERSION'" >&2
+          if [[ ! "$PRESET_ID" =~ ^copilot-[a-z0-9]+(-[a-z0-9]+)*$ ]] ||
+             [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+             [[ "$TAG" != "${PRESET_ID}-v${VERSION}" ]]; then
+            echo "Error: Invalid preset release tag '$TAG'" >&2
             exit 1
           fi
 
@@ -70,6 +87,23 @@ jobs:
           zip -r "$GITHUB_WORKSPACE/${{ steps.parse.outputs.preset_id }}.zip" . \
             -x '.*' '__pycache__/*'
 
+      - name: Create or verify release tag
+        env:
+          TAG: ${{ steps.parse.outputs.tag }}
+        run: |
+          if git show-ref --verify --quiet "refs/tags/$TAG"; then
+            if [[ "$(git rev-parse "refs/tags/$TAG^{commit}")" != "$(git rev-parse HEAD)" ]]; then
+              echo "Error: Tag '$TAG' points to a different commit; refusing to move it." >&2
+              exit 1
+            fi
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Error: Release tag '$TAG' is missing." >&2
+            exit 1
+          else
+            git tag "$TAG" HEAD
+            git push origin "refs/tags/$TAG"
+          fi
+
       - name: Generate release notes
         id: notes
         run: |
@@ -104,5 +138,7 @@ jobs:
 
           gh release create "$TAG" \
             "$PRESET_ID.zip" \
+            --verify-tag \
+            --latest=false \
             --title "$PRESET_ID v$VERSION" \
             --notes "${{ steps.notes.outputs.body }}"

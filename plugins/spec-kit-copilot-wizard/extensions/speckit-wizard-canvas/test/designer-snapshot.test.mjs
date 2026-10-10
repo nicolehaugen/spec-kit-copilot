@@ -13,6 +13,7 @@ test("loaded empty preset, extension and bundle catalogs make Designer launch-re
     inst.workspacePath = root;
 
     const before = await snapshot(inst);
+    assert.equal(Object.hasOwn(before, "featureFlags"), false);
     assert.equal(before.catalog.extensions, undefined);
     assert.equal(before.catalog.bundles, undefined);
     assert.equal(before.catalog.designerFingerprint, undefined);
