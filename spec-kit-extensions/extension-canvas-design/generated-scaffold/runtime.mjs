@@ -125,9 +125,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     let writes = Promise.resolve();
     let dispatching = false;
+    const untrackedDispatch = (run) => run.sessionId === session.sessionId
+        && !run.autopilotId && !run.messageId && !["Completed", "Failed"].includes(run.status);
     const interruptedDispatches = new Set(state.runs.filter((run) =>
-        run.sessionId === session.sessionId && !run.autopilotId && !run.messageId
-        && ["Request sent", "Run output unconfirmed"].includes(run.status)).map((run) => run.runId));
+        untrackedDispatch(run)).map((run) => run.runId));
     let idleAfterRestart = false;
     let recoverOnOpen = state.runs.some((run) => run.messageId
         && (!["Completed", "Failed"].includes(run.status)
@@ -568,7 +569,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             }
             if (runs.some((run) => !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)
                 || run.messageId === null && run.status !== "Failed"
-                    && !(interruptedDispatches.has(run.runId) && idleAfterRestart && !busy.value))) {
+                    && !(untrackedDispatch(run) && interruptedDispatches.has(run.runId)
+                        && idleAfterRestart && !busy.value))) {
                 throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
             }
             for (const run of runs) {

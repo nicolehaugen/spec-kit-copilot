@@ -76,13 +76,14 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
         } };
 }
 
-test("restart recovers message-less dispatch only after idle and retains folder checks", async (t) => {
+for (const status of ["Request sent", "Running", "Unconfirmed", "Run output unconfirmed"]) {
+test(`restart recovers message-less ${status} only after idle and retains folder checks`, async (t) => {
     const fixture = await setup(t);
     const itemId = await prepareNewWorkflow(fixture.runtime);
     const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
     saved.runs = [{ runId: "interrupted", before: [], item: itemId,
         phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
-        status: "Request sent", artifact: null, messageId: null }];
+        status, artifact: null, messageId: null }];
     await writeFile(fixture.stateFile, JSON.stringify(saved));
     const runtime = await fixture.restart();
     let snapshot = await runtime.snapshot();
@@ -100,6 +101,20 @@ test("restart recovers message-less dispatch only after idle and retains folder 
     snapshot = await runtime.snapshot();
     await discard();
     assert.equal((await runtime.snapshot()).items.some((row) => row.id === itemId), false);
+});
+}
+
+test("restart leaves terminal message-less attempts unchanged", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = ["Failed", "Completed"].map((status) => ({ runId: status,
+        before: [], item: itemId, phase: "specify", sessionId: "test-session",
+        instanceId: "panel", args: "", status, artifact: null, messageId: null }));
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    await (await fixture.restart()).snapshot();
+    assert.deepEqual(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs
+        .map((run) => run.status), ["Failed", "Completed"]);
 });
 
 test("restart reconnects a message-less dispatch to its exact prompt and live turn", async (t) => {
