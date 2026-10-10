@@ -359,8 +359,9 @@ addition to) the hosted registry entry:
   compatible Designer tab schema version.
   **Release readiness:** the earlier published `0.1.19` archive lacks
   `generated-phase-control` and `generated-phase-adapter`; its hosted launch
-  stops at `verify-base`. The staging catalog selects `0.1.20`, whose
-  published archive must pass `verify-base` before the hosted path is ready.
+  stops at `verify-base`. The staging catalog selects the published `0.1.20`
+  archive, which passes `verify-base` after installation from that catalog.
+  This verifies base compatibility, not an entire hosted Designer journey.
 - After the child agent creates a default-branch worktree and writes the
   unchanged handoff JSON, it runs `designer-setup.mjs install` for conditional
   Specify initialization and ordered package setup. The runner returns explicit
