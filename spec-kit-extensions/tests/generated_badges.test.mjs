@@ -8,13 +8,14 @@ import { evaluate as checklist } from
     "../extension-canvas-design/generated-host/badges/adapters/content.mjs";
 import { evaluate as valueMatch } from
     "../extension-canvas-design/generated-host/badges/adapters/content.mjs";
+import { badgesForTarget } from
+    "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs";
 
 const generated = await mkdtemp(join(process.cwd(), ".generated-badge-package-"));
-after(() => rm(generated, { recursive: true, force: true }));
 await cp(new URL("../extension-canvas-design/generated-scaffold/", import.meta.url),
     generated, { recursive: true });
 await mkdir(join(generated, "badges"), { recursive: true });
-for (const name of ["content", "artifact-state", "run"]) {
+for (const name of ["content", "artifact-state", "ordered-stale", "run"]) {
     await cp(new URL(`../extension-canvas-design/generated-host/badges/adapters/${name}.mjs`,
         import.meta.url), join(generated, "badges", `badge-rule-${name}-adapter.mjs`));
 }
@@ -47,52 +48,70 @@ const moduleFile = new URL("../extension-canvas-design/generated-host/badges/ada
     import.meta.url);
 const hash = createHash("sha256").update(await readFile(moduleFile)).digest("hex");
 const rule = { id: "checklist-progress", label: "Progress", description: "Progress",
-    inputs: [{ id: "artifact", type: "artifact" }], textPlaceholders: ["completed", "total", "percent"],
+    inputs: [{ id: "artifact", type: "artifact" },
+        { id: "prerequisites", type: "ordered-artifacts", scope: "metadata",
+            before: "artifact", minItems: 1 },
+        { id: "targetphase", type: "phase" }],
+    textPlaceholders: ["completed", "total", "percent"],
     adapter: "badge-rule-content-adapter", hash };
 const type = { id: "progress", title: "Progress", description: "Progress",
     rule: rule.id, defaultText: "{completed}/{total} complete", defaultColor: "blue", enabled: true };
 const instance = { id: "work", type: type.id, inputs: { artifact: {
     phase: "tasks", output: "specs/<slug>/tasks.md",
-} }, text: "{completed}/{total} complete", color: "blue",
+}, prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" }],
+targetphase: "tasks" }, text: "{completed}/{total} complete", color: "blue",
     showIn: ["workflow-list", "workflow-summary", "phase-card"], phase: "tasks" };
 const badges = { instances: [instance], types: [type], rules: [rule] };
+async function writeSpec(cwd, workflow = "specs/alpha") {
+    await mkdir(join(cwd, workflow), { recursive: true });
+    await writeFile(join(cwd, workflow, "spec.md"), "# Specification");
+    await utimes(join(cwd, workflow, "spec.md"),
+        new Date(1_600_000_000_000), new Date(1_600_000_000_000));
+}
+const projectRule = { ...rule, id: "value-match",
+    inputs: [{ id: "artifact", type: "artifact" }, { id: "value", type: "text" }],
+    textPlaceholders: [] };
+const projectType = { ...type, id: "value-match", rule: projectRule.id };
+const projectInputs = (artifact) => ({ artifact, value: "adopted" });
 
 test("generated rules require the adapter key rather than the former module key", () => {
     const { adapter, ...withoutAdapter } = rule;
-    assert.doesNotThrow(() => validateBadges(badges, ["tasks"]));
+    assert.doesNotThrow(() => validateBadges(badges, ["specify", "tasks"]));
     assert.throws(() => validateBadges({ ...badges, rules: [{
         ...withoutAdapter, module: adapter,
-    }] }, ["tasks"]), /Invalid generated badge rule/);
+    }] }, ["specify", "tasks"]), /Invalid generated badge rule/);
     assert.throws(() => validateBadges({ ...badges, rules: [{
         ...rule, module: adapter,
-    }] }, ["tasks"]), /Invalid generated badge rule/);
+    }] }, ["specify", "tasks"]), /Invalid generated badge rule/);
 });
 
 test("generated runtime validates Constitution card and declared output placements", () => {
     const constitution = { id: "speckit.constitution", project: true,
         outputs: [".specify/memory/constitution.md"] };
-    const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }, constitution];
-    const global = { ...instance, inputs: { artifact: {
+    const phases = [{ id: "specify", outputs: ["specs/<slug>/spec.md"] },
+        { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }, constitution];
+    const global = { ...instance, type: projectType.id, inputs: projectInputs({
         phase: constitution.id, output: constitution.outputs[0],
-    } }, showIn: ["workflow-list"], phase: null };
-    assert.doesNotThrow(() => validateBadges({ ...badges, instances: [global] }, phases));
+    }), showIn: ["workflow-list"], phase: null };
+    const both = { instances: [global], types: [type, projectType], rules: [rule, projectRule] };
+    assert.doesNotThrow(() => validateBadges(both, phases));
     assert.throws(() => validateBadges({ ...badges, instances: [{
         ...instance, phase: constitution.id,
     }] }, phases), /Project badge placement requires project-level rule inputs/);
-    assert.doesNotThrow(() => validateBadges({ ...badges, instances: [instance] }, phases));
+    assert.doesNotThrow(() => validateBadges({ ...both, instances: [instance] }, phases));
     for (const output of [null, constitution.outputs[0]]) {
-        assert.doesNotThrow(() => validateBadges({ ...badges, instances: [{
+        assert.doesNotThrow(() => validateBadges({ ...both, instances: [{
             ...global, targets: [{ phase: constitution.id, output }],
         }] }, phases));
-        assert.throws(() => validateBadges({ ...badges, instances: [{
+        assert.throws(() => validateBadges({ ...both, instances: [{
             ...instance, showIn: ["workflow-list"], phase: null,
             targets: [{ phase: constitution.id, output }],
         }] }, phases), /Project badge placement requires project-level rule inputs/);
     }
-    assert.throws(() => validateBadges({ ...badges, instances: [{
+    assert.throws(() => validateBadges({ ...both, instances: [{
         ...global, targets: [{ phase: constitution.id, output: "undeclared.md" }],
     }] }, phases), /Invalid generated badge instance/);
-    assert.throws(() => validateBadges({ ...badges, instances: [{
+    assert.throws(() => validateBadges({ ...both, instances: [{
         ...instance, showIn: [], phase: null, targets: [
             { phase: constitution.id, output: null }, { phase: "tasks", output: null },
         ],
@@ -117,11 +136,11 @@ test("project Constitution badges evaluate without workflows and do not count as
     await writeFile(join(cwd, ".specify", "memory", "constitution.md"), "- [x] adopted\n");
     const phase = { id: "speckit.constitution", project: true,
         outputs: [".specify/memory/constitution.md"] };
-    const projectBadge = { ...instance, inputs: { artifact: {
+    const projectBadge = { ...instance, type: projectType.id, inputs: projectInputs({
         phase: phase.id, output: phase.outputs[0],
-    } }, targets: [{ phase: phase.id, output: null }],
+    }), targets: [{ phase: phase.id, output: null }],
     showIn: ["workflow-list", "workflow-summary"], phase: null, phaseText: "Project ready" };
-    const config = { ...badges, instances: [projectBadge] };
+    const config = { instances: [projectBadge], types: [projectType], rules: [projectRule] };
     const evaluate = (workflows) => evaluateBadges(config, { cwd, workflows,
         phases: [phase], outputPath: async ({ output }) => output,
         runFor: () => null });
@@ -147,28 +166,32 @@ test("project-only badges do not consume workflow evaluation, while mixed placem
     await writeFile(join(cwd, ".specify", "memory", "other.md"), "- [x] adopted\n");
     for (const workflow of ["alpha", "beta"]) {
         await mkdir(join(cwd, "specs", workflow), { recursive: true });
+        await writeSpec(cwd, `specs/${workflow}`);
         await writeFile(join(cwd, "specs", workflow, "tasks.md"), "- [x] done\n");
     }
     const projectPhase = { id: "speckit.constitution", project: true,
         outputs: [".specify/memory/constitution.md", ".specify/memory/other.md"] };
-    const projectOnly = { ...instance, id: "project-only",
-        inputs: { artifact: { phase: projectPhase.id, output: projectPhase.outputs[0] } },
+    const projectOnly = { ...instance, id: "project-only", type: projectType.id,
+        inputs: projectInputs({ phase: projectPhase.id, output: projectPhase.outputs[0] }),
         showIn: [], phase: null, targets: [{ phase: projectPhase.id, output: null }] };
     const workflowOnly = { ...instance, id: "workflow-only", showIn: ["workflow-list"], phase: null };
     const mixed = { ...projectOnly, id: "mixed", showIn: ["workflow-summary"],
-        inputs: { artifact: { phase: projectPhase.id, output: projectPhase.outputs[1] } } };
+        inputs: projectInputs({ phase: projectPhase.id, output: projectPhase.outputs[1] }) };
     const mixedTarget = { ...workflowOnly, id: "mixed-target", showIn: [],
         targets: [{ phase: projectPhase.id, output: null }, { phase: "tasks", output: null }] };
-    const configured = { ...badges, instances: [projectOnly, workflowOnly, mixed] };
-    const phases = [projectPhase, { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
-    assert.throws(() => validateBadges({ ...badges, instances: [mixedTarget] }, phases),
+    const configured = { instances: [projectOnly, workflowOnly, mixed],
+        types: [type, projectType], rules: [rule, projectRule] };
+    const phases = [{ id: "specify", outputs: ["specs/<slug>/spec.md"] },
+        projectPhase, { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
+    assert.throws(() => validateBadges({ ...configured, instances: [mixedTarget] }, phases),
         /Project badge placement requires project-level rule inputs/);
     validateBadges(configured, phases);
     const calls = [];
     const result = await evaluateBadges(configured, { cwd, workflows: ["alpha", "beta"], phases,
         outputPath: async ({ phase, output }, workflow) => {
             calls.push([output, workflow]);
-            return phase === projectPhase.id ? output : `specs/${workflow}/tasks.md`;
+            return phase === projectPhase.id ? output
+                : `specs/${workflow}/${phase === "specify" ? "spec" : "tasks"}.md`;
         }, runFor: () => null });
     assert.deepEqual(result.project.map(({ id }) => id), ["project-only", "mixed"]);
     for (const workflow of ["alpha", "beta"]) {
@@ -217,13 +240,16 @@ const fileInstance = { id: "files", type: fileType.id,
 const fileBadges = { instances: [fileInstance], types: [fileType], rules: [fileRule] };
 const completeRule = { ...rule, id: "checklist-complete",
     inputs: [{ id: "artifact", type: "artifact", label: "Checklist output" },
-        { id: "prerequisite", type: "artifact", label: "Earlier output" }],
+        { id: "prerequisites", type: "ordered-artifacts", scope: "metadata",
+            before: "artifact", minItems: 1, label: "Earlier outputs" },
+        { id: "targetphase", type: "phase" }],
     textPlaceholders: [] };
 const completeType = { ...type, id: "checklist-complete", title: "Checklist complete",
     rule: completeRule.id, defaultText: "Checklist complete" };
 const completeInstance = { ...instance, id: "completed", type: completeType.id,
     inputs: { artifact: { phase: "tasks", output: "specs/<slug>/tasks.md" },
-        prerequisite: { phase: "plan", output: "specs/<slug>/plan.md" } },
+        prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" },
+            { phase: "plan", output: "specs/<slug>/plan.md" }], targetphase: "tasks" },
     text: "Checklist complete" };
 const completeBadges = { instances: [completeInstance], types: [completeType],
     rules: [completeRule] };
@@ -249,6 +275,124 @@ const phaseArtifactInstance = { ...instance, id: "phase-artifact",
             { phase: "plan", output: "specs/<slug>/plan.md" }] } };
 const phaseArtifactBadges = { instances: [phaseArtifactInstance],
     types: [phaseArtifactType], rules: [phaseArtifactRule] };
+
+test("replacement groups require a valid target-phase rule and remain optional", () => {
+    const phases = ["specify", "plan", "tasks"].map((id) =>
+        ({ id, outputs: [`specs/<slug>/${id === "specify" ? "spec" : id}.md`] }));
+    assert.doesNotThrow(() => validateBadges(phaseArtifactBadges, phases));
+    assert.doesNotThrow(() => validateBadges({
+        ...phaseArtifactBadges, types: [{ ...phaseArtifactType,
+            replacementGroup: "phase-completion" }],
+    }, phases));
+    for (const replacementGroup of ["", "Phase Completion", 42]) {
+        assert.throws(() => validateBadges({
+            ...phaseArtifactBadges, types: [{ ...phaseArtifactType, replacementGroup }],
+        }, phases), /Invalid generated badge type/);
+    }
+    assert.throws(() => validateBadges({
+        ...phaseArtifactBadges, rules: [{ ...phaseArtifactRule,
+            placementPhaseInput: undefined }],
+        types: [{ ...phaseArtifactType, replacementGroup: "phase-completion" }],
+    }, phases), /Invalid generated badge type/);
+});
+
+test("replacement shows the latest matching phase per location without changing cumulative summaries", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-replacement-badge-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const phases = ["specify", "plan", "tasks"].map((id) => ({
+        id, outputs: [`specs/<slug>/${id === "specify" ? "spec" : id}.md`,
+            ...(id === "plan" ? ["specs/<slug>/research.md"] : [])],
+    }));
+    const artifact = (phase, filename) => ({
+        phase, output: `specs/<slug>/${filename}.md`,
+    });
+    const badge = (id, target, prerequisites, placement = ["workflow-list", "workflow-summary"]) =>
+        ({ ...phaseArtifactInstance, id, inputs: { target, prerequisites },
+            text: `${id} ready`, summaryText: `${id} ({workflows})`,
+            showIn: placement.filter((place) => place !== "phase-card"),
+            targets: placement.includes("phase-card") ? [{ phase: target.phase, output: null }] : [] });
+    const specify = badge("specify", artifact("specify", "spec"), [],
+        ["workflow-list", "workflow-summary", "phase-card"]);
+    const plan = badge("plan", artifact("plan", "plan"), [specify.inputs.target],
+        ["workflow-list", "workflow-summary", "phase-card"]);
+    const tasks = badge("tasks", artifact("tasks", "tasks"),
+        [specify.inputs.target, plan.inputs.target],
+        ["workflow-list", "workflow-summary", "phase-card"]);
+    const { summaryText: _summaryText, ...ordinaryBase } = specify;
+    const ordinary = { ...ordinaryBase, id: "ordinary", type: "ordinary",
+        showIn: ["workflow-list"] };
+    const group = { ...phaseArtifactType, replacementGroup: "phase-completion" };
+    const config = { instances: [specify, plan, tasks, ordinary],
+        types: [group, { ...phaseArtifactType, id: "ordinary", title: "Ordinary" }],
+        rules: [phaseArtifactRule] };
+    const file = (workflow, name) => join(cwd, workflow, `${name}.md`);
+    const add = async (workflow, name, time) => {
+        await mkdir(join(cwd, workflow), { recursive: true });
+        await writeFile(file(workflow, name), "content");
+        const date = new Date(1_600_000_000_000 + time);
+        await utimes(file(workflow, name), date, date);
+    };
+    await add("specs/alpha", "spec", 1000);
+    await add("specs/alpha", "plan", 2000);
+    await add("specs/beta", "spec", 1000);
+    const evaluate = async (selected = config) => {
+        validateBadges(selected, phases);
+        return evaluateBadges(selected, { cwd, workflows: ["specs/alpha", "specs/beta"],
+            phases, outputPath: async ({ output }, workflow) =>
+                output.replace("specs/<slug>", workflow),
+            runFor: () => { throw new Error("Metadata badges must not inspect phase runs"); } });
+    };
+    const row = (result, workflow) => result.items[workflow]
+        .filter((item) => item.showIn.includes("workflow-list")).map((item) => item.id);
+    const card = (result, workflow, phase) =>
+        badgesForTarget(result.items[workflow], phase).map((item) => item.id);
+    const counts = (result) => result.summary.map(({ id, count }) => [id, count]);
+    let result = await evaluate();
+    assert.deepEqual(row(result, "specs/alpha"), ["plan", "ordinary"]);
+    assert.deepEqual(card(result, "specs/alpha", "specify"), ["ordinary"]);
+    assert.deepEqual(card(result, "specs/alpha", "plan"), ["plan"]);
+    assert.deepEqual(row(result, "specs/beta"), ["specify", "ordinary"]);
+    assert.deepEqual(counts(result), [["specify", 2], ["plan", 1], ["tasks", 0]]);
+    const { summaryText: _planSummary, ...ordinaryPlan } = plan;
+    result = await evaluate({ ...config, instances: [
+        specify, plan, ordinary, { ...ordinaryPlan, id: "ordinary-plan", type: "ordinary" },
+    ] });
+    assert.deepEqual(row(result, "specs/alpha"), ["plan", "ordinary", "ordinary-plan"]);
+    result = await evaluate({ ...config, instances: [tasks, plan, ordinary, specify] });
+    assert.deepEqual(row(result, "specs/alpha"), ["plan", "ordinary"]);
+    await add("specs/alpha", "tasks", 3000);
+    result = await evaluate();
+    assert.deepEqual(row(result, "specs/alpha"), ["tasks", "ordinary"]);
+    assert.deepEqual(card(result, "specs/alpha", "plan"), []);
+    assert.deepEqual(counts(result), [["specify", 2], ["plan", 1], ["tasks", 1]]);
+    await utimes(file("specs/alpha", "plan"), new Date(1_600_000_000_000),
+        new Date(1_600_000_000_000));
+    result = await evaluate();
+    assert.deepEqual(row(result, "specs/alpha"), ["specify", "ordinary"]);
+    assert.deepEqual(counts(result), [["specify", 2], ["plan", 0], ["tasks", 0]]);
+    await rm(file("specs/alpha", "plan"));
+    result = await evaluate();
+    assert.deepEqual(card(result, "specs/alpha", "specify"), ["specify", "ordinary"]);
+    assert.deepEqual(counts(result), [["specify", 2], ["plan", 0], ["tasks", 0]]);
+    await add("specs/alpha", "plan", 2000);
+    const { phaseText: _phaseText, ...listOnlySpecify } = specify;
+    const independent = { ...config, instances: [
+        { ...listOnlySpecify, targets: [] },
+        { ...plan, showIn: ["workflow-summary"], targets: plan.targets },
+    ] };
+    result = await evaluate(independent);
+    assert.deepEqual(row(result, "specs/alpha"), ["specify"]);
+    assert.deepEqual(card(result, "specs/alpha", "specify"), []);
+    assert.deepEqual(card(result, "specs/alpha", "plan"), ["plan"]);
+    assert.deepEqual(counts(result), [["specify", 2], ["plan", 1]]);
+    await add("specs/alpha", "research", 2000);
+    const research = badge("research", artifact("plan", "research"),
+        [specify.inputs.target], ["workflow-list", "workflow-summary", "phase-card"]);
+    result = await evaluate({ ...config, instances: [specify, plan, research, ordinary] });
+    assert.deepEqual(row(result, "specs/alpha"), ["plan", "research", "ordinary"]);
+    assert.deepEqual(card(result, "specs/alpha", "plan"), ["plan", "research"]);
+    assert.deepEqual(counts(result), [["specify", 2], ["plan", 1], ["research", 1]]);
+});
 
 test("ordered phase badge uses metadata only, compares neighbors and counts matching workflows", async (t) => {
     const cwd = await mkdtemp(join(process.cwd(), ".generated-phase-artifact-"));
@@ -334,15 +478,16 @@ test("ordered phase badge uses metadata only, compares neighbors and counts matc
 });
 
 test("badge evaluator counts checkboxes outside fences and ignores empty checklists", async () => {
-    assert.deepEqual(await checklist({ ruleId: "checklist-progress", inputs: { artifact: {
-        phase: "tasks", output: "tasks.md" } },
-        evidence: { readArtifact: async () => ({
-            state: "ok", text: "- [x] done\n- [ ] later\n```\n- [x] fake\n```",
-        }) } }),
+    const inputs = { artifact: { phase: "tasks", output: "tasks.md" },
+        prerequisites: [{ phase: "specify", output: "spec.md" }], targetphase: "tasks" };
+    const evidence = (text) => ({ readArtifact: async ({ phase }) => ({
+        state: "ok", mtimeMs: phase === "specify" ? 1 : 2, text,
+    }) });
+    assert.deepEqual(await checklist({ ruleId: "checklist-progress", inputs,
+        evidence: evidence("- [x] done\n- [ ] later\n```\n- [x] fake\n```") }),
     { match: true, values: { completed: 1, total: 2, percent: 50 } });
     assert.equal((await checklist({ ruleId: "checklist-complete",
-        inputs: { artifact: { phase: "tasks", output: "tasks.md" } },
-        evidence: { readArtifact: async () => ({ state: "ok", text: "No work" }) } })).match, false);
+        inputs, evidence: evidence("No work") })).match, false);
     assert.deepEqual(await valueMatch({ ruleId: "value-match", inputs: {
         artifact: { phase: "tasks", output: "tasks.md" }, value: "VERDICT: NEEDS-CLARIFICATION",
     }, evidence: { readArtifact: async () => ({
@@ -354,17 +499,20 @@ test("resolved badge instances evaluate per workflow using confined artifact rea
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-test-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
     await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
+    await writeSpec(cwd);
     await writeFile(join(cwd, "specs", "alpha", "tasks.md"),
         "- [x] first\n- [ ] second\n");
-    validateBadges(badges, ["tasks"]);
+    validateBadges(badges, ["specify", "tasks"]);
     assert.throws(() => validateBadges({ ...badges, instances: [{
         ...instance, showIn: ["list", "summary", "phase"],
-    }] }, ["tasks"]), /Invalid generated badge instance/);
+    }] }, ["specify", "tasks"]), /Invalid generated badge instance/);
     await verifyBadgeModules(badges);
-    const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
+    const phases = [{ id: "specify", outputs: ["specs/<slug>/spec.md"] },
+        { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
     const result = await evaluateBadges(badges, { cwd,
         workflows: ["specs/alpha", "specs/beta"], phases,
-        outputPath: async (_, workflow) => `${workflow}/tasks.md`,
+        outputPath: async ({ phase }, workflow) =>
+            `${workflow}/${phase === "specify" ? "spec" : "tasks"}.md`,
         runFor: () => null });
     assert.deepEqual(result.items["specs/alpha"], [{
         id: "work", text: "1/2 complete", color: "blue",
@@ -374,41 +522,50 @@ test("resolved badge instances evaluate per workflow using confined artifact rea
     assert.deepEqual(result.summary, [{ id: "work", color: "blue", count: 1,
         text: "Progress (1)" }]);
     const differentlyLabeled = { ...badges, instances: [instance, {
-        ...instance, id: "other", text: "Tasks: {completed} of {total}",
+        ...instance, id: "other", text: "Checklist: {completed} of {total}",
     }] };
     validateBadges(differentlyLabeled, phases);
     const repeated = await evaluateBadges(differentlyLabeled, { cwd,
         workflows: ["specs/alpha"], phases,
-        outputPath: async (_, workflow) => `${workflow}/tasks.md`,
+        outputPath: async ({ phase }, workflow) =>
+            `${workflow}/${phase === "specify" ? "spec" : "tasks"}.md`,
         runFor: () => null });
     assert.deepEqual(repeated.items["specs/alpha"].map(({ id, text }) => ({ id, text })), [
         { id: "work", text: "1/2 complete" },
-        { id: "other", text: "Tasks: 1 of 2" },
+        { id: "other", text: "Checklist: 1 of 2" },
     ]);
     assert.throws(() => validateBadges({ ...badges,
-        instances: [{ ...instance, inputs: { artifact: { phase: "not-declared" } } }] },
-    ["tasks"]), /Invalid generated badge input/);
+        instances: [{ ...instance, inputs: { ...instance.inputs,
+            artifact: { phase: "not-declared" } } }] },
+    ["specify", "tasks"]), /Invalid generated badge input/);
     await assert.rejects(() => verifyBadgeModules({ rules: [{ ...rule,
         hash: "0".repeat(64) }] }), /frozen hash/);
 });
 
-test("generated Checklist complete badges require a current checklist and earlier output", async (t) => {
+test("generated Checklist complete badges require ordered current evidence and a nonempty checklist", async (t) => {
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-checklist-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
     const directory = join(cwd, "specs", "alpha");
     await mkdir(directory, { recursive: true });
+    const spec = join(directory, "spec.md");
     const plan = join(directory, "plan.md");
     const tasks = join(directory, "tasks.md");
+    await writeFile(spec, "# Specification");
     await writeFile(plan, "# Plan");
     await writeFile(tasks, "- [x] first\n- [x] second");
-    const phases = [{ id: "plan", outputs: ["specs/<slug>/plan.md"] },
+    const phases = [{ id: "specify", outputs: ["specs/<slug>/spec.md"] },
+        { id: "plan", outputs: ["specs/<slug>/plan.md"] },
         { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
     validateBadges(completeBadges, phases);
     for (const input of [
-        { artifact: completeInstance.inputs.artifact },
-        { ...completeInstance.inputs, prerequisite: completeInstance.inputs.artifact },
-        { artifact: completeInstance.inputs.prerequisite,
-            prerequisite: completeInstance.inputs.artifact },
+        { ...completeInstance.inputs, prerequisites: [] },
+        { ...completeInstance.inputs, prerequisites: [completeInstance.inputs.artifact] },
+        { ...completeInstance.inputs, prerequisites:
+            [...completeInstance.inputs.prerequisites].reverse() },
+        { ...completeInstance.inputs, prerequisites: [
+            completeInstance.inputs.prerequisites[0], completeInstance.inputs.artifact] },
+        { ...completeInstance.inputs, artifact: completeInstance.inputs.prerequisites[0] },
+        { ...completeInstance.inputs, targetphase: "undeclared" },
     ]) {
         assert.throws(() => validateBadges({ ...completeBadges,
             instances: [{ ...completeInstance, inputs: input }] }, phases),
@@ -418,16 +575,94 @@ test("generated Checklist complete badges require a current checklist and earlie
         workflows: ["specs/alpha"], phases,
         outputPath: async ({ output }, workflow) => output.replace("specs/<slug>", workflow),
         runFor: () => null });
-    await utimes(plan, new Date(1_600_000_000_000), new Date(1_600_000_000_000));
-    await utimes(tasks, new Date(1_600_000_000_001), new Date(1_600_000_000_001));
+    await utimes(spec, new Date(1_600_000_000_000), new Date(1_600_000_000_000));
+    await utimes(plan, new Date(1_600_000_002_000), new Date(1_600_000_002_000));
+    await utimes(tasks, new Date(1_600_000_004_000), new Date(1_600_000_004_000));
     assert.equal((await evaluate()).summary[0].count, 1);
-    await utimes(plan, new Date(1_600_000_000_002), new Date(1_600_000_000_002));
+    await utimes(plan, new Date(1_600_000_006_000), new Date(1_600_000_006_000));
     assert.equal((await evaluate()).summary[0].count, 0);
+    await utimes(plan, new Date(1_600_000_002_000), new Date(1_600_000_002_000));
+    await utimes(spec, new Date(1_600_000_003_000), new Date(1_600_000_003_000));
+    assert.equal((await evaluate()).summary[0].count, 0);
+    await utimes(spec, new Date(1_600_000_000_000), new Date(1_600_000_000_000));
     await rm(plan);
     assert.equal((await evaluate()).summary[0].count, 0);
     await writeFile(plan, "# Plan");
+    await utimes(plan, new Date(1_600_000_002_000), new Date(1_600_000_002_000));
+    await writeFile(tasks, "No checklist items");
+    assert.equal((await evaluate()).summary[0].count, 0);
     await writeFile(tasks, "- [x] first\n- [ ] second");
     assert.equal((await evaluate()).summary[0].count, 0);
+    await mkdir(join(directory, "unsafe.md"));
+    const unsafe = { ...completeBadges, instances: [{
+        ...completeInstance, inputs: { ...completeInstance.inputs,
+            artifact: { phase: "tasks", output: "specs/<slug>/unsafe.md" } },
+    }] };
+    const unsafePhases = phases.map((phase) => phase.id === "tasks"
+        ? { ...phase, outputs: [...phase.outputs, "specs/<slug>/unsafe.md"] } : phase);
+    const rejected = await evaluateBadges(unsafe, { cwd, workflows: ["specs/alpha"],
+        phases: unsafePhases,
+        outputPath: async ({ output }, workflow) => output.replace("specs/<slug>", workflow),
+        runFor: () => null });
+    assert.equal(rejected.summary[0].count, 0);
+    assert.match(rejected.diagnostics.join(" "), /could not be read safely/);
+});
+
+test("Tasks and Implement checklists independently show both badges at 5/5", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-checklist-targets-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const phases = ["specify", "plan", "tasks", "implement"].map((id) => ({
+        id, outputs: [`specs/<slug>/${id === "specify" ? "spec" : id}.md`],
+    }));
+    const tasksInputs = { artifact: { phase: "tasks", output: "specs/<slug>/tasks.md" },
+        prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" },
+            { phase: "plan", output: "specs/<slug>/plan.md" }], targetphase: "tasks" };
+    const implementInputs = { artifact: { phase: "implement", output: "specs/<slug>/implement.md" },
+        prerequisites: [...tasksInputs.prerequisites, tasksInputs.artifact],
+        targetphase: "implement" };
+    const config = { rules: [rule, completeRule], types: [type, completeType],
+        instances: [tasksInputs, implementInputs].flatMap((inputs) => [
+            { ...instance, id: `${inputs.targetphase}-progress`, inputs,
+                phase: null, showIn: ["workflow-list", "workflow-summary"],
+                targets: [{ phase: inputs.targetphase, output: null }] },
+            { ...completeInstance, id: `${inputs.targetphase}-complete`, inputs,
+                phase: null, showIn: ["workflow-list", "workflow-summary"],
+                targets: [{ phase: inputs.targetphase, output: null }] },
+        ]) };
+    validateBadges(config, phases);
+    await verifyBadgeModules(config);
+    const checklistText = Array.from({ length: 5 }, (_, index) => `- [x] item ${index}`).join("\n");
+    for (const name of ["alpha", "beta"]) {
+        const folder = join(cwd, "specs", name);
+        await mkdir(folder, { recursive: true });
+        for (const [index, file] of ["spec.md", "plan.md", "tasks.md", "implement.md"].entries()) {
+            await writeFile(join(folder, file), index < 2 ? `# ${file}`
+                : name === "beta" && file === "tasks.md"
+                    ? "- [x] one\n- [ ] two" : checklistText);
+            await utimes(join(folder, file), new Date(1_600_000_000_000 + 2000 * index),
+                new Date(1_600_000_000_000 + 2000 * index));
+        }
+    }
+    const evaluate = () => evaluateBadges(config, { cwd,
+        workflows: ["specs/alpha", "specs/beta"], phases,
+        outputPath: async ({ output }, workflow) => output.replace("specs/<slug>", workflow),
+        runFor: () => null });
+    const result = await evaluate();
+    assert.deepEqual(result.items["specs/alpha"].map(({ id, text }) => ({ id, text })), [
+        { id: "tasks-progress", text: "5/5 complete" },
+        { id: "tasks-complete", text: "Checklist complete" },
+        { id: "implement-progress", text: "5/5 complete" },
+        { id: "implement-complete", text: "Checklist complete" },
+    ]);
+    assert.deepEqual(result.items["specs/beta"].map(({ id }) => id),
+        ["tasks-progress", "implement-progress", "implement-complete"]);
+    assert.deepEqual(result.summary.map(({ id, count }) => ({ id, count })), [
+        { id: "tasks-progress", count: 2 }, { id: "tasks-complete", count: 1 },
+        { id: "implement-progress", count: 2 }, { id: "implement-complete", count: 2 },
+    ]);
+    assert.deepEqual(result.diagnostics, []);
+    await rm(join(cwd, "specs", "beta", "plan.md"));
+    assert.deepEqual((await evaluate()).items["specs/beta"], []);
 });
 
 test("directory-scoped output counts regular Markdown files across workflows and seeds zero", async (t) => {
@@ -531,21 +766,24 @@ test("generated badge runtime preserves distinct phase/output targets", async (t
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-targets-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
     await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
+    await writeSpec(cwd);
     await writeFile(join(cwd, "specs", "alpha", "tasks.md"), "- [x] done\n");
     const targeted = { ...instance, showIn: [], phase: null,
         targets: [{ phase: "specify", output: "specs/<slug>/spec.md" },
             { phase: "plan", output: "specs/<slug>/plan.md" },
             { phase: "plan", output: null }] };
-    const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] },
-        { id: "specify", outputs: ["specs/<slug>/spec.md"] },
-        { id: "plan", outputs: ["specs/<slug>/plan.md"] }];
+    const phases = [{ id: "specify", outputs: ["specs/<slug>/spec.md"] },
+        { id: "plan", outputs: ["specs/<slug>/plan.md"] },
+        { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
     validateBadges({ ...badges, instances: [targeted] }, phases);
     assert.throws(() => validateBadges({ ...badges, instances: [{
         ...targeted, targets: [{ phase: "plan", output: "specs/<slug>/spec.md" }],
     }] }, phases), /Invalid generated badge instance/);
     const result = await evaluateBadges({ ...badges, instances: [targeted] }, {
         cwd, workflows: ["specs/alpha"], phases,
-        outputPath: async (_, workflow) => `${workflow}/tasks.md`, runFor: () => null });
+        outputPath: async ({ phase }, workflow) =>
+            `${workflow}/${phase === "specify" ? "spec" : "tasks"}.md`,
+        runFor: () => null });
     assert.deepEqual(result.items["specs/alpha"][0].targets, targeted.targets);
 });
 
@@ -554,9 +792,13 @@ test("generated runtime snapshots include badges for each workflow and the selec
     t.after(() => rm(cwd, { recursive: true, force: true }));
     await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
     await mkdir(join(cwd, "specs", "beta"), { recursive: true });
+    await writeSpec(cwd);
     await writeFile(join(cwd, "specs", "alpha", "tasks.md"), "- [x] done\n");
-    const config = { canvas: { id: "badge-snapshot" }, phases: ["tasks"],
-        phaseOutputs: { tasks: { expectsArtifact: true, outputPath: "specs/<slug>/tasks.md" } },
+    const config = { canvas: { id: "badge-snapshot" }, phases: ["specify", "tasks"],
+        phaseOutputs: {
+            specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
+            tasks: { expectsArtifact: true, outputPath: "specs/<slug>/tasks.md" },
+        },
         userProvidesSlug: false, badges };
     const runtime = await createRuntime({ config, cwd, workspace: cwd,
         session: { sessionId: "badge-snapshot", log: async () => {} } });
@@ -571,33 +813,70 @@ test("generated runtime snapshots include badges for each workflow and the selec
     } finally { runtime.close(); }
 });
 
-test("artifact staleness uses metadata and does not require rule-specific host logic", async (t) => {
+test("artifact staleness uses ordered upstream metadata without phase-run status", async (t) => {
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-stale-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
-    await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
-    await writeFile(join(cwd, "specs", "alpha", "tasks.md"), "Work");
-    const adapter = "badge-rule-artifact-state-adapter";
+    for (const name of ["alpha", "beta"]) {
+        await mkdir(join(cwd, "specs", name), { recursive: true });
+        for (const file of ["spec.md", "plan.md", "tasks.md"]) {
+            await writeFile(join(cwd, "specs", name, file), "Work");
+        }
+    }
+    const stamp = async (name, file, seconds) =>
+        utimes(join(cwd, "specs", name, file), new Date(seconds * 1000), new Date(seconds * 1000));
+    for (const [name, times] of [["alpha", [30, 10, 20]], ["beta", [10, 20, 30]]]) {
+        for (const [index, file] of ["spec.md", "plan.md", "tasks.md"].entries()) {
+            await stamp(name, file, times[index]);
+        }
+    }
+    const adapter = "badge-rule-ordered-stale-adapter";
     const hash = createHash("sha256").update(await readFile(new URL(
-        "../extension-canvas-design/generated-host/badges/adapters/artifact-state.mjs",
+        "../extension-canvas-design/generated-host/badges/adapters/ordered-stale.mjs",
         import.meta.url))).digest("hex");
     const config = { instances: [{ ...instance, id: "stale", type: "stale",
-        text: "Stale", color: "amber" }],
+        inputs: { artifact: { phase: "tasks", output: "specs/<slug>/tasks.md" },
+            prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" },
+                { phase: "plan", output: "specs/<slug>/plan.md" }] },
+        text: "Stale", color: "amber", showIn: ["workflow-list", "workflow-summary"] }],
     types: [{ ...type, id: "stale", rule: "artifact-stale" }],
-    rules: [{ ...rule, id: "artifact-stale", adapter, hash, textPlaceholders: [] }] };
+    rules: [{ ...rule, id: "artifact-stale", adapter, hash,
+        inputs: [{ id: "artifact", type: "artifact", scope: "metadata" },
+            { id: "prerequisites", type: "ordered-artifacts", scope: "metadata",
+                before: "artifact", minItems: 1 }], textPlaceholders: [] }] };
+    assert.equal(createHash("sha256").update(await readFile(
+        join(generated, "badges", `${adapter}.mjs`))).digest("hex"), hash);
     await verifyBadgeModules(config);
-    const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
-    const evaluate = (completedAt) => evaluateBadges(config, { cwd, workflows: ["specs/alpha"],
-        phases, outputPath: async () => "specs/alpha/tasks.md",
-        runFor: () => ({ status: "Completed", completedAt }) });
-    assert.equal((await evaluate(new Date(Date.now() + 30_000).toISOString()))
-        .items["specs/alpha"][0].text, "Stale");
-    assert.deepEqual((await evaluate(new Date(0).toISOString())).items["specs/alpha"], []);
-    const currentRun = await evaluateBadges(config, { cwd, workflows: ["specs/alpha"],
-        phases, outputPath: async () => "specs/alpha/tasks.md",
-        runFor: () => ({ status: "Completed",
-            startedAt: new Date(0).toISOString(),
+    const phases = ["specify", "plan", "tasks"].map((id) => ({
+        id, outputs: [`specs/<slug>/${id === "specify" ? "spec" : id}.md`] }));
+    assert.throws(() => validateBadges({ ...config, instances: [{
+        ...config.instances[0], inputs: { artifact: config.instances[0].inputs.artifact },
+    }] }, phases), /Invalid generated badge/);
+    assert.throws(() => validateBadges({ ...config, instances: [{
+        ...config.instances[0], inputs: { ...config.instances[0].inputs, prerequisites: [] },
+    }] }, phases), /Invalid generated badge/);
+    const evaluate = () => evaluateBadges(config, { cwd,
+        workflows: ["specs/alpha", "specs/beta"], phases,
+        outputPath: async ({ output }, workflow) =>
+            `${workflow}/${output.split("/").at(-1)}`,
+        runFor: () => ({ status: "Completed", startedAt: new Date(0).toISOString(),
             completedAt: new Date(Date.now() + 30_000).toISOString() }) });
-    assert.deepEqual(currentRun.items["specs/alpha"], []);
+    let result = await evaluate();
+    assert.equal(result.items["specs/alpha"][0].text, "Stale");
+    assert.deepEqual(result.items["specs/beta"], []);
+    assert.equal(result.summary[0].count, 1);
+    await stamp("alpha", "plan.md", 30);
+    await stamp("alpha", "tasks.md", 30);
+    result = await evaluate();
+    assert.deepEqual(result.items["specs/alpha"], []);
+    assert.equal(result.summary[0].count, 0);
+    await rm(join(cwd, "specs", "beta", "plan.md"));
+    result = await evaluate();
+    assert.equal(result.items["specs/beta"][0].text, "Stale");
+    assert.equal(result.summary[0].count, 1);
+    await rm(join(cwd, "specs", "beta", "tasks.md"));
+    result = await evaluate();
+    assert.deepEqual(result.items["specs/beta"], []);
+    assert.equal(result.summary[0].count, 0);
 });
 
 test("badge config rejects undeclared outputs and normalizes completed run statuses", async (t) => {
@@ -614,7 +893,10 @@ test("badge config rejects undeclared outputs and normalizes completed run statu
         textPlaceholders: [], adapter, hash }] };
     const phases = [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }];
     validateBadges(config, phases);
-    assert.throws(() => validateBadges(badges, [{ id: "tasks", outputs: [] }]),
+    assert.throws(() => validateBadges(badges, [
+        { id: "specify", outputs: ["specs/<slug>/spec.md"] },
+        { id: "tasks", outputs: [] },
+    ]),
         /Invalid generated badge input/);
     await verifyBadgeModules(config);
     for (const status of ["Completed", "complete", "success"]) {
@@ -662,10 +944,13 @@ test("missing artifacts do not match; oversized reads emit unknown diagnostics",
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-errors-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
     await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
+    await writeSpec(cwd);
     const diagnostics = [];
     const evaluate = () => evaluateBadges(badges, { cwd, workflows: ["specs/alpha"],
-        phases: [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }],
-        outputPath: async () => "specs/alpha/tasks.md", runFor: () => null,
+        phases: [{ id: "specify", outputs: ["specs/<slug>/spec.md"] },
+            { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }],
+        outputPath: async ({ phase }) => `specs/alpha/${phase === "specify" ? "spec" : "tasks"}.md`,
+        runFor: () => null,
         log: (message) => diagnostics.push(message) });
     assert.deepEqual((await evaluate()).items["specs/alpha"], []);
     assert.deepEqual(diagnostics, []);
@@ -679,14 +964,18 @@ test("workflow artifact evidence is read once across badge instances", async (t)
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-cache-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
     await mkdir(join(cwd, "specs", "alpha"), { recursive: true });
+    await writeSpec(cwd);
     await writeFile(join(cwd, "specs", "alpha", "tasks.md"), "- [x] done");
     let resolved = 0;
     const config = { ...badges, instances: [instance, { ...instance, id: "other" }] };
     const result = await evaluateBadges(config, { cwd, workflows: ["specs/alpha"],
-        phases: [{ id: "tasks", outputs: ["specs/<slug>/tasks.md"] }],
-        outputPath: async () => { resolved++; return "specs/alpha/tasks.md"; },
+        phases: [{ id: "specify", outputs: ["specs/<slug>/spec.md"] },
+            { id: "tasks", outputs: ["specs/<slug>/tasks.md"] }],
+        outputPath: async ({ phase }) => {
+            resolved++; return `specs/alpha/${phase === "specify" ? "spec" : "tasks"}.md`;
+        },
         runFor: () => null });
-    assert.equal(resolved, 1);
+    assert.equal(resolved, 2);
     assert.deepEqual(result.items["specs/alpha"].map(({ id }) => id), ["work", "other"]);
 });
 
@@ -713,3 +1002,5 @@ test("badge validator permits 100 unique types and rules", () => {
     assert.throws(() => validateBadges({ ...config, types: [...config.types, type] },
         ["tasks"]), /Invalid generated badge configuration/);
 });
+
+after(() => rm(generated, { recursive: true, force: true }));

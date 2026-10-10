@@ -208,6 +208,7 @@ test("empty selections produce a complete immutable inline handoff and one queue
     assert.deepEqual(response.body, { queued: true });
     assert.equal(sent.length, 1);
     assert.match(sent[0].prompt, /no base_branch \(the project default\)/);
+    assert.match(sent[0].prompt, /create_session with .*kickoff\.mode "interactive"/);
     assert.match(sent[0].prompt, /designer-setup\.mjs" install <child-checkout> <session-root>/);
     assert.match(sent[0].prompt, /designer-setup\.mjs" finalize <child-checkout> <session-root>/);
     assert.ok(sent[0].prompt.indexOf('" install <child-checkout>')
@@ -238,8 +239,10 @@ test("empty selections produce a complete immutable inline handoff and one queue
         workflow: handoff.workflow, selections: handoff.selections, canvasDesign: handoff.canvasDesign,
     }));
     assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
-    assert.equal(buildDesignerLaunchPrompt(handoff).includes(json), true);
-    assert.ok(Buffer.byteLength(sent[0].prompt) < Buffer.byteLength(buildDesignerLaunchPrompt(handoff)) / 2);
+    const legacyPrompt = buildDesignerLaunchPrompt(handoff);
+    assert.equal(legacyPrompt.includes(json), true);
+    assert.match(legacyPrompt, /kickoff\.mode "interactive"/);
+    assert.ok(Buffer.byteLength(sent[0].prompt) < Buffer.byteLength(legacyPrompt) / 2);
     const otherProject = fixture();
     otherProject.inst.workspacePath = tmpdir();
     assert.equal((await otherProject.post(request())).statusCode, 202);

@@ -93,7 +93,7 @@ button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-
 .phase-output-row { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; min-width: 0; }
 .canvas-badges { display: inline-flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
 .canvas-badge { display: inline-block; border-radius: 999px; padding: .12rem .5rem;
-    border: 1px solid var(--border-color-default); font-size: .75rem; font-weight: 600;
+    border: 1px solid currentColor; font-size: .75rem; font-weight: 600;
     background: var(--background-color-secondary); color: var(--text-color-default); }
 .canvas-badge[data-color="green"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--success-color)); }
 .canvas-badge[data-color="amber"] { color: color-mix(in srgb, var(--text-color-default) 45%, var(--warn-color)); }

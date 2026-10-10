@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "phase-artifact-complete",
   "label": "Phase artifact complete",
-  "description": "The selected phase output and every chosen earlier output exist and are current in workflow order.",
+  "description": "The selected output must exist. If earlier outputs are selected, they must also exist, and each later file must be at least as recent as the one before it.",
   "placementPhaseInput": "target",
   "inputs": [
     {

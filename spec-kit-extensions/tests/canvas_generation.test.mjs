@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import { mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
-import { materialize, readBoundedSessionFile } from "../extension-canvas-design/scripts/generate.mjs";
+import { materialize, readBoundedSessionFile, renameDirectoryWithoutReplacement } from "../extension-canvas-design/scripts/generate.mjs";
 import { createRuntime, existingOutputFolder } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
 import { phaseContract } from "../extension-canvas-design/generated-scaffold/contract.mjs";
 import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
@@ -44,10 +46,10 @@ test("the entry point becomes visible only after generated syntax and rendering 
     const checked = source.indexOf('checkSyntax(join(target, "extension.mjs"), files.at(-1)[1])');
     const rendered = source.indexOf('if (renderer.error || renderer.status !== 0)');
     const published = source.indexOf('await writeFile(join(target, "extension.mjs"), files.at(-1)[1]');
-    assert.ok(checked > 0 && checked < rendered && rendered < published);
+    const exposed = source.indexOf("await renameDirectoryWithoutReplacement(target, output)");
+    assert.ok(checked > 0 && checked < rendered && rendered < published && published < exposed);
     assert.equal(source.match(/writeFile\(join\(target, "extension\.mjs"\)/g)?.length, 1);
-    assert.match(source, /const target = output;/);
-    assert.doesNotMatch(source, /\b(?:rename|mkdtemp|publishStagedDirectory)\(/);
+    assert.match(source, /const target = await mkdtemp\(join\(parent, `\.\$\{config\.canvas\.id\}-stage-`\)\)/);
 });
 
 const model = {
@@ -71,13 +73,21 @@ const values = { "canvas.id": "my-workflow", "canvas.displayName": "My Workflow"
     "workflowSlug.userProvided": false };
 
 async function registerStockBadgeInput(selected, project, ruleId) {
-    const root = new URL("../extension-canvas-design/designer-host/badge-input-controls/stock/",
+    const checklist = ["checklist-progress", "checklist-complete"].includes(ruleId);
+    const control = checklist ? "checklist" : ruleId === "artifact-stale" ? "ordered-stale"
+        : ruleId === "phase-artifact-complete" ? "phase-artifact" : "stock";
+    const id = checklist ? "stock.checklist-inputs"
+        : ruleId === "artifact-stale" ? "stock.ordered-stale-inputs"
+            : ruleId === "phase-artifact-complete" ? "stock.phase-artifact-inputs" : "stock.badge-inputs";
+    const definition = `designer-badge-input-${control}`;
+    const adapter = `${definition}-adapter`;
+    const root = new URL("../extension-canvas-design/designer-host/badge-input-controls/",
         import.meta.url);
     const assets = [
         [`designer-badge-binding-${ruleId}`, "designer.badge-input-binding",
-            `bindings/${ruleId}.json`],
-        ["designer-badge-input-stock", "designer.badge-input-control", "control.json"],
-        ["designer-badge-input-stock-adapter", "designer.badge-input-adapter", "designer.mjs"],
+            `stock/bindings/${ruleId}.json`],
+        [definition, "designer.badge-input-control", `${control}/control.json`],
+        [adapter, "designer.badge-input-adapter", `${control}/designer.mjs`],
     ];
     for (const [name, kind, source] of assets) {
         const bytes = await readFile(new URL(source, root));
@@ -87,7 +97,7 @@ async function registerStockBadgeInput(selected, project, ruleId) {
         selected.templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
             strategy: "replace", path, hash: createHash("sha256").update(bytes).digest("hex") });
     }
-    selected.badgeInputControls = [{ rule: ruleId, control: "stock.badge-inputs",
+    selected.badgeInputControls = [{ rule: ruleId, control: id,
         binding: assets[0][0], definition: assets[1][0], adapter: assets[2][0] }];
 }
 
@@ -122,8 +132,15 @@ test("confirmed outputs override legacy defaults, including an explicitly empty 
     assert.equal(phases[1].output, null);
     assert.deepEqual(phases[1].outputs, []);
     assert.equal(phases[1].expectsArtifact, false);
+    const watched = phaseContract({ ...config, phaseArtifacts: {
+        ...config.phaseArtifacts, plan: { outputs: ["specs/<slug>/notes.md"], view: null },
+    } })[1];
+    assert.deepEqual(watched.outputs, ["specs/<slug>/notes.md"]);
+    assert.equal(watched.output, null);
+    assert.equal(watched.expectsArtifact, true);
     for (const invalid of [
         { outputs: [], view: "specs/<slug>/plan.md" },
+        { outputs: ["specs/<slug>/notes.md"], view: "another.md" },
         { outputs: ["../bad.md"], view: "../bad.md" },
         { outputs: ["specs/<slug>/plan.md", "specs/<slug>/plan.md"],
             view: "specs/<slug>/plan.md" },
@@ -563,7 +580,68 @@ test("selected badge definitions and evaluator are packaged without preset files
         "generated-workflow-page-adapter.mjs"), "utf8"), /Workflow page adapter ran in Node/);
 });
 
-test("Checklist complete freezes both confirmed outputs and rejects a reordered prerequisite", async (t) => {
+test("Phase artifact replacement group freezes with its badge type and rejects mismatches", async (t) => {
+    const { project, workspace, sdk } = await fixture(t);
+    const selected = structuredClone(model);
+    const root = new URL("../extension-canvas-design/", import.meta.url);
+    for (const [name, kind, path] of [
+        ["badges-settings", "designer.badges-settings-definition",
+            "designer-host/badges-settings/badge-types.json"],
+        ["badge-rule-phase-artifact-complete", "generated.badge-rule-definition",
+            "generated-host/badges/rules/phase-artifact-complete.json"],
+        ["badge-rule-phase-artifact-complete-adapter", "generated.badge-rule-adapter",
+            "generated-host/badges/adapters/phase-artifact-complete.mjs"],
+    ]) {
+        const bytes = await readFile(new URL(path, root));
+        const destination = join(project, ".specify", "templates",
+            `${name}.${path.endsWith(".mjs") ? "mjs" : "json"}`);
+        await writeFile(destination, bytes);
+        selected.templates.push({ name, kind, sourceId: "extension:extension-canvas-design",
+            strategy: "replace", path: destination,
+            hash: createHash("sha256").update(bytes).digest("hex") });
+    }
+    const settings = JSON.parse(await readFile(new URL(
+        "designer-host/badges-settings/badge-types.json", root), "utf8"));
+    const rule = JSON.parse(await readFile(new URL(
+        "generated-host/badges/rules/phase-artifact-complete.json", root), "utf8"));
+    selected.badgeTypes = [{ name: "badges-settings", sourceId: "extension:extension-canvas-design",
+        schemaVersion: 1, ...settings.types.find((type) => type.id === rule.id) }];
+    selected.badgeRules = [{ name: "badge-rule-phase-artifact-complete", ...rule }];
+    await registerStockBadgeInput(selected, project, rule.id);
+    const outputs = { constitution: { outputs: [".specify/memory/constitution.md"],
+        view: ".specify/memory/constitution.md" },
+    specify: { outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" },
+    plan: { outputs: ["specs/<slug>/plan.md"], view: "specs/<slug>/plan.md" } };
+    const badge = { id: "phase-plan", type: rule.id,
+        inputs: { target: { phase: "plan", output: "specs/<slug>/plan.md" },
+            prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" }] },
+        text: "Plan complete", color: "green",
+        showIn: ["workflow-list", "workflow-summary"], phase: null,
+        targets: [{ phase: "plan", output: null }] };
+    const frozen = await freezeGeneration({ project, workspace, model: selected,
+        values, handoff, outputs, badges: [badge] });
+    await materialize(project, workspace, handoff.handoffId, frozen.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.equal(config.badges.types[0].replacementGroup, "phase-completion");
+    validateGeneratedBadges(config.badges, [
+        { id: "specify", outputs: outputs.specify.outputs },
+        { id: "plan", outputs: outputs.plan.outputs },
+    ]);
+    const mismatched = await freezeGeneration({ project, workspace, model: selected,
+        values: { ...values, "canvas.id": "mismatched-group" },
+        handoff, outputs, badges: [badge] });
+    const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",
+        handoff.handoffId, "generations", mismatched.requestId, "request.json");
+    const request = JSON.parse(await readFile(requestPath, "utf8"));
+    delete request.badges.types[0].replacementGroup;
+    const { integrity: _integrity, ...payload } = request;
+    request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    await writeFile(requestPath, JSON.stringify(request));
+    await assert.rejects(materialize(project, workspace, handoff.handoffId,
+        mismatched.requestId), /Frozen badge type differs from badges settings/);
+});
+
+test("Checklist complete freezes an ordered currentness chain and rejects invalid order", async (t) => {
     const { project, workspace, sdk } = await fixture(t);
     const selected = structuredClone(model);
     const root = new URL("../extension-canvas-design/", import.meta.url);
@@ -597,7 +675,8 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
     plan: { outputs: ["specs/<slug>/plan.md"], view: "specs/<slug>/plan.md" } };
     const instance = { id: "checklist", type: "checklist-complete",
         inputs: { artifact: { phase: "plan", output: "specs/<slug>/plan.md" },
-            prerequisite: { phase: "specify", output: "specs/<slug>/spec.md" } },
+            prerequisites: [{ phase: "specify", output: "specs/<slug>/spec.md" }],
+            targetphase: "plan" },
         text: "Checklist complete", color: "green", showIn: ["workflow-summary"], phase: null };
     const outputTarget = { ...instance, id: "checklist-output",
         targets: [{ phase: "plan", output: "specs/<slug>/plan.md" }] };
@@ -620,8 +699,8 @@ test("Checklist complete freezes both confirmed outputs and rejects a reordered 
     assert.deepEqual(config.badges.rules[0].inputs, definition.inputs);
     assert.deepEqual(await readFile(join(sdk, "badges", "badge-rule-content-adapter.mjs")),
         await readFile(new URL("generated-host/badges/adapters/content.mjs", root)));
-    const invalid = { ...instance, inputs: { artifact: instance.inputs.prerequisite,
-        prerequisite: instance.inputs.artifact } };
+    const invalid = { ...instance, inputs: { ...instance.inputs,
+        prerequisites: [instance.inputs.artifact] } };
     await assert.rejects(freezeGeneration({ project, workspace, model: selected, values,
         handoff, outputs, badges: [invalid] }), /invalid or removed output/);
     const next = await freezeGeneration({ project, workspace, model: selected,
@@ -1957,12 +2036,15 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     const reopened = await createRuntime({ config, cwd: project, workspace, session });
     t.after(() => reopened.close());
     snapshot = await reopened.snapshot();
-    assert.deepEqual(snapshot.items.map((item) => item.label), ["Customer dashboard", "Workflow 2"]);
+    assert.deepEqual(snapshot.items.map((item) => item.label), ["Workflow 2", "Customer dashboard"]);
     assert.equal(snapshot.selected, second.id);
     await reopened.removePending({ itemId: second.id, revision: snapshot.revision });
     snapshot = await reopened.snapshot();
     assert.equal(snapshot.selected, first.id);
     assert.equal(snapshot.drafts[JSON.stringify([first.id, "specify"])], "Dashboard scope");
+    await mkdir(join(project, "specs", "000-existing"), { recursive: true });
+    snapshot = await reopened.snapshot();
+    assert.deepEqual(snapshot.items.map((item) => item.id), [first.id, "specs/000-existing"]);
     const result = await reopened.run({ phase: "specify", itemId: first.id, args: "Dashboard scope" }, "pending-panel");
     await assert.rejects(reopened.removePending({ itemId: first.id, revision: (await reopened.snapshot()).revision }),
         /Confirm Discard pending row/);
@@ -1974,7 +2056,8 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     await reopened.reportSlug({ phaseRunId: result.runId, slug: "001-customer-dashboard" }, "pending-panel");
     snapshot = await reopened.snapshot();
     assert.equal(snapshot.selected, "specs/001-customer-dashboard");
-    assert.deepEqual(snapshot.items.map((item) => item.label), ["Customer dashboard"]);
+    assert.deepEqual(snapshot.items.map((item) => item.id),
+        ["specs/001-customer-dashboard", "specs/000-existing"]);
     assert.equal(snapshot.drafts[JSON.stringify([snapshot.selected, "specify"])], "Dashboard scope");
 });
 
@@ -2083,6 +2166,80 @@ test("existing canvases are preserved and tampered requests fail before creation
     await writeFile(path, JSON.stringify(request));
     await assert.rejects(materialize(two.project, two.workspace, handoff.handoffId, two.prepared.requestId),
         /integrity mismatch/);
+});
+
+async function withRenameIntercept(intercept, action) {
+    const original = fs.promises.rename;
+    fs.promises.rename = (source, destination) => intercept(source, destination, original);
+    syncBuiltinESMExports();
+    try { return await action(); }
+    finally {
+        fs.promises.rename = original;
+        syncBuiltinESMExports();
+    }
+}
+
+test("first-time Windows publication retries a transient rename denial", {
+    skip: process.platform !== "win32",
+}, async (t) => {
+    const { project, workspace, prepared, sdk } = await fixture(t);
+    let attempts = 0;
+    await withRenameIntercept(async (source, destination, original) => {
+        if (destination === sdk) {
+            attempts++;
+            if (attempts === 1) throw Object.assign(new Error("temporarily locked"), { code: "EPERM" });
+        }
+        return original(source, destination);
+    }, () => materialize(project, workspace, handoff.handoffId, prepared.requestId));
+    assert.equal(attempts, 2);
+    assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.id,
+        values["canvas.id"]);
+});
+
+test("Windows publication surfaces persistent denial without creating output", {
+    skip: process.platform !== "win32",
+}, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "canvas-publish-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const source = join(root, "stage");
+    const destination = join(root, "canvas");
+    await mkdir(source);
+    let attempts = 0;
+    await withRenameIntercept(async (from, to, original) => {
+        if (from === source && to === destination) {
+            attempts++;
+            throw Object.assign(new Error("locked"), { code: "EPERM" });
+        }
+        return original(from, to);
+    }, () => assert.rejects(renameDirectoryWithoutReplacement(source, destination),
+        { code: "EPERM" }));
+    assert.equal(attempts, 6);
+    await assert.rejects(readdir(destination), { code: "ENOENT" });
+    assert.deepEqual(await readdir(source), []);
+});
+
+test("Windows publication will not retry over a newly created destination", {
+    skip: process.platform !== "win32",
+}, async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "canvas-publish-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const source = join(root, "stage");
+    const destination = join(root, "canvas");
+    await mkdir(source);
+    let attempts = 0;
+    await withRenameIntercept(async (from, to, original) => {
+        if (from === source && to === destination) {
+            attempts++;
+            await mkdir(destination);
+            await writeFile(join(destination, "owner.txt"), "another process");
+            throw Object.assign(new Error("occupied"), { code: "EPERM" });
+        }
+        return original(from, to);
+    }, () => assert.rejects(renameDirectoryWithoutReplacement(source, destination),
+        /Canvas destination changed before publication/));
+    assert.equal(attempts, 1);
+    assert.equal(await readFile(join(destination, "owner.txt"), "utf8"), "another process");
+    assert.deepEqual(await readdir(source), []);
 });
 
 test("generator rejects inconsistent all-page values and stock defaults before writing", async (t) => {

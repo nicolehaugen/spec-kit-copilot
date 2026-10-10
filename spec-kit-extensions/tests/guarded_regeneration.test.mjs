@@ -79,9 +79,71 @@ test("replacement requires explicit confirmation and preserves the old app on ca
         /Canvas changed since replacement was confirmed/);
     assert.equal(await readFile(join(sdk, "canvas-config.json"), "utf8"), before);
     await regenerate(`--replace-existing=${first.requestId}`);
-    assert.equal((await lstat(sdk)).ino, directory.ino);
+    assert.notEqual((await lstat(sdk)).ino, directory.ino);
     assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.displayName, "Second");
     assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
+});
+
+test("published replacement reports a locked backup as a warning without losing success", async (t) => {
+    const { sdk, first, next, regenerate } = await fixture(t);
+    const originalRm = fs.rm;
+    let backupDir;
+    const backupPrefix = join(sdk, "..", ".my-workflow-backup-");
+    fs.rm = async (path, options) => {
+        if (path.startsWith(backupPrefix)) {
+            backupDir = path;
+            throw Object.assign(new Error("Locked backup fixture"), { code: "EPERM" });
+        }
+        return originalRm(path, options);
+    };
+    syncBuiltinESMExports();
+    let result;
+    try {
+        result = await regenerate(`--replace-existing=${first.requestId}`);
+    } finally {
+        fs.rm = originalRm;
+        syncBuiltinESMExports();
+    }
+    assert.equal(result.canvasId, "my-workflow");
+    assert.equal(result.target, ".github/extensions/my-workflow/");
+    assert.ok(backupDir);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0], /replacement was published.*Locked backup fixture/);
+    assert.ok(result.warnings[0].includes(backupDir));
+    assert.equal(JSON.parse(await readFile(join(sdk, "settings-provenance.json"), "utf8")).requestId,
+        next.requestId);
+    assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.displayName,
+        "Second");
+    assert.equal(JSON.parse(await readFile(join(backupDir, "previous", "canvas-config.json"), "utf8"))
+        .canvas.displayName, "First");
+    await assert.rejects(regenerate(`--replace-existing=${first.requestId}`),
+        /Canvas changed since replacement was confirmed/);
+});
+
+test("publication failure rolls back the old canvas and permits retry", async (t) => {
+    const { sdk, first, regenerate } = await fixture(t);
+    const originalRename = fs.rename;
+    const stagePrefix = join(sdk, "..", ".my-workflow-stage-");
+    fs.rename = async (source, destination) => {
+        if (source.startsWith(stagePrefix) && destination === sdk) {
+            throw Object.assign(new Error("Publication fixture failure"), { code: "EIO" });
+        }
+        return originalRename(source, destination);
+    };
+    syncBuiltinESMExports();
+    try {
+        await assert.rejects(regenerate(`--replace-existing=${first.requestId}`),
+            /Publication fixture failure/);
+    } finally {
+        fs.rename = originalRename;
+        syncBuiltinESMExports();
+    }
+    assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.displayName,
+        "First");
+    assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
+    await regenerate(`--replace-existing=${first.requestId}`);
+    assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.displayName,
+        "Second");
 });
 
 test("confirmed replacement discards regular manual edits and extra files", async (t) => {
@@ -155,9 +217,10 @@ test("replacement refuses symlinked canvas and symlinked contents", async (t) =>
     assert.ok((await lstat(join(sdk, "manual-link.mjs"))).isSymbolicLink());
 });
 
-test("failed direct creation or regeneration removes its output and can be retried", async (t) => {
+test("failed staging leaves any existing canvas intact and can be retried", async (t) => {
     for (const generate of [false, true]) {
         const { project, sdk, workspace, first, next, regenerate } = await fixture(t, generate);
+        const original = generate ? await readFile(join(sdk, "canvas-config.json"), "utf8") : null;
         const preload = join(workspace, "fail-renderer.cjs");
         await writeFile(preload, `if (process.execArgv.includes("-e")
             && process.argv[1]?.endsWith("/server.mjs")) {
@@ -185,9 +248,14 @@ test("failed direct creation or regeneration removes its output and can be retri
             if (previousOptions === undefined) delete process.env.NODE_OPTIONS;
             else process.env.NODE_OPTIONS = previousOptions;
         }
-        await assert.rejects(lstat(sdk), /ENOENT/);
+        if (generate) {
+            assert.equal(await readFile(join(sdk, "canvas-config.json"), "utf8"), original);
+        } else {
+            await assert.rejects(lstat(sdk), /ENOENT/);
+        }
         assert.deepEqual((await readdir(join(sdk, ".."))).filter((name) => name.startsWith(".my-workflow-")), []);
-        await materialize(project, workspace, handoff.handoffId, next.requestId);
+        if (generate) await regenerate(`--replace-existing=${first.requestId}`);
+        else await materialize(project, workspace, handoff.handoffId, next.requestId);
         assert.equal(JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8")).canvas.displayName, "Second");
     }
 });
@@ -195,9 +263,17 @@ test("failed direct creation or regeneration removes its output and can be retri
 test("failed cleanup reports both errors and the target path", async (t) => {
     const { sdk, first, regenerate } = await fixture(t);
     const originalRm = fs.rm;
+    const originalWriteFile = fs.writeFile;
+    const stagePrefix = join(sdk, "..", ".my-workflow-stage-");
+    fs.writeFile = async (path, ...args) => {
+        if (path.startsWith(stagePrefix) && path.endsWith("canvas-config.json")) {
+            throw new Error("Staging fixture failure");
+        }
+        return originalWriteFile(path, ...args);
+    };
     fs.rm = async (path, options) => {
-        if (path === join(sdk, "extension.mjs") || path === sdk) {
-            throw Object.assign(new Error("Locked canvas fixture"), { code: "EPERM" });
+        if (path.startsWith(stagePrefix)) {
+            throw Object.assign(new Error("Locked staging fixture"), { code: "EPERM" });
         }
         return originalRm(path, options);
     };
@@ -206,12 +282,14 @@ test("failed cleanup reports both errors and the target path", async (t) => {
         await assert.rejects(regenerate(`--replace-existing=${first.requestId}`), (error) => {
             assert.ok(error instanceof AggregateError);
             assert.equal(error.errors.length, 2);
-            assert.ok(error.message.includes(sdk));
-            assert.match(error.message, /Locked canvas fixture/);
+            assert.ok(error.message.includes(stagePrefix));
+            assert.match(error.message, /Staging fixture failure/);
+            assert.match(error.message, /Locked staging fixture/);
             return true;
         });
     } finally {
         fs.rm = originalRm;
+        fs.writeFile = originalWriteFile;
         syncBuiltinESMExports();
     }
     assert.ok((await lstat(sdk)).isDirectory());

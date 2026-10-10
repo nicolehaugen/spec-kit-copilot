@@ -69,8 +69,9 @@ Workflow header, and Allow custom artifact directory slug are ordered Essentials
 Header logo, Main page logo, and light/dark accent, page background, surface,
 secondary surface, and text colors are ordered Appearance contributions
 registered by the composed load-page command. The two required identity fields
-use the fixed Designer identity control, while the Outputs page mounts its fixed
-phase-artifacts control. Other fields use registered adapters: `stock.checkbox`
+use the fixed Designer identity control; Badges uses its fixed page shell with
+registered badge input control definitions and Designer adapters. Output evidence
+is nonvisual host data, not a Designer page. Other fields use registered adapters: `stock.checkbox`
 provides the optional boolean editor, and `stock.text` validates optional text
 and palette values at Generate. Generate packages the winning stock-text generated adapter
 for visible Description, Workflow header, or read-only text placements. Text
@@ -129,13 +130,17 @@ phase navigation, while creating a workflow. It labels the workflow there.
 When Allow custom artifact directory slug is on, the generated workflow accepts an optional
 Artifact directory slug. If entered, it previews the View target; the created
 directory, which may include a numeric prefix, remains authoritative.
-The resolved **Outputs** definition (`designer-artifacts`) remains in the
-model and frozen generation data, but its tab is hidden in this MVP. Inferred
-pipeline artifacts remain; Constitution still opens
+Wizard-inferred output evidence remains in the handoff and frozen generation
+data without an Outputs page. Badge input controls may declare additional
+Markdown files that a phase is expected to produce when inference missed them.
+They appear as additional output links and are available as badge evidence,
+without changing the inferred default View target.
+A phase without an inferred viewer stays without a View button even when
+a badge watches a file. Constitution still opens
 `.specify/memory/constitution.md`. The **Generate** tab is fixed shell
 UI rather than a customizable contribution, so it does not register a JSON
 definition or adapter/renderer template pair.
-The existing header Save persists confirmed outputs with the other bounded,
+The existing header Save persists confirmed output evidence with the other bounded,
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff retains the saved revision but starts a fresh form
@@ -283,9 +288,8 @@ A missing skill directs users to relaunch with the current Canvas Design release
 current local source, before any generation request is prepared. Healthy pages remain
 editable even when another page fails. Essentials
 is selected first, including when it shows an error; in that case it supplies
-no Canvas ID or Title values, so Generate remains unavailable. When a partial
-non-preview composition has only the hidden Outputs definition, Designer selects
-the disabled Generate page instead of rendering Outputs without a tab. Tab changes display the in-memory model without re-resolving
+no Canvas ID or Title values, so Generate remains unavailable. When a partial non-preview composition has no pages, Designer explains that
+no settings pages are registered and Generate remains unavailable. Tab changes display the in-memory model without re-resolving
 pages; there is no page-reload control or persisted page snapshot. After a
 successful handoff launch, the provider saves its complete resolved open
 inventory in the Designer session's `speckit-canvas-designer/last-open.json`.

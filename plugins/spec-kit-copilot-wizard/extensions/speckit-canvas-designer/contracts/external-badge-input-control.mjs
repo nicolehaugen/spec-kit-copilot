@@ -6,12 +6,16 @@ const keys = (value, names) => Object.keys(value).filter((key) => key !== "$sche
     .sort().join() === [...names].sort().join();
 
 export function validateBadgeInputControl(value, name) {
-    if (!record(value) || !keys(value, ["schemaVersion", "id", "adapter", "inputTypes"])
+    if (!record(value) || !keys(value, ["schemaVersion", "id", "adapter", "inputTypes",
+        ...(value.capabilities === undefined ? [] : ["capabilities"])])
         || value.schemaVersion !== 1 || !controlPattern.test(value.id)
         || !idPattern.test(value.adapter) || !Array.isArray(value.inputTypes)
         || value.inputTypes.length < 1 || value.inputTypes.length > inputTypes.size
         || new Set(value.inputTypes).size !== value.inputTypes.length
-        || value.inputTypes.some((type) => !inputTypes.has(type))) {
+        || value.inputTypes.some((type) => !inputTypes.has(type))
+        || value.capabilities !== undefined && (!Array.isArray(value.capabilities)
+            || value.capabilities.length !== 1
+            || value.capabilities[0] !== "declare-markdown-output")) {
         throw new Error(`${name}: invalid Designer badge input control`);
     }
 }
@@ -35,7 +39,11 @@ export function validateBadgeInputAdapterIdentity(entry, binding, exports) {
     const id = literalExport("controlId",
         /^\s*=\s*["']([a-z][a-z0-9.-]{0,79})["']\s*;/);
     const version = literalExport("contractVersion", /^\s*=\s*(1)\s*;/);
-    if (id !== binding.control || version !== "1") {
+    const declares = exports.some((item) => item.n === "declaresMarkdownOutput");
+    const expected = binding.capabilities?.includes("declare-markdown-output") === true;
+    if (id !== binding.control || version !== "1" || declares !== expected
+        || (expected
+            && literalExport("declaresMarkdownOutput", /^\s*=\s*(true)\s*;/) !== "true")) {
         throw new Error(`${entry.name}: incompatible Designer badge input adapter for ${binding.rule}`);
     }
 }
@@ -77,7 +85,9 @@ export function resolveBadgeInputControls(loaded, types, rules) {
         }
         resolved.push({ rule: rule.document.id, control: control.document.id,
             adapter: adapter.name, binding: binding.name, definition: control.name,
-            sourceId: binding.sourceId });
+            sourceId: binding.sourceId,
+            ...(control.document.capabilities
+                ? { capabilities: [...control.document.capabilities] } : {}) });
     }
     for (const binding of bindings) {
         if (!rules.some((rule) => rule.document.id === binding.document.rule)) {

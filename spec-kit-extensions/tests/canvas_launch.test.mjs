@@ -107,7 +107,6 @@ test("composed verification resolves every name, rejects warnings and native scr
         "sample-page": join(preset, "pages", "sample.json"),
         "sample-renderer": join(preset, "pages", "renderer.mjs"),
         "designer-essentials": join(installed, "designer-host", "tabs", "essentials.json"),
-        "designer-artifacts": join(installed, "designer-host", "tabs", "outputs.json"),
         "designer-badges": join(installed, "designer-host", "tabs", "badges.json"),
         "designer-appearance": join(installed, "designer-host", "tabs", "appearance.json"),
         "designer-essentials-description": join(installed, "designer-host", "essentials-settings", "description.json"),
@@ -135,19 +134,33 @@ test("composed verification resolves every name, rejects warnings and native scr
             "badge-input-controls", "stock", "control.json"),
         "designer-badge-input-stock-adapter": join(installed, "designer-host",
             "badge-input-controls", "stock", "designer.mjs"),
+        "designer-badge-input-checklist": join(installed, "designer-host",
+            "badge-input-controls", "checklist", "control.json"),
+        "designer-badge-input-checklist-adapter": join(installed, "designer-host",
+            "badge-input-controls", "checklist", "designer.mjs"),
+        "designer-badge-input-phase-artifact": join(installed, "designer-host",
+            "badge-input-controls", "phase-artifact", "control.json"),
+        "designer-badge-input-phase-artifact-adapter": join(installed, "designer-host",
+            "badge-input-controls", "phase-artifact", "designer.mjs"),
+        "designer-badge-input-ordered-stale": join(installed, "designer-host",
+            "badge-input-controls", "ordered-stale", "control.json"),
+        "designer-badge-input-ordered-stale-adapter": join(installed, "designer-host",
+            "badge-input-controls", "ordered-stale", "designer.mjs"),
         ...Object.fromEntries(["value-match", "artifact-current", "markdown-file-count",
-            "checklist-progress", "checklist-complete", "work-complete", "phase-run-complete",
+            "checklist-progress", "checklist-complete", "phase-run-complete",
             "artifact-stale", "phase-artifact-complete"].map((id) =>
             [`designer-badge-binding-${id}`, join(installed, "designer-host",
                 "badge-input-controls", "stock", "bindings", `${id}.json`)])),
         ...Object.fromEntries(["value-match", "artifact-current", "markdown-file-count", "checklist-progress",
-            "checklist-complete", "work-complete", "phase-run-complete", "artifact-stale",
+            "checklist-complete", "phase-run-complete", "artifact-stale",
             "phase-artifact-complete"].map((id) =>
             [`badge-rule-${id}`, join(installed, "generated-host", "badges", "rules", `${id}.json`)])),
         ...Object.fromEntries(["content", "artifact-state", "run"].map((id) =>
             [`badge-rule-${id}-adapter`, join(installed, "generated-host", "badges", "adapters", `${id}.mjs`)])),
         "badge-rule-phase-artifact-complete-adapter": join(installed, "generated-host",
             "badges", "adapters", "phase-artifact-complete.mjs"),
+        "badge-rule-ordered-stale-adapter": join(installed, "generated-host",
+            "badges", "adapters", "ordered-stale.mjs"),
         "shared-controls-image": join(installed, "shared-controls", "stock-image", "control.json"),
         "designer-control-adapter-image": join(installed, "shared-controls", "stock-image", "designer.mjs"),
         "generated-control-adapter-image": join(installed, "shared-controls", "stock-image", "generated.mjs"),
@@ -182,12 +195,12 @@ test("composed verification resolves every name, rejects warnings and native scr
     };
     const result = await verifyComposition(project, run);
     assert.equal(calls, 1);
-    assert.equal(result.pages.length, 5);
+    assert.equal(result.pages.length, 4);
     assert.equal(result.templates.length, stockTemplateCount + 1);
     assert.deepEqual(result.templates.find((entry) => entry.name === "sample-renderer").sourceId, "sample");
     await writeFile(skill, base);
     const baseOnly = await verifyComposition(project, run);
-    assert.equal(baseOnly.pages.length, 4);
+    assert.equal(baseOnly.pages.length, 3);
     assert.equal(baseOnly.templates.length, stockTemplateCount);
     assert.equal(calls, 2);
     await writeFile(skill, `${base}\n${contribution}`);
@@ -214,7 +227,7 @@ test("composed verification resolves every name, rejects warnings and native scr
     strategy = "replace";
     await writeFile(skill, `${minimalBase}\n${contribution}`);
     const intentionalReplacement = await verifyComposition(project, run);
-    assert.equal(intentionalReplacement.pages.length, 5);
+    assert.equal(intentionalReplacement.pages.length, 4);
     assert.equal(intentionalReplacement.templates.length, 1);
     await writeFile(skill, "## Pages\n\nNo pages selected.\n");
     assert.deepEqual(await verifyComposition(project, run), { pages: [], templates: [] });

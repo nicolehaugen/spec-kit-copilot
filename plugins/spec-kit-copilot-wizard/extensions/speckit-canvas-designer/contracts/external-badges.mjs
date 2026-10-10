@@ -37,6 +37,9 @@ export function validateBadges(badges, model) {
         if (!type) fail(`missing badge type ${badge.type}`);
         if (!type.enabled) fail(`disabled badge type ${badge.type}`);
         if (!rule) fail(`missing badge rule ${type.rule} required by type ${badge.type}`);
+        if (type.replacementGroup && !rule.placementPhaseInput) {
+            fail("replacement group requires a target phase artifact");
+        }
         if (model.templates && !model.templates.some((item) =>
             item.kind === "generated.badge-rule-adapter"
                 && item.name === rule.adapter)) {
@@ -83,7 +86,8 @@ export function validateBadges(badges, model) {
                 }
             } else if (input.type === "ordered-artifacts") {
                 const target = badge.inputs[input.before];
-                if (!Array.isArray(value) || value.length > 100 || !record(target)
+                if (!Array.isArray(value) || value.length > 100
+                    || value.length < (input.minItems ?? 0) || !record(target)
                     || !outputs[target.phase]?.outputs?.includes(target.output)) {
                     fail(`invalid ordered outputs in ${input.id}`);
                 }
@@ -99,14 +103,6 @@ export function validateBadges(badges, model) {
                 }
             } else {
                 fail(`unsupported rule input type ${input.type}`);
-            }
-        }
-        if (rule.id === "checklist-complete"
-            && rule.inputs.some((input) => input.id === "prerequisite")) {
-            const { artifact: checklist, prerequisite } = badge.inputs;
-            if (model.phases.indexOf(prerequisite.phase) >= model.phases.indexOf(checklist.phase)
-                || prerequisite.output.toLowerCase() === checklist.output.toLowerCase()) {
-                fail("choose a different confirmed output from an earlier phase");
             }
         }
         if (typeof badge.text !== "string" || !badge.text.trim() || badge.text.length > 120

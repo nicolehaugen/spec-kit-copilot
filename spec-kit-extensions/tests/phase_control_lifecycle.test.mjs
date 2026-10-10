@@ -286,7 +286,6 @@ for (const [name, adapter] of [["stock", stock], ["vertical", vertical]]) {
         if (name === "stock") assert.equal(updatedDraft, draft);
         assert.equal(updatedDraft.value, "typed but not yet saved");
         assert.equal(updatedDraft.selectionStart, 5);
-        assert.equal(dom.root.querySelector(".phase-notice").textContent, "Completed");
         const view = dom.root.querySelector(name === "stock" ? "#view-artifact" : '[data-action="view-row"]');
         if (name === "stock") assert.equal(view.hidden, false);
         else assert.match(dom.root.innerHTML, /data-action="view-row"/);

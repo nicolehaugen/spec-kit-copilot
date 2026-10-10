@@ -1,7 +1,0 @@
-{
-  "$schema": "../../../../schemas/external-designer.badge-input-binding.schema.json",
-  "schemaVersion": 1,
-  "id": "work-complete",
-  "rule": "work-complete",
-  "control": "stock.badge-inputs"
-}

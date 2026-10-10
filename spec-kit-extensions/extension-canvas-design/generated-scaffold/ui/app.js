@@ -941,7 +941,10 @@ function renderCollection() {
             badge.className = "phase-notice";
             select.append(badge);
         }
-        if (badge) { badge.textContent = entry.status ?? "Not started"; badge.hidden = !entry.pending; }
+        if (badge) {
+            badge.textContent = entry.status === "Completed" ? "" : entry.status ?? "Not started";
+            badge.hidden = !entry.pending || entry.status === "Completed";
+        }
         if (entry.pending) select.title = entry.workflowRecoveryMessage ?? "";
         let recovery = select.querySelector(".recovery-note");
         if (entry.pending && entry.workflowRecoveryMessage && !recovery) {

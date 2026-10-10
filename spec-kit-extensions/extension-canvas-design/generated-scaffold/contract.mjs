@@ -39,7 +39,7 @@ export function phaseContract(config) {
         if (configured && (typeof configured !== "object" || Array.isArray(configured)
             || Object.keys(configured).sort().join() !== "outputs,view"
             || !Array.isArray(configured.outputs) || configured.outputs.length > 100
-            || (configured.outputs.length ? !configured.outputs.includes(configured.view) : configured.view !== null))) {
+            || (configured.view !== null && !configured.outputs.includes(configured.view)))) {
             throw new UserError("Invalid phase artifact outputs or viewer target.");
         }
         if (Object.hasOwn(artifacts, id) && !configured) throw new UserError("Invalid phase artifact configuration.");

@@ -86,6 +86,7 @@ test("a timed-out Run clears the in-flight guard without automatically resubmitt
 });
 
 test("named badge colors meet small-text contrast in light, dark and automatic dark themes", () => {
+    assert.match(runtimeCss, /\.canvas-badge\s*\{[^}]*border:\s*1px solid currentColor;/);
     const theme = (selector) => {
         const start = themeSource.indexOf(selector);
         assert.ok(start >= 0);

@@ -29,9 +29,6 @@ provides:
     - name: designer-essentials
       file: designer-host/tabs/essentials.json
       description: Essentials fields for canvas identity and workflow naming.
-    - name: designer-artifacts
-      file: designer-host/tabs/outputs.json
-      description: Outputs page for confirming phase files and viewer defaults.
     - name: designer-badges
       file: designer-host/tabs/badges.json
       description: Configure result badges for workflow lists, summaries, and phase cards.
@@ -133,8 +130,6 @@ provides:
       file: generated-host/badges/rules/markdown-file-count.json
     - name: badge-rule-checklist-complete
       file: generated-host/badges/rules/checklist-complete.json
-    - name: badge-rule-work-complete
-      file: generated-host/badges/rules/work-complete.json
     - name: badge-rule-phase-run-complete
       file: generated-host/badges/rules/phase-run-complete.json
     - name: badge-rule-phase-artifact-complete
@@ -145,6 +140,8 @@ provides:
       file: generated-host/badges/adapters/content.mjs
     - name: badge-rule-artifact-state-adapter
       file: generated-host/badges/adapters/artifact-state.mjs
+    - name: badge-rule-ordered-stale-adapter
+      file: generated-host/badges/adapters/ordered-stale.mjs
     - name: badge-rule-run-adapter
       file: generated-host/badges/adapters/run.mjs
     - name: badge-rule-phase-artifact-complete-adapter
@@ -155,6 +152,18 @@ provides:
       file: designer-host/badge-input-controls/stock/control.json
     - name: designer-badge-input-stock-adapter
       file: designer-host/badge-input-controls/stock/designer.mjs
+    - name: designer-badge-input-checklist
+      file: designer-host/badge-input-controls/checklist/control.json
+    - name: designer-badge-input-checklist-adapter
+      file: designer-host/badge-input-controls/checklist/designer.mjs
+    - name: designer-badge-input-phase-artifact
+      file: designer-host/badge-input-controls/phase-artifact/control.json
+    - name: designer-badge-input-phase-artifact-adapter
+      file: designer-host/badge-input-controls/phase-artifact/designer.mjs
+    - name: designer-badge-input-ordered-stale
+      file: designer-host/badge-input-controls/ordered-stale/control.json
+    - name: designer-badge-input-ordered-stale-adapter
+      file: designer-host/badge-input-controls/ordered-stale/designer.mjs
     - name: designer-badge-binding-value-match
       file: designer-host/badge-input-controls/stock/bindings/value-match.json
     - name: designer-badge-binding-artifact-current
@@ -167,8 +176,6 @@ provides:
       file: designer-host/badge-input-controls/stock/bindings/checklist-progress.json
     - name: designer-badge-binding-checklist-complete
       file: designer-host/badge-input-controls/stock/bindings/checklist-complete.json
-    - name: designer-badge-binding-work-complete
-      file: designer-host/badge-input-controls/stock/bindings/work-complete.json
     - name: designer-badge-binding-phase-run-complete
       file: designer-host/badge-input-controls/stock/bindings/phase-run-complete.json
     - name: designer-badge-binding-phase-artifact-complete

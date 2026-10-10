@@ -26,7 +26,6 @@ internal handoff ID from the user or guess one from local files.
 Load these default pages:
 
 - Essentials (`designer-essentials`)
-- `designer-artifacts`
 - `designer-badges`
 - `designer-appearance`
 
@@ -170,23 +169,28 @@ unregistered files are not loaded.
 - `badge-rule-markdown-file-count` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-checklist-progress` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-checklist-complete` — `generated.badge-rule-definition`, `replace`
-- `badge-rule-work-complete` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-phase-run-complete` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-phase-artifact-complete` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-artifact-stale` — `generated.badge-rule-definition`, `replace`
 - `badge-rule-content-adapter` — `generated.badge-rule-adapter`, `replace`
 - `badge-rule-artifact-state-adapter` — `generated.badge-rule-adapter`, `replace`
+- `badge-rule-ordered-stale-adapter` — `generated.badge-rule-adapter`, `replace`
 - `badge-rule-run-adapter` — `generated.badge-rule-adapter`, `replace`
 - `badge-rule-phase-artifact-complete-adapter` — `generated.badge-rule-adapter`, `replace`
 - `designer-badge-input-stock` — `designer.badge-input-control`, `replace`
 - `designer-badge-input-stock-adapter` — `designer.badge-input-adapter`, `replace`
+- `designer-badge-input-checklist` — `designer.badge-input-control`, `replace`
+- `designer-badge-input-checklist-adapter` — `designer.badge-input-adapter`, `replace`
+- `designer-badge-input-phase-artifact` — `designer.badge-input-control`, `replace`
+- `designer-badge-input-phase-artifact-adapter` — `designer.badge-input-adapter`, `replace`
+- `designer-badge-input-ordered-stale` — `designer.badge-input-control`, `replace`
+- `designer-badge-input-ordered-stale-adapter` — `designer.badge-input-adapter`, `replace`
 - `designer-badge-binding-value-match` — `designer.badge-input-binding`, `replace`
 - `designer-badge-binding-artifact-current` — `designer.badge-input-binding`, `replace`
 - `designer-badge-binding-artifact-stale` — `designer.badge-input-binding`, `replace`
 - `designer-badge-binding-markdown-file-count` — `designer.badge-input-binding`, `replace`
 - `designer-badge-binding-checklist-progress` — `designer.badge-input-binding`, `replace`
 - `designer-badge-binding-checklist-complete` — `designer.badge-input-binding`, `replace`
-- `designer-badge-binding-work-complete` — `designer.badge-input-binding`, `replace`
 - `designer-badge-binding-phase-run-complete` — `designer.badge-input-binding`, `replace`
 - `designer-badge-binding-phase-artifact-complete` — `designer.badge-input-binding`, `replace`
 - `shared-controls-image` — `shared.control-definition`, `replace`

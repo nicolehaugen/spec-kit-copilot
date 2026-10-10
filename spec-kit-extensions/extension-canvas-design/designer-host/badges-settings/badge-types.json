@@ -23,7 +23,7 @@
     {
       "id": "artifact-stale",
       "title": "Artifact stale",
-      "description": "Show when the selected output may be stale.",
+      "description": "Show when an existing output is stale relative to selected earlier outputs.",
       "rule": "artifact-stale",
       "defaultText": "Artifact stale",
       "defaultColor": "amber",
@@ -41,27 +41,18 @@
     {
       "id": "checklist-progress",
       "title": "Checklist progress",
-      "description": "Count checked and total Markdown checkbox items.",
+      "description": "Count checked and total items in a current Markdown checklist.",
       "rule": "checklist-progress",
-      "defaultText": "{completed}/{total} complete",
+      "defaultText": "Checklist: {completed}/{total} complete",
       "defaultColor": "blue",
       "enabled": true
     },
     {
       "id": "checklist-complete",
       "title": "Checklist complete",
-      "description": "Show when every Markdown checkbox item is checked and the checklist output is at least as recent as a selected earlier output.",
+      "description": "Show when every checkbox in a current, nonempty Markdown checklist is checked.",
       "rule": "checklist-complete",
       "defaultText": "Checklist complete",
-      "defaultColor": "green",
-      "enabled": true
-    },
-    {
-      "id": "work-complete",
-      "title": "Work complete",
-      "description": "Show when every checkbox is checked and the completion phase's latest run completed.",
-      "rule": "work-complete",
-      "defaultText": "Work complete",
       "defaultColor": "green",
       "enabled": true
     },
@@ -77,8 +68,9 @@
     {
       "id": "phase-artifact-complete",
       "title": "Phase artifact complete",
-      "description": "Show when the selected output and chosen earlier outputs exist and are current in workflow order.",
+      "description": "Show when the selected output and chosen earlier outputs are current. Among matching phase artifact badges, only the furthest phase appears at each location; summary counts remain cumulative.",
       "rule": "phase-artifact-complete",
+      "replacementGroup": "phase-completion",
       "defaultText": "Phase complete",
       "defaultColor": "green",
       "enabled": true

@@ -2,17 +2,25 @@
   "schemaVersion": 1,
   "id": "checklist-complete",
   "label": "Markdown checklist complete",
-  "description": "All checkbox items are checked and the checklist output is not older than a required earlier output.",
+  "description": "The checklist must be current and contain at least one checkbox. The badge appears when every checkbox is checked. A missing, stale, or empty checklist does not mean complete.",
   "inputs": [
     {
       "id": "artifact",
       "type": "artifact",
-      "label": "Checklist output"
+      "label": "Checklist file"
     },
     {
-      "id": "prerequisite",
-      "type": "artifact",
-      "label": "Earlier output"
+      "id": "prerequisites",
+      "type": "ordered-artifacts",
+      "scope": "metadata",
+      "before": "artifact",
+      "minItems": 1,
+      "label": "Earlier outputs required for currentness"
+    },
+    {
+      "id": "targetphase",
+      "type": "phase",
+      "label": "Target phase"
     }
   ],
   "textPlaceholders": [],

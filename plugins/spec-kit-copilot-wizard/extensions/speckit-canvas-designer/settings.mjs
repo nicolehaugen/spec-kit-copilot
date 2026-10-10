@@ -99,7 +99,7 @@ export async function loadDesignerSettings(workspacePath, handoff, model, openFi
     if (record) {
         validateSavedSettings(record, handoff, model);
         if (record.outputs !== undefined) {
-            validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases);
+            validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases, true);
         }
     }
     const pipeline = initialOutputs(handoff);

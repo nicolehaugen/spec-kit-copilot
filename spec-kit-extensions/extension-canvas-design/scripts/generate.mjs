@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validControlContract, validControlValue } from "../generated-scaffold/external-control-contract.mjs";
@@ -29,6 +29,55 @@ const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided", "setup.show"]);
+
+export async function renameDirectoryWithoutReplacement(source, destination) {
+    if (process.platform === "win32") {
+        const staged = await lstat(source);
+        for (let attempt = 0; ; attempt++) {
+            try { await rename(source, destination); break; }
+            catch (error) {
+                if (error.code !== "EPERM" || attempt >= 5) throw error;
+                // Windows can briefly deny a directory rename after generated files are read.
+                await new Promise((done) => setTimeout(done, 100 * (attempt + 1)));
+                const current = await lstat(source);
+                if (!current.isDirectory() || current.isSymbolicLink()
+                    || current.dev !== staged.dev || current.ino !== staged.ino) {
+                    throw new Error("Canvas staging directory changed before publication");
+                }
+                try {
+                    await lstat(destination);
+                    throw new Error("Canvas destination changed before publication");
+                } catch (lookupError) {
+                    if (lookupError.code !== "ENOENT") throw lookupError;
+                }
+            }
+        }
+        return;
+    }
+    // POSIX rename replaces an existing empty directory; reserve the destination first.
+    await mkdir(destination);
+    const claim = await lstat(destination);
+    try {
+        const current = await lstat(destination);
+        if (current.dev !== claim.dev || current.ino !== claim.ino
+            || !current.isDirectory() || current.isSymbolicLink()) {
+            throw new Error("Canvas destination changed before publication");
+        }
+        await rename(source, destination);
+    } catch (error) {
+        const current = await lstat(destination).catch((readError) => {
+            if (readError.code === "ENOENT") return null;
+            throw readError;
+        });
+        if (current?.dev === claim.dev && current.ino === claim.ino) {
+            try { await rmdir(destination); }
+            catch (cleanup) {
+                throw new AggregateError([error, cleanup], "Canvas destination could not be released");
+            }
+        }
+        throw error;
+    }
+}
 
 function withoutSchema(document) {
     if (!document || typeof document !== "object" || Array.isArray(document)) return document;
@@ -173,8 +222,13 @@ export function frozenBadges(badges, workflow) {
         const parsed = badgeSettings.types.find((item) => item.id === type.id);
         if (!parsed || type.name !== settings.name || type.sourceId !== settings.sourceId
             || type.schemaVersion !== 1
-            || !isDeepStrictEqual(parsed, Object.fromEntries(typeKeys.map((key) => [key, type[key]])))
+            || !isDeepStrictEqual(parsed, Object.fromEntries([
+                ...typeKeys, ...(parsed.replacementGroup === undefined ? [] : ["replacementGroup"]),
+            ].map((key) => [key, type[key]])))
             || !parsed.enabled || !name.test(parsed.rule)
+            || (parsed.replacementGroup !== undefined
+                && (!name.test(parsed.replacementGroup)
+                    || !ruleMap.get(parsed.rule)?.placementPhaseInput))
             || !ruleMap.has(parsed.rule) || typeof parsed.title !== "string"
             || !parsed.title.trim() || typeof parsed.description !== "string"
             || typeof parsed.defaultText !== "string"
@@ -194,7 +248,8 @@ export function frozenBadges(badges, workflow) {
                 && !parsed.inputs.some((input) => input.id === parsed.placementPhaseInput
                     && input.type === "artifact"))
             || parsed.inputs.some((input) => !input || typeof input !== "object"
-                || Object.keys(input).some((key) => !["id", "type", "scope", "before", "label"].includes(key))
+                || Object.keys(input).some((key) =>
+                    !["id", "type", "scope", "before", "minItems", "label"].includes(key))
                 || !name.test(input.id)
                 || !["artifact", "artifact-set", "ordered-artifacts", "phase", "text"].includes(input.type)
                 || (input.label !== undefined
@@ -204,9 +259,11 @@ export function frozenBadges(badges, workflow) {
                         || input.type === "ordered-artifacts" && input.scope === "metadata"))
                 || input.type === "ordered-artifacts"
                     && (input.scope !== "metadata" || typeof input.before !== "string")
+                || input.minItems !== undefined && (input.type !== "ordered-artifacts"
+                    || !Number.isInteger(input.minItems) || input.minItems < 1 || input.minItems > 100)
                 || input.before !== undefined && (input.type !== "ordered-artifacts"
                     || !parsed.inputs.some((target) => target.id === input.before
-                        && target.type === "artifact" && target.scope === "metadata")))
+                        && target.type === "artifact" && target.scope !== "directory")))
             || !Array.isArray(parsed.textPlaceholders)
             || new Set(parsed.textPlaceholders).size !== parsed.textPlaceholders.length
             || parsed.textPlaceholders.some((placeholder) => !name.test(placeholder))) {
@@ -249,7 +306,8 @@ export function frozenBadges(badges, workflow) {
             if (input.type === "ordered-artifacts") {
                 const target = instance.inputs[input.before];
                 const chain = [...(Array.isArray(value) ? value : []), target];
-                return Array.isArray(value) && value.length <= 100 && declared(target)
+                return Array.isArray(value) && value.length <= 100
+                    && value.length >= (input.minItems ?? 0) && declared(target)
                     && value.every((entry) => entry && typeof entry === "object"
                         && Object.keys(entry).sort().join() === "output,phase" && declared(entry))
                     && chain.every((entry, index) => index === 0
@@ -280,12 +338,6 @@ export function frozenBadges(badges, workflow) {
         if (!type || !rule || typeof instance.id !== "string"
             || !/^[a-z0-9][a-z0-9-]{0,79}$/.test(instance.id)
             || ids.has(instance.id) || !validInputs(instance, rule)
-            || (rule.id === "checklist-complete"
-                && rule.inputs.some((input) => input.id === "prerequisite")
-                && (workflow.selectedPhases.indexOf(instance.inputs.prerequisite.phase)
-                    >= workflow.selectedPhases.indexOf(instance.inputs.artifact.phase)
-                    || instance.inputs.prerequisite.output.toLowerCase()
-                        === instance.inputs.artifact.output.toLowerCase()))
             || (rule.placementPhaseInput
                 && (instance.targets?.length
                     ? instance.targets.length !== 1 || instance.targets[0].output !== null
@@ -1607,12 +1659,11 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         if (priorRequestId !== previous.requestId) {
             throw new Error("Canvas changed since replacement was confirmed");
         }
-    } else {
-        if (priorRequestId) throw new Error("Canvas no longer exists for confirmed replacement");
-        await mkdir(output);
+    } else if (priorRequestId) {
+        throw new Error("Canvas no longer exists for confirmed replacement");
     }
-    const target = output;
-    const owned = original ?? await lstat(target);
+    const target = await mkdtemp(join(parent, `.${config.canvas.id}-stage-`));
+    const owned = await lstat(target);
     const verifyTarget = async () => {
         const current = await lstat(target);
         if (!current.isDirectory() || current.isSymbolicLink()
@@ -1623,13 +1674,6 @@ export async function materialize(project, workspace, handoffId, requestId, repl
     };
     try {
     await verifyTarget();
-    if (original) {
-        await rm(join(target, "extension.mjs"));
-        for (const entry of await readdir(target)) {
-            await verifyTarget();
-            await rm(join(target, entry), { recursive: true });
-        }
-    }
     await mkdir(join(target, "ui"));
     await mkdir(join(target, "contracts"));
     if (pageFiles.length) await mkdir(join(target, "pages"));
@@ -1689,11 +1733,69 @@ export async function materialize(project, workspace, handoffId, requestId, repl
     if (renderer.error || renderer.status !== 0) throw new Error(`Workflow renderer failed: ${renderer.stderr || renderer.error}`);
     await verifyTarget();
     await writeFile(join(target, "extension.mjs"), files.at(-1)[1], { flag: "wx" });
+    let current;
+    try { current = await lstat(output); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (original) {
+        if (!current || current.dev !== original.dev || current.ino !== original.ino
+            || !current.isDirectory() || current.isSymbolicLink()) {
+            throw new Error("Existing canvas changed during generation");
+        }
+        const previous = await existingGeneratedCanvas(output, projectRoot, workspaceRoot,
+            handoff, config.canvas.id, files);
+        if (priorRequestId !== previous.requestId) {
+            throw new Error("Canvas changed since replacement was confirmed");
+        }
+        const backupDir = await mkdtemp(join(parent, `.${config.canvas.id}-backup-`));
+        const backup = join(backupDir, "previous");
+        let moved = false;
+        let published = false;
+        try {
+            await rename(output, backup);
+            moved = true;
+            const displaced = await lstat(backup);
+            if (displaced.dev !== original.dev || displaced.ino !== original.ino) {
+                throw new Error("Existing canvas changed during replacement");
+            }
+            await renameDirectoryWithoutReplacement(target, output);
+            published = true;
+        } catch (error) {
+            if (moved) {
+                try {
+                    await renameDirectoryWithoutReplacement(backup, output);
+                }
+                catch (rollback) {
+                    throw new AggregateError([error, rollback],
+                        `Canvas replacement failed; prior output remains at ${backup}`);
+                }
+            }
+            throw error;
+        } finally {
+            // Retain the backup if a rollback failed.
+            if (!published && await lstat(backup).then(() => false, (error) => error.code === "ENOENT")) {
+                await rm(backupDir, { recursive: true, force: true });
+            }
+        }
+        try { await rm(backupDir, { recursive: true, force: true }); }
+        catch (error) {
+            warnings.push(`Canvas replacement was published, but the prior backup could not be removed at ${backupDir}: ${error.message}. Inspect and remove any remaining files manually.`);
+        }
+    } else {
+        try { await lstat(output); throw new Error(`Canvas extension already exists: ${output}`); }
+        catch (error) { if (error.code !== "ENOENT") throw error; }
+        await renameDirectoryWithoutReplacement(target, output);
+    }
     return { target: request.target, canvasId: config.canvas.id, warnings };
     } catch (error) {
         try {
-            await verifyTarget();
-            await rm(target, { recursive: true });
+            const current = await lstat(target).catch((readError) => {
+                if (readError.code === "ENOENT") return null;
+                throw readError;
+            });
+            if (current) {
+                await verifyTarget();
+                await rm(target, { recursive: true, force: true });
+            }
         } catch (cleanup) {
             throw new AggregateError([error, cleanup],
                 `${error.message}; failed canvas cleanup requires inspection at ${target}: ${cleanup.message}`);

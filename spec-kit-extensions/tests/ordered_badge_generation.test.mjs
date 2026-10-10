@@ -85,6 +85,71 @@ test("malformed metadata rule references and ordered evidence are rejected", () 
     }
 });
 
+test("an ordered chain can require earlier files before a full-content target", () => {
+    const contentRule = { ...rule, placementPhaseInput: undefined,
+        inputs: [{ id: "target", type: "artifact" },
+            { id: "prerequisites", type: "ordered-artifacts", scope: "metadata",
+                before: "target", minItems: 1 }] };
+    delete contentRule.placementPhaseInput;
+    assert.doesNotThrow(() => validateBadgeRule(contentRule, "phase-artifact-definition"));
+    assert.equal(validBadgeEvidence(instance, contentRule, workflow.selectedPhases, declared), true);
+    assert.deepEqual(frozenBadges(inventory(instance, contentRule), workflow).rules[0].inputs,
+        contentRule.inputs);
+    const empty = { ...instance, inputs: { target, prerequisites: [] } };
+    assert.equal(validBadgeEvidence(empty, contentRule, workflow.selectedPhases, declared), false);
+    assert.throws(() => frozenBadges(inventory(empty, contentRule), workflow),
+        /Invalid configured badge/);
+    for (const input of [
+        { ...contentRule.inputs[1], minItems: 0 },
+        { ...contentRule.inputs[1], minItems: 101 },
+        { ...contentRule.inputs[1], minItems: 1.5 },
+        { ...contentRule.inputs[1], before: "missing" },
+    ]) {
+        const malformed = { ...contentRule, inputs: [contentRule.inputs[0], input] };
+        assert.throws(() => validateBadgeRule(malformed, "phase-artifact-definition"),
+            /invalid badge rule definition/);
+        assert.throws(() => frozenBadges(inventory(instance, malformed), workflow),
+            /Invalid frozen badge rule/);
+    }
+});
+
+test("Artifact stale freezes its required metadata chain without accepting old saved inputs", () => {
+    const staleRule = { ...rule, id: "artifact-stale",
+        adapter: "badge-rule-ordered-stale-adapter",
+        inputs: [{ id: "artifact", type: "artifact", scope: "metadata" },
+            { id: "prerequisites", type: "ordered-artifacts", scope: "metadata",
+                before: "artifact", minItems: 1 }] };
+    delete staleRule.placementPhaseInput;
+    const staleType = { ...type, id: "artifact-stale", rule: staleRule.id,
+        defaultText: "Artifact stale" };
+    const badge = { ...instance, id: "plan-stale", type: staleType.id,
+        inputs: { artifact: target, prerequisites: [earlier] }, text: "Artifact stale" };
+    const selected = (entry) => ({
+        instances: [entry],
+        settings: asset("badges-settings", "designer.badges-settings-definition",
+            { schemaVersion: 1, types: [staleType] }),
+        types: [{ name: "badges-settings", sourceId: "test-preset", schemaVersion: 1,
+            ...staleType }],
+        rules: [{ name: "stale-definition", sourceId: "test-preset", ...staleRule,
+            assets: [asset("stale-definition", "generated.badge-rule-definition", staleRule)] }],
+        adapters: [asset(staleRule.adapter, "generated.badge-rule-adapter",
+            "export const contractVersion = 1; export function evaluate() {}")],
+    });
+    assert.doesNotThrow(() => validateBadgeRule(staleRule, "stale-definition"));
+    assert.equal(validBadgeEvidence(badge, staleRule, workflow.selectedPhases, declared), true);
+    assert.deepEqual(frozenBadges(selected(badge), workflow).rules[0].inputs, staleRule.inputs);
+    for (const inputs of [
+        { artifact: target },
+        { artifact: target, prerequisites: [] },
+        { artifact: target, prerequisites: [target] },
+    ]) {
+        const invalid = { ...badge, inputs };
+        assert.equal(validBadgeEvidence(invalid, staleRule, workflow.selectedPhases, declared),
+            false);
+        assert.throws(() => frozenBadges(selected(invalid), workflow), /Invalid configured badge/);
+    }
+});
+
 test("generator permits Constitution card placement while honoring rule target constraints", () => {
     const constitution = { phase: "speckit.constitution", output: ".specify/memory/constitution.md" };
     const phases = { selectedPhases: [constitution.phase, ...workflow.selectedPhases],

@@ -3,5 +3,5 @@
   "schemaVersion": 1,
   "id": "checklist-progress",
   "rule": "checklist-progress",
-  "control": "stock.badge-inputs"
+  "control": "stock.checklist-inputs"
 }

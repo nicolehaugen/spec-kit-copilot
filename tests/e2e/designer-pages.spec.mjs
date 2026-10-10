@@ -54,7 +54,7 @@ function workflowRegistrations(resolve) {
 
 async function model(revision = "first") {
     const pages = [];
-    for (const name of ["essentials", "outputs", "badges", "appearance"]) {
+    for (const name of ["essentials", "badges", "appearance"]) {
         const document = JSON.parse(await readFile(new URL(`${name}.json`, templateRoot), "utf8"));
         pages.push({ ...document, page: document.id });
     }
@@ -154,10 +154,10 @@ async function startPreparedShell(state) {
                 kind: "designer.badge-input-adapter" });
             const evaluator = state.badgeRules[0].adapter;
             const evaluatorPath = join(project, ".specify", "extensions", "extension-canvas-design",
-                "badges", "adapters", "content.mjs");
+                "badges", "adapters", "run.mjs");
             await mkdir(join(project, ".specify", "extensions", "extension-canvas-design",
                 "badges", "adapters"), { recursive: true });
-            await copyFile(new URL("generated-host/badges/adapters/content.mjs",
+            await copyFile(new URL("generated-host/badges/adapters/run.mjs",
                 extensionRoot), evaluatorPath);
             const evaluatorBytes = await readFile(evaluatorPath);
             state.templates.push({ name: evaluator, path: evaluatorPath,
@@ -191,13 +191,14 @@ async function badgeState() {
     state.outputs = { specify: {
         outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md",
     } };
-    state.badgeTypes = [{ id: "work-complete", rule: "work-complete",
-        title: "Work complete", description: "Tracks a phase",
+    state.badgeTypes = [{ id: "phase-run-complete", rule: "phase-run-complete",
+        title: "Phase run complete", description: "Tracks a phase",
         defaultText: "Complete", defaultColor: "green", enabled: true }];
     state.badgeRules = [JSON.parse(await readFile(new URL(
-        "generated-host/badges/rules/work-complete.json", extensionRoot), "utf8"))];
+        "generated-host/badges/rules/phase-run-complete.json", extensionRoot), "utf8"))];
     const adapter = "designer-badge-input-stock-adapter";
-    state.badgeInputControls = [{ rule: "work-complete", control: "stock.badge-inputs", adapter }];
+    state.badgeInputControls = [{ rule: "phase-run-complete", control: "stock.badge-inputs",
+        adapter, capabilities: ["declare-markdown-output"] }];
     return state;
 }
 
@@ -212,7 +213,7 @@ test("Badges editor persists a configured badge through the Designer save bounda
             return [style.backgroundColor, style.color, style.fontWeight, style.padding];
         });
         await page.getByRole("button", { name: "+ Add badge" }).click();
-        await page.getByRole("button", { name: "Work complete" }).click();
+        await page.getByRole("button", { name: "Phase run complete" }).click();
         await page.getByRole("button", { name: "Create badge" }).click();
         await expect(page.locator(".badge-row")).toContainText("Complete");
         await page.locator("#save-settings").click();
@@ -225,8 +226,7 @@ test("Badges editor persists a configured badge through the Designer save bounda
         expect(saved.persisted).toBe(true);
         expect(saved.badges).toHaveLength(1);
         expect(saved.badges[0]).toMatchObject({
-            type: "work-complete", inputs: { phase: "specify",
-                artifact: { phase: "specify", output: "specs/<slug>/spec.md" } },
+            type: "phase-run-complete", inputs: { phase: "specify" },
             text: "Complete", showIn: ["workflow-list"],
         });
         await page.reload();
@@ -245,6 +245,46 @@ test("Badges editor persists a configured badge through the Designer save bounda
     }
 });
 
+test("badge editor saves watched evidence without creating a View target", async ({ page }) => {
+    const state = await badgeState();
+    state.outputs.plan = { outputs: [], view: null };
+    state.badgeTypes = [{ id: "watched-file", rule: "watched-file",
+        title: "Watched file", defaultText: "Watched file", defaultColor: "green", enabled: true }];
+    state.badgeRules = [{ id: "watched-file", description: "Checks a Markdown file",
+        inputs: [{ id: "artifact", type: "artifact" }], textPlaceholders: [],
+        adapter: "badge-rule-run-adapter" }];
+    state.badgeInputControls = [{ rule: "watched-file", control: "stock.badge-inputs",
+        adapter: "designer-badge-input-stock-adapter",
+        capabilities: ["declare-markdown-output"] }];
+    const shell = await startPreparedShell(state);
+    try {
+        await page.goto(shell.url);
+        await page.getByRole("tab", { name: "Badges" }).click();
+        await page.getByRole("button", { name: "+ Add badge" }).click();
+        await page.getByRole("button", { name: "Watched file" }).click();
+        await page.locator(".badge-input-controls").getByRole("checkbox", { name: "Plan" }).check();
+        await page.getByText("Use a Markdown file not listed").click();
+        await page.getByRole("textbox", { name: "Markdown file path" })
+            .fill("specs/<slug>/notes.md");
+        await page.getByRole("button", { name: "Add file" }).click();
+        await expect(page.locator(".badge-declaration-error")).toBeEmpty();
+        await page.getByRole("button", { name: "Create badge" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await expect(page.locator("#action-message")).toContainText("Settings saved.");
+        const url = new URL(shell.url);
+        const response = await page.request.get(new URL(
+            `/api/state?token=${url.searchParams.get("token")}`, url).href);
+        expect(response.ok()).toBe(true);
+        const saved = await response.json();
+        expect(saved.outputs.plan).toEqual({ outputs: ["specs/<slug>/notes.md"], view: null });
+        expect(saved.badges[0].inputs.artifact).toEqual({
+            phase: "plan", output: "specs/<slug>/notes.md",
+        });
+    } finally {
+        await shell.close();
+    }
+});
+
 test("a failed badge adapter import leaves other Designer pages available", async ({ page }) => {
     const shell = await startPreparedShell(await badgeState());
     try {
@@ -253,7 +293,7 @@ test("a failed badge adapter import leaves other Designer pages available", asyn
         await expect(page.getByRole("tab", { name: "Essentials" })).toBeVisible();
         await page.getByRole("tab", { name: "Badges" }).click();
         await page.getByRole("button", { name: "+ Add badge" }).click();
-        await page.getByRole("button", { name: "Work complete" }).click();
+        await page.getByRole("button", { name: "Phase run complete" }).click();
         await expect(page.locator(".badge-editor")).toContainText("Could not load badge input control");
         await page.getByRole("tab", { name: "Essentials" }).click();
         await expect(page.getByRole("tab", { name: "Generate" })).toBeVisible();
@@ -273,7 +313,7 @@ test("sample preview initializes visible badge input defaults before creating ba
         await page.getByRole("button", { name: "Create badge" }).click();
         await expect(page.locator(".badge-row")).toContainText("Phase run complete");
         await page.getByRole("button", { name: "+ Add badge" }).click();
-        await page.getByRole("button", { name: "Work complete" }).click();
+        await page.getByRole("button", { name: "Artifact current" }).click();
         await page.getByRole("button", { name: "Create badge" }).click();
         await expect(page.locator(".badge-row")).toHaveCount(2);
     } finally {
@@ -323,7 +363,7 @@ test("empty and partial preset inventories keep Designer open with inline genera
     }
 });
 
-test("Outputs definition and handoff evidence remain intact while their tab is hidden", async ({ page }) => {
+test("handoff output evidence remains intact without an Outputs page", async ({ page }) => {
     const state = await model();
     state.outputs = {
         constitution: { outputs: [".specify/memory/constitution.md"],
@@ -344,8 +384,7 @@ test("Outputs definition and handoff evidence remain intact while their tab is h
             return response.json();
         };
         const initial = await getState();
-        expect(initial.pages.find((entry) => entry.page === "designer-artifacts"))
-            .toMatchObject({ title: "Outputs" });
+        expect(initial.pages.some((entry) => entry.page === "designer-artifacts")).toBe(false);
         expect(initial.pipelineOutputs).toEqual(state.outputs);
         expect(initial.pipelineOutputs.specify.view).toBe("specs/<slug>/spec.md");
         await page.getByRole("textbox", { name: "Canvas ID (required)" }).fill("output-default");
@@ -359,16 +398,16 @@ test("Outputs definition and handoff evidence remain intact while their tab is h
     }
 });
 
-test("a partial composition never selects the hidden Outputs page", async ({ page }) => {
+test("a composition without pages explains why Generate is unavailable", async ({ page }) => {
     const state = await model();
-    state.pages = state.pages.filter((entry) => entry.fixedControl === "designer.outputs");
+    state.pages = [];
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);
         await expect(page.getByRole("tab")).toHaveText(["Generate"]);
-        await expect(page.getByRole("heading", { name: "Create and open your canvas" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "No Designer pages registered" })).toBeVisible();
         await expect(page.locator(".output-section")).toHaveCount(0);
-        await expect(page.locator("#generate-canvas")).toBeDisabled();
+        await expect(page.locator("#generate-canvas")).toBeHidden();
     } finally {
         await shell.close();
     }
@@ -650,7 +689,7 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         ]));
         const resolved = journey.resolved;
         expect(resolved.pages.map((item) => item.title)).toEqual(
-            ["Essentials", "Outputs", "Badges", "Appearance", "Billing"]);
+            ["Essentials", "Badges", "Appearance", "Billing"]);
         const costPage = resolved.pages.find((entry) =>
             entry.fields.some((field) => field.id === "billing.costCode"));
         await page.getByRole("tab", { name: costPage.title }).click();
@@ -797,7 +836,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
             expect(source, output).not.toBeNull();
             return { name, path: line.slice(name.length + 2), sourceId: source[1] };
         };
-        const pages = ["designer-essentials", "designer-artifacts", "designer-badges", "designer-appearance"]
+        const pages = ["designer-essentials", "designer-badges", "designer-appearance"]
             .map((name) => { const { sourceId: _sourceId, ...entry } = resolve(name);
                 return { ...entry, kind: "designer.tab-definition", strategy: "replace" }; });
         const templates = [
@@ -1080,13 +1119,13 @@ test("missing Generate skill explains why the action is disabled", async ({ page
 });
 
 test("failed optional page shows safe diagnostics while Essentials remains editable", async ({ page }) => {
-    const shell = await openWithError(page, "designer-artifacts");
+    const shell = await openWithError(page, "designer-appearance");
     try {
         await expect(page.locator("#conn-status")).toHaveText("Live");
         const id = page.getByRole("textbox", { name: "Canvas ID (required)" });
         await id.fill("my-canvas");
-        await page.getByRole("tab", { name: "designer-artifacts (error)" }).click();
-        await expect(page.getByRole("heading", { name: "Could not load designer-artifacts" })).toBeVisible();
+        await page.getByRole("tab", { name: "designer-appearance (error)" }).click();
+        await expect(page.getByRole("heading", { name: "Could not load designer-appearance" })).toBeVisible();
         await expect(page.getByText("Resolved path: C:\\project\\.specify\\bad.json")).toBeVisible();
         await expect(page.getByText("Reason: Invalid JSON: <b>unexpected</b>")).toBeVisible();
         await expect(page.locator("#settings-page b")).toHaveCount(0);

@@ -19,11 +19,9 @@ import { validateBadgeInputBinding, validateBadgeInputControl,
 export { validateBadgeRule } from "./contracts/external-badge-definitions.mjs";
 
 export { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
-const DEFAULT_PAGES = ["designer-essentials", "designer-artifacts",
-    "designer-badges", "designer-appearance"];
+const DEFAULT_PAGES = ["designer-essentials", "designer-badges", "designer-appearance"];
 const FIXED_PAGE_CONTROLS = {
     "designer-essentials": "designer.identity",
-    "designer-artifacts": "designer.outputs",
     "designer-badges": "designer.badges",
 };
 const FILE_LIMIT = 256 * 1024;
@@ -117,7 +115,6 @@ function buildModel(entries, schema) {
             if (document.id !== name) throw new Error(`${name}: page id does not match template name`);
             const fixedControl = FIXED_PAGE_CONTROLS[name];
             if (document.fixedControl !== undefined && document.fixedControl !== fixedControl
-                || name === "designer-artifacts" && document.fields.length
                 || name === "designer-essentials" && ["canvas.id", "canvas.displayName"].some((id) => {
                     const field = document.fields.filter((entry) => entry.id === id);
                     return field.length !== 1 || field[0].label !== (id === "canvas.id" ? "Canvas ID" : "Title")
@@ -410,6 +407,9 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
     for (const entry of badgeTypes) {
         const rule = badgeRules.find((item) => item.document.id === entry.document.rule);
         if (!rule) throw new Error(`${entry.name}: missing badge rule ${entry.document.rule}`);
+        if (entry.document.replacementGroup && !rule.document.placementPhaseInput) {
+            throw new Error(`${entry.name}: replacement group requires a target phase artifact`);
+        }
         validateBadgeText(entry.document.defaultText, rule.document.textPlaceholders, entry.name);
     }
     for (const entry of badgeRules) {
