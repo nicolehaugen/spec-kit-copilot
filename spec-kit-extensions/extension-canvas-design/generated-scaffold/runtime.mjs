@@ -1,3 +1,5 @@
+import { providerEvaluationScript, validateProviderSerializedResult } from
+    "./contracts/external-value-provider.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { posix } from "node:path";
@@ -41,19 +43,11 @@ const PROVIDER_REFRESH_ERROR = "Value provider refresh time limit exceeded. Refr
 if (!isMainThread && workerData?.canvasValueProvider) {
     try {
         const { source, workflow } = workerData.canvasValueProvider;
-        const body = source.replace(/(^|\n)\s*export\s+(?=(?:async\s+)?function\s+provideValue\b|const\s+provideValue\b)/g, "$1");
         const context = createContext(Object.create(null), { codeGeneration: { strings: false, wasm: false } });
         const serialized = runInContext(
-            `"use strict"; const workflow = Object.freeze(JSON.parse(${JSON.stringify(JSON.stringify(workflow))}));\n`
-            + "const provide = (() => {\n"
-            + `${body}\n`
-            + "return provideValue;\n})();\n"
-            + "if (typeof provide !== 'function') throw new Error('provideValue must be a function');\n"
-            + "const result = provide({ workflow });\n"
-            + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
-            + "JSON.stringify(result);",
+            providerEvaluationScript(source, workflow),
             context, { timeout: PROVIDER_EVALUATION_LIMIT_MS });
-        if (typeof serialized !== "string" || serialized.length > 8192) throw new Error("Invalid provider result");
+        validateProviderSerializedResult(serialized);
         parentPort.postMessage({ value: JSON.parse(serialized) });
     } catch (error) {
         parentPort.postMessage({ error: error.message });

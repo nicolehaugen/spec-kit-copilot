@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { HANDOFF_LIMIT, readHandoff, validateHandoffId } from "../../speckit-canvas-designer/handoff.mjs";
 import { specifySpawnOptions } from "../env/specify-invocation.mjs";
 import { readDesignerContract, validateLocalSource, verifyHostedWorkflowRegistrations } from "./designer-local-sources.mjs";
-import designerCompatibility from "../../speckit-canvas-designer/designer-contract.json" with { type: "json" };
+import designerCompatibility from "../../speckit-canvas-designer/external-designer-contract.json" with { type: "json" };
 
 const exec = promisify(execFile);
 const manifestName = { presets: "preset.yml", extensions: "extension.yml" };

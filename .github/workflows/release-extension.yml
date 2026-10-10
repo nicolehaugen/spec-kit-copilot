@@ -105,10 +105,10 @@ jobs:
               if entry["version"] != version:
                   raise SystemExit("Catalog version must match extension.yml version")
               if extension_id == "extension-canvas-design":
-                  schema = json.loads((package / "schemas/designer.tab-definition.schema.json").read_text("utf-8"))
+                  schema = json.loads((package / "schemas/external-designer.tab-definition.schema.json").read_text("utf-8"))
                   contract_version = schema["properties"]["schemaVersion"]["const"]
                   supported = json.loads(
-                      Path("plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/designer-contract.json")
+                      Path("plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/external-designer-contract.json")
                       .read_text("utf-8")
                   )["supportedVersions"]
                   if (not isinstance(contract_version, int)

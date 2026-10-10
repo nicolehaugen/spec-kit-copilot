@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { validControlContract, validControlValue } from "../extension-canvas-design/generated-scaffold/control-contract.mjs";
-import * as designer from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/control-contract.mjs";
+import { validControlContract, validControlValue } from "../extension-canvas-design/generated-scaffold/external-control-contract.mjs";
+import * as designer from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/external-control-contract.mjs";
 
-const source = new URL("../extension-canvas-design/generated-scaffold/control-contract.mjs", import.meta.url);
-const packaged = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/control-contract.mjs",
+const source = new URL("../extension-canvas-design/generated-scaffold/external-control-contract.mjs", import.meta.url);
+const packaged = new URL("../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/external-control-contract.mjs",
     import.meta.url);
 
 test("Designer and generated control contract packages retain identical source", async () => {

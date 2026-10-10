@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mount, pageId, contractVersion, renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
-import { validateWorkflowPageState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
+import { validateWorkflowPageState } from "../extension-canvas-design/generated-scaffold/contracts/external-host-adapter.mjs";
 
 test("stock adapter owns setup, constitution, values, phase and contributed markup", () => {
     const root = { innerHTML: "" };

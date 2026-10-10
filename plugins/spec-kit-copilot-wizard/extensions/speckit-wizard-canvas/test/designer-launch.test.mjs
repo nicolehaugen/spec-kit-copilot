@@ -318,7 +318,7 @@ test("hosted Canvas Design handoff verifies the installed package", async (t) =>
     assert.equal((await verifyHostedCanvasDesign(root, handoff, run)).designerContract, 1);
     await assert.rejects(verifyHostedCanvasDesign(root, handoff,
         async () => ({ stdout: "[]" })), /source or ID differs/);
-    const schema = join(path, "schemas", "designer.tab-definition.schema.json");
+    const schema = join(path, "schemas", "external-designer.tab-definition.schema.json");
     const original = JSON.parse(await readFile(schema, "utf8"));
     original.properties.schemaVersion.const = 2;
     await writeFile(schema, JSON.stringify(original));

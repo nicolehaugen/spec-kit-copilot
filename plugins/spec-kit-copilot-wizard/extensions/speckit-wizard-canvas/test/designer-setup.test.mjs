@@ -10,7 +10,7 @@ import { finalizeDesignerSetup, installDesignerSetup, runSpecify,
     verifyComposedLoadPage } from "../server/designer-setup.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from
     "../../speckit-canvas-designer/contracts/host-open.mjs";
-import { checkSchema } from "../../speckit-canvas-designer/contracts/design-contributions.mjs";
+import { checkSchema } from "../../speckit-canvas-designer/contracts/external-design-contributions.mjs";
 
 const baseUrl = "https://example.org/canvas.zip?x=1&y=2";
 const baseCatalog = {

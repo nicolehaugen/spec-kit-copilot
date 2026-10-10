@@ -23,6 +23,7 @@ FILES = {
     "extension.yml",
     "README.md",
     "ARCHITECTURE.md",
+    "EXTERNAL-CONTRACTS.md",
     "BADGE-EXTENSIBILITY-PLAN.md",
     "commands/load-page.md",
     "commands/generate.md",
@@ -31,22 +32,22 @@ FILES = {
     "scripts/contracts/generation-request.mjs",
     "scripts/verify-launch.mjs",
     "scripts/validate-generated-open.mjs",
-    "schemas/designer.tab-definition.schema.json",
-    "schemas/designer.setting-definition.schema.json",
-    "schemas/designer.badges-settings-definition.schema.json",
-    "schemas/designer.badge-input-control.schema.json",
-    "schemas/designer.badge-input-binding.schema.json",
-    "schemas/generated.badge-rule-definition.schema.json",
-    "schemas/generated.added-page-definition.schema.json",
-    "schemas/generated.workflow-page-definition.schema.json",
-    "schemas/generated.phase-control-definition.schema.json",
-    "schemas/generated.dialog-definition.schema.json",
-    "schemas/generated.phase-dialog-binding.schema.json",
-    "schemas/generated.button-control-definition.schema.json",
-    "schemas/generated.button-placement.schema.json",
-    "schemas/generated.field-placement.schema.json",
-    "schemas/shared.control-definition.schema.json",
-    "schemas/generated.value-definition.schema.json",
+    "schemas/external-designer.tab-definition.schema.json",
+    "schemas/external-designer.setting-definition.schema.json",
+    "schemas/external-designer.badges-settings-definition.schema.json",
+    "schemas/external-designer.badge-input-control.schema.json",
+    "schemas/external-designer.badge-input-binding.schema.json",
+    "schemas/external-generated.badge-rule-definition.schema.json",
+    "schemas/external-generated.added-page-definition.schema.json",
+    "schemas/external-generated.workflow-page-definition.schema.json",
+    "schemas/external-generated.phase-control-definition.schema.json",
+    "schemas/external-generated.dialog-definition.schema.json",
+    "schemas/external-generated.phase-dialog-binding.schema.json",
+    "schemas/external-generated.button-control-definition.schema.json",
+    "schemas/external-generated.button-placement.schema.json",
+    "schemas/external-generated.field-placement.schema.json",
+    "schemas/external-shared.control-definition.schema.json",
+    "schemas/external-generated.value-definition.schema.json",
     *(f"designer-host/tabs/{name}.json" for name in PAGE_NAMES),
     *(f"designer-host/essentials-settings/{name}.json" for name in (
         "description", "workflow-heading", "custom-slug", "show-setup", "header-logo", "main-page-logo",
@@ -88,9 +89,11 @@ FILES = {
     "generated-host/setup-button-control/generated-setup-button-adapter.mjs",
     "generated-host/setup-button-control/setup.json",
     *(f"generated-scaffold/{name}" for name in (
-        "extension.mjs", "server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
+        "extension.mjs", "server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "external-control-contract.mjs", "files.mjs",
         "phase-response.mjs",
-        "contracts/agent-actions.mjs", "contracts/host-adapter.mjs",
+        "contracts/agent-actions.mjs", "contracts/external-host-adapter.mjs",
+        "contracts/external-generated-controls.mjs", "contracts/external-dialog-button.mjs",
+        "contracts/external-badge-evaluator.mjs", "contracts/external-value-provider.mjs",
         "contracts/packaged-contributions.mjs", "contracts/workflow-state.mjs",
         "badge-runtime.mjs",
         "ui/app.js", "ui/markdown.mjs", "ui/runtime.css", "ui/workflow-theme.css",
@@ -104,7 +107,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
     def setUpClass(cls):
         cls.manifest = yaml.safe_load((PACKAGE / "extension.yml").read_text("utf-8"))
         cls.catalog = json.loads((EXTENSIONS / "catalog.json").read_text("utf-8"))
-        cls.schema = json.loads((PACKAGE / "schemas/designer.tab-definition.schema.json").read_text("utf-8"))
+        cls.schema = json.loads((PACKAGE / "schemas/external-designer.tab-definition.schema.json").read_text("utf-8"))
         cls.validator = Draft202012Validator(cls.schema)
         cls.pages = [
             json.loads((PACKAGE / f"designer-host/tabs/{name}.json").read_text("utf-8"))
@@ -291,7 +294,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             "generated.workflow-page-definition",
             "shared.control-definition", "generated.value-definition",
         )
-        schemas = {kind: json.loads((PACKAGE / f"schemas/{kind}.schema.json").read_text("utf-8"))
+        schemas = {kind: json.loads((PACKAGE / f"schemas/external-{kind}.schema.json").read_text("utf-8"))
                    for kind in kinds}
         preset_roots = (EXTENSIONS.parent / "spec-kit-presets",
                         EXTENSIONS.parent / "tests/fixtures/test-presets")
@@ -340,7 +343,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                     validator.validate(doc)
                     if path.is_relative_to(PACKAGE):
                         self.assertEqual(doc["$schema"], os.path.relpath(
-                            PACKAGE / "schemas" / f"{kind}.schema.json",
+                            PACKAGE / "schemas" / f"external-{kind}.schema.json",
                             path.parent).replace("\\", "/"))
         for kind, obsolete in (
             ("designer.tab-definition", {"accepts": ["field"]}),
@@ -369,7 +372,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         workflow_validator.validate({**workflow, "slots": [
             {"id": "workflow.phases"}, {"id": "workflow.summary"},
         ]})
-        badge_schema = json.loads((PACKAGE / "schemas/generated.badge-rule-definition.schema.json")
+        badge_schema = json.loads((PACKAGE / "schemas/external-generated.badge-rule-definition.schema.json")
                                   .read_text("utf-8"))
         Draft202012Validator.check_schema(badge_schema)
         badge_validator = Draft202012Validator(badge_schema)
@@ -485,7 +488,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         self.validator.validate(page)
 
     def test_setting_schema_allows_required_text_fields_only(self):
-        schema = json.loads((PACKAGE / "schemas/designer.setting-definition.schema.json").read_text("utf-8"))
+        schema = json.loads((PACKAGE / "schemas/external-designer.setting-definition.schema.json").read_text("utf-8"))
         validator = Draft202012Validator(schema)
         setting = {
             "schemaVersion": 1, "id": "custom-setting", "host": "designer",
@@ -510,7 +513,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
                     validator.validate(invalid)
 
     def test_object_setting_requires_generated_binding(self):
-        schema = json.loads((PACKAGE / "schemas/designer.setting-definition.schema.json").read_text("utf-8"))
+        schema = json.loads((PACKAGE / "schemas/external-designer.setting-definition.schema.json").read_text("utf-8"))
         validator = Draft202012Validator(schema)
         setting = json.loads((EXTENSIONS.parent / "tests/fixtures/test-presets/copilot-risk-matrix-test"
                               / "designer/settings/risk-rating.json").read_text("utf-8"))
@@ -520,7 +523,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             validator.validate(setting)
 
     def test_setting_schema_rejects_whitespace_only_section_title(self):
-        schema = json.loads((PACKAGE / "schemas/designer.setting-definition.schema.json").read_text("utf-8"))
+        schema = json.loads((PACKAGE / "schemas/external-designer.setting-definition.schema.json").read_text("utf-8"))
         validator = Draft202012Validator(schema)
         setting = {
             "schemaVersion": 1, "id": "custom-setting", "host": "designer",
@@ -681,13 +684,13 @@ class CanvasDesignPackageTests(unittest.TestCase):
             package.mkdir(parents=True)
             shutil.copyfile(PACKAGE / "extension.yml", package / "extension.yml")
             (package / "schemas").mkdir()
-            shutil.copyfile(PACKAGE / "schemas/designer.tab-definition.schema.json",
-                            package / "schemas/designer.tab-definition.schema.json")
+            shutil.copyfile(PACKAGE / "schemas/external-designer.tab-definition.schema.json",
+                            package / "schemas/external-designer.tab-definition.schema.json")
             designer = root / "plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer"
             designer.mkdir(parents=True)
             shutil.copyfile(
-                EXTENSIONS.parent / "plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/designer-contract.json",
-                designer / "designer-contract.json",
+                EXTENSIONS.parent / "plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/external-designer-contract.json",
+                designer / "external-designer-contract.json",
             )
             for field, value, error in mutations:
                 with self.subTest(field=field):

@@ -107,7 +107,7 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
             || path === "/ui/generation-state.js"
             || path === "/ui/generated-output-state.js"
             || path === "/ui/identity-control.js" || path === "/ui/outputs-control.js"
-            || path === "/ui/control-adapter-contract.js"
+            || path === "/ui/external-control-adapter-contract.js"
             || path === "/ui/badges-control.js" || path === "/ui/badge-duplicates.js") {
             const file = path === "/" ? "index.html" : path.slice(4);
             await route.fulfill({ body: await readFile(new URL(file, ui)), contentType:

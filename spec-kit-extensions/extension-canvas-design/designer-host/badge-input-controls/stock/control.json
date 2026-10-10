@@ -1,5 +1,5 @@
 {
-  "$schema": "../../../schemas/designer.badge-input-control.schema.json",
+  "$schema": "../../../schemas/external-designer.badge-input-control.schema.json",
   "schemaVersion": 1,
   "id": "stock.badge-inputs",
   "adapter": "designer-badge-input-stock-adapter",

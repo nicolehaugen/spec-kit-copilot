@@ -12,7 +12,7 @@ import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effect
 import { jsonError, jsonRes } from "./http-utils.mjs";
 import { buildPortableRuntimeSetup, resolveRuntimeInstallLocators } from "./runtime-provenance.mjs";
 import { normalizeInstalledWorkflowInventory } from "../contracts/specify-inventory.mjs";
-import designerCompatibility from "../../speckit-canvas-designer/designer-contract.json" with { type: "json" };
+import designerCompatibility from "../../speckit-canvas-designer/external-designer-contract.json" with { type: "json" };
 
 const KINDS = ["presets", "extensions", "bundles"];
 // Local development sources: presets/extensions only (no local bundles).

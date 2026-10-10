@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { isWindowsDeviceName, UserError } from "./files.mjs";
 import { phaseContract, valueContract } from "./contract.mjs";
-import { validControlValue } from "./control-contract.mjs";
+import { validControlValue } from "./external-control-contract.mjs";
 import { validateRuntimeSetup } from "./setup.mjs";
 import { readFieldPlacement as checkFieldPlacement, readPlacementControl as checkPlacementControl,
     readWorkflowPage as checkWorkflowPage, readImageAsset as checkImageAsset,
@@ -830,8 +830,12 @@ export function createWorkflowRoutes(config, { runtime, instanceId, token, port,
                 response.writeHead(200, { "Content-Type": `${url.pathname === "/" ? "text/html" : "text/javascript"}; charset=utf-8` }).end(body);
                 return;
             }
-            if (request.method === "GET" && url.pathname === "/contracts/host-adapter.mjs") {
-                const module = readPackagedFile(new URL("./contracts/host-adapter.mjs", import.meta.url));
+            if (request.method === "GET" && [
+                "/contracts/external-host-adapter.mjs",
+                "/contracts/external-generated-controls.mjs",
+                "/contracts/external-dialog-button.mjs",
+            ].includes(url.pathname)) {
+                const module = readPackagedFile(new URL(`.${url.pathname}`, import.meta.url));
                 response.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8" })
                     .end(module);
                 return;

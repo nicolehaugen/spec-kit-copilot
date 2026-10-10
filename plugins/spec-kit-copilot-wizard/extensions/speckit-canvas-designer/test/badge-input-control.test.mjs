@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveBadgeInputControls, validateBadgeInputBinding,
-    validateBadgeInputControl } from "../contracts/badge-input-control.mjs";
-import { validateBadges } from "../contracts/badges.mjs";
+    validateBadgeInputControl } from "../contracts/external-badge-input-control.mjs";
+import { validateBadges } from "../contracts/external-badges.mjs";
 
 const entry = (kind, name, document) => ({ kind, name, sourceId: "fixture", document });
 const rule = entry("generated.badge-rule-definition", "fixture-rule", {

@@ -7,7 +7,7 @@ import { fixedConstitutionOutputs, handoffDirectory, validateConfirmedOutputs,
 import { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues, validateSavedSettings,
     validateSaveRequest } from "./contracts/designer-settings.mjs";
 export { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues } from "./contracts/designer-settings.mjs";
-import { validateBadges } from "./contracts/badges.mjs";
+import { validateBadges } from "./contracts/external-badges.mjs";
 
 const saves = new Map();
 export const initialOutputs = (handoff) => fixedConstitutionOutputs(

@@ -91,9 +91,9 @@ async function loadFixturePages(handoff, project, entries, complete, registratio
 }
 
 test("Designer packages the same control validator as the generated app", async () => {
-    assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
+    assert.deepEqual(await readFile(new URL("../external-control-contract.mjs", import.meta.url)),
         await readFile(new URL(
-            "../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
+            "../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/external-control-contract.mjs",
             import.meta.url)));
 });
 
@@ -336,8 +336,8 @@ async function projectFixture(t, workspace) {
     await writeFile(join(project, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md"), "test");
     await writeFile(join(specify, "extensions", ".registry"),
         JSON.stringify({ extensions: { "extension-canvas-design": { enabled: true } } }));
-    await copyFile(join(source, "schemas", "designer.tab-definition.schema.json"),
-        join(installed, "schemas", "designer.tab-definition.schema.json"));
+    await copyFile(join(source, "schemas", "external-designer.tab-definition.schema.json"),
+        join(installed, "schemas", "external-designer.tab-definition.schema.json"));
     await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
     const pages = ["essentials", "outputs", "badges", "appearance"];
     const entries = [];
@@ -4733,8 +4733,8 @@ test("paired control validates both adapters, typed values and portable generate
         pathToFileURL(join(portable, "server.mjs")).href);
     const config = readConfig();
     assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
-    assert.deepEqual(await readFile(join(portable, "control-contract.mjs")),
-        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
+    assert.deepEqual(await readFile(join(portable, "external-control-contract.mjs")),
+        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/external-control-contract.mjs",
             import.meta.url)));
     const configPath = join(portable, "canvas-config.json");
     for (const invalidProperties of [
@@ -4786,7 +4786,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
     const schema = join(project, ".specify", "extensions", "extension-canvas-design",
-        "schemas", "designer.tab-definition.schema.json");
+        "schemas", "external-designer.tab-definition.schema.json");
     const original = await readFile(schema);
     for (const [contents, reason] of [
         [null, /ENOENT/], ["{broken", /Invalid Designer JSON/],
@@ -4817,7 +4817,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "open-state.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
+    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "open-state.mjs", "server.mjs", "pages.mjs", "external-control-contract.mjs",
         "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
@@ -4868,7 +4868,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     await mkdir(join(extension, "ui"));
     for (const file of ["index.html", "app.js", "generation-state.js", "generated-output-state.js",
         "identity-control.js", "outputs-control.js",
-        "control-adapter-contract.js", "badges-control.js", "badge-duplicates.js",
+        "external-control-adapter-contract.js", "badges-control.js", "badge-duplicates.js",
         "preview-badge-input.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
@@ -4968,7 +4968,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             handoffId: ID, pages: [...entries, entries[0]], templates: [],
         } }), /duplicate Designer page name/);
         const schema = join(project, ".specify", "extensions", "extension-canvas-design",
-            "schemas", "designer.tab-definition.schema.json");
+            "schemas", "external-designer.tab-definition.schema.json");
         const installedSchema = await readFile(schema);
         await rm(schema);
         await assert.rejects(canvas.open({ instanceId: "same", input: {

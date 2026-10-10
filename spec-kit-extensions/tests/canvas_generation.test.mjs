@@ -12,7 +12,7 @@ import { phaseContract } from "../extension-canvas-design/generated-scaffold/con
 import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
-import { validateBadges as validateDesignerBadges } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/badges.mjs";
+import { validateBadges as validateDesignerBadges } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/external-badges.mjs";
 import { validateBadges as validateGeneratedBadges } from "../extension-canvas-design/generated-scaffold/badge-runtime.mjs";
 import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
