@@ -306,24 +306,37 @@ addition to) the hosted registry entry:
   Missing or ambiguous sources and sources that change before dispatch
   block launch instead of guessing. Child package version drift is reported
   as a warning, while mismatched package identity or source still blocks
-  launch. Hosted Canvas Design download URLs are quoted as single shell
-  arguments in both install instructions, including the post-bundle restore.
+  launch. The child-side `server/designer-setup.mjs` runner passes approved
+  URLs and local paths as separate subprocess arguments, not interpolated
+  shell commands; the required base is restored after bundles.
   It installs remaining standalone extensions (including local
   overrides), then
-  standalone presets (including local overrides).
+  standalone presets (including local overrides). For an approved local
+  Canvas Design base, it first replaces only its generated, dev-linked
+  skill files with local copies so Specify can regenerate composed skills
+  without writing through links into the source checkout.
   This ensures bundled and standalone preset command additions have the base
   available. It stops on composition warnings even if Specify exits
-  successfully, and checks the generated load-page skill for the registered
-  preset page/template names before opening Designer. This ordering applies
-  only to Designer launch, not the Wizard's Catalogs install actions or a
-  generated canvas opened independently as a standard plugin.
-- Before installing, the child prepares the session-root handoff: it accepts
+  successfully. Specify's artifact inventory must resolve the composed
+  load-page command, and the installed Canvas Design verifier resolves its
+  registered template names through Specify before opening Designer. This
+  setup records the resolved manifest ID, version, and CLI source for each
+  selected standalone preset or extension in a bounded, handoff-bound file
+  beside the child session's `handoff.json`. Finalize requires that record
+  and rechecks the same installed packages; a missing or changed record
+  blocks launch. When a bundle has already installed a selected catalog
+  alias, the runner resolves its actual manifest ID before replacing it,
+  or stops if that identity is ambiguous. This ordering applies only to
+  Designer launch, not the Wizard's Catalogs install actions or a generated
+  canvas opened independently as a standard plugin.
+- Before installing, the child-side runner prepares the session-root handoff:
+  it accepts
   the exact launch-hashed bytes or strips one trailing LF/CRLF only when the
   remaining bytes match the launch hash. Other changes fail without rewriting
-  the file. The subsequent read-only preflight checks the
+  the file. Its subsequent read-only preflight checks the
   session-root handoff bytes against the hash in the launch prompt, as well as
   Specify CLI version, project setup, and approved local paths and manifest
-  IDs. The child writes the exact UTF-8 JSON from the prompt without a
+  IDs. The child agent writes the exact UTF-8 JSON from the prompt without a
   trailing newline or BOM and checks its hash before preflight. This exact-byte
   check applies at preflight only; later `verify-local` calls validate the
   handoff but do not compare its bytes to that launch hash.
@@ -347,6 +360,22 @@ addition to) the hosted registry entry:
   approved local-source override instead of treating the hosted package as ready.
   An approved local source may have a different version but must declare a
   compatible Designer tab schema version.
+  **Release readiness:** the catalog-selected published `0.1.19` archive
+  currently lacks `generated-phase-control` and `generated-phase-adapter`;
+  the hosted launch stops at `verify-base`. Local-source validation of these
+  development changes does not make that published archive compatible.
+- After the child agent creates a default-branch worktree and writes the
+  unchanged handoff JSON, it runs `designer-setup.mjs install` for conditional
+  Specify initialization and ordered package setup. The runner returns explicit
+  errors, version warnings, and stage durations; a missing or outdated CLI
+  sends the agent to the existing setup/upgrade skill. The agent calls
+  `speckit_designer_reload_skills` once, then runs `designer-setup.mjs finalize`
+  to recheck inventories and obtain `openInput` with the complete verified
+  `handoffId`, `pages`, and `templates`. Only `openInput` goes to the Designer
+  canvas; the runner's sibling `timings` and `warnings` are for reporting.
+  Installation and resolution never run in the Wizard checkout. The handoff
+  schema, `202 { queued: true }` launch response, and official canvas open input
+  remain unchanged.
 - Newer Canvas Design packages run a read-only verifier over the **generated,
   composed** load-page skill and Specify's per-name resolution/stack metadata.
   It produces the complete pages/templates input only when all registrations
