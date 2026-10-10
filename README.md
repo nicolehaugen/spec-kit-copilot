@@ -84,6 +84,11 @@ Personal skills remain untouched. Run `/skills reload` and verify project discov
 
 ### Distribution and releases
 
+Metadata changes are staged before application. If an apply fails, earlier
+writes are rolled back and the error lists retained backups. A rollback conflict
+or filesystem failure is reported explicitly for manual recovery; this is not a
+crash-safe transaction across files.
+
 Select `config\distribution.upstream.example.json`,
 `config\distribution.fork.example.json`, or custom JSON explicitly:
 

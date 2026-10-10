@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 export function parseArgs(args, valued, switches = ['apply', 'help']) {
@@ -116,23 +116,52 @@ export function preview(changes) {
   }).join('\n');
 }
 
-export async function applyChanges(changes, expected) {
+export async function applyChanges(changes, expected, { move = rename } = {}) {
   if (expected !== fingerprint(changes)) throw new Error('Conflict: preview has changed or --expect is missing; preview again before applying.');
   for (const change of changes) {
     if (await readOptional(change.path) !== change.before) throw new Error(`Conflict: file changed since preview: ${change.path}`);
   }
   const backups = [];
-  for (const { path, before, after } of changes) {
-    if (before === after) continue;
-    await mkdir(dirname(path), { recursive: true });
-    await assertRegularPath(path);
-    if (await readOptional(path) !== before) throw new Error(`Conflict: file changed before write: ${path}`);
-    if (before !== null) {
-      const backup = `${path}.backup-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`;
-      await writeFile(backup, before, { flag: 'wx' });
-      backups.push(backup);
+  const staged = [];
+  const committed = [];
+  try {
+    for (const { path, before, after } of changes) {
+      if (before === after) continue;
+      await mkdir(dirname(path), { recursive: true });
+      await assertRegularPath(path);
+      if (await readOptional(path) !== before) throw new Error(`Conflict: file changed before staging: ${path}`);
+      if (before !== null) {
+        const backup = `${path}.backup-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`;
+        await writeFile(backup, before, { flag: 'wx' });
+        backups.push(backup);
+      }
+      const temporary = `${path}.stage-${randomUUID()}`;
+      staged.push({ path, before, after, temporary });
+      await writeFile(temporary, after, { flag: 'wx' });
     }
-    await writeFile(path, after, { flag: before === null ? 'wx' : 'w' });
+    for (const change of staged) {
+      if (await readOptional(change.path) !== change.before) throw new Error(`Conflict: file changed before write: ${change.path}`);
+      await move(change.temporary, change.path);
+      committed.push(change);
+    }
+  } catch (error) {
+    const failures = [];
+    for (const { path, before, after } of committed.reverse()) {
+      try {
+        if (await readOptional(path) !== after) throw new Error(`Rollback conflict: ${path} changed after apply`);
+        if (before === null) await unlink(path);
+        else await writeFile(path, before);
+      } catch (rollbackError) { failures.push(rollbackError); }
+    }
+    const detail = backups.length ? ` Backups: ${backups.join(', ')}` : '';
+    throw new AggregateError([error, ...failures],
+      `${error.message}; ${failures.length ? 'rollback incomplete' : 'applied changes restored'}.${detail}`);
+  } finally {
+    for (const { temporary } of staged) {
+      try { await unlink(temporary); } catch (error) {
+        if (error.code !== 'ENOENT') throw new Error(`Unable to remove staged file ${temporary}: ${error.message}. Backups: ${backups.join(', ')}`, { cause: error });
+      }
+    }
   }
   return backups;
 }

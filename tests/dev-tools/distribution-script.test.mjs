@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, symlink } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, symlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { prepareDistribution, validateDistribution } from '../../dev-tools/prepare-distribution.mjs';
@@ -125,6 +125,42 @@ test('file write preflight rejects directory junction ancestors without changing
   const changes = [{ path: resolve(link, 'settings.json'), before: 'original', after: 'next' }];
   await assert.rejects(applyChanges(changes, fingerprint(changes)), /symlink or junction/);
   assert.equal(await readFile(resolve(target, 'settings.json'), 'utf8'), 'original');
+});
+
+test('failed multi-file commit restores prior writes and reports retained backups', async t => {
+  const root = await workspace(t);
+  const paths = ['first.json', 'second.json'].map(name => resolve(root, name));
+  for (const path of paths) await write(path, 'original');
+  const changes = paths.map(path => ({ path, before: 'original', after: 'updated' }));
+  let calls = 0;
+  await assert.rejects(applyChanges(changes, fingerprint(changes), {
+    move: async (source, destination) => {
+      if (++calls === 2) throw new Error('injected commit failure');
+      await rename(source, destination);
+    },
+  }), /injected commit failure; applied changes restored.*Backups:/);
+  for (const path of paths) assert.equal(await readFile(path, 'utf8'), 'original');
+  assert.equal((await readdir(root)).some(name => name.includes('.stage-')), false);
+});
+
+test('rollback removes newly created targets when a later commit fails', async t => {
+  const root = await workspace(t);
+  const created = resolve(root, 'new.json');
+  const existing = resolve(root, 'existing.json');
+  await write(existing, 'original');
+  const changes = [
+    { path: created, before: null, after: 'new' },
+    { path: existing, before: 'original', after: 'updated' },
+  ];
+  await assert.rejects(applyChanges(changes, fingerprint(changes), {
+    move: async (source, destination) => {
+      if (destination === existing) throw new Error('injected failure');
+      await rename(source, destination);
+    },
+  }), /applied changes restored/);
+  assert.equal(await readFile(existing, 'utf8'), 'original');
+  await assert.rejects(readFile(created), { code: 'ENOENT' });
+  assert.equal((await readdir(root)).some(name => name.includes('.stage-')), false);
 });
 
 test('checked-in distribution examples preview without writes and become idempotent when applied', async t => {
