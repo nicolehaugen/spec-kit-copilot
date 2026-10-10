@@ -313,11 +313,15 @@ The provider loads without installed npm dependencies. The Wizard's environment
 setup checks and installs the Designer's renderer parser alongside its own YAML
 parser. Opening Designer directly without the parser reports an install instruction
 instead of failing at provider startup. For local tests, install dependencies with
-`npm ci` in this directory, then run:
+`npm ci` in this directory and ensure Specify CLI is available, then run:
 
 ```bash
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
 ```
+
+The resolved-template integration test requires a successful `specify --version`
+and fails rather than skipping when the CLI is unavailable. The Release Extension
+workflow installs Specify before running the Node.js integration tests.
 
 Canvas Design's [taxonomy, kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
 define the registration and authoring surface. Required and added Designer tabs

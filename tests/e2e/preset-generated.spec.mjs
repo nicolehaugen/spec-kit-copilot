@@ -130,6 +130,7 @@ async function generate(page, journey, dispatched, id, {
     await expect(page.locator("#workflow-content").getByRole("heading", {
         name: "Workflows (1)", exact: true,
     })).toBeVisible();
+    await expect(page.locator("#workflow-rows [data-workflow-id]").first()).toBeVisible();
     return { request, ...served };
 }
 

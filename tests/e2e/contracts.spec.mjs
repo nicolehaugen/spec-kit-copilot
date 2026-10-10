@@ -34,6 +34,7 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
         return { stdout: responses[args[0]] };
     };
     const snapshot = {
+        featureFlags: { generateCanvas: true },
         workspacePath: checkout, currentPhase: "constitution",
         setup: { pluginInstalled: true, cliInstalled: true, projectInitialized: true, skillsReloaded: true },
         boot: { phase: "ready", steps: [] }, phases: {}, commands: [],
@@ -62,7 +63,7 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
             },
             log: async () => {},
             getState: async () => snapshot,
-            getInstance: () => ({ workspacePath: checkout }),
+            getInstance: () => ({ workspacePath: checkout, generateCanvas: true }),
             getInstalledWorkflow: (state) => readInstalledWorkflowInventory(state, runner),
             inspectBundle: async () => ({ source: "copilot", members: [] }),
         });

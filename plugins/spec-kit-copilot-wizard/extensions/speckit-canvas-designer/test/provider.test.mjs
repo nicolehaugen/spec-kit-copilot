@@ -23,6 +23,7 @@ import {
 import { freezeGeneration, generationBlockers, validateEssentials } from "../generation.mjs";
 import { generationAvailability, GENERATION_EXISTS, GENERATION_PENDING } from "../contracts/generation-request.mjs";
 import { decodeImage } from "../image.mjs";
+import { specifySpawnOptions } from "../../speckit-wizard-canvas/env/specify-invocation.mjs";
 import { renderStockPage } from "../../../../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 
 const ID = "designer_1";
@@ -4906,10 +4907,12 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
 });
 
 test("canvas opens with a partial inventory and rebuilds on reopening", async (t) => {
-    if (spawnSync("specify", ["--version"], { encoding: "utf8" }).error?.code === "ENOENT") {
-        t.skip("Specify CLI is required for resolved-template integration");
-        return;
-    }
+    const cli = spawnSync("specify", ["--version"], await specifySpawnOptions(process.cwd(), {
+        encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024,
+    }));
+    assert.ifError(cli.error);
+    assert.equal(cli.status, 0,
+        `Specify CLI is required for resolved-template integration: ${cli.stderr || cli.stdout}`);
     const workspace = await fixture(t);
     const source = fileURLToPath(new URL("../", import.meta.url));
     const extension = join(workspace, "provider");
