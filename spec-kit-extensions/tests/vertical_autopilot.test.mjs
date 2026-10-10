@@ -161,6 +161,43 @@ test("restart reconnects a message-less dispatch to its exact prompt and live tu
     assert.equal(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0].messageId, "recovered");
     await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
         confirmation: "discard" }), /agent turn has not ended/);
+    fixture.idle();
+    await runtime.refresh();
+    const ended = await runtime.snapshot();
+    assert.equal(ended.items.find((row) => row.id === itemId).status, "Run output unconfirmed");
+    fixture.active();
+    await assert.rejects(runtime.removePending({ itemId, revision: ended.revision,
+        confirmation: "discard" }), /agent turn has not ended/);
+    fixture.idle();
+    await runtime.refresh();
+    await runtime.removePending({ itemId, revision: (await runtime.snapshot()).revision,
+        confirmation: "discard" });
+});
+
+test("many attempts share one verified directory inventory per snapshot", async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = Array.from({ length: 100 }, (_, index) => ({ runId: `attempt-${index}`,
+        before: [], item: itemId, phase: "specify", sessionId: "test-session",
+        instanceId: "panel", args: "", status: "Failed", artifact: null, messageId: null }));
+    await mkdir(join(fixture.project, "specs", "001-demo"), { recursive: true });
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const file = join(fixture.target, "runtime.mjs");
+    const source = await readFile(file, "utf8");
+    await writeFile(file, source.replace("async function inspectDirectories() {",
+        "async function inspectDirectories() { globalThis.inventoryScans++;"));
+    const { createRuntime } = await import(pathToFileURL(file).href + "?inventory-test");
+    globalThis.inventoryScans = 0;
+    t.after(() => { delete globalThis.inventoryScans; });
+    const runtime = await createRuntime(fixture.options);
+    t.after(() => runtime.close());
+    const snapshot = await runtime.snapshot();
+    assert.equal(globalThis.inventoryScans, 1);
+    assert.match(snapshot.items.find((row) => row.id === itemId).workflowRecoveryMessage,
+        /specs\/001-demo/);
+    await runtime.snapshot();
+    assert.equal(globalThis.inventoryScans, 2);
 });
 
 test("pending recovery includes earlier attempts and unsafe checks after a retry", async (t) => {

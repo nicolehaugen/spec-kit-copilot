@@ -179,6 +179,10 @@ unconfirmed and permits confirmed metadata discard only after observing session
 idle in the restarted host, while still requiring all directory safety checks.
 New session activity blocks discard again; the host never treats an untracked
 dispatch as proof that no prompt was sent.
+Recovered tracked runs also become Run output unconfirmed after an observed
+session idle when no terminal response or turn-end event is available. New
+activity blocks discard again. Recovery messages share one verified directory
+inventory per snapshot; discard always performs fresh directory safety checks.
 After the turn ends, a run-backed row offers a confirmed Discard pending row action.
 This checks all configured workflow roots against the pre-run snapshot, including
 empty directories, and removes only the pending row, drafts, and run history when

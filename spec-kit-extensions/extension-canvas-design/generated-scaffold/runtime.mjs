@@ -130,6 +130,10 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const interruptedDispatches = new Set(state.runs.filter((run) =>
         untrackedDispatch(run)).map((run) => run.runId));
     let idleAfterRestart = false;
+    const recoveredRuns = new Set(state.runs.filter((run) => run.sessionId === session.sessionId
+        && !run.autopilotId && !["Completed", "Failed"].includes(run.status)).map((run) => run.runId));
+    const recoveredTurnEnded = (run) => recoveredRuns.has(run.runId)
+        && idleAfterRestart && !busy.value;
     let recoverOnOpen = interruptedDispatches.size > 0 || state.runs.some((run) => run.messageId
         && (!["Completed", "Failed"].includes(run.status)
             || run.status === "Completed" && newItem(run.item) && !run.artifact && !run.confirmedSlug));
@@ -210,23 +214,34 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
         ? [config.phaseOutputs?.[step.id]?.outputPath].filter(Boolean) : step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
-    async function compareDirectories(before) {
+    async function compareDirectories(before, inventory) {
         if (!Array.isArray(before) || new Set(before).size !== before.length
             || before.some((id) => typeof id !== "string"
                 || !roots.some((root) => id.startsWith(`${root}/`)
                     && slugPattern.test(id.slice(root.length + 1))))) {
             throw new UserError("The app cannot reliably check whether this run created a workflow folder. Check the project files before abandoning this workflow.", 409);
         }
-        const discovered = [];
+        const current = await (inventory ?? inspectDirectories());
+        for (const root of current.missingRoots) {
+            if (before.some((id) => id.startsWith(`${root}/`))) {
+                throw new UserError("A folder used to store workflows is missing. Check the project files before abandoning this workflow.", 409);
+            }
+        }
+        if (before.some((id) => !current.ids.includes(id))) {
+            throw new UserError("A workflow folder that existed before this run is missing. Check the project files.", 409);
+        }
+        const prior = new Set(before);
+        return current.ids.filter((id) => !prior.has(id));
+    }
+    async function inspectDirectories() {
+        const ids = [], missingRoots = [];
         for (const root of roots) {
             const path = safePath(root);
             let folder;
             try { folder = await confined(cwd, path); }
             catch (error) {
                 if (error.code !== "ENOENT") throw error;
-                if (before.some((id) => id.startsWith(`${root}/`))) {
-                    throw new UserError("A folder used to store workflows is missing. Check the project files before abandoning this workflow.", 409);
-                }
+                missingRoots.push(root);
                 continue;
             }
             const original = await lstat(folder);
@@ -241,7 +256,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 const target = await confined(cwd, id);
                 const first = await lstat(target);
                 if (!first.isDirectory()) throw new UserError("Workflow directory changed during inspection.", 409);
-                if (!before.includes(id)) discovered.push(id);
+                ids.push(id);
                 const second = await lstat(await confined(cwd, id));
                 if (first.dev !== second.dev || first.ino !== second.ino) {
                     throw new UserError("Workflow directory changed during inspection.", 409);
@@ -252,12 +267,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 || original.mtimeMs !== current.mtimeMs) {
                 throw new UserError("Workflow root changed during inspection. Refresh and retry.", 409);
             }
-            if (before.some((id) => id.startsWith(`${root}/`)
-                && !entries.some((entry) => `${root}/${entry.name}` === id))) {
-                throw new UserError("A workflow folder that existed before this run is missing. Check the project files.", 409);
-            }
         }
-        return discovered;
+        return { ids, missingRoots };
     }
     async function items(view = state) {
         const found = [];
@@ -445,6 +456,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }) : undefined;
         if (badges) badges.selected = badges.items[item] ?? [];
         const project = phases.find((phase) => phase.project);
+        let recoveryInventory;
         const pending = await Promise.all((view.pendingWorkflows ?? []).map(async ({ id, name, slug }) => {
             const runs = view.runs.filter((entry) => entry.item === id);
             const run = runs.at(-1);
@@ -453,7 +465,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             for (const attempt of runs) {
                 if (!["Completed", "Failed", "Run output unconfirmed"].includes(attempt.status)) continue;
                 try {
-                    for (const path of await compareDirectories(attempt.before)) discovered.add(path);
+                    recoveryInventory ??= inspectDirectories();
+                    for (const path of await compareDirectories(attempt.before, recoveryInventory)) discovered.add(path);
                 } catch (error) {
                     if (!(error instanceof UserError)) throw error;
                     errors.add(error.message);
@@ -574,13 +587,14 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             if (runs.some((run) => !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)
                 || run.messageId === null && run.status !== "Failed"
                     && !(untrackedDispatch(run) && interruptedDispatches.has(run.runId)
-                        && idleAfterRestart && !busy.value))) {
+                        && recoveredTurnEnded(run)))) {
                 throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
             }
             for (const run of runs) {
                 if (run.messageId) {
                     const events = await session.getEvents();
-                    if (!phaseResponse(events, run.messageId) && !phaseTurnState(events, run.messageId).ended) {
+                    if (!phaseResponse(events, run.messageId) && !phaseTurnState(events, run.messageId).ended
+                        && !recoveredTurnEnded(run)) {
                         throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
                     }
                 }
@@ -1093,7 +1107,8 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 if (run.sessionId !== session.sessionId || !run.messageId || run.status === "Failed"
                     || run.status === "Completed" && (!newItem(run.item) || run.artifact || run.confirmedSlug)) continue;
                 const response = phaseResponse(events, run.messageId);
-                const turn = phaseTurnState(events, run.messageId);
+                const turn = recoveredTurnEnded(run) ? { active: false, ended: true }
+                    : phaseTurnState(events, run.messageId);
                 if (!response || response.success === undefined) {
                     run.status = turn.active ? "Running" : turn.ended ? "Run output unconfirmed" : "Unconfirmed";
                     run.error = turn.active ? null : turn.ended
