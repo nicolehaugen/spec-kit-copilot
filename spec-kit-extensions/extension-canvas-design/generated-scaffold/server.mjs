@@ -11,6 +11,7 @@ import { readFieldPlacement as checkFieldPlacement, readPlacementControl as chec
     readWorkflowPage as checkWorkflowPage, readImageAsset as checkImageAsset,
     readImageControl as checkImageControl, readTextControl as checkTextControl } from "./contracts/packaged-contributions.mjs";
 import { validateBadges } from "./badge-runtime.mjs";
+import { APPEARANCE_PROPERTIES, validAppearance } from "./contracts/appearance.mjs";
 
 const styles = readFileSync(new URL("./ui/workflow-theme.css", import.meta.url), "utf8");
 const script = readFileSync(new URL("./ui/app.js", import.meta.url), "utf8");
@@ -172,19 +173,7 @@ function validRuntimeConfig(config) {
             && typeof output.expectsArtifact === "boolean"
             && (output.outputPath === null || typeof output.outputPath === "string"))
         && (config.theme === undefined || ["light", "dark"].includes(config.theme))
-        && (config.appearance === undefined || (config.appearance
-            && typeof config.appearance === "object" && !Array.isArray(config.appearance)
-            && Object.keys(config.appearance).length > 0
-            && Object.keys(config.appearance).every((mode) => ["light", "dark"].includes(mode)
-                && (typeof config.appearance[mode] === "string"
-                    ? /^#[0-9a-fA-F]{6}$/.test(config.appearance[mode])
-                    : config.appearance[mode] && typeof config.appearance[mode] === "object"
-                        && !Array.isArray(config.appearance[mode])
-                        && Object.keys(config.appearance[mode]).length > 0
-                        && Object.keys(config.appearance[mode]).every((key) =>
-                            Object.hasOwn(APPEARANCE_PROPERTIES, key)
-                            && typeof config.appearance[mode][key] === "string"
-                            && /^#[0-9a-fA-F]{6}$/.test(config.appearance[mode][key]))))))
+        && validAppearance(config.appearance)
         && (config.showSetup === undefined || typeof config.showSetup === "boolean")
         && validateRuntimeSetup(config.runtimeSetup)
         && config.installed && ["presets", "extensions", "bundles"].every((kind) =>
@@ -619,14 +608,6 @@ function readImageControl(control) {
 function readTextControl(control) {
     return checkTextControl(control, readPackagedFile);
 }
-const APPEARANCE_PROPERTIES = {
-    accent: "--accent-color",
-    background: "--background-color-default",
-    surface: "--background-color-elevated",
-    secondary: "--background-color-secondary",
-    text: "--text-color-default",
-};
-
 export function renderHtml(config, token = "") {
     if (!validRuntimeConfig(config)) throw new Error("Invalid generated canvas configuration");
     const adapted = Boolean(config.workflowPage.pageAdapter);

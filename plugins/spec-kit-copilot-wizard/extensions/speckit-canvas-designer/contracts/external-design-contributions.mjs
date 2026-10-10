@@ -1,6 +1,6 @@
+import { APPEARANCE_RULES } from "./appearance.mjs";
+
 const FILE_LIMIT = 256 * 1024;
-const OPTIONAL_COLOR = { type: "string", maxLength: 7,
-    pattern: "^(?:#?[0-9A-Fa-f]{6})?$" };
 export const RULES = {
     "canvas.id": { type: "string", minLength: 1, maxLength: 100,
         pattern: "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)[a-z0-9][a-z0-9-]*$",
@@ -8,16 +8,7 @@ export const RULES = {
     "canvas.displayName": { type: "string", minLength: 1, maxLength: 120, required: true },
     "canvas.description": { type: "string", maxLength: 240 },
     "canvas.workflowListName": { type: "string", maxLength: 80 },
-    "canvas.accentLight": OPTIONAL_COLOR,
-    "canvas.backgroundLight": OPTIONAL_COLOR,
-    "canvas.surfaceLight": OPTIONAL_COLOR,
-    "canvas.secondaryLight": OPTIONAL_COLOR,
-    "canvas.textLight": OPTIONAL_COLOR,
-    "canvas.accentDark": OPTIONAL_COLOR,
-    "canvas.backgroundDark": OPTIONAL_COLOR,
-    "canvas.surfaceDark": OPTIONAL_COLOR,
-    "canvas.secondaryDark": OPTIONAL_COLOR,
-    "canvas.textDark": OPTIONAL_COLOR,
+    ...APPEARANCE_RULES,
     "workflowSlug.userProvided": { type: "boolean" },
 };
 const RESERVED_CANVAS_IDS = ["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"];

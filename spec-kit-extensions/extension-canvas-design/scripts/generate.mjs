@@ -12,11 +12,14 @@ import { phaseContract } from "../generated-scaffold/contract.mjs";
 import { validateDialogAdapterSource, validateButtonAdapterSource } from
     "../generated-scaffold/contracts/external-dialog-button.mjs";
 import { REQUEST_LIMIT, validateGenerationRequestIntegrity } from "./contracts/generation-request.mjs";
+import { APPEARANCE_PROPERTIES, validateAppearanceField } from
+    "../generated-scaffold/contracts/appearance.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "generated-scaffold");
 const featureFiles = ["server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "external-control-contract.mjs", "files.mjs",
     "phase-response.mjs", "contracts/agent-actions.mjs", "contracts/workflow-state.mjs",
+    "contracts/appearance.mjs",
     "contracts/external-host-adapter.mjs", "contracts/packaged-contributions.mjs",
     "contracts/external-generated-controls.mjs", "contracts/external-dialog-button.mjs",
     "contracts/external-badge-evaluator.mjs", "contracts/external-value-provider.mjs",
@@ -48,6 +51,7 @@ function validateFrozenValues(values, constraints) {
         throw new Error("Invalid frozen Designer fields");
     }
     for (const [id, rule] of Object.entries(constraints)) {
+        validateAppearanceField(id);
         if (!fieldPattern.test(id) || !rule || typeof rule !== "object"
             || Array.isArray(rule)) throw new Error(`Invalid frozen Designer field: ${id}`);
         const value = values[id];
@@ -767,7 +771,7 @@ function configuration(request) {
     const appearance = {};
     for (const [mode, suffix] of [["light", "Light"], ["dark", "Dark"]]) {
         const colors = {};
-        for (const key of ["accent", "background", "surface", "secondary", "text"]) {
+        for (const key of Object.keys(APPEARANCE_PROPERTIES)) {
             const id = `canvas.${key}${suffix}`;
             if (!Object.hasOwn(values, id)) continue;
             if (fieldConstraints[id]?.type !== "string"

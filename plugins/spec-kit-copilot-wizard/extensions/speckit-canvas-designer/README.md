@@ -66,8 +66,8 @@ individual page errors still appear as tabs once the schema loads.
 
 Essentials requires Canvas ID and Title from the resolved core page. Description,
 Workflow header, and Allow custom artifact directory slug are ordered Essentials contributions.
-Header logo, Main page logo, and light/dark accent, page background, surface,
-secondary surface, and text colors are ordered Appearance contributions
+Header logo, Main page logo, and light/dark accent and page background colors
+are ordered Appearance contributions
 registered by the composed load-page command. The two required identity fields
 use the fixed Designer identity control, while the Outputs page mounts its fixed
 phase-artifacts control. Other fields use registered adapters: `stock.checkbox`
@@ -146,10 +146,16 @@ outputs, or badges. Saved values, output additions, viewer selections, and badge
 are not restored on reopen; a subsequent Save or Generate replaces them with
 the current draft. New drafts remain fully validated on Save, and Generate also
 validates the saved content against the current model before freezing it.
-Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
+Appearance has four optional `stock.text` color fields: Light mode accent,
+Light page background, Dark mode accent, and Dark page background. They accept
+`RRGGBB` or `#RRGGBB`;
 blank retains the current color in that mode, while invalid hex blocks Generate
 without preventing an incomplete draft from being saved. The generated canvas
-keeps its existing light/dark toggle. Designer's fixed header also has a
+keeps its existing light/dark toggle and default surface, secondary-surface, and
+text colors. The former surface, secondary, and text JSON settings and their
+registrations are removed; contributions and frozen/generated overrides using
+those reserved palette fields are rejected without migration.
+Designer's fixed header also has a
 keyboard-accessible light/dark toggle, stored in the browser for page refreshes;
 it follows the system contrast preference until explicitly changed. There is
 no Designer color preview or contrast warning. The Designer connection pill

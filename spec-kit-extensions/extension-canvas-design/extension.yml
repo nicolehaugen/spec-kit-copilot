@@ -64,30 +64,12 @@ provides:
     - name: designer-appearance-light-background
       file: designer-host/appearance-settings/light-background.json
       description: Optional generated canvas light-mode page background.
-    - name: designer-appearance-light-surface
-      file: designer-host/appearance-settings/light-surface.json
-      description: Optional generated canvas light-mode card surface.
-    - name: designer-appearance-light-secondary
-      file: designer-host/appearance-settings/light-secondary.json
-      description: Optional generated canvas light-mode secondary surface.
-    - name: designer-appearance-light-text
-      file: designer-host/appearance-settings/light-text.json
-      description: Optional generated canvas light-mode main text color.
     - name: designer-appearance-dark-accent
       file: designer-host/appearance-settings/dark-accent.json
       description: Optional generated canvas dark-mode accent color.
     - name: designer-appearance-dark-background
       file: designer-host/appearance-settings/dark-background.json
       description: Optional generated canvas dark-mode page background.
-    - name: designer-appearance-dark-surface
-      file: designer-host/appearance-settings/dark-surface.json
-      description: Optional generated canvas dark-mode card surface.
-    - name: designer-appearance-dark-secondary
-      file: designer-host/appearance-settings/dark-secondary.json
-      description: Optional generated canvas dark-mode secondary surface.
-    - name: designer-appearance-dark-text
-      file: designer-host/appearance-settings/dark-text.json
-      description: Optional generated canvas dark-mode main text color.
 
     # Workflow page: page layout and declared contribution slots.
     - name: generated-workflow

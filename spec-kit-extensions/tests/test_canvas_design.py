@@ -54,7 +54,7 @@ FILES = {
     )),
     *(f"designer-host/appearance-settings/{mode}-{color}.json"
       for mode in ("light", "dark")
-      for color in ("accent", "background", "surface", "secondary", "text")),
+      for color in ("accent", "background")),
     "designer-host/badges-settings/badge-types.json",
     "designer-host/badge-input-controls/stock/control.json",
     "designer-host/badge-input-controls/stock/designer.mjs",
@@ -91,7 +91,7 @@ FILES = {
     *(f"generated-scaffold/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "external-control-contract.mjs", "files.mjs",
         "phase-response.mjs",
-        "contracts/agent-actions.mjs", "contracts/external-host-adapter.mjs",
+        "contracts/agent-actions.mjs", "contracts/external-host-adapter.mjs", "contracts/appearance.mjs",
         "contracts/external-generated-controls.mjs", "contracts/external-dialog-button.mjs",
         "contracts/external-badge-evaluator.mjs", "contracts/external-value-provider.mjs",
         "contracts/packaged-contributions.mjs", "contracts/workflow-state.mjs",
@@ -160,7 +160,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
             + [(f"designer-appearance-{mode}-{color}",
                 f"designer-host/appearance-settings/{mode}-{color}.json")
                for mode in ("light", "dark")
-               for color in ("accent", "background", "surface", "secondary", "text")]
+               for color in ("accent", "background")]
             + [("generated-workflow", "generated-host/workflow-page/workflow.json"),
                ("generated-workflow-page-adapter",
                 "generated-host/workflow-page/generated-workflow-page-adapter.mjs"),
