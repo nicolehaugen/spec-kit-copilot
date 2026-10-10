@@ -482,7 +482,9 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
                 : item.rule === "phase-artifact-complete"
                     ? ["stock.phase-artifact-inputs", "designer-badge-input-phase-artifact-adapter"]
                 : ["stock.badge-inputs", "designer-badge-input-stock-adapter"];
-        return item.control === control[0] && item.adapter === control[1];
+        return item.control === control[0] && item.adapter === control[1]
+            && (item.capabilities?.includes("declare-markdown-output") === true)
+                === (item.rule !== "artifact-stale");
     }));
     assert.ok(model.badgeRules.some((rule) => rule.id === "value-match"
         && rule.inputs[0].type === "artifact" && rule.inputs[1].type === "text"));
@@ -542,7 +544,16 @@ test("registered badge definitions resolve types, rules, adapters, and declared 
     await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
         "contractVersion = 1", "contractVersion = 2"));
     await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(inputAdapter.path, inputAdapterOriginal.replace(
+        "export const declaresMarkdownOutput = true;", ""));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
     await writeFile(inputAdapter.path, inputAdapterOriginal);
+    const controlOriginal = await readFile(control.path, "utf8");
+    const withoutCapability = JSON.parse(controlOriginal);
+    delete withoutCapability.capabilities;
+    await writeFile(control.path, JSON.stringify(withoutCapability));
+    await assert.rejects(load(), /incompatible Designer badge input adapter/);
+    await writeFile(control.path, controlOriginal);
     const original = await readFile(rule.path, "utf8");
     const { adapter: legacyAdapter, ...withoutAdapter } = JSON.parse(original);
     await writeFile(rule.path, JSON.stringify({ ...withoutAdapter, module: legacyAdapter }));

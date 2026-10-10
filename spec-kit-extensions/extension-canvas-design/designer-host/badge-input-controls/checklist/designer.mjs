@@ -1,5 +1,6 @@
 export const controlId = "stock.checklist-inputs";
 export const contractVersion = 1;
+export const declaresMarkdownOutput = true;
 
 function node(tag, text, className) {
     const element = document.createElement(tag);
@@ -43,13 +44,16 @@ export function mount({ root, rule, inputs, phases, outputs, onChange, onDeclare
         outputs[phase]?.outputs?.find((path) => /\.md$/i.test(path)) ?? "";
     const evidencePhase = [...phases].reverse().find((phase) => checklistPath(phase))
         ?? phases[0] ?? "";
+    const targetPhases = phases.filter((phase) =>
+        phase.replace(/^speckit\./, "") !== "constitution");
     if (initial) {
         inputs[checklistInput.id] = {
             phase: evidencePhase,
             output: checklistPath(evidencePhase),
         };
         inputs[chainInput.id] = [];
-        inputs[targetInput.id] = evidencePhase;
+        inputs[targetInput.id] = targetPhases.includes(evidencePhase)
+            ? evidencePhase : targetPhases[0] ?? "";
     }
     const emit = () => onChange(structuredClone(inputs));
     if (initial) emit();
@@ -60,7 +64,8 @@ export function mount({ root, rule, inputs, phases, outputs, onChange, onDeclare
     const earlier = node("div", undefined, "badge-artifact-set");
     const isProgress = rule.id === "checklist-progress";
     let customOpen = false;
-    const phaseChoices = phases.map((phase) => [phase, title(phase)]);
+    const phaseChoices = targetPhases.map((phase) => [phase, title(phase)]);
+    const evidenceChoices = phases.map((phase) => [phase, title(phase)]);
     const outputChoices = (phase) =>
         (outputs[phase]?.outputs ?? []).map((path) => [path, path]);
     const render = () => {
@@ -76,7 +81,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange, onDeclare
             render();
             emit();
         }, `This badge describes ${isProgress ? "progress" : "completion"} for the selected phase.`),
-        chooser("Evidence phase", phaseChoices, file.phase, (value) => {
+        chooser("Evidence phase", evidenceChoices, file.phase, (value) => {
             file.phase = value;
             file.output = checklistPath(value);
             prior.splice(0, prior.length);
@@ -176,8 +181,8 @@ export function mount({ root, rule, inputs, phases, outputs, onChange, onDeclare
         error.hidden = !error.textContent;
     };
     const validationError = () => {
-        if (!file || !Array.isArray(prior) || !phases.includes(inputs[targetInput.id]))
-            return "Choose a valid target phase and checklist.";
+        if (!file || !Array.isArray(prior) || !targetPhases.includes(inputs[targetInput.id]))
+            return "Choose a workflow target phase and checklist.";
         if (!outputs[file.phase]?.outputs?.includes(file.output)) {
             return "Choose a declared checklist file on the evidence phase.";
         }
@@ -194,6 +199,7 @@ export function mount({ root, rule, inputs, phases, outputs, onChange, onDeclare
     render();
     return { isReady: () => !validationError(), validationError,
         handlesOutputDeclaration: true,
-        selectedPhases: () => [inputs[targetInput.id]].filter((phase) => phases.includes(phase)),
+        selectedPhases: () => [inputs[targetInput.id]]
+            .filter((phase) => targetPhases.includes(phase)),
         dispose() { root.replaceChildren(); } };
 }

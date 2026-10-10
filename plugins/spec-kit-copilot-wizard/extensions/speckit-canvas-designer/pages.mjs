@@ -892,7 +892,11 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         const id = literalExport("controlId",
             /^\s*=\s*["']([a-z][a-z0-9.-]{0,79})["']\s*;/);
         const version = literalExport("contractVersion", /^\s*=\s*(1)\s*;/);
-        if (id !== binding.control || version !== "1") {
+        const declares = exports.some((item) => item.n === "declaresMarkdownOutput");
+        const expected = binding.capabilities?.includes("declare-markdown-output") === true;
+        if (id !== binding.control || version !== "1" || declares !== expected
+            || (expected
+                && literalExport("declaresMarkdownOutput", /^\s*=\s*(true)\s*;/) !== "true")) {
             throw new Error(`${entry.name}: incompatible Designer badge input adapter for ${binding.rule}`);
         }
     }

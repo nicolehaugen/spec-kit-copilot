@@ -409,6 +409,52 @@ test("checklist help tracks selected phases and missing or incompatible declarat
     }
 });
 
+test("checklist target excludes Constitution and cannot claim a project-card placement", () => {
+    const phases = ["speckit.constitution", "specify", "tasks"];
+    const outputs = {
+        "speckit.constitution": {
+            outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md",
+        },
+        specify: { outputs: ["spec.md"], view: "spec.md" },
+        tasks: { outputs: ["tasks.md"], view: "tasks.md" },
+    };
+    const rule = { id: "checklist-complete", inputs: [
+        { id: "artifact", type: "artifact" },
+        { id: "prerequisites", type: "ordered-artifacts", before: "artifact", minItems: 1 },
+        { id: "targetphase", type: "phase" },
+    ] };
+    const type = { id: rule.id, rule: rule.id, title: "Checklist complete",
+        defaultText: "Complete", defaultColor: "green", enabled: true };
+    const { root, draftBadges, cleanup } = setup({ phases, outputs,
+        badgeTypes: [type], badgeRules: [rule], controlMount: mountChecklistInputs });
+    try {
+        const editor = choose(root);
+        const controls = editor.querySelector(".badge-input-controls");
+        const target = descendants(controls).find((node) =>
+            node.attributes["aria-label"] === "Applies to phase");
+        const evidence = descendants(controls).find((node) =>
+            node.attributes["aria-label"] === "Evidence phase");
+        assert.deepEqual(target.children.map((option) => option.value), ["specify", "tasks"]);
+        assert.ok(evidence.children.some((option) => option.value === "speckit.constitution"));
+
+        const saved = { artifact: { phase: "tasks", output: "tasks.md" },
+            prerequisites: [{ phase: "specify", output: "spec.md" }],
+            targetphase: "speckit.constitution" };
+        const handle = mountChecklistInputs({ root: new Node("div"), rule, inputs: saved,
+            phases, outputs, onChange() {} });
+        assert.equal(handle.isReady(), false);
+        assert.deepEqual(handle.selectedPhases(), []);
+        assert.match(handle.validationError(), /workflow target phase/);
+        target.value = "speckit.constitution";
+        target.events.change();
+        submit(editor);
+        assert.equal(draftBadges.length, 0);
+        assert.ok(descendants(editor).some((node) =>
+            node.attributes.role === "alert" && /workflow target phase/.test(node.textContent)));
+    } finally { cleanup(); }
+});
+
 test("inline watched-file declaration validates scope and leaves View artifact unchanged", () => {
     const phases = ["tasks", "implement", "constitution"];
     const outputs = { tasks: { outputs: ["tasks.md"], view: "tasks.md" },

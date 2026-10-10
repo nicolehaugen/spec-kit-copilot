@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { resolveBadgeInputControls, validateBadgeInputBinding,
     validateBadgeInputControl } from "../contracts/badge-input-control.mjs";
 import { validateBadges } from "../contracts/badges.mjs";
+import { mountBadgeInputAdapter } from "../ui/control-adapter-contract.js";
 
 const entry = (kind, name, document) => ({ kind, name, sourceId: "fixture", document });
 const rule = entry("generated.badge-rule-definition", "fixture-rule", {
@@ -26,6 +27,69 @@ test("Designer control registry binds a rule to its declared input types", () =>
         rule: "fixture", control: "fixture.input", adapter: "fixture-adapter",
         binding: "fixture-binding", definition: "fixture-control", sourceId: "fixture",
     }]);
+});
+
+test("output declaration capability is explicit and bounded at resolution", () => {
+    const declared = { ...control, document: {
+        ...control.document, capabilities: ["declare-markdown-output"],
+    } };
+    validateBadgeInputControl(declared.document, declared.name);
+    assert.deepEqual(resolveBadgeInputControls([declared, binding, adapter], [type], [rule]), [{
+        rule: "fixture", control: "fixture.input", adapter: "fixture-adapter",
+        binding: "fixture-binding", definition: "fixture-control", sourceId: "fixture",
+        capabilities: ["declare-markdown-output"],
+    }]);
+    for (const capabilities of [[], ["unknown"], ["declare-markdown-output", "unknown"]]) {
+        assert.throws(() => validateBadgeInputControl({
+            ...control.document, capabilities,
+        }, control.name), /invalid Designer badge input control/);
+    }
+});
+
+test("badge adapter mount requires declaration opt-in on both sides before exposing the host action", () => {
+    const bindingWithDeclaration = { control: "fixture.input", adapter: "fixture-adapter",
+        capabilities: ["declare-markdown-output"] };
+    let action;
+    let cleared = 0;
+    const root = { replaceChildren() { cleared++; } };
+    const context = { root, onDeclareFile: (phase, path) => [phase, path] };
+    const capable = { controlId: bindingWithDeclaration.control, contractVersion: 1,
+        declaresMarkdownOutput: true,
+        mount({ onDeclareFile }) {
+            action = onDeclareFile;
+            assert.throws(() => action("specify", "notes.md"), /before control mount/);
+            return { isReady: () => true, handlesOutputDeclaration: true };
+        } };
+    const handle = mountBadgeInputAdapter(capable, bindingWithDeclaration, context);
+    assert.equal(handle.isReady(), true);
+    assert.deepEqual(action("specify", "notes.md"), ["specify", "notes.md"]);
+    assert.throws(() => mountBadgeInputAdapter(capable, {
+        ...bindingWithDeclaration, capabilities: undefined,
+    }, context), /Incompatible Designer badge input adapter/);
+    assert.throws(() => mountBadgeInputAdapter(capable, {
+        ...bindingWithDeclaration, capabilities: ["unknown"],
+    }, context), /Incompatible Designer badge input capabilities/);
+    assert.throws(() => mountBadgeInputAdapter(capable, bindingWithDeclaration,
+        { root }), /output declaration is unavailable/);
+    assert.throws(() => mountBadgeInputAdapter({
+        ...capable, mount({ onDeclareFile }) {
+            action = onDeclareFile;
+            return { isReady: () => true };
+        },
+    }, bindingWithDeclaration, context), /Incompatible Designer badge input declaration handle/);
+    assert.equal(cleared, 1);
+    assert.throws(() => action("specify", "notes.md"), /before control mount/);
+    const legacy = { controlId: "fixture.input", contractVersion: 1,
+        mount(options) {
+            assert.equal(Object.hasOwn(options, "onDeclareFile"), false);
+            return { isReady: () => true };
+        } };
+    mountBadgeInputAdapter(legacy, { control: "fixture.input", adapter: "fixture-adapter" },
+        context);
+    assert.throws(() => mountBadgeInputAdapter({
+        ...legacy, mount() { return { handlesOutputDeclaration: true }; },
+    }, { control: "fixture.input", adapter: "fixture-adapter" }, context),
+    /Incompatible Designer badge input declaration handle/);
 });
 
 test("Designer badge controls fail explicitly on missing, duplicate, and incompatible links", () => {

@@ -197,7 +197,8 @@ async function badgeState() {
     state.badgeRules = [JSON.parse(await readFile(new URL(
         "generated-host/badges/rules/phase-run-complete.json", extensionRoot), "utf8"))];
     const adapter = "designer-badge-input-stock-adapter";
-    state.badgeInputControls = [{ rule: "phase-run-complete", control: "stock.badge-inputs", adapter }];
+    state.badgeInputControls = [{ rule: "phase-run-complete", control: "stock.badge-inputs",
+        adapter, capabilities: ["declare-markdown-output"] }];
     return state;
 }
 
@@ -253,7 +254,8 @@ test("badge editor saves watched evidence without creating a View target", async
         inputs: [{ id: "artifact", type: "artifact" }], textPlaceholders: [],
         adapter: "badge-rule-run-adapter" }];
     state.badgeInputControls = [{ rule: "watched-file", control: "stock.badge-inputs",
-        adapter: "designer-badge-input-stock-adapter" }];
+        adapter: "designer-badge-input-stock-adapter",
+        capabilities: ["declare-markdown-output"] }];
     const shell = await startPreparedShell(state);
     try {
         await page.goto(shell.url);

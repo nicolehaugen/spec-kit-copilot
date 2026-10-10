@@ -541,12 +541,8 @@ function renderPage(pageId, invalidFieldId) {
                 const adapter = badgeInputAdapters.get(binding.adapter);
                 if (adapter instanceof Error) throw adapter;
                 if (!adapter) throw new Error(`Missing Designer badge input adapter ${binding.adapter}`);
-                if (adapter.controlId !== binding.control || adapter.contractVersion !== 1
-                    || typeof adapter.mount !== "function") {
-                    throw new Error(`Incompatible Designer badge input adapter ${binding.adapter}`);
-                }
-                return adapter.mount({ root: mount, rule, inputs, phases, outputs, onChange,
-                    onDeclareFile });
+                return adapterContract.mountBadgeInputAdapter(adapter, binding,
+                    { root: mount, rule, inputs, phases, outputs, onChange, onDeclareFile });
             } });
         root.setAttribute("aria-busy", "false");
         return true;

@@ -1,5 +1,6 @@
 export const controlId = "stock.badge-inputs";
 export const contractVersion = 1;
+export const declaresMarkdownOutput = true;
 
 function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -512,5 +513,6 @@ export function mount({ root, rule, inputs, phases, outputs, onChange, onDeclare
         return "";
     };
     return { isReady: () => !validationError(), validationError, selectedPhases,
+        handlesOutputDeclaration: true,
         dispose() { root.replaceChildren(); } };
 }

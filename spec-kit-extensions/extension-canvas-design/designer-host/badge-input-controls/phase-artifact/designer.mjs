@@ -1,5 +1,6 @@
 export const controlId = "stock.phase-artifact-inputs";
 export const contractVersion = 1;
+export const declaresMarkdownOutput = true;
 
 function node(tag, text, className) {
     const element = document.createElement(tag);

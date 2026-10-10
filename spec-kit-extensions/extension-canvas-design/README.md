@@ -300,7 +300,8 @@ validates the phase, path, duplicate and output limit, updates draft output evid
 and returns the updated output snapshot. A missing callback, stale editor,
 rejected path, or incompatible returned snapshot must show an error rather
 than claim the file was added. Their registered checklist input control
-selects a separate target phase and an ordered currentness chain (for example,
+selects a separate workflow target phase (not Constitution) and an ordered
+currentness chain (for example,
 draft.md → review.md → checklist.md). Every file must exist and each timestamp must
 be at least its predecessor's; equal timestamps pass. No separate evidence-phase badge
 nor a completed phase run is required. Missing or stale files do not match;
@@ -407,8 +408,8 @@ phase adapter must declare badge support before phase-card placement is used.
 Designer input controls are separate from generated evaluators. Each registered
 `designer.badge-input-binding` maps one rule ID to a reusable
 `designer.badge-input-control` JSON definition (`id`, `adapter`, supported
-`inputTypes`). Its registered, self-contained `designer.badge-input-adapter`
-exports `controlId`, `contractVersion = 1`, and
+`inputTypes`, and optional `capabilities`). Its registered, self-contained
+`designer.badge-input-adapter` exports `controlId`, `contractVersion = 1`, and
 `mount({root, rule, inputs, phases, outputs, onChange})`. It renders inside the
 provided root. The identity and version must be direct literal `export const`
 declarations so Designer can check them without executing preset code in Node;
@@ -416,6 +417,18 @@ the browser also checks the loaded adapter before mounting it. It reports the
 **complete** structured `inputs` object through
 `onChange`. The host passes detached snapshots of the rule, inputs, phases,
 and confirmed outputs; mutating them does not change host-owned state.
+For contract version 1, `capabilities: ["declare-markdown-output"]` opts into
+the synchronous `onDeclareFile(phase, path)` action. The adapter must also
+declare `export const declaresMarkdownOutput = true;` as a literal and return
+`handlesOutputDeclaration: true` from `mount`. The host checks the declaration
+against the resolved control definition before loading the adapter, then checks
+the mounted handle before enabling the callback. An adapter without the
+capability never receives the callback; a mismatched declaration or handle
+produces an incompatible-adapter error in the badge editor. The action rejects
+an inactive editor, invalid phase or path, duplicate, or exceeded output limit
+by throwing; on success it adds an expected Markdown phase output without
+changing `view` and returns a detached complete output snapshot. Adapters
+must display errors instead of claiming a failed declaration succeeded.
 Adapters must send a complete, JSON-safe replacement with declared input types
 and available phase/output selections after initializing defaults and after
 each edit. Empty selections may remain while the user finishes editing;
@@ -427,7 +440,7 @@ submission with an inline error; a
 failing disposal is reported without blocking navigation. The Designer
 validates saved input IDs, types, and confirmed outputs against the rule,
 regardless of what the adapter allows in the browser.
-The base extension binds its nine rules to `stock.badge-inputs`; a preset can
+The base extension binds its rules to declared stock controls; a preset can
 register a custom JSON definition, adapter, and rule binding without editing
 the Badges tab. Add the three named templates to the composed
 `load-page` command with strategy `replace`; use the existing Specify template

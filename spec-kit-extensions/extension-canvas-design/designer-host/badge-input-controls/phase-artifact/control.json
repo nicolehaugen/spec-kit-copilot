@@ -3,5 +3,6 @@
   "schemaVersion": 1,
   "id": "stock.phase-artifact-inputs",
   "adapter": "designer-badge-input-phase-artifact-adapter",
-  "inputTypes": ["artifact", "ordered-artifacts"]
+  "inputTypes": ["artifact", "ordered-artifacts"],
+  "capabilities": ["declare-markdown-output"]
 }
