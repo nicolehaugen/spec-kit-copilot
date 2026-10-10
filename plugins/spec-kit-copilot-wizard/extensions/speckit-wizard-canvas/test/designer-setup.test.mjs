@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -200,6 +200,10 @@ test("Specify command composition must resolve through its active artifact stack
         JSON.stringify([{ id: "command:speckit.extension-canvas-design.load-page",
             name: "speckit.extension-canvas-design.load-page", kind: "command",
             stack: [{ active: false }] }])), /did not resolve/);
+    await writeFile(f.skill, "x".repeat(256 * 1024 + 1));
+    await assert.rejects(verifyComposedLoadPage(f.project, async () => {
+        throw new Error("Should reject oversized skill before querying Specify");
+    }), /Oversized generated Canvas Design load-page skill/);
 });
 
 test("Specify subprocess treats zero-exit composition warnings as errors", async () => {
@@ -280,6 +284,114 @@ test("incompatible catalog configuration and absent CLI stop before installation
             throw error;
         } }), /invoke speckit-cli-setup and retry/);
     assert.deepEqual(missing.calls, []);
+});
+
+test("catalog configuration is bounded and cannot be a symlink", async (t) => {
+    const f = await fixture(t);
+    const config = join(f.project, ".specify", "extension-catalogs.yml");
+    await writeFile(config, "x".repeat(65537));
+    await assert.rejects(installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
+        /Oversized extension catalog configuration/);
+    await rm(config);
+    const target = join(f.root, "catalog.yml");
+    await writeFile(target, "catalogs: []\n");
+    try { await symlink(target, config); }
+    catch (error) {
+        if (error.code !== "EPERM") throw error;
+        t.diagnostic("File symlinks require developer mode on this Windows host");
+        return;
+    }
+    await assert.rejects(installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps),
+        /ELOOP|changed while reading|symlink|EINVAL/);
+    assert.ok(!f.calls.some((args) => args[1] === "add"));
+});
+
+test("local dev-linked skills are detached before presets regenerate them", async (t) => {
+    const source = await mkdtemp(join(tmpdir(), "designer-linked-base-"));
+    t.after(() => rm(source, { recursive: true, force: true }));
+    await writeFile(join(source, "extension.yml"),
+        "extension:\n  id: extension-canvas-design\n  name: Local\n  version: 1.0.0\n");
+    const original = "## Pages\n- `designer-essentials`\n";
+    const target = join(source, "SKILL.md");
+    await writeFile(target, original);
+    const f = await fixture(t, { selections: { extensions: [], bundles: [], presets: [{
+        id: "pirate", source: "community", approved: true, version: "1.1.0",
+        downloadUrl: "https://example.org/pirate.zip",
+    }] }, localSelections: { extensions: [{
+        id: "extension-canvas-design", source: "local", path: source, approved: true,
+        version: "1.0.0",
+    }] } });
+    const probe = join(f.project, "skill-symlink-probe");
+    try { await symlink(target, probe); }
+    catch (error) {
+        if (error.code !== "EPERM") throw error;
+        t.skip("File symlinks require developer mode on this Windows host");
+        return;
+    }
+    await rm(probe);
+    const run = async (binary, args, options) => {
+        const result = await f.run(binary, args, options);
+        if (args[0] === "extension" && args[1] === "add") {
+            await rm(f.skill);
+            await symlink(target, f.skill);
+        }
+        if (args[0] === "preset" && args[1] === "add") {
+            assert.equal((await lstat(f.skill)).isSymbolicLink(), false);
+            await writeFile(f.skill, `${original}- \`preset-page\`\n`);
+        }
+        return result;
+    };
+    const installed = { ...f.deps, run };
+    await installDesignerSetup(f.project, f.root, f.id, f.hash, installed);
+    assert.equal((await lstat(f.skill)).isSymbolicLink(), false);
+    assert.match(await readFile(f.skill, "utf8"), /preset-page/);
+    assert.equal(await readFile(target, "utf8"), original);
+});
+
+test("append registration accepts an approved dev-linked preset but not another target", async (t) => {
+    const source = await mkdtemp(join(tmpdir(), "designer-linked-preset-"));
+    const other = await mkdtemp(join(tmpdir(), "designer-unapproved-preset-"));
+    t.after(() => Promise.all([source, other].map((path) =>
+        rm(path, { recursive: true, force: true }))));
+    const manifest = "preset:\n  id: pirate-full\n  name: Test\n  version: 1.1.0\n"
+        + "provides:\n  templates:\n    - type: command\n"
+        + "      name: speckit.extension-canvas-design.load-page\n"
+        + "      strategy: append\n      file: commands/load-page.md\n";
+    for (const root of [source, other]) {
+        await mkdir(join(root, "commands"));
+        await writeFile(join(root, "preset.yml"), manifest);
+        await writeFile(join(root, "commands", "load-page.md"), "## Pages\n- `preset-page`\n");
+    }
+    const f = await fixture(t, { localSelections: { presets: [{
+        id: "pirate-full", source: "local", path: source, approved: true,
+    }] } });
+    const run = async (binary, args, options) => {
+        const result = await f.run(binary, args, options);
+        if (args[0] !== "artifact") return result;
+        const artifacts = JSON.parse(result.stdout);
+        artifacts[0].stack.unshift({ active: true, layer: "preset",
+            sourceId: "pirate-full", strategy: "append" });
+        return { stdout: JSON.stringify(artifacts) };
+    };
+    const deps = { ...f.deps, run };
+    await installDesignerSetup(f.project, f.root, f.id, f.hash, deps);
+    await writeFile(join(f.project, ".specify", "extensions", "extension-canvas-design",
+        "scripts", "verify-launch.mjs"),
+    "export function declarations(text) { return [...text.matchAll(/`([^`]+)`/g)]"
+        + ".map((match) => ({ name: match[1], kind: 'designer.tab-definition' })); }\n");
+    await writeFile(f.skill, "## Pages\n- `preset-page`\n");
+    const installed = join(f.project, ".specify", "presets", "pirate-full");
+    await rm(installed, { recursive: true });
+    await symlink(source, installed, process.platform === "win32" ? "junction" : "dir");
+    assert.equal((await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps)).stage, "ready");
+    await writeFile(join(source, "preset.yml"), "x".repeat(65537));
+    await assert.rejects(finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps),
+        /Oversized preset manifest: pirate-full/);
+    await writeFile(join(source, "preset.yml"), manifest);
+    await rm(installed);
+    await symlink(other, installed, process.platform === "win32" ? "junction" : "dir");
+    await assert.rejects(finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps),
+        /differs from its approved source/);
 });
 
 test("a catalog source mismatch blocks even a URL-based package install", async (t) => {

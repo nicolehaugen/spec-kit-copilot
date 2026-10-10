@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { createWriteStream } from "node:fs";
-import { access, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { constants, createWriteStream } from "node:fs";
+import { access, lstat, mkdtemp, open, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,6 +28,76 @@ const GROUP = { presets: "preset", extensions: "extension", bundles: "bundle" };
 const WARNING = /(?:^|\n)[^\n]*(?:no base command layer|composition[^\n]*\b(?:warning|incomplete|failed)\b)[^\n]*/i;
 
 function elapsed(start) { return Math.round(performance.now() - start); }
+
+async function readBoundedFile(path, limit, label) {
+    const parent = dirname(path);
+    const [folder, parentStat] = await Promise.all([realpath(parent), lstat(parent)]);
+    const handle = await open(path, constants.O_RDONLY
+        | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    try {
+        const [file, current, currentFolder, currentParent] = await Promise.all([
+            handle.stat(), lstat(path), realpath(parent), lstat(parent),
+        ]);
+        if (folder !== currentFolder || parentStat.dev !== currentParent.dev
+            || parentStat.ino !== currentParent.ino || !file.isFile()
+            || !current.isFile() || current.isSymbolicLink()
+            || file.dev !== current.dev || file.ino !== current.ino) {
+            throw new Error(`${label} changed while reading`);
+        }
+        if (file.size > limit) throw new Error(`Oversized ${label}`);
+        const buffer = Buffer.alloc(limit + 1);
+        let size = 0;
+        while (size < buffer.length) {
+            const { bytesRead } = await handle.read(buffer, size, buffer.length - size, null);
+            if (!bytesRead) break;
+            size += bytesRead;
+        }
+        if (size > limit) throw new Error(`Oversized ${label}`);
+        const [after, afterFolder, afterParent] = await Promise.all([
+            lstat(path), realpath(parent), lstat(parent),
+        ]);
+        if (afterFolder !== folder || afterParent.dev !== parentStat.dev
+            || afterParent.ino !== parentStat.ino || after.dev !== file.dev
+            || after.ino !== file.ino || !after.isFile() || after.isSymbolicLink()) {
+            throw new Error(`${label} changed while reading`);
+        }
+        return buffer.subarray(0, size).toString("utf8");
+    } finally {
+        await handle.close();
+    }
+}
+
+async function materializeDevSkills(project, approvedSource) {
+    const approved = await realpath(approvedSource);
+    const checkout = await realpath(project);
+    for (const name of ["load-page", "generate", "open-generated"]) {
+        const path = join(project, ".github", "skills",
+            `speckit-extension-canvas-design-${name}`, "SKILL.md");
+        let stat;
+        try { stat = await lstat(path); }
+        catch (error) {
+            if (error.code === "ENOENT") continue;
+            throw error;
+        }
+        if (!stat.isSymbolicLink()) continue;
+        const target = await realpath(path);
+        const inside = (root) => {
+            const within = relative(root, target);
+            return within && within !== ".." && !within.startsWith(`..${sep}`) && !isAbsolute(within);
+        };
+        if (!inside(approved) && !inside(checkout)) {
+            throw new Error(`Generated Canvas Design ${name} skill is outside the approved source`);
+        }
+        const content = await readBoundedFile(target, 256 * 1024, `Canvas Design ${name} skill`);
+        const temporary = join(dirname(path), `.SKILL.md-${process.pid}-${randomUUID()}`);
+        try {
+            await writeFile(temporary, content, { flag: "wx" });
+            await rename(temporary, path);
+        } finally {
+            await rm(temporary, { force: true });
+        }
+    }
+}
 // Specify's Windows console entry point is an .exe; avoid interpreting approved URLs or paths in cmd.exe.
 const directRun = (run) => (binary, args, options) => run(binary, args, {
     ...options, shell: process.platform === "win32" ? false : options.shell,
@@ -266,12 +337,11 @@ function uniqueWarnings(warnings) { return [...new Set(warnings)]; }
 async function registerCatalog(project, kind, url, command) {
     const config = join(project, ".specify", `${kind}-catalogs.yml`);
     let text;
-    try { text = await readFile(config, "utf8"); }
+    try { text = await readBoundedFile(config, 65536, `${kind} catalog configuration`); }
     catch (error) {
         if (error.code !== "ENOENT") throw error;
     }
     if (text !== undefined) {
-        if (Buffer.byteLength(text) > 65536) throw new Error(`Oversized ${kind} catalog configuration`);
         const parsed = load(text, { schema: JSON_SCHEMA });
         if (!Array.isArray(parsed?.catalogs)) throw new Error(`Invalid ${kind} catalog configuration`);
         const existing = parsed.catalogs.find((entry) => entry.name === "spec-kit-copilot");
@@ -287,7 +357,7 @@ async function registerCatalog(project, kind, url, command) {
 
 export async function verifyComposedLoadPage(project, command) {
     const skill = join(project, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md");
-    const contents = await readFile(skill, "utf8");
+    const contents = await readBoundedFile(skill, 256 * 1024, "generated Canvas Design load-page skill");
     if (!contents.trim()) throw new Error("Generated Canvas Design load-page skill is empty");
     let artifacts;
     try { artifacts = JSON.parse(await command(["artifact", "list", "--json"])); }
@@ -301,19 +371,26 @@ export async function verifyComposedLoadPage(project, command) {
     return { skill, stack: entry.stack };
 }
 
-async function verifyPresetRegistrations(project, commandStack, verifier, skill) {
+async function verifyPresetRegistrations(project, handoff, commandStack, verifier, skill) {
     const firstReplacement = commandStack.findIndex((entry) => entry.strategy === "replace");
     const contributors = new Set(commandStack.slice(0, firstReplacement < 0
         ? commandStack.length : firstReplacement).filter((entry) =>
         entry.layer === "preset" && entry.strategy === "append").map((entry) => entry.sourceId));
     if (!contributors.size) return;
     const { declarations } = await import(pathToFileURL(verifier).href);
-    const composed = new Map(declarations(await readFile(skill, "utf8")).map((entry) =>
+    const composed = new Map(declarations(await readBoundedFile(skill, 256 * 1024,
+        "generated Canvas Design load-page skill")).map((entry) =>
         [entry.name, entry]));
     for (const id of contributors) {
         const folder = join(project, ".specify", "presets", id);
-        const text = await readFile(join(folder, "preset.yml"), "utf8");
-        if (Buffer.byteLength(text) > 65536) throw new Error(`Oversized preset manifest: ${id}`);
+        const canonical = await realpath(folder);
+        const locator = handoff.workflow.installLocators.presets.find((entry) => entry.installedId === id);
+        const local = handoff.localSelections?.presets?.find((entry) => entry.id === id);
+        const approved = local?.path ?? (locator?.source === "local" ? locator.path : undefined);
+        if (canonical !== folder && (!approved || canonical !== await realpath(approved))) {
+            throw new Error(`Canvas Design preset ${id} differs from its approved source`);
+        }
+        const text = await readBoundedFile(join(canonical, "preset.yml"), 65536, `preset manifest: ${id}`);
         const manifest = load(text, { schema: JSON_SCHEMA });
         const registrations = manifest?.provides?.templates?.filter((entry) =>
             entry.type === "command" && entry.name === "speckit.extension-canvas-design.load-page"
@@ -325,12 +402,14 @@ async function verifyPresetRegistrations(project, commandStack, verifier, skill)
             if (typeof registration.file !== "string" || isAbsolute(registration.file)) {
                 throw new Error(`Invalid Canvas Design command path in preset ${id}`);
             }
-            const source = resolve(folder, registration.file);
-            const rel = relative(folder, source);
-            if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || await realpath(source) !== source) {
+            const source = resolve(canonical, registration.file);
+            const rel = relative(canonical, source);
+            if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)
+                || await realpath(source) !== source) {
                 throw new Error(`Canvas Design command path escapes preset ${id}`);
             }
-            for (const entry of declarations(await readFile(source, "utf8"))) {
+            for (const entry of declarations(await readBoundedFile(source, 256 * 1024,
+                `Canvas Design command in preset ${id}`))) {
                 if (composed.get(entry.name)?.kind !== entry.kind) {
                     throw new Error(`Preset ${id} registration ${entry.name} is missing from Specify's composed command`);
                 }
@@ -396,6 +475,7 @@ export async function installDesignerSetup(project, root, id, hash, {
     timings.bundles = elapsed(start);
     for (const kind of ["extensions", "presets"]) {
         start = performance.now();
+        if (kind === "presets" && localBase) await materializeDevSkills(project, localBase.path);
         for (const item of standalone(handoff, kind)) {
             await installPackage(project, kind, item, command, warnings, verify);
         }
@@ -446,7 +526,7 @@ export async function finalizeDesignerSetup(project, root, id, hash, {
         return { stage: "manual-resolution", timings: { finalize: elapsed(start) },
             warnings: uniqueWarnings(warnings) };
     }
-    await verifyPresetRegistrations(project, composed.stack, verifier, composed.skill);
+    await verifyPresetRegistrations(project, handoff, composed.stack, verifier, composed.skill);
     const options = await specifySpawnOptions(project, {
         timeout: 120000, maxBuffer: 2 * 1024 * 1024,
         shell: false,

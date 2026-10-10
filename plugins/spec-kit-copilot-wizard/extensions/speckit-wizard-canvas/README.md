@@ -308,7 +308,10 @@ addition to) the hosted registry entry:
   shell commands; the required base is restored after bundles.
   It installs remaining standalone extensions (including local
   overrides), then
-  standalone presets (including local overrides).
+  standalone presets (including local overrides). For an approved local
+  Canvas Design base, it first replaces only its generated, dev-linked
+  skill files with local copies so Specify can regenerate composed skills
+  without writing through links into the source checkout.
   This ensures bundled and standalone preset command additions have the base
   available. It stops on composition warnings even if Specify exits
   successfully. Specify's artifact inventory must resolve the composed
