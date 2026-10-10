@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, writeFile, rename, unlink } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
 export function parseArgs(args, valued, switches = ['apply', 'help']) {
@@ -131,14 +131,17 @@ export async function applyChanges(changes, expected, { move = rename, removeSta
       await mkdir(dirname(path), { recursive: true });
       await assertRegularPath(path);
       if (await readOptional(path) !== before) throw new Error(`Conflict: file changed before staging: ${path}`);
+      const mode = before !== null && process.platform !== 'win32' ? (await lstat(path)).mode & 0o777 : undefined;
       if (before !== null) {
         const backup = `${path}.backup-${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`;
-        await writeFile(backup, before, { flag: 'wx' });
+        await writeFile(backup, before, { flag: 'wx', mode });
         backups.push(backup);
+        if (mode !== undefined) await chmod(backup, mode);
       }
       const temporary = `${path}.stage-${randomUUID()}`;
       staged.push({ path, before, after, temporary });
-      await writeFile(temporary, after, { flag: 'wx' });
+      await writeFile(temporary, after, { flag: 'wx', mode });
+      if (mode !== undefined) await chmod(temporary, mode);
     }
     for (const change of staged) {
       if (await readOptional(change.path) !== change.before) throw new Error(`Conflict: file changed before write: ${change.path}`);

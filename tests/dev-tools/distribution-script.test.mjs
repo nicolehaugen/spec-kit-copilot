@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, readFile, readdir, rename, symlink, unlink } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, stat, symlink, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { prepareDistribution, validateDistribution, manifestIdentity } from '../../dev-tools/prepare-distribution.mjs';
@@ -154,6 +154,32 @@ test('failed multi-file commit restores prior writes and reports retained backup
   }), /injected commit failure; applied changes restored.*Backups:/);
   for (const path of paths) assert.equal(await readFile(path, 'utf8'), 'original');
   assert.equal((await readdir(root)).some(name => name.includes('.stage-')), false);
+});
+
+test('apply preserves POSIX permissions on replacements and backups despite umask', {
+  skip: process.platform === 'win32' ? 'POSIX permission bits do not represent Windows ACLs' : false,
+}, async t => {
+  const root = await workspace(t);
+  const changes = [];
+  for (const mode of [0o600, 0o640]) {
+    const path = resolve(root, `settings-${mode}.json`);
+    await write(path, 'original');
+    await chmod(path, mode);
+    changes.push({ path, before: 'original', after: 'updated' });
+  }
+  const previousUmask = process.umask(0o077);
+  let backups;
+  try {
+    backups = await applyChanges(changes, fingerprint(changes));
+  } finally {
+    process.umask(previousUmask);
+  }
+  for (const [index, mode] of [0o600, 0o640].entries()) {
+    assert.equal((await stat(changes[index].path)).mode & 0o777, mode);
+    assert.equal((await stat(backups[index])).mode & 0o777, mode);
+    assert.equal(await readFile(changes[index].path, 'utf8'), 'updated');
+    assert.equal(await readFile(backups[index], 'utf8'), 'original');
+  }
 });
 
 test('rollback removes newly created targets when a later commit fails', async t => {

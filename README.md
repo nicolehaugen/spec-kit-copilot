@@ -96,6 +96,8 @@ crash-safe transaction across files.
 Staged-file cleanup attempts every file and reports cleanup failures alongside
 the original apply/rollback error. Catalog refs must also pass local syntax
 validation; preparation does not check whether the ref exists remotely.
+On POSIX systems, backups and replacements retain the existing file's permission
+bits. This helper does not manage Windows ACLs.
 
 Select `config\distribution.upstream.example.json`,
 `config\distribution.fork.example.json`, or custom JSON explicitly:
