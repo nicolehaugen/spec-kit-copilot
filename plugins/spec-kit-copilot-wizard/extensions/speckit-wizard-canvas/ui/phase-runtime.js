@@ -1,6 +1,7 @@
 // Consolidated phase runtime: pipeline state, run-lock, resolver, extension cards.
 
 import { escapeHtml } from "./client.js";
+import { readGenerateCanvas } from "../contracts/generate-feature.mjs";
 import {
     state,
     commands,
@@ -408,7 +409,9 @@ export function renderPipelineBanner() {
             <div class="header-actions pipeline-actions">
                 <button type="button" class="btn btn-ghost pipeline-clear" data-action="clear"${items.length ? "" : " disabled"}>Clear</button>
                 <button type="button" class="btn btn-ghost pipeline-reset" data-action="reset"${edited ? "" : " disabled"}>Reset to default</button>
-                <button type="button" class="btn btn-ghost pipeline-generate" aria-label="Generate canvas" title="Choose design customizations and launch a new Canvas designer session from this pipeline.">Generate canvas</button>
+                ${readGenerateCanvas(state.snapshot)
+                    ? '<button type="button" class="btn btn-ghost pipeline-generate" aria-label="Generate canvas" title="Choose design customizations and launch a new Canvas designer session from this pipeline.">Generate canvas</button>'
+                    : ""}
             </div>
         </header>
         ${refreshLabel ? `<div class="pipeline-refresh-status" role="status" aria-live="polite" data-progress="${refreshState}">${refreshState === "updating" ? '<span class="pipeline-refresh-spinner" aria-hidden="true"></span>' : ""}${refreshLabel}</div>` : ""}

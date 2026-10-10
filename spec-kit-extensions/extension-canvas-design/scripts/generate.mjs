@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validControlContract, validControlValue } from "../generated-scaffold/external-control-contract.mjs";
@@ -29,36 +29,6 @@ const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided", "setup.show"]);
-
-export async function renameDirectoryWithoutReplacement(source, destination) {
-    if (process.platform === "win32") {
-        await rename(source, destination);
-        return;
-    }
-    // POSIX rename replaces an existing empty directory; reserve the destination first.
-    await mkdir(destination);
-    const claim = await lstat(destination);
-    try {
-        const current = await lstat(destination);
-        if (current.dev !== claim.dev || current.ino !== claim.ino
-            || !current.isDirectory() || current.isSymbolicLink()) {
-            throw new Error("Canvas destination changed before publication");
-        }
-        await rename(source, destination);
-    } catch (error) {
-        const current = await lstat(destination).catch((readError) => {
-            if (readError.code === "ENOENT") return null;
-            throw readError;
-        });
-        if (current?.dev === claim.dev && current.ino === claim.ino) {
-            try { await rmdir(destination); }
-            catch (cleanup) {
-                throw new AggregateError([error, cleanup], "Canvas destination could not be released");
-            }
-        }
-        throw error;
-    }
-}
 
 function withoutSchema(document) {
     if (!document || typeof document !== "object" || Array.isArray(document)) return document;
@@ -1637,9 +1607,29 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         if (priorRequestId !== previous.requestId) {
             throw new Error("Canvas changed since replacement was confirmed");
         }
+    } else {
+        if (priorRequestId) throw new Error("Canvas no longer exists for confirmed replacement");
+        await mkdir(output);
     }
-    const target = await mkdtemp(join(parent, `.${config.canvas.id}-stage-`));
+    const target = output;
+    const owned = original ?? await lstat(target);
+    const verifyTarget = async () => {
+        const current = await lstat(target);
+        if (!current.isDirectory() || current.isSymbolicLink()
+            || current.dev !== owned.dev || current.ino !== owned.ino
+            || await realpath(target) !== target || await realpath(parent) !== parent) {
+            throw new Error("Canvas directory changed during generation");
+        }
+    };
     try {
+    await verifyTarget();
+    if (original) {
+        await rm(join(target, "extension.mjs"));
+        for (const entry of await readdir(target)) {
+            await verifyTarget();
+            await rm(join(target, entry), { recursive: true });
+        }
+    }
     await mkdir(join(target, "ui"));
     await mkdir(join(target, "contracts"));
     if (pageFiles.length) await mkdir(join(target, "pages"));
@@ -1697,64 +1687,18 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         pathToFileURL(join(target, "server.mjs")).href],
     { encoding: "utf8" });
     if (renderer.error || renderer.status !== 0) throw new Error(`Workflow renderer failed: ${renderer.stderr || renderer.error}`);
+    await verifyTarget();
     await writeFile(join(target, "extension.mjs"), files.at(-1)[1], { flag: "wx" });
-    let current;
-    try { current = await lstat(output); }
-    catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (original) {
-        if (!current || current.dev !== original.dev || current.ino !== original.ino
-            || !current.isDirectory() || current.isSymbolicLink()) {
-            throw new Error("Existing canvas changed during generation");
-        }
-        const previous = await existingGeneratedCanvas(output, projectRoot, workspaceRoot,
-            handoff, config.canvas.id, files);
-        if (priorRequestId !== previous.requestId) {
-            throw new Error("Canvas changed since replacement was confirmed");
-        }
-        const backupDir = await mkdtemp(join(parent, `.${config.canvas.id}-backup-`));
-        const backup = join(backupDir, "previous");
-        let moved = false;
-        try {
-            await rename(output, backup);
-            moved = true;
-            const displaced = await lstat(backup);
-            if (displaced.dev !== original.dev || displaced.ino !== original.ino) {
-                throw new Error("Existing canvas changed during replacement");
-            }
-            // Windows can briefly retain handles from the renderer subprocess after exit.
-            for (let attempt = 0; ; attempt++) {
-                try { await renameDirectoryWithoutReplacement(target, output); break; }
-                catch (error) {
-                    if (process.platform !== "win32" || error.code !== "EPERM" || attempt >= 5) throw error;
-                    await new Promise((done) => setTimeout(done, 100 * (attempt + 1)));
-                }
-            }
-        } catch (error) {
-            if (moved) {
-                try {
-                    await renameDirectoryWithoutReplacement(backup, output);
-                }
-                catch (rollback) {
-                    throw new AggregateError([error, rollback],
-                        `Canvas replacement failed; prior output remains at ${backup}`);
-                }
-            }
-            throw error;
-        } finally {
-            // Retain the backup if a rollback failed.
-            if (await lstat(backup).then(() => false, (error) => error.code === "ENOENT")) {
-                await rm(backupDir, { recursive: true, force: true });
-            }
-        }
-        await rm(backupDir, { recursive: true, force: true });
-    } else {
-        try { await lstat(output); throw new Error(`Canvas extension already exists: ${output}`); }
-        catch (error) { if (error.code !== "ENOENT") throw error; }
-        await renameDirectoryWithoutReplacement(target, output);
-    }
     return { target: request.target, canvasId: config.canvas.id, warnings };
-    } finally {
-        await rm(target, { recursive: true, force: true });
+    } catch (error) {
+        try {
+            await verifyTarget();
+            await rm(target, { recursive: true });
+        } catch (cleanup) {
+            throw new AggregateError([error, cleanup],
+                `${error.message}; failed canvas cleanup requires inspection at ${target}: ${cleanup.message}`);
+        }
+        throw error;
     }
 }
 

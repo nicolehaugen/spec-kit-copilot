@@ -71,6 +71,7 @@ export async function startPresetJourney(page, {
     const snapshot = {
         workspacePath: checkout,
         currentPhase: "constitution",
+        featureFlags: { generateCanvas: true },
         setup: { pluginInstalled: true, cliInstalled: true, projectInitialized: true,
             skillsReloaded: true },
         boot: { phase: "ready", steps: [] }, phases: {}, commands: [],
@@ -154,7 +155,7 @@ export async function startPresetJourney(page, {
             },
             log: async () => {},
             getState: async () => snapshot,
-            getInstance: () => ({ workspacePath: checkout }),
+            getInstance: () => ({ workspacePath: checkout, generateCanvas: true }),
             getInstalledWorkflow: (state) => readInstalledWorkflowInventory(state,
                 async (_executable, args) => ({ stdout: "[]" })),
         });

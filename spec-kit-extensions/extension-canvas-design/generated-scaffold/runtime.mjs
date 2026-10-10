@@ -1,7 +1,7 @@
 import { providerEvaluationScript, validateProviderSerializedResult } from
     "./contracts/external-value-provider.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, realpath, readdir } from "node:fs/promises";
 import { posix } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -10,9 +10,9 @@ import { createContext, runInContext } from "node:vm";
 import { UserError, confined, readBounded, readBoundedBytes, directories, atomicJson, safePath, slugPattern,
     deleteConfinedDirectory } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
-import { phaseResponse } from "./phase-response.mjs";
+import { phaseResponse, phaseTurnState } from "./phase-response.mjs";
 import { createSetup } from "./setup.mjs";
-import { freshState, validateWorkflowState, pendingId, newItem } from "./contracts/workflow-state.mjs";
+import { freshState, validateWorkflowState, validatePendingRemoval, pendingId, newItem } from "./contracts/workflow-state.mjs";
 import { evaluateBadges, verifyBadgeModules } from "./badge-runtime.mjs";
 
 function staleRevision(message) {
@@ -119,12 +119,27 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     let writes = Promise.resolve();
     let dispatching = false;
+    const requiresRecovery = (run) => run.sessionId === session.sessionId && !run.autopilotId
+        && run.status !== "Failed" && (run.status !== "Completed"
+            || newItem(run.item) && !run.artifact && !run.confirmedSlug);
+    const recoveryRuns = new Set(state.runs.filter(requiresRecovery).map((run) => run.runId));
+    let idleAfterRestart = false;
+    let recoverOnOpen = recoveryRuns.size > 0;
     let deleting = false;
     let closed = false;
     const liveRuns = new Set();
     const busy = { value: false };
     const subscriptions = [];
     const observedMessages = new Set();
+    function runActivity(run, events) {
+        if (recoveryRuns.has(run.runId) && idleAfterRestart && !busy.value) return "ended";
+        if (idleAfterRestart && busy.value) return "active";
+        if (!run.messageId) return run.status === "Failed" ? "ended" : "unknown";
+        const turn = phaseTurnState(events, run.messageId);
+        if (turn.active) return "active";
+        if (turn.ended || phaseResponse(events, run.messageId)?.success !== undefined) return "ended";
+        return busy.value ? "active" : "unknown";
+    }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
     const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
@@ -196,6 +211,62 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
         ? [config.phaseOutputs?.[step.id]?.outputPath].filter(Boolean) : step.outputs)
         .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
+    async function compareDirectories(before, inventory) {
+        if (!Array.isArray(before) || new Set(before).size !== before.length
+            || before.some((id) => typeof id !== "string"
+                || !roots.some((root) => id.startsWith(`${root}/`)
+                    && slugPattern.test(id.slice(root.length + 1))))) {
+            throw new UserError("The app cannot reliably check whether this run created a workflow folder. Check the project files before abandoning this workflow.", 409);
+        }
+        const current = await (inventory ?? inspectDirectories());
+        for (const root of current.missingRoots) {
+            if (before.some((id) => id.startsWith(`${root}/`))) {
+                throw new UserError("A folder used to store workflows is missing. Check the project files before abandoning this workflow.", 409);
+            }
+        }
+        if (before.some((id) => !current.ids.includes(id))) {
+            throw new UserError("A workflow folder that existed before this run is missing. Check the project files.", 409);
+        }
+        const prior = new Set(before);
+        return current.ids.filter((id) => !prior.has(id));
+    }
+    async function inspectDirectories() {
+        const ids = [], missingRoots = [];
+        for (const root of roots) {
+            const path = safePath(root);
+            let folder;
+            try { folder = await confined(cwd, path); }
+            catch (error) {
+                if (error.code !== "ENOENT") throw error;
+                missingRoots.push(root);
+                continue;
+            }
+            const original = await lstat(folder);
+            if (!original.isDirectory()) throw new UserError("Workflow root is not a directory.", 409);
+            const entries = await readdir(folder, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+                const id = `${root}/${entry.name}`;
+                if (entry.isSymbolicLink() || !slugPattern.test(entry.name)) {
+                    throw new UserError(`Workflow root contains an unsafe directory entry: ${id}`, 409);
+                }
+                const target = await confined(cwd, id);
+                const first = await lstat(target);
+                if (!first.isDirectory()) throw new UserError("Workflow directory changed during inspection.", 409);
+                ids.push(id);
+                const second = await lstat(await confined(cwd, id));
+                if (first.dev !== second.dev || first.ino !== second.ino) {
+                    throw new UserError("Workflow directory changed during inspection.", 409);
+                }
+            }
+            const current = await lstat(await confined(cwd, path));
+            if (original.dev !== current.dev || original.ino !== current.ino
+                || original.mtimeMs !== current.mtimeMs) {
+                throw new UserError("Workflow root changed during inspection. Refresh and retry.", 409);
+            }
+        }
+        return { ids, missingRoots };
+    }
     async function items(view = state) {
         const found = [];
         for (const root of roots) {
@@ -291,6 +362,11 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }
     }
     async function snapshot() {
+        if (recoverOnOpen) {
+            recoverOnOpen = false;
+            try { await capture(); }
+            catch (error) { recoverOnOpen = true; throw error; }
+        }
         const view = structuredClone(state);
         const entries = await items(view);
         const item = view.selected;
@@ -351,8 +427,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                     await diagnostic(`Generated canvas artifact availability failed: ${artifactError}`);
                 }
             }
-            const status = run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
-                ? "Unconfirmed" : run?.status ?? "Not run";
+            const status = run?.status ?? "Not run";
             statuses[step.id] = { status, output, artifactAvailability, artifactError,
                 error: run?.error ?? null };
         }
@@ -378,25 +453,40 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         }) : undefined;
         if (badges) badges.selected = badges.items[item] ?? [];
         const project = phases.find((phase) => phase.project);
-        const pending = (view.pendingWorkflows ?? []).map(({ id, name, slug }) => {
-            const run = view.runs.findLast((entry) => entry.item === id);
+        let recoveryInventory;
+        const pending = await Promise.all((view.pendingWorkflows ?? []).map(async ({ id, name, slug }) => {
+            const runs = view.runs.filter((entry) => entry.item === id);
+            const run = runs.at(-1);
+            let recovery = run?.error ?? null;
+            const discovered = new Set(), errors = new Set();
+            for (const attempt of runs) {
+                if (!["Completed", "Failed", "Run output unconfirmed"].includes(attempt.status)) continue;
+                try {
+                    recoveryInventory ??= inspectDirectories();
+                    for (const path of await compareDirectories(attempt.before, recoveryInventory)) discovered.add(path);
+                } catch (error) {
+                    if (!(error instanceof UserError)) throw error;
+                    errors.add(error.message);
+                }
+            }
+            const findings = [
+                ...(discovered.size ? [`New workflow directory: ${[...discovered].join(", ")}. Select it in the workflow list to inspect it.`] : []),
+                ...errors,
+            ];
+            if (findings.length) recovery = findings.join(" ");
+            if (id === item && run && recovery) statuses[run.phase].error = recovery;
             return { id, slug: config.userProvidesSlug ? slug : "",
                 label: name.trim() || "Unstarted workflow", pending: true,
-                status: run && !liveRuns.has(run.runId) && !["Completed", "Failed"].includes(run.status)
-                    ? "Unconfirmed" : run?.status ?? "Not started" };
-        });
-        const legacyDraft = (view.name || view.slug
-            || Object.keys(view.drafts).some((key) => key.startsWith('["__new__",')))
-            ? [{ id: "__new__", slug: config.userProvidesSlug ? view.slug : "",
-                label: view.name?.trim() || (config.userProvidesSlug && view.slug)
-                    || "Unstarted workflow", pending: true }] : [];
+                status: run?.status ?? "Not started",
+                hasWorkflowRunHistory: Boolean(run), workflowRecoveryMessage: recovery };
+        }));
         return { ...view, userProvidesSlug: config.userProvidesSlug,
             constitutionReady: !project || statuses[project.id].artifactAvailability === "available",
             autopilot: automation, showSetup: config.showSetup === true,
             selected: item, runs: undefined, tagMatches: undefined, values: undefined,
             name: pendingFor(item, view)?.name ?? view.name,
             slug: config.userProvidesSlug ? pendingFor(item, view)?.slug ?? view.slug : "",
-            phases, items: [...entries, ...legacyDraft, ...pending],
+            phases, items: [...entries, ...pending],
             statuses, valueFields: visibleValues, pageValues, valueErrors,
             ...(badges ? { badges } : {}),
             setup: config.runtimeSetup !== undefined || config.showSetup ? await setup.status()
@@ -479,24 +569,33 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         return { revision: state.revision, id };
     }
     async function removePending(input) {
-        if (!input || Object.keys(input).sort().join() !== "itemId,revision"
-            || !pendingId(input.itemId) || !Number.isSafeInteger(input.revision)) {
-            throw new UserError("Invalid unstarted workflow removal.");
-        }
-        const existing = await items();
-        await update((next) => {
+        validatePendingRemoval(input);
+        await update(async (next) => {
             if (input.revision !== next.revision) throw staleRevision("Canvas state changed in another panel. Refresh before removing this workflow.");
             const index = (next.pendingWorkflows ?? []).findIndex((entry) => entry.id === input.itemId);
             if (index < 0) throw new UserError("This unstarted workflow no longer exists.");
-            if (next.runs.some((run) => run.item === input.itemId && run.status !== "Failed")) {
-                throw new UserError("This row cannot be removed: a run may have created a workflow directory without reporting it, even if completed. Check chat and artifacts.");
+            const runs = next.runs.filter((run) => run.item === input.itemId);
+            if (runs.length && input.confirmation !== "discard") {
+                throw new UserError("Confirm Discard pending row before removing its run history.", 409);
             }
-            if (next.runs.some((run) => run.item === input.itemId && run.status === "Failed"
-                && existing.some((entry) => !run.before.includes(entry.id)
-                    && (!run.slug || entry.slug === run.slug
-                        || new RegExp(`^\\d+-${run.slug}$`).test(entry.slug))))) {
-                throw new UserError("A workflow directory may have been created by the failed run. Check its artifacts before removing this row.");
+            if (!runs.length && input.confirmation !== undefined) {
+                throw new UserError("This row has no run to discard.", 409);
             }
+            const events = runs.length ? await session.getEvents() : [];
+            for (const run of runs) {
+                if (runActivity(run, events) !== "ended") {
+                    throw new UserError("The agent turn has not ended. Check chat before discarding.", 409);
+                }
+                const discovered = await compareDirectories(run.before);
+                if (discovered.length) throw new UserError(
+                    `A workflow directory appeared: ${discovered.join(", ")}. Inspect it in the workflow list before discarding.`, 409);
+            }
+            for (const run of runs) {
+                if ((await compareDirectories(run.before)).length) {
+                    throw new UserError("A workflow directory appeared during the discard check. Inspect the workflow list.", 409);
+                }
+            }
+            const existing = await items();
             if (next.autopilot?.item === input.itemId
                 && (["Request sent", "Running", "Finishing"].includes(next.autopilot.status)
                     || (next.autopilot.status === "Blocked" && liveRuns.has(next.autopilot.id)))) {
@@ -883,15 +982,23 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             throw error;
         } finally { dispatching = false; }
     }
-    function reportingRun(input, instanceId) {
+    async function reportingRun(input, instanceId) {
         const run = state.runs.find((entry) => entry.runId === input?.phaseRunId);
-        if (!run || (!busy.value && !(run.autopilotId && liveRuns.has(run.autopilotId)))
+        let recoveredActive = false;
+        if (run && recoveryRuns.has(run.runId)) {
+            const events = await session.getEvents();
+            recoveredActive = !!run.messageId && phaseTurnState(events, run.messageId).active
+                && runActivity(run, events) === "active";
+            if (recoveredActive) liveRuns.add(run.runId);
+            else liveRuns.delete(run.runId);
+        }
+        if (!run || (!recoveredActive && !busy.value && !(run.autopilotId && liveRuns.has(run.autopilotId)))
             || !liveRuns.has(run.runId) || run.sessionId !== session.sessionId || run.instanceId !== instanceId
-            || ["Completed", "Failed"].includes(run.status)) throw new UserError("Unknown or stale phase reporting request.");
+            || ["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) throw new UserError("Unknown or stale phase reporting request.");
         return run;
     }
     async function reportSlug(input, instanceId) {
-        const run = reportingRun(input, instanceId);
+        const run = await reportingRun(input, instanceId);
         if (phaseFor(run.phase).project || (!newItem(run.item) && !run.confirmedSlug)) throw new UserError("Only a new workflow can report a directory slug.");
         if (!validSlug(input.slug)) throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
         if (run.confirmedSlug && run.slug !== input.slug) throw new UserError("This run already reported a different workflow directory.");
@@ -927,7 +1034,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 .filter(Boolean).map((path) => path.replace("<slug>", input.slug)) })) };
     }
     async function report(input, instanceId) {
-        const run = reportingRun(input, instanceId);
+        const run = await reportingRun(input, instanceId);
         const step = phaseFor(run.phase);
         let path, item;
         path = safePath(input.path);
@@ -981,18 +1088,37 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         await update((next) => {
             for (const run of next.runs) {
                 if (run.autopilotId) continue;
-                if (run.sessionId !== session.sessionId || !run.messageId || ["Completed", "Failed"].includes(run.status)) continue;
+                if (recoveryRuns.has(run.runId) && !run.messageId) {
+                    const matches = events.filter((event) => event.type === "user.message"
+                        && !event.agentId && !event.data?.parentToolCallId
+                        && typeof event.data?.content === "string"
+                        && event.data.content.includes(`phaseRunId:${JSON.stringify(run.runId)}`));
+                    if (matches.length === 1 && matches[0].data.messageId) {
+                        run.messageId = matches[0].data.messageId;
+                    } else {
+                        const activity = runActivity(run, events);
+                        run.status = activity === "active" ? "Running"
+                            : activity === "ended" ? "Run output unconfirmed" : "Unconfirmed";
+                        run.error = "The app restarted before this request could be tracked. Check chat. Once the session is idle, you can confirm Discard pending row if no workflow folder appeared.";
+                    }
+                }
+                if (run.sessionId !== session.sessionId || !run.messageId || run.status === "Failed"
+                    || run.status === "Completed" && (!newItem(run.item) || run.artifact || run.confirmedSlug)) continue;
                 const response = phaseResponse(events, run.messageId);
-                if (!response || response.success === undefined) {
-                    const started = busy.value && events.some((event) => event.type === "user.message"
-                        && event.data?.messageId === run.messageId);
-                    run.status = started ? "Running" : "Unconfirmed";
-                    run.error = started ? null : "No completed response is associated with this request yet. Check chat or refresh.";
+                const activity = runActivity(run, events);
+                if (activity === "active" || !response || response.success === undefined) {
+                    run.status = activity === "active" ? "Running" : activity === "ended" ? "Run output unconfirmed" : "Unconfirmed";
+                    run.error = activity === "active" ? null : activity === "ended"
+                        ? "This run ended without confirmed output. Retry the phase, close and reopen the app, or choose Discard pending row to remove this unfinished workflow without deleting files."
+                        : "No completed response is associated with this request yet. Check chat or refresh.";
                     continue;
                 }
-                run.status = response.success ? "Completed" : "Failed";
+                const reported = run.artifact || run.confirmedSlug || phaseFor(run.phase).project;
+                run.status = response.success ? reported || !newItem(run.item) ? "Completed" : "Run output unconfirmed" : "Failed";
                 if (response.success) run.completedAt ??= new Date().toISOString();
-                run.error = response.error ?? null;
+                run.error = run.status === "Run output unconfirmed"
+                    ? "This run ended without confirmed output. Retry the phase, close and reopen the app, or choose Discard pending row to remove this unfinished workflow without deleting files."
+                    : response.error ?? null;
             }
             const automation = next.autopilot;
             if (automation?.sessionId === session.sessionId && automation.messageId
@@ -1036,13 +1162,18 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }).catch(() => diagnostic("Could not persist the phase's running status. Check chat."));
         }));
         subscriptions.push(session.on("tool.execution_start", () => { busy.value = true; }));
+        subscriptions.push(session.on("assistant.turn_start", () => {
+            busy.value = true;
+        }));
         subscriptions.push(session.on("session.idle", () => {
             busy.value = false;
+            idleAfterRestart = true;
             reconcile = reconcile.then(capture).catch(() => diagnostic("Generated canvas response reconciliation failed; completion is unconfirmed."));
         }));
     }
     async function refresh() {
-        if (state.runs.some((entry) => entry.sessionId === session.sessionId && entry.messageId && !["Completed", "Failed"].includes(entry.status))) {
+        if (state.runs.some((entry) => requiresRecovery(entry)
+            && (entry.messageId || recoveryRuns.has(entry.runId)))) {
             reconcile = reconcile.then(capture);
             try { await reconcile; } catch (error) { reconcile = Promise.resolve(); throw error; }
         }
@@ -1067,7 +1198,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }
             if (state.runs.some((run) => (run.item === item.id
                 || (newItem(run.item) && !run.before.includes(item.id)))
-                && !["Completed", "Failed"].includes(run.status))) {
+                && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
             await deleteConfinedDirectory(cwd, item.id);
