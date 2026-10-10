@@ -13,6 +13,7 @@ plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/test-results/
 !.github/skills/dev-tools-speckit-wizard-installed-open/
 !.github/skills/dev-tools-speckit-wizard-local-generate-launch/
 !.github/skills/dev-tools-speckit-distribution/
+!.github/skills/dev-tools-speckit-clean-reset/
 *.backup-*
 tests/dev-tools/.scratch-*/
 specs/
