@@ -1,4 +1,6 @@
 import { isWindowsDeviceName, safePath, UserError } from "./files.mjs";
+import { validateValue } from "./contracts/external-value-provider.mjs";
+export { validateValue } from "./contracts/external-value-provider.mjs";
 
 const outputs = {
     constitution: ".specify/memory/constitution.md",
@@ -69,22 +71,6 @@ export function phaseContract(config) {
 
 const fieldId = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const moduleId = /^[a-z][a-z0-9-]{0,79}$/;
-
-export function validateValue(schema, value, id) {
-    const invalid = () => { throw new UserError(`Invalid value for ${id}.`); };
-    if (schema.type === "string") {
-        if (typeof value !== "string" || value.length > schema.maxLength
-            || value.length < (schema.minLength ?? 0)
-            || (schema.pattern && !new RegExp(schema.pattern).test(value))) invalid();
-    } else if (schema.type === "boolean") {
-        if (typeof value !== "boolean") invalid();
-    } else if (schema.type === "object") {
-        if (!value || typeof value !== "object" || Array.isArray(value)
-            || Object.keys(value).sort().join() !== Object.keys(schema.properties).sort().join()
-            || Object.entries(schema.properties).some(([key, options]) => !options.includes(value[key]))) invalid();
-    } else invalid();
-    return structuredClone(value);
-}
 
 export function valueContract(config) {
     const fields = config.valueSources ?? [];

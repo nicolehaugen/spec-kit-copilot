@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateBadges } from "../contracts/badges.mjs";
-import { validateBadgeSettings } from "../contracts/badge-definitions.mjs";
+import { validateBadges } from "../contracts/external-badges.mjs";
+import { validateBadgeSettings } from "../contracts/external-badge-definitions.mjs";
 
 const model = {
     phases: ["specify", "plan"],

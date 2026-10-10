@@ -30,91 +30,87 @@ export function renderStockPage(root, definition) {
             `<dt>${escapeHtml(label)}</dt><dd data-field-id="${escapeHtml(id)}"${textPlacements.some((item) =>
                 item.id === id && item.slot === "details.content")
                 ? ` data-stock-text="details.content" data-text-label="${escapeHtml(label)}"` : ""}>${escapeHtml(value)}</dd>`).join("")}</dl></section>`).join("");
-    root.innerHTML = `<section id="setup-surface" class="phase-card" aria-labelledby="setup-heading" hidden>
-        <div class="setup-copy"><h2 id="setup-heading">Set up this project</h2>
-        <p class="muted">Set up Spec Kit and install the selected presets, extensions, and bundles.</p></div>
-        <div id="setup-actions"></div><p id="setup-status" role="status" hidden></p>
-    </section>
-    <section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
-        <div class="instance-collection-head">
-            ${mainPageAsset
-                ? `<div class="collection-intro"><span data-stock-image="workflow.intro"
-                    data-image-file="${escapeHtml(mainPageAsset.file)}"
-                    data-image-alt="${escapeHtml(canvas.displayName)} logo"
-                    data-image-class="collection-logo generated-image"></span>${intro}</div>` : intro}
-            <button class="btn btn-secondary" id="new-workflow" type="button">New workflow</button>
-        </div>
-        <div id="workflow-identity" class="workflow-identity-fields" hidden>
-            <label class="field" for="workflow-name"><span class="field-label" id="workflow-name-label">Workflow name</span>
-                <input class="phase-input-control" id="workflow-name" type="text" maxlength="120"
-                    placeholder="Workflow 1" aria-describedby="workflow-name-help">
-                <span class="muted" id="workflow-name-help">Shown in the workflow list.</span></label>
-            <label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact directory slug</span>
-                <input class="phase-input-control" id="workflow-slug" type="text" maxlength="100"
-                    pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="workflow-1"
-                    aria-describedby="workflow-slug-help workflow-slug-error">
-                <span class="muted" id="workflow-slug-help">Leave blank to let Spec Kit choose the directory.
-                    Use lowercase, numbers, or hyphens.</span>
-                <span id="workflow-slug-error" class="workflow-error" role="alert" hidden></span></label>
-        </div>
-        ${hasBadges && definition.badgeDestinations.includes("workflow.summary")
-            ? '<div id="workflow-badge-summary" data-badge-slot="workflow.summary" class="canvas-badges" aria-label="Selected workflow badges" hidden></div>' : ""}
-        ${hasBadges ? '<p id="workflow-badge-diagnostics" class="muted" role="status" hidden></p>' : ""}
-        <label id="workflow-search-field" class="workflow-search" for="workflow-search" hidden>
-            <span class="visually-hidden">Search workflows</span>
-            <input id="workflow-search" type="search" placeholder="Search workflows by name or directory"></label>
-        <div id="workflow-list" class="instance-list">
-            <div id="workflow-rows" role="list" aria-labelledby="workflow-heading"${definition.badgeDestinations.includes("workflow.list")
-                ? ' data-badge-slot="workflow.list"' : ""}></div>
-            <p id="workflow-empty">No workflows yet.</p>
-        </div>
-        <p id="workflow-constitution-note" class="muted" hidden>Create a constitution to start a workflow.</p>
-        <p id="workflow-list-status" class="muted" role="status" hidden></p>
-        <p id="workflow-action-error" class="workflow-error" role="alert" hidden></p>
-    </section>
-    ${hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
-        <div class="constitution-summary"><strong>Constitution</strong><span class="muted">
-            Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span>
-            ${hasBadges && definition.badgeDestinations.includes("phase.card")
-                ? '<span id="constitution-badges" class="canvas-badges" aria-label="Constitution badges"></span>' : ""}
-        </div>
-        <div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p>
-            <p id="constitution-artifact-status" class="muted" role="status"></p>
-        </div>
-        <div class="constitution-actions">
-            ${hasBadges && definition.badgeDestinations.includes("phase.output")
-                ? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
-            <button class="btn btn-secondary" id="view-constitution" type="button"
-                aria-describedby="constitution-artifact-status" hidden>View</button>
-            <button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button>
-        </div></section>` : ""}
-    ${details}
-    ${hasValues ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
-    ${generatedControls.map(({ id, label, adapter, control, properties, value }) =>
-        `<section class="phase-card" aria-label="${escapeHtml(label)}">
-            <h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
-                data-field-label="${escapeHtml(label)}" data-control-type="${escapeHtml(control)}"
-                data-contract="${escapeHtml(JSON.stringify({ type: "object", properties }))}"
-                data-module="/controls/${escapeHtml(adapter)}.mjs"
-                data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("")}
-    <div id="workflow-pipeline" hidden></div>
-    ${fieldSlots.map((id) =>
-        `<section class="phase-card" data-workflow-slot="${escapeHtml(id)}"></section>`).join("")}
-    <dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title">
-        <h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2>
-        <p>This permanently deletes the selected workflow directory and everything in it:</p>
-        <p><code id="delete-workflow-directory"></code></p>
-        <footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow"
-            type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow"
-            type="button">Delete workflow</button></footer></dialog>
-    ${hasConstitution ? `<dialog id="constitution-dialog" aria-labelledby="constitution-dialog-title">
-        <h2 id="constitution-dialog-title">Create constitution</h2>
-        <label class="field" for="constitution-args"><span class="field-label" id="constitution-args-label">
-            Project principles</span><textarea class="phase-input-control" id="constitution-args" required></textarea></label>
-        <p id="constitution-message" role="status"></p><footer class="viewer-head">
-        <button class="btn btn-secondary" id="cancel-constitution" type="button">Cancel</button>
-        <button class="btn btn-primary" id="send-constitution" type="button">Create constitution</button>
-        </footer></dialog>` : ""}`;
+    root.innerHTML = `<section id="setup-surface" class="phase-card" aria-labelledby="setup-heading" hidden><div class="setup-copy"><h2 id="setup-heading">Set up this project</h2><p class="muted">Set up Spec Kit and install the selected presets, extensions, and bundles.</p></div><div id="setup-actions"></div><p id="setup-status" role="status" hidden></p></section>
+<section id="instance-collection" class="instance-collection" aria-labelledby="workflow-heading">
+<div class="instance-collection-head">
+${mainPageAsset
+? `<div class="collection-intro"><span data-stock-image="workflow.intro"
+data-image-file="${escapeHtml(mainPageAsset.file)}"
+data-image-alt="${escapeHtml(canvas.displayName)} logo"
+data-image-class="collection-logo generated-image"></span>${intro}</div>` : intro}
+<button class="btn btn-secondary" id="new-workflow" type="button">New workflow</button>
+</div>
+<div id="workflow-identity" class="workflow-identity-fields" hidden>
+<label class="field" for="workflow-name"><span class="field-label" id="workflow-name-label">Workflow name</span>
+<input class="phase-input-control" id="workflow-name" type="text" maxlength="120"
+placeholder="Workflow 1" aria-describedby="workflow-name-help">
+<span class="muted" id="workflow-name-help">Shown in the workflow list.</span></label>
+<label class="field" for="workflow-slug"><span class="field-label" id="workflow-slug-label">Artifact directory slug</span>
+<input class="phase-input-control" id="workflow-slug" type="text" maxlength="100"
+pattern="[a-z0-9]+(-[a-z0-9]+)*" placeholder="workflow-1"
+aria-describedby="workflow-slug-help workflow-slug-error">
+<span class="muted" id="workflow-slug-help">Leave blank to let Spec Kit choose the directory.
+Use lowercase, numbers, or hyphens.</span>
+<span id="workflow-slug-error" class="workflow-error" role="alert" hidden></span></label>
+</div>
+${hasBadges && definition.badgeDestinations.includes("workflow.summary")
+? '<div id="workflow-badge-summary" data-badge-slot="workflow.summary" class="canvas-badges" aria-label="Selected workflow badges" hidden></div>' : ""}
+${hasBadges ? '<p id="workflow-badge-diagnostics" class="muted" role="status" hidden></p>' : ""}
+<label id="workflow-search-field" class="workflow-search" for="workflow-search" hidden>
+<span class="visually-hidden">Search workflows</span>
+<input id="workflow-search" type="search" placeholder="Search workflows by name or directory"></label>
+<div id="workflow-list" class="instance-list">
+<div id="workflow-rows" role="list" aria-labelledby="workflow-heading"${definition.badgeDestinations.includes("workflow.list")
+? ' data-badge-slot="workflow.list"' : ""}></div>
+<p id="workflow-empty">No workflows yet.</p>
+</div>
+<p id="workflow-constitution-note" class="muted" hidden>Create a constitution to start a workflow.</p>
+<p id="workflow-list-status" class="muted" role="status" hidden></p>
+<p id="workflow-action-error" class="workflow-error" role="alert" hidden></p>
+</section>
+${hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
+<div class="constitution-summary"><strong>Constitution</strong><span class="muted">
+Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span>
+${hasBadges && definition.badgeDestinations.includes("phase.card")
+? '<span id="constitution-badges" class="canvas-badges" aria-label="Constitution badges"></span>' : ""}
+</div>
+<div class="constitution-details"><p id="constitution-prerequisite">Set the principles that guide every workflow in this project.</p>
+<p id="constitution-artifact-status" class="muted" role="status"></p>
+</div>
+<div class="constitution-actions">
+${hasBadges && definition.badgeDestinations.includes("phase.output")
+? '<span id="constitution-output-badges" class="canvas-badges" aria-label="Constitution output badges"></span>' : ""}
+<button class="btn btn-secondary" id="view-constitution" type="button"
+aria-describedby="constitution-artifact-status" hidden>View</button>
+<button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button>
+</div></section>` : ""}
+${details}
+${hasValues ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
+${generatedControls.map(({ id, label, adapter, control, properties, value }) =>
+`<section class="phase-card" aria-label="${escapeHtml(label)}">
+<h2>${escapeHtml(label)}</h2><div data-control-id="${escapeHtml(id)}"
+data-field-label="${escapeHtml(label)}" data-control-type="${escapeHtml(control)}"
+data-contract="${escapeHtml(JSON.stringify({ type: "object", properties }))}"
+data-module="/controls/${escapeHtml(adapter)}.mjs"
+data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("")}
+<div id="workflow-pipeline" hidden></div>
+${fieldSlots.map((id) =>
+`<section class="phase-card" data-workflow-slot="${escapeHtml(id)}"></section>`).join("")}
+<dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title">
+<h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2>
+<p>This permanently deletes the selected workflow directory and everything in it:</p>
+<p><code id="delete-workflow-directory"></code></p>
+<footer class="viewer-head"><button class="btn btn-secondary" id="cancel-delete-workflow"
+type="button">Cancel</button><button class="btn btn-danger" id="confirm-delete-workflow"
+type="button">Delete workflow</button></footer></dialog>
+${hasConstitution ? `<dialog id="constitution-dialog" aria-labelledby="constitution-dialog-title">
+<h2 id="constitution-dialog-title">Create constitution</h2>
+<label class="field" for="constitution-args"><span class="field-label" id="constitution-args-label">
+Project principles</span><textarea class="phase-input-control" id="constitution-args" required></textarea></label>
+<p id="constitution-message" role="status"></p><footer class="viewer-head">
+<button class="btn btn-secondary" id="cancel-constitution" type="button">Cancel</button>
+<button class="btn btn-primary" id="send-constitution" type="button">Create constitution</button>
+</footer></dialog>` : ""}`;
 }
 
 export function mount({ root, definition, state, actions }) {
@@ -239,10 +235,23 @@ export function mount({ root, definition, state, actions }) {
             }
             if (notice) { notice.textContent = entry.status === "Completed" ? "" : entry.status ?? "Not started";
                 notice.hidden = !entry.pending || entry.status === "Completed"; }
+            select.title = entry.pending ? entry.workflowRecoveryMessage ?? "" : "";
+            let recovery = select.querySelector(".recovery-note");
+            if (entry.pending && entry.workflowRecoveryMessage && !recovery) {
+                recovery = document.createElement("span");
+                recovery.className = "recovery-note";
+                select.append(recovery);
+            }
+            if (recovery) {
+                recovery.textContent = entry.workflowRecoveryMessage ?? "";
+                recovery.hidden = !entry.pending || !entry.workflowRecoveryMessage;
+            }
             const remove = row.querySelector(".instance-delete");
-            remove.hidden = entry.id === "__new__";
-            remove.textContent = entry.pending ? "Remove" : "Delete";
-            remove.setAttribute("aria-label", `${remove.textContent} ${entry.label}`);
+            const discard = entry.pending && entry.hasWorkflowRunHistory;
+            remove.hidden = entry.id === "__new__" || discard
+                && !["Completed", "Failed", "Run output unconfirmed"].includes(entry.status);
+            remove.textContent = discard ? "Discard pending row" : entry.pending ? "Remove" : "Delete";
+            remove.ariaLabel = `${remove.textContent} ${entry.label}`;
         }
         const editor = workflowIdentity;
         editor.hidden = !model.items.some((item) => item.id === model.selected && item.pending);

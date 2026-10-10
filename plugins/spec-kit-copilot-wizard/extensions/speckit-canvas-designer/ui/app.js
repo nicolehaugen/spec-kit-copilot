@@ -797,7 +797,7 @@ try {
         import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
         import(`/ui/output-evidence.js?token=${encodeURIComponent(token)}`),
         import(`/ui/badges-control.js?token=${encodeURIComponent(token)}`),
-        import(`/ui/control-adapter-contract.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/external-control-adapter-contract.js?token=${encodeURIComponent(token)}`),
     ]);
     const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);

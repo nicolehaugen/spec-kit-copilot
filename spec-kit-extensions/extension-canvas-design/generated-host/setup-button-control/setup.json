@@ -1,5 +1,5 @@
 {
-  "$schema": "../../schemas/generated.button-placement.schema.json",
+  "$schema": "../../schemas/external-generated.button-placement.schema.json",
   "schemaVersion": 1,
   "id": "generated-setup-button",
   "page": "setup",

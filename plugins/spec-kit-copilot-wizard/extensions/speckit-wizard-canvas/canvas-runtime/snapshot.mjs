@@ -51,6 +51,7 @@
 
 
 import { PHASE_ORDER } from "./wizard-phases.mjs";
+import { createFeatureFlags } from "../contracts/generate-feature.mjs";
 import { scanWorkspace } from "../project-scanner.mjs";
 import { buildStateSnapshot } from "./snapshot-builder.mjs";
 import { applyPatch, overlayCachedComposition, activeFingerprint } from "../state/store.mjs";
@@ -167,9 +168,7 @@ export async function snapshot(inst) {
     // /api/skills/reload) so the UI can gate setup completion on the
     // live SDK result rather than a persisted flag or a folder probe.
     snap.skillsReload = inst.skillsReload ?? null;
-    snap.featureFlags = {
-        generateCanvas: inst.generateCanvas === true,
-    };
+    snap.featureFlags = createFeatureFlags(inst.generateCanvas ?? false);
     inst.state = applyPatch(inst.state ?? {}, {
         currentPhase: scan.currentPhase,
         preset: scan.preset,

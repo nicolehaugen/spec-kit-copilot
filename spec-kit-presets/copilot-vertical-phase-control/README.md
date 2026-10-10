@@ -9,8 +9,9 @@ without the design-time preset installed.
 
 In local development, add it from this checkout using
 `specify preset add --dev ./spec-kit-presets/copilot-vertical-phase-control`.
-After its versioned release is published, register the repository's preset
-catalog with `--install-allowed` and use
+For the staging release, register
+`https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-presets/catalog.json`
+as `spec-kit-staging` with `--install-allowed` and use
 `specify preset add copilot-vertical-phase-control`.
 
 Each step can be started manually. Autopilot asks the attached Copilot session

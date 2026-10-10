@@ -3,9 +3,14 @@
 A Spec Kit extension that supplies settings pages, a page-loading command,
 and separate commands to generate and open workflow canvases for the Copilot Designer.
 
+See [External customization contracts](EXTERNAL-CONTRACTS.md) for the definition
+schemas, executable interfaces, host consumers, and boundary tests. `external-`
+filenames identify contributor-facing contracts; unprefixed internal contracts
+continue to govern host operations, persistence, transport, and integrity.
+
 ## What It Does
 
-Canvas Design **0.1.19** registers four JSON page templates, fifteen ordered
+Canvas Design **0.1.20** registers four JSON page templates, fifteen ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition, phase control definition with its required placement,
@@ -171,6 +176,38 @@ Without one, Specify chooses the artifact directory. No directory is created unt
 Specify runs; its scripts may add a numeric prefix to the actual directory name.
 New stays available while editing, and Remove discards an unstarted row without
 deleting any directory. Pending rows and their phase drafts survive a reload.
+An external extension reload during a phase can interrupt reporting. A live turn
+remains Running; a finished turn without a reported directory is marked Run output unconfirmed.
+Recovered runs can report directories and artifacts only while their matched
+turn is active; reporting rechecks that evidence and rejects ended turns.
+An ended Run output unconfirmed does not block the existing confirmed Delete
+action for a discovered workflow directory. Metadata-only discard still refuses
+to remove a row when a directory appeared.
+The host-to-Workflow-page contract in `generated-scaffold/contracts/external-host-adapter.mjs`
+defines pending rows' `hasWorkflowRunHistory` (boolean), `workflowRecoveryMessage`
+(string or null), and `status` (Not started, Request sent, Running, Unconfirmed,
+Run output unconfirmed, Completed, or Failed). Recovery messages explain discovered
+folders or inconclusive checks; they do not authorize deletion.
+If a restart loses the dispatch message ID, the host first tries to recover it
+from the unique run ID in the dispatched prompt. Otherwise it shows Run output
+unconfirmed and permits confirmed metadata discard only after observing session
+idle in the restarted host, while still requiring all directory safety checks.
+New session activity blocks discard again; the host never treats an untracked
+dispatch as proof that no prompt was sent.
+Recovered tracked runs also become Run output unconfirmed after an observed
+session idle when no terminal response or turn-end event is available. New
+activity blocks discard again. Recovery messages share one verified directory
+inventory per snapshot; discard always performs fresh directory safety checks.
+One restart eligibility rule includes unfinished runs and Completed pending runs
+without reported output. Reconciliation and discard share the same active,
+ended, or unknown activity decision; unknown activity blocks discard, and a
+new matching turn clears the previous turn's ended state.
+After the turn ends, a run-backed row offers a confirmed Discard pending row action.
+This checks all configured workflow roots against the pre-run snapshot, including
+empty directories, and removes only the pending row, drafts, and run history when
+no directory appeared. A new or unsafe directory blocks discard and its path is
+shown for inspection in the workflow list. The app cannot prevent externally
+initiated extension reloads; its existing skill reload behavior is unchanged.
 Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
 Deletion verifies the directory and its parent, moves it to a temporary
@@ -242,9 +279,9 @@ the phase card or changing other phases. Project-scoped Constitution does not
 support generated phase confirmations. Autopilot cannot start when any workflow
 phase has a generated confirmation binding; run those phases manually instead.
 
-The named contracts are `schemas/generated.dialog-definition.schema.json`,
-`generated.phase-dialog-binding.schema.json`, `generated.button-control-definition.schema.json`,
-and `generated.button-placement.schema.json`. A dialog adapter exports
+The named contracts are `schemas/external-generated.dialog-definition.schema.json`,
+`external-generated.phase-dialog-binding.schema.json`, `external-generated.button-control-definition.schema.json`,
+and `external-generated.button-placement.schema.json`. A dialog adapter exports
 `dialogId = "stock.dialog"`, `contractVersion = 1`, and
 `mount({root, definition, context, onDecision})`, returning an instance (or a
 promise of one) with a decision promise (`confirmed` or `cancelled`) and `dispose()`.
@@ -474,7 +511,7 @@ alone does not add a fifth placement choice.
 
 Installing this extension does not install or open a Designer. The Designer
 contract is the `schemaVersion.const` in
-`schemas/designer.tab-definition.schema.json` (currently `1`). Bump that
+`schemas/external-designer.tab-definition.schema.json` (currently `1`). Bump that
 schema version and coordinate with the Designer provider when changing its
 supported interface; the extension release version alone does not establish
 compatibility.
@@ -485,21 +522,20 @@ compatibility.
 discovery-only by default; `--install-allowed` permits installation:
 
 ```powershell
-specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json --name spec-kit-copilot --install-allowed
+specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-extensions/catalog.json --name spec-kit-staging --install-allowed
 specify extension add extension-canvas-design
 ```
 
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.19/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.20/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
-The current 0.1.19 catalog still advertises two commands; the hosted archive
-has not been verified to include `open-generated`. This worktree-only split is not ready
-for the default hosted Generate/Open path until a coordinated release is
-published and verified against the catalog-selected archive.
+The staging catalog advertises all three commands. Verify the published
+archive selected by the staging catalog before treating hosted Generate/Open
+as release-ready.
 For a new Copilot project, initialize it first:
 
 ```powershell
@@ -648,7 +684,7 @@ code.
 The Designer, generator, and standalone generated app apply the same object
 contract and value rules: 1-10 named properties, each with 1-20 distinct,
 nonempty string options of at most 80 characters. The canonical
-`generated-scaffold/control-contract.mjs` is copied into generated apps;
+`generated-scaffold/external-control-contract.mjs` is copied into generated apps;
 the Wizard provider includes a byte-checked copy, without a runtime dependency
 on the design-time extension.
 The browser reports incompatible `controlId` or `valueContract` exports,
@@ -683,11 +719,15 @@ and packaged workflow UI, theme, routes, and runtime modules into a new
 `.github/extensions/<canvas-id>/` directory, alongside the frozen configuration.
 The entry point uses `joinSession` and `createCanvas` to register actions and a
 loopback HTTP server with open/close lifecycle handling. Generation does not call
-`create-canvas` or rewrite an SDK scaffold. It stages and validates the completed extension before moving it into place.
+`create-canvas` or rewrite an SDK scaffold. It writes directly into the final
+directory without staging-directory renames.
 An existing target stops generation unless the Designer confirms a recognizable
 same-handoff target and passes its prior request ID; confirmed regeneration
-replaces that folder, including manual edits, with rollback on failure. Publishing
-and rollback refuse an occupied destination, including an empty directory.
+clears and rebuilds that directory in place, including manual edits, without
+backup or rollback. New creation refuses any occupied destination, including an
+empty directory. Failed generation removes its owned output so Generate can be
+retried; failed regeneration does not restore the previous canvas. Cleanup
+failures report the target path and error for inspection.
 Designer saves settings before dispatching Generate, then restores editing
 after the bounded submission. The entry point is written only after syntax
 and render validation succeeds. Generate does not reload or open the canvas.
@@ -707,29 +747,29 @@ not the JSON document. No kind is inferred from a filename.
 
 | Kind | Shape | JSON Schema |
 | --- | --- | --- |
-| `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
-| `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
-| `generated.workflow-page-definition` | Required generated Workflow page, adapter reference, and supported destinations | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `designer.tab-definition` | Required or added Designer tab | [tab](schemas/external-designer.tab-definition.schema.json) |
+| `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/external-designer.setting-definition.schema.json) |
+| `generated.workflow-page-definition` | Required generated Workflow page, adapter reference, and supported destinations | [Workflow page](schemas/external-generated.workflow-page-definition.schema.json) |
 | `generated.workflow-page-adapter` | Replaceable whole Workflow-page `.mjs` presentation | Module contract below |
-| `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/generated.field-placement.schema.json) |
-| `generated.phase-control-definition` | Required phase identity, placement, adapter reference, and optional phase view labels | [phase control](schemas/generated.phase-control-definition.schema.json) |
+| `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/external-generated.field-placement.schema.json) |
+| `generated.phase-control-definition` | Required phase identity, placement, adapter reference, and optional phase view labels | [phase control](schemas/external-generated.phase-control-definition.schema.json) |
 | `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
-| `designer.badges-settings-definition` | Complete replaceable badge type list and default appearance, shared by Designer and generated canvases | [badges settings](schemas/designer.badges-settings-definition.schema.json) |
-| `generated.badge-rule-definition` | Evidence inputs, badge text placeholders, and evaluator reference | [badge rule](schemas/generated.badge-rule-definition.schema.json) |
+| `designer.badges-settings-definition` | Complete replaceable badge type list and default appearance, shared by Designer and generated canvases | [badges settings](schemas/external-designer.badges-settings-definition.schema.json) |
+| `generated.badge-rule-definition` | Evidence inputs, badge text placeholders, and evaluator reference | [badge rule](schemas/external-generated.badge-rule-definition.schema.json) |
 | `generated.badge-rule-adapter` | Self-contained `.mjs` evaluator | Module contract below |
-| `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
+| `generated.added-page-definition` | Generated-only page | [generated page](schemas/external-generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
-| `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
+| `shared.control-definition` | Shared typed control | [shared control](schemas/external-shared.control-definition.schema.json) |
 | `designer.control-adapter` | Designer `.mjs` control adapter | Module contract below |
 | `generated.control-adapter` | Generated `.mjs` control adapter | Module contract below |
-| `generated.value-definition` | Generated constant or computed value | [generated value](schemas/generated.value-definition.schema.json) |
+| `generated.value-definition` | Generated constant or computed value | [generated value](schemas/external-generated.value-definition.schema.json) |
 | `generated.computed-value-provider` | Generated `.mjs` provider | Module contract below |
-| `generated.dialog-definition` | Named dialog content and decision labels | [dialog](schemas/generated.dialog-definition.schema.json) |
+| `generated.dialog-definition` | Named dialog content and decision labels | [dialog](schemas/external-generated.dialog-definition.schema.json) |
 | `generated.dialog-adapter` | Generated `.mjs` dialog presentation | Module contract below |
-| `generated.phase-dialog-binding` | Optional per-phase dialog reference | [phase binding](schemas/generated.phase-dialog-binding.schema.json) |
-| `generated.button-control-definition` | Named button identity and adapter reference | [button control](schemas/generated.button-control-definition.schema.json) |
+| `generated.phase-dialog-binding` | Optional per-phase dialog reference | [phase binding](schemas/external-generated.phase-dialog-binding.schema.json) |
+| `generated.button-control-definition` | Named button identity and adapter reference | [button control](schemas/external-generated.button-control-definition.schema.json) |
 | `generated.button-adapter` | Generated `.mjs` button presentation | Module contract below |
-| `generated.button-placement` | Setup or workflow button placement and action | [button placement](schemas/generated.button-placement.schema.json) |
+| `generated.button-placement` | Setup or workflow button placement and action | [button placement](schemas/external-generated.button-placement.schema.json) |
 
 Each JSON kind has a matching schema filename. The four required tabs are
 identified by their registered names; added tabs use the same document shape.

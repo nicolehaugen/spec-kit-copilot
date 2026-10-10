@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { mount, pageId, contractVersion, renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
-import { validateWorkflowPageState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
+import { validateWorkflowPageState } from "../extension-canvas-design/generated-scaffold/contracts/external-host-adapter.mjs";
+
+test("stock Workflow adapter stays within the packaged module byte limit", async () => {
+    const bytes = await readFile(new URL(
+        "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs",
+        import.meta.url));
+    assert.ok(bytes.length <= 32 * 1024, `Workflow adapter is ${bytes.length} bytes`);
+    const windowsBytes = Buffer.byteLength(bytes.toString("utf8").replace(/\r?\n/g, "\r\n"));
+    assert.ok(windowsBytes <= 32 * 1024, `Windows Workflow adapter is ${windowsBytes} bytes`);
+});
 
 test("stock adapter owns setup, constitution, values, phase and contributed markup", () => {
     const root = { innerHTML: "" };
@@ -245,6 +255,35 @@ test("Workflow page state requires a boolean slug setting and supports both mode
     assert.throws(() => validateWorkflowPageState({
         model: { userProvidesSlug: false }, phaseState: { slugEditable: true },
     }), /slug settings disagree/);
+});
+
+test("Workflow page contract validates pending recovery before a replacement adapter receives it", () => {
+    const received = [];
+    const replacement = { update: (state) => received.push(state.model.items[0]) };
+    const row = { id: "__new__:1", pending: true, hasWorkflowRunHistory: true,
+        workflowRecoveryMessage: "Inspect specs/001-demo.", status: "Run output unconfirmed" };
+    const state = (item) => ({ model: { userProvidesSlug: false, items: [item] },
+        phaseState: { slugEditable: false } });
+    for (const status of ["Not started", "Request sent", "Running", "Unconfirmed",
+        "Run output unconfirmed", "Completed", "Failed"]) {
+        replacement.update(validateWorkflowPageState(state({ ...row, status })));
+    }
+    replacement.update(validateWorkflowPageState(state({ ...row,
+        hasWorkflowRunHistory: false, workflowRecoveryMessage: null, status: "Not started" })));
+    assert.equal(received.length, 8);
+    for (const invalid of [
+        ...[undefined, null, "true", 1].map((hasWorkflowRunHistory) =>
+            ({ ...row, hasWorkflowRunHistory })),
+        ...[undefined, false, 42, {}].map((workflowRecoveryMessage) =>
+            ({ ...row, workflowRecoveryMessage })),
+        ...[undefined, null, "Unknown"].map((status) => ({ ...row, status })),
+    ]) {
+        assert.throws(() => replacement.update(validateWorkflowPageState(state(invalid))),
+            /invalid pending workflow recovery/);
+    }
+    assert.equal(received.length, 8);
+    assert.throws(() => validateWorkflowPageState({ ...state(row),
+        model: { userProvidesSlug: false, items: "invalid" } }), /items must be an array/);
 });
 
 test("Workflow page contract validates project badges before a replacement adapter receives them", () => {

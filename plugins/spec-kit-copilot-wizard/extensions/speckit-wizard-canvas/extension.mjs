@@ -27,6 +27,8 @@ import { createBootTracker } from "./canvas-runtime/boot-progress.mjs";
 // `extension.yml` / `.registry` here; catalog interpretation belongs to the
 // skills and scanner.
 import { fetchSessionRepoPath, resolveWorkspace, resolveGenerateCanvas } from "./env/workspace.mjs";
+import { runtimeSettings } from "./env/runtime-settings.mjs";
+import { generateCanvasInputSchema } from "./contracts/generate-feature.mjs";
 import { fsDeps, sessionState, getInstance, allInstances, sessionAdapter, setSession, getSession } from "./canvas-runtime/instances.mjs";
 import { ensureEnvProbe } from "./env/probe-cache.mjs";
 import { startStateWatcher, stopStateWatcher, startArtifactWatcher, stopArtifactWatcher } from "./canvas-runtime/watchers.mjs";
@@ -70,11 +72,8 @@ const instances = allInstances();
 // --------------------------- canvas open / close ---------------------------
 async function onOpen(ctx) {
     const inst = getInstance(ctx.instanceId);
+    inst.generateCanvas = resolveGenerateCanvas(inst, ctx, runtimeSettings.generateCanvasEnabled);
     inst._session = getSession();
-    // Preserve a previously-set flag across a reopen/focus call that omits
-    // `generateCanvas` (e.g. a focus-only open_canvas used just to invoke an
-    // action) — only an explicit value in this call's input should change it.
-    inst.generateCanvas = resolveGenerateCanvas(inst, ctx);
     // If the session repo path wasn't captured at startup (race), try once more.
     if (!sessionState.repoPath && getSession()) {
         sessionState.repoPath = await fetchSessionRepoPath(getSession());
@@ -364,7 +363,7 @@ setSession(await joinSession({
                 type: "object",
                 properties: {
                     cwd: { type: "string", description: "Workspace directory. Defaults to the session's cwd." },
-                    generateCanvas: { type: "boolean", description: "Show the experimental Generate canvas button. Defaults to false." },
+                    generateCanvas: generateCanvasInputSchema,
                 },
             },
             actions: ACTIONS,

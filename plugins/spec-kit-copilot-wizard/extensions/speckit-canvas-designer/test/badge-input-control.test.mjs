@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveBadgeInputControls, validateBadgeInputBinding,
-    validateBadgeInputControl } from "../contracts/badge-input-control.mjs";
-import { validateBadges } from "../contracts/badges.mjs";
-import { mountBadgeInputAdapter } from "../ui/control-adapter-contract.js";
+    validateBadgeInputControl } from "../contracts/external-badge-input-control.mjs";
+import { validateBadges } from "../contracts/external-badges.mjs";
+import { mountBadgeInputAdapter } from "../ui/external-control-adapter-contract.js";
 
 const entry = (kind, name, document) => ({ kind, name, sourceId: "fixture", document });
 const rule = entry("generated.badge-rule-definition", "fixture-rule", {

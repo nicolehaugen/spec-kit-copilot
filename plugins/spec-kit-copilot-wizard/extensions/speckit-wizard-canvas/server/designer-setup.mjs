@@ -11,9 +11,10 @@ import { promisify } from "node:util";
 import { load, JSON_SCHEMA } from "js-yaml";
 import { readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerOpenInputSchema } from "../../speckit-canvas-designer/contracts/host-open.mjs";
-import { checkSchema } from "../../speckit-canvas-designer/contracts/design-contributions.mjs";
+import { checkSchema } from "../../speckit-canvas-designer/contracts/external-design-contributions.mjs";
 import { normalizeInstalledWorkflowInventory } from "../contracts/specify-inventory.mjs";
 import { specifySpawnOptions } from "../env/specify-invocation.mjs";
+import { runtimeSettings } from "../env/runtime-settings.mjs";
 import { prepareHandoff, preflight, verifyHostedCanvasDesign, verifyLocalInstall } from "./designer-launch-check.mjs";
 import { validateLocalSource } from "./designer-local-sources.mjs";
 
@@ -21,8 +22,8 @@ const exec = promisify(execFile);
 const CLI = process.platform === "win32" ? "specify.exe" : "specify";
 const BASE = "extension-canvas-design";
 const CATALOGS = [
-    ["extension", "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json"],
-    ["preset", "https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-presets/catalog.json"],
+    ["extension", runtimeSettings.catalogs.copilot.extensions],
+    ["preset", runtimeSettings.catalogs.copilot.presets],
 ];
 const GROUP = { presets: "preset", extensions: "extension", bundles: "bundle" };
 const WARNING = /(?:^|\n)[^\n]*(?:no base command layer|composition[^\n]*\b(?:warning|incomplete|failed)\b)[^\n]*/i;
@@ -429,7 +430,7 @@ async function registerCatalog(project, kind, url, command) {
     if (text !== undefined) {
         const parsed = load(text, { schema: JSON_SCHEMA });
         if (!Array.isArray(parsed?.catalogs)) throw new Error(`Invalid ${kind} catalog configuration`);
-        const existing = parsed.catalogs.find((entry) => entry.name === "spec-kit-copilot");
+        const existing = parsed.catalogs.find((entry) => entry.name === runtimeSettings.copilotCatalogName);
         if (existing) {
             if (existing.url !== url || existing.install_allowed !== true) {
                 throw new Error(`Existing ${kind} catalog differs from the approved source`);
@@ -437,7 +438,7 @@ async function registerCatalog(project, kind, url, command) {
             return;
         }
     }
-    await command([kind, "catalog", "add", url, "--name", "spec-kit-copilot", "--install-allowed"]);
+    await command([kind, "catalog", "add", url, "--name", runtimeSettings.copilotCatalogName, "--install-allowed"]);
 }
 
 export async function verifyComposedLoadPage(project, command) {

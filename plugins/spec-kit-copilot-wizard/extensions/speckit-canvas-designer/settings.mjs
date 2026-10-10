@@ -5,9 +5,9 @@ import { dirname, join } from "node:path";
 import { fixedConstitutionOutputs, handoffDirectory, validateConfirmedOutputs,
     validatePhaseOutputs } from "./handoff.mjs";
 import { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues, validateSavedSettings,
-    validateSaveRequest } from "./contracts/designer-settings.mjs";
+    validateSavedSettingsMetadata, validateSaveRequest } from "./contracts/designer-settings.mjs";
 export { SETTINGS_LIMIT, SAVE_REQUEST_LIMIT, validateValues } from "./contracts/designer-settings.mjs";
-import { validateBadges } from "./contracts/badges.mjs";
+import { validateBadges } from "./contracts/external-badges.mjs";
 
 const saves = new Map();
 export const initialOutputs = (handoff) => fixedConstitutionOutputs(
@@ -37,7 +37,7 @@ async function settingsPath(workspacePath, handoff) {
     return join(folder, "settings.json");
 }
 
-async function readSettings(path, handoff, model, openFile = open) {
+async function readSettings(path, handoff, openFile = open) {
     let file;
     try {
         file = await openFile(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)
@@ -79,16 +79,7 @@ async function readSettings(path, handoff, model, openFile = open) {
     } finally {
         await file.close();
     }
-    validateSavedSettings(record, handoff, model);
-    if (record.outputs !== undefined) {
-        validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases, true);
-    }
-    if (record.badges !== undefined) {
-        const pipeline = initialOutputs(handoff);
-        validateBadges(record.badges, { ...model, phases: handoff.workflow.selectedPhases,
-            outputs: record.outputs
-            ? restorePipelineOutputs(record.outputs, pipeline) : pipeline });
-    }
+    validateSavedSettingsMetadata(record, handoff);
     return record;
 }
 
@@ -104,7 +95,13 @@ async function assertTemporaryFile(file, path, folder) {
 
 export async function loadDesignerSettings(workspacePath, handoff, model, openFile = open) {
     const record = await readSettings(await settingsPath(workspacePath, handoff),
-        handoff, model, openFile);
+        handoff, openFile);
+    if (record) {
+        validateSavedSettings(record, handoff, model);
+        if (record.outputs !== undefined) {
+            validatePhaseOutputs(record.outputs, handoff.workflow.selectedPhases, true);
+        }
+    }
     const pipeline = initialOutputs(handoff);
     const outputs = record?.outputs ? restorePipelineOutputs(record.outputs, pipeline) : pipeline;
     validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases, pipeline);
@@ -115,11 +112,11 @@ export async function loadDesignerSettings(workspacePath, handoff, model, openFi
 }
 
 export async function freshDesignerSettings(workspacePath, handoff, model) {
-    const saved = await loadDesignerSettings(workspacePath, handoff, model);
+    const saved = await readSettings(await settingsPath(workspacePath, handoff), handoff);
     const outputs = initialOutputs(handoff);
     const badges = validateBadges(model.badges ?? [],
         { ...model, phases: handoff.workflow.selectedPhases, outputs });
-    return { ...model, outputs, badges, settingsRevision: saved.settingsRevision,
+    return { ...model, outputs, badges, settingsRevision: saved?.revision ?? 0,
         persisted: false };
 }
 
@@ -134,7 +131,7 @@ export async function saveDesignerSettings(workspacePath, handoff, model, reques
     const path = await settingsPath(workspacePath, handoff);
     const prior = saves.get(path) ?? Promise.resolve();
     const work = prior.catch(() => {}).then(async () => {
-        const current = await readSettings(path, handoff, model);
+        const current = await readSettings(path, handoff);
         if (request.revision !== (current?.revision ?? 0)) {
             throw new Error("Designer settings changed elsewhere. Copy any unsaved edits, then close and reopen Designer before saving.");
         }

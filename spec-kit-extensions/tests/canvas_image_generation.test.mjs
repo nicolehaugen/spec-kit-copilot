@@ -308,13 +308,13 @@ test("generated host adapter route rejects linked and oversized packaged files a
         server.closeAllConnections();
         return new Promise((resolve) => server.close(resolve));
     });
-    const url = `http://127.0.0.1:${server.address().port}/contracts/host-adapter.mjs?token=secret`;
+    const url = `http://127.0.0.1:${server.address().port}/contracts/external-host-adapter.mjs?token=secret`;
     assert.equal((await fetch(url)).status, 200);
     const contracts = join(sdk, "contracts");
-    const adapter = join(contracts, "host-adapter.mjs");
-    const original = join(sdk, "original-host-adapter.mjs");
+    const adapter = join(contracts, "external-host-adapter.mjs");
+    const original = join(sdk, "original-external-host-adapter.mjs");
     await t.test("file symlink", async (subtest) => {
-        const outside = join(workspace, "outside-host-adapter.mjs");
+        const outside = join(workspace, "outside-external-host-adapter.mjs");
         await writeFile(outside, "private outside package");
         await rename(adapter, original);
         try {
@@ -339,7 +339,7 @@ test("generated host adapter route rejects linked and oversized packaged files a
         const originalDirectory = join(sdk, "original-contracts");
         const outside = join(workspace, "outside-contracts");
         await mkdir(outside);
-        await writeFile(join(outside, "host-adapter.mjs"), "private outside package");
+        await writeFile(join(outside, "external-host-adapter.mjs"), "private outside package");
         await rename(contracts, originalDirectory);
         let linked = false;
         try {

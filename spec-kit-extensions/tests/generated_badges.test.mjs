@@ -27,7 +27,7 @@ await cp(presetEvaluator, join(generated, "badges", "badge-rule-test-phase-adapt
 const { evaluateBadges, validateBadges, verifyBadgeModules } =
     await import(pathToFileURL(join(generated, "badge-runtime.mjs")).href);
 const { validateWorkflowPageState } =
-    await import(pathToFileURL(join(generated, "contracts", "host-adapter.mjs")).href);
+    await import(pathToFileURL(join(generated, "contracts", "external-host-adapter.mjs")).href);
 const { createRuntime } = await import(pathToFileURL(join(generated, "runtime.mjs")).href);
 const { countMarkdownDirectory } = await import(pathToFileURL(join(generated, "files.mjs")).href);
 const { readBoundedWithMetadata } = await import(pathToFileURL(join(generated, "files.mjs")).href);

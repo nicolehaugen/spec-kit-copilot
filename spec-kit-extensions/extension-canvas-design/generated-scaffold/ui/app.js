@@ -1,9 +1,15 @@
+const { validateStockTextAdapter, validateGeneratedControl, validatePlacedControl,
+    validatePageRenderer } = await import(
+    `/contracts/external-generated-controls.mjs${new URL(import.meta.url).search}`);
+const { validateDialogAdapter, validateDialogInstance, validateDialogDecision,
+    validateButtonAdapter, validateButtonInstance } = await import(
+    `/contracts/external-dialog-button.mjs${new URL(import.meta.url).search}`);
 const { renderMarkdown } = await import(`./markdown.mjs${new URL(import.meta.url).search}`);
 const { mountPageAssets, createStockImageRenderer } = await import(
     `./page-assets.mjs${new URL(import.meta.url).search}`);
 const { validatePhaseAdapter, validatePhaseMount, validatePhaseState,
-    validateWorkflowPageState } = await import(
-    `/contracts/host-adapter.mjs${new URL(import.meta.url).search}`);
+    validateWorkflowPageState, validateWorkflowAdapter, validateWorkflowMount } = await import(
+    `/contracts/external-host-adapter.mjs${new URL(import.meta.url).search}`);
 const token = new URL(location.href).searchParams.get("token");
 const imageRegistration = document.getElementById("stock-image-registration");
 const renderStockImage = createStockImageRenderer(imageRegistration, token);
@@ -24,8 +30,7 @@ function mountStockPresentation() {
             try {
                 const { mount, controlId, valueContract } = await import(
                     `${textRegistration.dataset.module}?token=${encodeURIComponent(token)}`);
-                if (controlId !== "stock.text" || JSON.stringify(valueContract) !== '{"type":"string"}'
-                    || typeof mount !== "function") throw new Error("Incompatible stock.text adapter");
+                validateStockTextAdapter(controlId, valueContract, mount);
                 const field = { id: root.dataset.fieldId, label: root.dataset.textLabel };
                 const value = root.textContent;
                 await mount({ root, field, value,
@@ -43,13 +48,7 @@ async function mountGeneratedControl(root) {
     try {
         const { mount, controlId, valueContract } = await import(`${root.dataset.module}?token=${encodeURIComponent(
             new URL(import.meta.url).searchParams.get("token"))}`);
-        if (typeof mount !== "function") throw new Error("Missing mount export");
-        const expected = JSON.parse(root.dataset.contract);
-        if (controlId !== root.dataset.controlType || valueContract?.type !== expected.type
-            || JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
-                !== JSON.stringify(Object.entries(expected.properties).sort())) {
-            throw new Error("Incompatible control ID or value contract");
-        }
+        validateGeneratedControl(mount, controlId, valueContract, root);
         await mount({ root, field, value: JSON.parse(root.dataset.value),
             values: model?.controlValues?.[field.id] ?? {},
             readValues: () => ({ ...(model?.controlValues?.[field.id] ?? {}) }) });
@@ -79,9 +78,7 @@ async function showGeneratedDialog(name, context = {}) {
             if (!response.ok) throw new Error(`Could not load generated dialog ${name} (${response.status})`);
             const definition = await response.json();
             const module = await import(`/dialogs/${registration.adapter}.mjs?token=${encodeURIComponent(token)}`);
-            if (definition.id !== name || definition.adapter !== registration.adapter
-                || module.dialogId !== "stock.dialog" || module.contractVersion !== 1
-                || typeof module.mount !== "function") throw new Error(`Incompatible generated dialog: ${name}`);
+            validateDialogAdapter(definition, name, registration, module);
             entry = { definition, mount: module.mount };
             dialogCache.set(name, entry);
         }
@@ -90,12 +87,10 @@ async function showGeneratedDialog(name, context = {}) {
         try {
             const instance = await entry.mount({ root, definition: entry.definition,
                 context, onDecision: () => {} });
-            if (!instance || typeof instance.dispose !== "function" || !instance.result?.then) {
-                throw new Error(`Invalid dialog adapter result: ${name}`);
-            }
+            validateDialogInstance(instance, name);
             try {
                 const result = await instance.result;
-                if (!["confirmed", "cancelled"].includes(result)) throw new Error("Invalid generated dialog decision");
+                validateDialogDecision(result);
                 return result === "confirmed";
             } finally {
                 instance.dispose();
@@ -129,8 +124,7 @@ async function mountGeneratedButtons() {
         const control = buttonControls.find((item) => item.id === definition.control);
         if (!control) throw new Error(`Missing button control: ${definition.control}`);
         const module = await import(`/buttons/${control.adapter}.mjs?token=${encodeURIComponent(token)}`);
-        if (module.controlId !== control.id || module.contractVersion !== 1
-            || typeof module.mount !== "function") throw new Error(`Incompatible button adapter: ${control.id}`);
+        validateButtonAdapter(module, control);
         const root = definition.page === "setup" ? $("setup-actions")
             : document.querySelector(`[data-workflow-slot="${definition.slot}"]`);
         if (!root) throw new Error(`Missing generated button slot: ${definition.slot}`);
@@ -159,7 +153,7 @@ async function mountGeneratedButtons() {
         };
         const instance = await module.mount({ root: mountRoot, definition,
             ...(definition.control === "project.setup-button" ? { onSetup: activate } : { onTrigger: activate }) });
-        if (typeof instance?.dispose !== "function") throw new Error("Invalid button instance");
+        validateButtonInstance(instance);
         buttonMounts.push(instance);
     }
 }
@@ -321,12 +315,7 @@ async function mountField(placement, root) {
             const { mount, controlId, valueContract } = await import(
                 `/controls/${placement.adapter}.mjs?token=${encodeURIComponent(token)}`);
             if (mounted.disposed) return;
-            if (typeof mount !== "function" || controlId !== placement.control
-                || valueContract?.type !== state.schema?.type
-                || (state.schema?.type === "object" && JSON.stringify(Object.entries(valueContract.properties ?? {}).sort())
-                    !== JSON.stringify(Object.entries(state.schema.properties ?? {}).sort()))) {
-                throw new Error(`Incompatible generated adapter for ${placement.field}`);
-            }
+            validatePlacedControl(mount, controlId, valueContract, placement, state);
             const values = () => ({ ...(model?.controlValues?.[placement.field] ?? {}) });
             mounted.instance = await mount({ root, field: state.field, value: state.value,
                 values: values(), readValues: values, editable: state.editable,
@@ -423,7 +412,7 @@ function wireGeneratedPages() {
             if (!registration) throw new Error(`Missing generated page ${id}`);
             const { renderPage } = await import(`${registration.dataset.module}?token=${encodeURIComponent(token)}`);
             if (currentSelection !== pageSelection) return;
-            if (typeof renderPage !== "function") throw new Error(`Invalid renderer for ${id}`);
+            validatePageRenderer(renderPage, id);
             const content = document.createElement("div");
             await renderPage({ root: content, canvas: { id: root.dataset.canvasId,
                 displayName: root.dataset.canvasTitle },
@@ -956,9 +945,18 @@ function renderCollection() {
             badge.textContent = entry.status === "Completed" ? "" : entry.status ?? "Not started";
             badge.hidden = !entry.pending || entry.status === "Completed";
         }
+        if (entry.pending) select.title = entry.workflowRecoveryMessage ?? "";
+        let recovery = select.querySelector(".recovery-note");
+        if (entry.pending && entry.workflowRecoveryMessage && !recovery) {
+            recovery = document.createElement("span");
+            recovery.className = "recovery-note";
+            select.append(recovery);
+        }
+        if (recovery) { recovery.textContent = entry.workflowRecoveryMessage ?? ""; recovery.hidden = !entry.workflowRecoveryMessage; }
         const remove = row.querySelector(".instance-delete");
-        remove.hidden = entry.id === "__new__";
-        remove.textContent = entry.pending ? "Remove" : "Delete";
+        remove.hidden = entry.id === "__new__" || entry.pending && entry.hasWorkflowRunHistory
+            && !["Completed", "Failed", "Run output unconfirmed"].includes(entry.status);
+        remove.textContent = entry.pending ? entry.hasWorkflowRunHistory ? "Discard pending row" : "Remove" : "Delete";
         remove.setAttribute("aria-label", `${remove.textContent} ${entry.label}`);
     }
     const editor = workflowIdentity;
@@ -1108,8 +1106,12 @@ async function deleteFeature(itemId) {
     const item = model.items.find((entry) => entry.id === itemId);
     if (!item) throw new Error("This workflow is no longer available. Refresh and try again.");
     if (item.pending) {
+        if (item.hasWorkflowRunHistory && !window.confirm(
+            `Discard pending row ${item.label}? This removes its draft and run history only. No workflow directory will be deleted.`
+        )) return;
         await flush();
-        await retryRevision("/api/workflow/pending/remove", { itemId });
+        await retryRevision("/api/workflow/pending/remove", { itemId,
+            ...(item.hasWorkflowRunHistory ? { confirmation: "discard" } : {}) });
         await refresh();
         message(`Removed ${item.label}. No directory was created.`);
         return;
@@ -1401,10 +1403,7 @@ try {
     };
     if (workflowRoot.dataset.pageModule) {
         const pageModule = await import(`${workflowRoot.dataset.pageModule}?token=${encodeURIComponent(token)}`);
-        if (pageModule.pageId !== "workflow" || pageModule.contractVersion !== 1
-            || typeof pageModule.mount !== "function") {
-            throw new Error("Incompatible Workflow page adapter");
-        }
+        validateWorkflowAdapter(pageModule);
         workflowPage = await pageModule.mount({
             root: workflowRoot, definition: JSON.parse(workflowRoot.dataset.pageDefinition),
             state: validateWorkflowPageState({ model: null, phaseState: initialState }),
@@ -1478,9 +1477,7 @@ try {
                 error: (error) => message(error.message, "workflow-action-error", true),
             },
         });
-        if (typeof workflowPage?.update !== "function" || typeof workflowPage.dispose !== "function") {
-            throw new Error("Workflow page adapter must return update and dispose");
-        }
+        validateWorkflowMount(workflowPage);
         mountStockPresentation();
     } else mountPhase(pipelineRoot, initialState);
 } catch (error) {

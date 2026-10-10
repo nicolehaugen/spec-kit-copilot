@@ -16,7 +16,7 @@ Copilot canvas providers remain under `plugins/`.
 Register the catalog once, then install by ID:
 
 ```powershell
-specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/main/spec-kit-extensions/catalog.json --name spec-kit-copilot --install-allowed
+specify extension catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-extensions/catalog.json --name spec-kit-staging --install-allowed
 specify extension add extension-canvas-design
 ```
 

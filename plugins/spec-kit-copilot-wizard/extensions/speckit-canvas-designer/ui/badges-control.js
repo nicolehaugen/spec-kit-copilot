@@ -1,3 +1,5 @@
+const { jsonSafe, validBadgeInputDraft, hasDeclaredBadgeInputs, badgeInputReady } = await import(
+    `./external-control-adapter-contract.js${new URL(import.meta.url).search}`);
 const duplicateModule = new URL("./badge-duplicates.js", import.meta.url);
 duplicateModule.search = new URL(import.meta.url).search;
 const { findDuplicateBadge } = await import(duplicateModule.href);
@@ -88,66 +90,6 @@ function evidencePhases(rule, inputs) {
         }
     }
     return [...selected];
-}
-
-function jsonSafe(value) {
-    const active = new Set();
-    const stack = [[value, false, 0]];
-    while (stack.length) {
-        const [current, leaving, depth] = stack.pop();
-        if (leaving) {
-            active.delete(current);
-            continue;
-        }
-        if (current === null || typeof current === "string" || typeof current === "boolean") continue;
-        if (typeof current === "number" && Number.isFinite(current)) continue;
-        if (typeof current !== "object" || depth > 16 || active.has(current)
-            || !(Array.isArray(current)
-                ? Object.getPrototypeOf(current) === Array.prototype
-                : [Object.prototype, null].includes(Object.getPrototypeOf(current)))
-            || Reflect.ownKeys(current).some((key) => typeof key !== "string")
-            || Reflect.ownKeys(current).length !== Object.keys(current).length
-                + (Array.isArray(current) ? 1 : 0)
-            || Array.isArray(current) && (Object.keys(current).length !== current.length
-                || !Array.from({ length: current.length }, (_, index) =>
-                    Object.hasOwn(current, index)).every(Boolean))) return false;
-        active.add(current);
-        stack.push([current, true, depth]);
-        for (const key of Object.keys(current)) {
-            const property = Object.getOwnPropertyDescriptor(current, key);
-            if (!property || !Object.hasOwn(property, "value") || !property.enumerable) return false;
-            stack.push([property.value, false, depth + 1]);
-        }
-    }
-    return true;
-}
-
-function validBadgeInputDraft(inputs, rule, phases, outputs) {
-    const phase = (value) => value === "" || phases.includes(value);
-    const artifact = (value) => value && typeof value === "object"
-        && !Array.isArray(value) && Object.keys(value).sort().join() === "output,phase"
-        && typeof value.phase === "string" && typeof value.output === "string"
-        && (value.phase === "" && value.output === ""
-            || phases.includes(value.phase)
-                && (value.output === "" || outputs[value.phase]?.outputs?.includes(value.output)));
-    return (rule.inputs ?? []).every(({ id, type }) => {
-        const value = inputs[id];
-        if (type === "phase") return typeof value === "string" && phase(value);
-        if (type === "text") return typeof value === "string" && value.length <= 256
-            && !/[\x00-\x1f\x7f]/.test(value);
-        if (type === "artifact") return artifact(value);
-        if (type === "ordered-artifacts") return Array.isArray(value) && value.length <= 100
-            && value.every((entry) => artifact(entry) && entry.phase !== ""
-                && entry.output !== "");
-        if (type === "artifact-set") return Array.isArray(value) && value.length <= 100
-            && value.every((entry) => entry && typeof entry === "object"
-                && !Array.isArray(entry) && Object.keys(entry).sort().join() === "outputs,phase"
-                && phases.includes(entry.phase) && Array.isArray(entry.outputs)
-                && entry.outputs.length > 0 && entry.outputs.length <= 100
-                && entry.outputs.every((path) => typeof path === "string"
-                    && outputs[entry.phase]?.outputs?.includes(path)));
-        return false;
-    });
 }
 
 function placementSummary(badge, phases) {
@@ -438,8 +380,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
         let control;
         let isReady;
         const inputIds = (rule.inputs ?? []).map(({ id }) => id).sort().join();
-        const hasDeclaredInputs = (value) => value && typeof value === "object"
-            && !Array.isArray(value) && Object.keys(value).sort().join() === inputIds;
+        const hasDeclaredInputs = (value) => hasDeclaredBadgeInputs(value, inputIds);
         const editorPending = pending;
         const editorRenderId = renderId;
         try {
@@ -664,7 +605,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
                 return revealError("Badge control returned inputs that do not match its rule.");
             }
             try {
-                if (isReady.call(control) !== true) {
+                if (!badgeInputReady(isReady, control)) {
                     return revealError(control.validationError?.() || "Complete the badge inputs before saving.");
                 }
             } catch (error) {

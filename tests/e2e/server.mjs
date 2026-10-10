@@ -9,8 +9,8 @@ if (!releasedBase?.version || !releasedBase.download_url) {
     throw new Error("Canvas Design release catalog entry is missing a version or download URL");
 }
 const snapshot = {
-    workspacePath: process.cwd(),
     featureFlags: { generateCanvas: true },
+    workspacePath: process.cwd(),
     currentPhase: "constitution",
     setup: {
         pluginInstalled: true,
@@ -73,7 +73,7 @@ const handler = createHandler({
     },
     log: async (message) => { console.error(message); },
     getState: async () => snapshot,
-    getInstance: () => ({ workspacePath: repoPath }),
+    getInstance: () => ({ workspacePath: repoPath, generateCanvas: true }),
     broadcast: () => {},
     registerSse: (_req, res) => { res.on("close", () => {}); },
     inspectBundle: async (id) => ({

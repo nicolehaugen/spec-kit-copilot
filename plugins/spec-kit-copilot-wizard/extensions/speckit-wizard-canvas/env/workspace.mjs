@@ -2,6 +2,7 @@
 
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import { validateGenerateCanvas } from "../contracts/generate-feature.mjs";
 
 export async function pathExists(path, statFn = stat) {
     try {
@@ -31,15 +32,12 @@ export function resolveWorkspace(instance, context, sessionRepoPath) {
     return instance?.workspacePath ?? null;
 }
 
-// Resolve the `generateCanvas` feature flag on open/reopen. A reopen/focus
-// `open_canvas` call that omits the field (e.g. a focus-only call used just
-// to invoke an action) must not silently clear a previously-set flag — only
-// an explicit boolean in this call's input should change it, mirroring the
-// "rehydrate on reconnect" fallback used by resolveWorkspace above.
-export function resolveGenerateCanvas(instance, context) {
-    const fromInput = context?.input?.generateCanvas;
-    if (fromInput !== undefined) return fromInput === true;
-    return instance?.generateCanvas === true;
+export function resolveGenerateCanvas(instance, context, defaultValue = false) {
+    const input = context?.input;
+    if (input && Object.hasOwn(input, "generateCanvas")) {
+        return validateGenerateCanvas(input.generateCanvas);
+    }
+    return typeof instance?.generateCanvas === "boolean" ? instance.generateCanvas : defaultValue;
 }
 
 export async function fetchSessionRepoPath(session) {

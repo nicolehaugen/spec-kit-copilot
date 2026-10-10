@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { readHandoff } from "./handoff.mjs";
-import { validateBadges } from "./contracts/badges.mjs";
+import { validateBadges } from "./contracts/external-badges.mjs";
 import { GENERATION_EXISTS, GENERATION_PENDING, generationAvailability,
     validateGenerateSubmission } from "./contracts/generation-request.mjs";
 import { readFrozenAsset } from "./pages.mjs";
@@ -45,7 +45,7 @@ const ASSETS = {
     "/ui/generated-output-state.js": ["generated-output-state.js", "text/javascript"],
     "/ui/identity-control.js": ["identity-control.js", "text/javascript"],
     "/ui/output-evidence.js": ["output-evidence.js", "text/javascript"],
-    "/ui/control-adapter-contract.js": ["control-adapter-contract.js", "text/javascript"],
+    "/ui/external-control-adapter-contract.js": ["external-control-adapter-contract.js", "text/javascript"],
     "/ui/badges-control.js": ["badges-control.js", "text/javascript"],
     "/ui/badge-duplicates.js": ["badge-duplicates.js", "text/javascript"],
 };

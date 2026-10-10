@@ -17,11 +17,13 @@ import { shellHtml, startShell } from "../server.mjs";
 import { previewModel } from "../preview.mjs";
 import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAsset } from "../pages.mjs";
 import {
-    loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings, SETTINGS_LIMIT, validateValues,
+    freshDesignerSettings, initialOutputs, loadDesignerSettings, SAVE_REQUEST_LIMIT, saveDesignerSettings,
+    SETTINGS_LIMIT, validateValues,
 } from "../settings.mjs";
 import { freezeGeneration, generationBlockers, validateEssentials } from "../generation.mjs";
 import { generationAvailability, GENERATION_EXISTS, GENERATION_PENDING } from "../contracts/generation-request.mjs";
 import { decodeImage } from "../image.mjs";
+import { specifySpawnOptions } from "../../speckit-wizard-canvas/env/specify-invocation.mjs";
 import { renderStockPage } from "../../../../../spec-kit-extensions/extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 
 const ID = "designer_1";
@@ -91,9 +93,9 @@ async function loadFixturePages(handoff, project, entries, complete, registratio
 }
 
 test("Designer packages the same control validator as the generated app", async () => {
-    assert.deepEqual(await readFile(new URL("../control-contract.mjs", import.meta.url)),
+    assert.deepEqual(await readFile(new URL("../external-control-contract.mjs", import.meta.url)),
         await readFile(new URL(
-            "../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
+            "../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/external-control-contract.mjs",
             import.meta.url)));
 });
 
@@ -355,8 +357,8 @@ async function projectFixture(t, workspace) {
     await writeFile(join(project, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md"), "test");
     await writeFile(join(specify, "extensions", ".registry"),
         JSON.stringify({ extensions: { "extension-canvas-design": { enabled: true } } }));
-    await copyFile(join(source, "schemas", "designer.tab-definition.schema.json"),
-        join(installed, "schemas", "designer.tab-definition.schema.json"));
+    await copyFile(join(source, "schemas", "external-designer.tab-definition.schema.json"),
+        join(installed, "schemas", "external-designer.tab-definition.schema.json"));
     await copyFile(join(source, "extension.yml"), join(installed, "extension.yml"));
     const pages = ["essentials", "badges", "appearance"];
     const entries = [];
@@ -2783,6 +2785,104 @@ test("Save persists incomplete drafts beside the handoff and rejects stale or ma
         /Invalid saved Designer settings JSON/);
 });
 
+test("fresh Designer ignores discarded content and model revisions while Save replaces it safely", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const path = join(folder, "settings.json");
+    const model = { revision: "current", constraints: { "canvas.id": { type: "string" } },
+        values: { "canvas.id": "default" } };
+    const old = { schemaVersion: 1, handoffId: handoff.handoffId, revision: 7,
+        modelRevision: "old", values: { removed: true }, outputs: { removed: null },
+        badges: [{ id: "removed", type: "missing", inputs: { obsolete: true } }] };
+    for (const discarded of [
+        { modelRevision: old.modelRevision },
+        { values: old.values },
+        { outputs: old.outputs },
+        { badges: old.badges },
+        { ...old, unknownOldField: true },
+    ]) {
+        const record = { ...old, modelRevision: model.revision, values: model.values,
+            outputs: initialOutputs(handoff), badges: [], ...discarded };
+        const bytes = JSON.stringify(record);
+        await writeFile(path, bytes);
+        const fresh = await freshDesignerSettings(workspace, handoff, model);
+        assert.deepEqual(fresh.values, model.values);
+        assert.deepEqual(fresh.outputs, initialOutputs(handoff));
+        assert.deepEqual(fresh.badges, []);
+        assert.equal(fresh.settingsRevision, 7);
+        assert.equal(fresh.persisted, false);
+        assert.equal(await readFile(path, "utf8"), bytes);
+        await assert.rejects(loadDesignerSettings(workspace, handoff, model));
+        const request = { modelRevision: model.revision, revision: 7,
+            values: { "canvas.id": "replacement" } };
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, modelRevision: "old" }), /Invalid Designer save request/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, values: old.values }), /unexpected or missing fields/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, outputs: old.outputs }), /Invalid Designer phase outputs/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, badges: old.badges }), /badge/i);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, fresh,
+            { ...request, revision: 6 }), /settings changed elsewhere/);
+        assert.equal(await readFile(path, "utf8"), bytes);
+        const saved = await saveDesignerSettings(workspace, handoff, fresh, request);
+        assert.equal(saved.settingsRevision, 8);
+        assert.equal(saved.persisted, true);
+        assert.deepEqual((await loadDesignerSettings(workspace, handoff, model)).values,
+            request.values);
+        assert.equal(JSON.parse(await readFile(path, "utf8")).modelRevision, model.revision);
+        const reopened = await freshDesignerSettings(workspace, handoff, model);
+        assert.deepEqual(reopened.values, model.values);
+        assert.equal(reopened.settingsRevision, 8);
+    }
+});
+
+test("fresh Designer and Save still reject unsafe files and invalid saved metadata", async (t) => {
+    const workspace = await fixture(t);
+    const handoff = validHandoff();
+    const folder = await saveHandoff(workspace, handoff);
+    const path = join(folder, "settings.json");
+    const model = { revision: "current", constraints: {}, values: {} };
+    const request = { modelRevision: model.revision, revision: 1, values: {} };
+    const metadata = { schemaVersion: 1, handoffId: handoff.handoffId, revision: 1 };
+    assert.equal((await freshDesignerSettings(workspace, handoff, model)).settingsRevision, 0);
+    for (const content of [
+        "{broken", "null", "[]",
+        JSON.stringify({ ...metadata, handoffId: "different" }),
+        JSON.stringify({ ...metadata, schemaVersion: 2 }),
+        ...[undefined, 0, -1, 1.5, "1", Number.MAX_SAFE_INTEGER + 1]
+            .map((revision) => JSON.stringify({ ...metadata, revision })),
+        "x".repeat(SETTINGS_LIMIT + 1),
+    ]) {
+        await writeFile(path, content);
+        await assert.rejects(freshDesignerSettings(workspace, handoff, model),
+            /Invalid saved Designer settings|Saved Designer settings/);
+        await assert.rejects(saveDesignerSettings(workspace, handoff, model, request),
+            /Invalid saved Designer settings|Saved Designer settings/);
+        assert.equal(await readFile(path, "utf8"), content);
+    }
+    await rm(path);
+    await mkdir(path);
+    await assert.rejects(freshDesignerSettings(workspace, handoff, model));
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, request));
+    await rm(path, { recursive: true });
+    const target = join(folder, "other-settings.json");
+    await writeFile(target, JSON.stringify(metadata));
+    try {
+        await symlink(target, path, "file");
+    } catch (error) {
+        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
+        t.diagnostic("Windows symlink creation is not permitted; settings symlink assertion skipped");
+        return;
+    }
+    await assert.rejects(freshDesignerSettings(workspace, handoff, model),
+        /Invalid saved Designer settings file|ELOOP/);
+    await assert.rejects(saveDesignerSettings(workspace, handoff, model, request),
+        /Invalid saved Designer settings file|ELOOP/);
+});
+
 test("token-gated Save endpoint reports errors without losing the current values", async (t) => {
     const workspace = await fixture(t);
     const handoff = validHandoff();
@@ -3322,6 +3422,19 @@ test("empty shell renders without a handoff and keeps the token gate", async (t)
     assert.match(await (await fetch(shell.url)).text(), /No Wizard handoff is attached yet/);
     const url = new URL(shell.url);
     assert.equal((await fetch(url.origin)).status, 404);
+});
+
+test("preview checklist progress matches the shipping badge type and rule", async () => {
+    const root = new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url);
+    const types = JSON.parse(await readFile(new URL("designer-host/badges-settings/badge-types.json", root)));
+    const rule = JSON.parse(await readFile(new URL("generated-host/badges/rules/checklist-progress.json", root)));
+    const preview = previewModel();
+    const expected = types.types.find((entry) => entry.id === "checklist-progress");
+    const actual = preview.badgeTypes.find((entry) => entry.id === "checklist-progress");
+    assert.equal(actual.description, expected.description);
+    assert.equal(actual.defaultText, expected.defaultText);
+    assert.equal(preview.badgeRules.find((entry) => entry.id === rule.id).description,
+        rule.description);
 });
 
 test("sample-only preview renders badges without a handoff and rejects writes", async (t) => {
@@ -4819,8 +4932,8 @@ test("paired control validates both adapters, typed values and portable generate
         pathToFileURL(join(portable, "server.mjs")).href);
     const config = readConfig();
     assert.deepEqual(config.generatedControls[0].value, values["risk.rating"]);
-    assert.deepEqual(await readFile(join(portable, "control-contract.mjs")),
-        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/control-contract.mjs",
+    assert.deepEqual(await readFile(join(portable, "external-control-contract.mjs")),
+        await readFile(new URL("../../../../../spec-kit-extensions/extension-canvas-design/generated-scaffold/external-control-contract.mjs",
             import.meta.url)));
     const configPath = join(portable, "canvas-config.json");
     for (const invalidProperties of [
@@ -4872,7 +4985,7 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
     const workspace = await fixture(t);
     const { project, entries } = await projectFixture(t, workspace);
     const schema = join(project, ".specify", "extensions", "extension-canvas-design",
-        "schemas", "designer.tab-definition.schema.json");
+        "schemas", "external-designer.tab-definition.schema.json");
     const original = await readFile(schema);
     for (const [contents, reason] of [
         [null, /ENOENT/], ["{broken", /Invalid Designer JSON/],
@@ -4893,17 +5006,19 @@ test("unavailable page schema stops opening with repair guidance; invalid pages 
 });
 
 test("canvas opens with a partial inventory and rebuilds on reopening", async (t) => {
-    if (spawnSync("specify", ["--version"], { encoding: "utf8" }).error?.code === "ENOENT") {
-        t.skip("Specify CLI is required for resolved-template integration");
-        return;
-    }
+    const cli = spawnSync("specify", ["--version"], await specifySpawnOptions(process.cwd(), {
+        encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024,
+    }));
+    assert.ifError(cli.error);
+    assert.equal(cli.status, 0,
+        `Specify CLI is required for resolved-template integration: ${cli.stderr || cli.stdout}`);
     const workspace = await fixture(t);
     const source = fileURLToPath(new URL("../", import.meta.url));
     const extension = join(workspace, "provider");
     const sdk = join(workspace, "node_modules", "@github", "copilot-sdk");
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
-    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "open-state.mjs", "server.mjs", "pages.mjs", "control-contract.mjs",
+    for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "open-state.mjs", "server.mjs", "pages.mjs", "external-control-contract.mjs",
         "settings.mjs", "generation.mjs", "image.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
@@ -4947,6 +5062,10 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     await mkdir(shared, { recursive: true });
     await copyFile(join(source, "..", "speckit-wizard-canvas", "env", "workspace.mjs"),
         join(shared, "workspace.mjs"));
+    const sharedContracts = join(workspace, "speckit-wizard-canvas", "contracts");
+    await mkdir(sharedContracts, { recursive: true });
+    await copyFile(join(source, "..", "speckit-wizard-canvas", "contracts", "generate-feature.mjs"),
+        join(sharedContracts, "generate-feature.mjs"));
     for (const file of ["resolve-path.mjs", "specify-invocation.mjs"]) {
         await copyFile(join(source, "..", "speckit-wizard-canvas", "env", file),
             join(shared, file));
@@ -4954,7 +5073,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     await mkdir(join(extension, "ui"));
     for (const file of ["index.html", "app.js", "generation-state.js", "generated-output-state.js",
         "identity-control.js", "output-evidence.js",
-        "control-adapter-contract.js", "badges-control.js", "badge-duplicates.js",
+        "external-control-adapter-contract.js", "badges-control.js", "badge-duplicates.js",
         "preview-badge-input.js", "styles.css"]) {
         await copyFile(join(source, "ui", file), join(extension, "ui", file));
     }
@@ -5054,7 +5173,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             handoffId: ID, pages: [...entries, entries[0]], templates: [],
         } }), /duplicate Designer page name/);
         const schema = join(project, ".specify", "extensions", "extension-canvas-design",
-            "schemas", "designer.tab-definition.schema.json");
+            "schemas", "external-designer.tab-definition.schema.json");
         const installedSchema = await readFile(schema);
         await rm(schema);
         await assert.rejects(canvas.open({ instanceId: "same", input: {

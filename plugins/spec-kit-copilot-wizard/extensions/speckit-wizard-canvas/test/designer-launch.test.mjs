@@ -146,7 +146,7 @@ test("Designer handoff fixes Constitution to its canonical artifact", () => {
 function fixture(overrides = {}) {
     const sent = [];
     const errors = [];
-    const inst = { workspacePath: process.cwd() };
+    const inst = { workspacePath: process.cwd(), generateCanvas: true };
     const provider = { id: DESIGNER_EXTENSION_ID, source: "plugin", status: "running" };
     const registered = { extensionId: DESIGNER_EXTENSION_ID, canvasId: "speckit-canvas-designer" };
     let current = snapshot;
@@ -321,7 +321,7 @@ test("hosted Canvas Design handoff verifies the installed package", async (t) =>
     assert.equal((await verifyHostedCanvasDesign(root, handoff, run)).designerContract, 1);
     await assert.rejects(verifyHostedCanvasDesign(root, handoff,
         async () => ({ stdout: "[]" })), /source or ID differs/);
-    const schema = join(path, "schemas", "designer.tab-definition.schema.json");
+    const schema = join(path, "schemas", "external-designer.tab-definition.schema.json");
     const original = JSON.parse(await readFile(schema, "utf8"));
     original.properties.schemaVersion.const = 2;
     await writeFile(schema, JSON.stringify(original));

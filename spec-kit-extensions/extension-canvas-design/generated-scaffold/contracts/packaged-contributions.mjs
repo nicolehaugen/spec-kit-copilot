@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { phaseControlInterface } from "./host-adapter.mjs";
+import { phaseControlInterface } from "./external-host-adapter.mjs";
 
 const imageValueContract = { type: "image", maxBytes: 32768,
     mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };

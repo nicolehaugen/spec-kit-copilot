@@ -1,5 +1,11 @@
 # Architecture draft: consistent customization of the Designer Canvas and Generated Workflow Canvas app
 
+The implemented contributor-facing interfaces and their consumers/tests are
+indexed in [EXTERNAL-CONTRACTS.md](EXTERNAL-CONTRACTS.md). Their `external-`
+filenames distinguish customization contracts from internal host operations.
+This classification does not redesign the APIs or make every interface share
+the same lifecycle; the index records the current implementations.
+
 ## 1. Terminology
 
 These terms identify different products and phases of the journey. In particular, a **Copilot canvas**, a **Specify extension**, and a **Specify preset** are not the same thing.
@@ -126,7 +132,7 @@ At Generate:
 
 Generated configuration remains derived from the frozen request; there is no competing preset-replaceable generated-config template. Changes to a source preset do not alter an app that was already generated.
 The control contract and typed-value checks are authored once in
-`generated-scaffold/control-contract.mjs`. The generator imports that module,
+`generated-scaffold/external-control-contract.mjs`. The generator imports that module,
 the Wizard Designer ships a byte-identical copy checked by package tests, and
 generated apps receive the same module with their source-owned shell. Validation
 of each host's envelope (template provenance, frozen bytes, or saved app config)
@@ -354,7 +360,7 @@ spec-kit-extensions/extension-canvas-design/
   generated-host/phase-control/phase-control.json  phase identity, placement, adapter and view labels
   generated-host/phase-control/generated-phase-adapter.mjs  phase UI adapter
   shared-controls/stock-{text,checkbox,image}/  cross-host definitions and adapters
-  schemas/designer.tab-definition.schema.json  currently string/boolean fields
+  schemas/external-designer.tab-definition.schema.json  currently string/boolean fields
   scripts/generate.mjs
   generated-scaffold/
     extension.mjs
@@ -401,7 +407,7 @@ spec-kit-extensions/extension-canvas-design/
       feature.json
       generated.mjs                    setup UI, not package installer
   schemas/
-    designer.tab-definition.schema.json
+    external-designer.tab-definition.schema.json
     contribution.schema.json           proposed versioned contribution schema
   scripts/generate.mjs
   generated-scaffold/
@@ -456,7 +462,7 @@ For the future standalone Copilot plugin, those app files would be placed under 
 
 ## 13. Illustrative JSON contracts
 
-These examples describe the **proposed Canvas Design contract**, not the current `designer.tab-definition.schema.json`. Specify can resolve the JSON templates; the Designer Canvas interprets and validates their contents.
+These examples describe the **proposed Canvas Design contract**, not the current `external-designer.tab-definition.schema.json`. Specify can resolve the JSON templates; the Designer Canvas interprets and validates their contents.
 
 Core Essentials defines the required fields and a documented slot:
 

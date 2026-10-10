@@ -14,7 +14,7 @@ import { phaseContract } from "../extension-canvas-design/generated-scaffold/con
 import { renderHtml } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
 import { freezeGeneration, readCurrentInstalledVersions, validateEssentials } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/generation.mjs";
-import { validateBadges as validateDesignerBadges } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/badges.mjs";
+import { validateBadges as validateDesignerBadges } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/external-badges.mjs";
 import { validateBadges as validateGeneratedBadges } from "../extension-canvas-design/generated-scaffold/badge-runtime.mjs";
 import { buildAugmentedPath } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/resolve-path.mjs";
 import { addWorkflowFixture } from "./workflow_fixture.mjs";
@@ -46,8 +46,10 @@ test("the entry point becomes visible only after generated syntax and rendering 
     const checked = source.indexOf('checkSyntax(join(target, "extension.mjs"), files.at(-1)[1])');
     const rendered = source.indexOf('if (renderer.error || renderer.status !== 0)');
     const published = source.indexOf('await writeFile(join(target, "extension.mjs"), files.at(-1)[1]');
-    assert.ok(checked > 0 && checked < rendered && rendered < published);
+    const exposed = source.indexOf("await renameDirectoryWithoutReplacement(target, output)");
+    assert.ok(checked > 0 && checked < rendered && rendered < published && published < exposed);
     assert.equal(source.match(/writeFile\(join\(target, "extension\.mjs"\)/g)?.length, 1);
+    assert.match(source, /const target = await mkdtemp\(join\(parent, `\.\$\{config\.canvas\.id\}-stage-`\)\)/);
 });
 
 const model = {
@@ -1855,10 +1857,10 @@ test("legacy result state stays on disk but is not evaluated or shown", async (t
         { type: "assistant.turn_end", data: { turnId: "turn-legacy" } },
     ];
     const completed = await runtime.refresh();
-    assert.equal(completed.statuses.specify.status, "Completed");
+    assert.equal(completed.statuses.specify.status, "Run output unconfirmed");
     assert.equal(Object.hasOwn(completed.statuses.specify, "result"), false);
     assert.equal(JSON.parse(await readFile(join(stateDir, "state.json"), "utf8"))
-        .runs.find((entry) => entry.runId === run.runId).status, "Completed");
+        .runs.find((entry) => entry.runId === run.runId).status, "Run output unconfirmed");
     assert.deepEqual(JSON.parse(await readFile(join(stateDir, "state.json"), "utf8")).tagMatches,
         old.tagMatches);
 });
@@ -2012,11 +2014,18 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     const runtime = await createRuntime({ config, cwd: project, workspace, session });
     t.after(() => runtime.close());
     assert.deepEqual((await runtime.snapshot()).items, []);
-    const first = await runtime.createPending({ revision: 0 });
+    await runtime.save({ revision: 0, name: "Draft without a row", slug: "draft",
+        draft: { item: "__new__", phase: "specify", value: "Draft" } });
+    assert.deepEqual((await runtime.snapshot()).items, []);
+    const first = await runtime.createPending({ revision: (await runtime.snapshot()).revision });
     assert.equal(first.id, "__new__:1");
     let snapshot = await runtime.snapshot();
     assert.deepEqual(snapshot.items.map(({ label, slug, pending }) => ({ label, slug, pending })),
         [{ label: "Workflow 1", slug: "", pending: true }]);
+    const { validateWorkflowPageState } = await import(
+        "../extension-canvas-design/generated-scaffold/contracts/external-host-adapter.mjs");
+    assert.equal(validateWorkflowPageState({ model: snapshot,
+        phaseState: { slugEditable: snapshot.userProvidesSlug } }).model, snapshot);
     assert.equal(snapshot.statuses.specify.output, null);
     await assert.rejects(readdir(join(project, "specs")), { code: "ENOENT" });
     await runtime.save({ revision: snapshot.revision, name: "Customer dashboard", slug: "customer-dashboard",
@@ -2038,7 +2047,10 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     assert.deepEqual(snapshot.items.map((item) => item.id), [first.id, "specs/000-existing"]);
     const result = await reopened.run({ phase: "specify", itemId: first.id, args: "Dashboard scope" }, "pending-panel");
     await assert.rejects(reopened.removePending({ itemId: first.id, revision: (await reopened.snapshot()).revision }),
-        /may have created a workflow directory/);
+        /Confirm Discard pending row/);
+    await assert.rejects(reopened.removePending({ itemId: first.id,
+        revision: (await reopened.snapshot()).revision, confirmation: "discard" }),
+        /The agent turn has not ended/);
     const directory = join(project, "specs", "001-customer-dashboard");
     await mkdir(directory, { recursive: true });
     await reopened.reportSlug({ phaseRunId: result.runId, slug: "001-customer-dashboard" }, "pending-panel");

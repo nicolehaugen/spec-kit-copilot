@@ -43,8 +43,8 @@ discovery-only by default, so `--install-allowed` is required to install from th
 (and `--name` is required):
 
 ```bash
-specify preset catalog add https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-presets/catalog.json \
-  --name spec-kit-copilot --install-allowed
+specify preset catalog add https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-presets/catalog.json \
+  --name spec-kit-staging --install-allowed
 
 # then add by id — the normal way:
 specify preset add copilot-sub-agents
@@ -100,13 +100,15 @@ Releases are cut by CI — there is no local build script. The zip is built **in
 the release workflow (`.github/workflows/release-preset.yml`) from the preset
 directory, so `preset.yml` and `commands/` sit at the archive root. To publish:
 
-- **Preferred:** run the **Release Preset Trigger** workflow
-  (`.github/workflows/release-preset-trigger.yml`) via *Actions → Run workflow* with
-  the preset id and version; it validates, then creates and pushes the
-  `<preset>-v<version>` tag.
-- **Or** push the tag yourself (`git tag copilot-sub-agents-v1.0.0 && git push origin
+- **Preferred:** run **Release Preset Trigger** via *Actions → Run workflow*
+  from the staging branch with the preset id and matching manifest version.
+  It calls the publisher directly, creates the tag, and publishes the ZIP
+  in the same run.
+- Or push the tag yourself (`git tag copilot-sub-agents-v1.0.0 && git push origin
   copilot-sub-agents-v1.0.0`).
 
-Either path fires `release-preset.yml`, which builds the zip and creates the GitHub
-release with that asset. When revving a preset, bump its `preset.yml` version and the
-matching `catalog.json` entry together **before** tagging.
+Both paths run `release-preset.yml`, which builds the zip and creates the GitHub
+release with that asset. A `GITHUB_TOKEN` tag push alone cannot start a separate
+workflow, so the manual trigger calls the publisher as a reusable workflow.
+When revving a preset, bump its `preset.yml` version and the matching
+`catalog.json` entry together **before** tagging.

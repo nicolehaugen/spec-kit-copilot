@@ -6,17 +6,23 @@ Wizard and Designer canvases.
 
 The provider's `contracts/` directory names the Wizard handoff and open input
 (`wizard-handoff.mjs`, `host-open.mjs`), saved settings and save request
-(`designer-settings.mjs`), configured Badge instances (`badges.mjs`) and
-registered Badge definitions (`badge-definitions.mjs`), generation submission
+(`designer-settings.mjs`), configured Badge instances (`external-badges.mjs`) and
+registered Badge definitions (`external-badge-definitions.mjs`), generation submission
 and frozen request writer (`generation-request.mjs`), generated output status and
 bounded folder/Open actions (`generated-output.mjs`), Specify version inventory (`specify-inventory.mjs`),
-control adapter exports (`control-adapter.mjs`), and contribution field/schema
-rules (`design-contributions.mjs`). The existing readers and handlers retain
+control adapter exports (`external-control-adapter.mjs`), and contribution field/schema
+rules (`external-design-contributions.mjs`). Definition checks live in
+`external-definitions.mjs`; static executable export and self-contained-module
+requirements live in `external-executable-modules.mjs`. `external-` identifies
+contributor-facing contracts, while the unprefixed contracts govern internal
+host operations. The [external-contract index](../../../../spec-kit-extensions/extension-canvas-design/EXTERNAL-CONTRACTS.md)
+maps both Designer and generated-runtime interfaces to their consumers and tests.
+The existing readers and handlers retain
 filesystem confinement, UI lifecycle, and revision conflicts. The generator is
 independently packaged and validates request integrity with its own
 `scripts/contracts/generation-request.mjs`; it does not import the provider.
-The browser's matching mount, readiness, and draft-change rules live in
-`ui/control-adapter-contract.js`, served with the provider rather than loaded
+The browser's matching mount, readiness, badge input, and draft-change rules live in
+`ui/external-control-adapter-contract.js`, served with the provider rather than loaded
 from a preset.
 The browser-safe `ui/generated-output-state.js` defines status, reveal, Generate,
 Open, and error response shapes shared by the server and browser. Reveal responds
@@ -138,9 +144,13 @@ The existing header Save persists confirmed output evidence with the other bound
 structurally valid drafts, including incomplete field values, to `settings.json`
 beside the handoff in the Designer session artifacts (never to the page templates);
 reopening the same handoff retains the saved revision but starts a fresh form
-from template defaults when its resolved pages are unchanged. Saved additional
-files and legacy viewer selections are not restored on reopen; a subsequent Save
-or Generate replaces them with the handoff defaults.
+from current template defaults, even when the resolved pages have changed.
+Reopen and Save safely read the prior file and validate its schema version,
+handoff identity, and revision, not its discarded model revision, fields,
+outputs, or badges. Saved values, output additions, viewer selections, and badges
+are not restored on reopen; a subsequent Save or Generate replaces them with
+the current draft. New drafts remain fully validated on Save, and Generate also
+validates the saved content against the current model before freezing it.
 Appearance's optional `RRGGBB` or `#RRGGBB` palette fields use `stock.text`;
 blank retains the current color in that mode, while invalid hex blocks Generate
 without preventing an incomplete draft from being saved. The generated canvas
@@ -237,8 +247,10 @@ Generation requires both separate Generate and Open skills and a complete
 Wizard handoff; a hosted package with only the older combined Generate command
 is blocked rather than silently reloading Designer.
 For a verified same-handoff target, **Regenerate canvas** confirms that all
-files, including manual edits, will be overwritten. The generator stages and
-validates replacement, then swaps directories with rollback; foreign or
+files, including manual edits, will be overwritten. The generator clears and
+rebuilds the final directory in place without staging, backup, or rollback.
+It writes the entry point only after validation and removes failed output so
+Generate can be retried; cleanup failures require folder inspection. Foreign or
 incomplete output is not replaceable. The server rejects replacement fields
 when the target is absent; creation must be submitted without replacement,
 and replacement requires the matching verified prior request ID. If a target
@@ -250,7 +262,8 @@ the generated folder afterward.
 An accepted regeneration waits for its own verified output before enabling
 Open or Share, so the previous published version cannot disconnect Designer
 while replacement is pending. If regeneration fails or stalls, reopen Designer
-to clear that panel-local wait and recheck the previously published files.
+to clear that panel-local wait and recheck the target. Failed regeneration does
+not preserve the previous files; when cleanup succeeds, Generate can start again.
 Before dispatch, the Open step warns that registration disconnects Designer
 and shows the child-chat guidance. Generate and Open stay disabled after the
 opening request is accepted; an error before acceptance restores them. The
@@ -304,11 +317,15 @@ The provider loads without installed npm dependencies. The Wizard's environment
 setup checks and installs the Designer's renderer parser alongside its own YAML
 parser. Opening Designer directly without the parser reports an install instruction
 instead of failing at provider startup. For local tests, install dependencies with
-`npm ci` in this directory, then run:
+`npm ci` in this directory and ensure Specify CLI is available, then run:
 
 ```bash
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
 ```
+
+The resolved-template integration test requires a successful `specify --version`
+and fails rather than skipping when the CLI is unavailable. The Release Extension
+workflow installs Specify before running the Node.js integration tests.
 
 Canvas Design's [taxonomy, kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
 define the registration and authoring surface. Required and added Designer tabs

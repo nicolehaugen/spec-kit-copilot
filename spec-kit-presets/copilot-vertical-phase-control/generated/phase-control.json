@@ -1,5 +1,5 @@
 {
-  "$schema": "../../../spec-kit-extensions/extension-canvas-design/schemas/generated.phase-control-definition.schema.json",
+  "$schema": "../../../spec-kit-extensions/extension-canvas-design/schemas/external-generated.phase-control-definition.schema.json",
   "schemaVersion": 1,
   "id": "workflow-phases",
   "adapter": "generated-phase-adapter",

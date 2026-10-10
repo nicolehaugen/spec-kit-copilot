@@ -26,6 +26,7 @@ const run = promisify(execFile);
 async function withWizardCheckout(page, run, {
     setup: setupOverrides = {}, environment: environmentOverrides = {},
     reload, boot, depsError, beforeNavigate, send,
+    generateCanvas = false,
     checkoutPrefix = join(tmpdir(), "wizard-flow-e2e-"),
 } = {}) {
     const root = await mkdtemp(checkoutPrefix);
@@ -41,6 +42,7 @@ async function withWizardCheckout(page, run, {
     try {
         await mkdir(join(root, ".specify"), { recursive: true });
         inst.workspacePath = root;
+        inst.generateCanvas = generateCanvas;
         inst.state = { currentPhase: "constitution", setup, pipeline: null, phases: {} };
         inst.boot = boot;
         inst.depsError = depsError;
@@ -57,6 +59,7 @@ async function withWizardCheckout(page, run, {
         };
         setSession(session);
         const getState = async () => ({
+            featureFlags: { generateCanvas },
             workspacePath: root, projectInitialized: true, currentPhase: "constitution",
             setup: inst.state.setup, boot: inst.boot ?? { phase: "ready", steps: [] },
             depsError: inst.depsError,
@@ -66,7 +69,7 @@ async function withWizardCheckout(page, run, {
                 artifactPath: inst.state.phases?.constitution?.artifactPath ?? null, locked: false }],
             pipeline: inst.state.pipeline,
             composition: inst.cachedComposition,
-            catalog, featureFlags: { generateCanvas: false },
+            catalog,
             environment: inst.environment,
             scaffoldedSkills: ["speckit-constitution"], skillsReload: inst.skillsReload,
             refreshStatus: inst.refreshStatus?.status ?? "ready",
@@ -107,7 +110,9 @@ test("environment Recheck adopts the latest probe without reopening the Wizard",
         await expect(phases).toHaveAttribute("aria-disabled", "false");
         await phases.click();
         await expect(page.locator("#stepper")).toContainText("Constitution");
+        await expect(page.getByRole("button", { name: "Generate canvas" })).toBeVisible();
     }, {
+        generateCanvas: true,
         setup: { cliInstalled: false },
         environment: { cliInstalled: false },
         beforeNavigate: async ({ inst, server }) => {
@@ -569,7 +574,7 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         const getState = async () => {
             const snap = {
                 workspacePath: root, projectInitialized: true, currentPhase: "constitution",
-                setup, featureFlags: { generateCanvas: false },
+                setup,
                 boot: { phase: "ready", steps: [] }, phases: {},
                 pipeline: inst.state?.pipeline ?? null,
                 commands: [

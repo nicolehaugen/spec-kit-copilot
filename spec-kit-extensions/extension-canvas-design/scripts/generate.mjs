@@ -5,17 +5,21 @@ import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { validControlContract, validControlValue } from "../generated-scaffold/control-contract.mjs";
+import { validControlContract, validControlValue } from "../generated-scaffold/external-control-contract.mjs";
 import { validateRuntimeSetup } from "../generated-scaffold/setup.mjs";
 import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
 import { phaseContract } from "../generated-scaffold/contract.mjs";
+import { validateDialogAdapterSource, validateButtonAdapterSource } from
+    "../generated-scaffold/contracts/external-dialog-button.mjs";
 import { REQUEST_LIMIT, validateGenerationRequestIntegrity } from "./contracts/generation-request.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "generated-scaffold");
-const featureFiles = ["server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "control-contract.mjs", "files.mjs",
+const featureFiles = ["server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "external-control-contract.mjs", "files.mjs",
     "phase-response.mjs", "contracts/agent-actions.mjs", "contracts/workflow-state.mjs",
-    "contracts/host-adapter.mjs", "contracts/packaged-contributions.mjs",
+    "contracts/external-host-adapter.mjs", "contracts/packaged-contributions.mjs",
+    "contracts/external-generated-controls.mjs", "contracts/external-dialog-button.mjs",
+    "contracts/external-badge-evaluator.mjs", "contracts/external-value-provider.mjs",
     "badge-runtime.mjs",
     "ui/app.js", "ui/markdown.mjs", "ui/page-assets.mjs", "ui/runtime.css", "ui/workflow-theme.css"];
 const idPattern = /^[a-z0-9][a-z0-9-]{0,99}$/;
@@ -732,12 +736,7 @@ function frozenDialogs(request, workflowLayout, phases) {
         const code = Buffer.from(item.assets[1].content, "base64").toString("utf8");
         const syntax = spawnSync("node", ["--check", "--input-type=module"],
             { input: code, encoding: "utf8", timeout: 5000 });
-        if (syntax.status !== 0 || syntax.error
-            || !/export\s+(?:async\s+)?function\s+mount\s*\(/.test(code)
-            || !/export\s+const\s+dialogId\s*=\s*["']stock\.dialog["']/.test(code)
-            || !/export\s+const\s+contractVersion\s*=\s*1\b/.test(code)) {
-            throw new Error(`Incompatible frozen dialog adapter: ${doc.adapter}`);
-        }
+        validateDialogAdapterSource(code, syntax, doc.adapter);
         return { id: doc.id, adapter: doc.adapter, hash: doc.hash, adapterHash: doc.adapterHash,
             sourceId: item.assets[0].sourceId };
     });
@@ -799,13 +798,7 @@ function frozenDialogs(request, workflowLayout, phases) {
         const code = Buffer.from(item.assets[1].content, "base64").toString("utf8");
         const syntax = spawnSync("node", ["--check", "--input-type=module"],
             { input: code, encoding: "utf8", timeout: 5000 });
-        if (syntax.status !== 0 || syntax.error
-            || !/export\s+(?:async\s+)?function\s+mount\s*\(/.test(code)
-            || !code.includes(`controlId = "${control.id}"`)
-                && !code.includes(`controlId = '${control.id}'`)
-            || !/export\s+const\s+contractVersion\s*=\s*1\b/.test(code)) {
-            throw new Error(`Incompatible frozen button adapter: ${control.id}`);
-        }
+        validateButtonAdapterSource(code, syntax, control.id);
         return { ...control, name: item.name };
     });
     if (!unique(controls, (item) => item.id) || !unique(controls, (item) => item.adapter)
@@ -1666,9 +1659,21 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         if (priorRequestId !== previous.requestId) {
             throw new Error("Canvas changed since replacement was confirmed");
         }
+    } else if (priorRequestId) {
+        throw new Error("Canvas no longer exists for confirmed replacement");
     }
     const target = await mkdtemp(join(parent, `.${config.canvas.id}-stage-`));
+    const owned = await lstat(target);
+    const verifyTarget = async () => {
+        const current = await lstat(target);
+        if (!current.isDirectory() || current.isSymbolicLink()
+            || current.dev !== owned.dev || current.ino !== owned.ino
+            || await realpath(target) !== target || await realpath(parent) !== parent) {
+            throw new Error("Canvas directory changed during generation");
+        }
+    };
     try {
+    await verifyTarget();
     await mkdir(join(target, "ui"));
     await mkdir(join(target, "contracts"));
     if (pageFiles.length) await mkdir(join(target, "pages"));
@@ -1726,6 +1731,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         pathToFileURL(join(target, "server.mjs")).href],
     { encoding: "utf8" });
     if (renderer.error || renderer.status !== 0) throw new Error(`Workflow renderer failed: ${renderer.stderr || renderer.error}`);
+    await verifyTarget();
     await writeFile(join(target, "extension.mjs"), files.at(-1)[1], { flag: "wx" });
     let current;
     try { current = await lstat(output); }
@@ -1775,8 +1781,21 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         await renameDirectoryWithoutReplacement(target, output);
     }
     return { target: request.target, canvasId: config.canvas.id, warnings };
-    } finally {
-        await rm(target, { recursive: true, force: true });
+    } catch (error) {
+        try {
+            const current = await lstat(target).catch((readError) => {
+                if (readError.code === "ENOENT") return null;
+                throw readError;
+            });
+            if (current) {
+                await verifyTarget();
+                await rm(target, { recursive: true, force: true });
+            }
+        } catch (cleanup) {
+            throw new AggregateError([error, cleanup],
+                `${error.message}; failed canvas cleanup requires inspection at ${target}: ${cleanup.message}`);
+        }
+        throw error;
     }
 }
 

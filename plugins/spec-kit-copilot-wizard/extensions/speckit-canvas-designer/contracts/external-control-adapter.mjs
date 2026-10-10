@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
-export { validControlContract, validControlValue } from "../control-contract.mjs";
+export { validControlContract, validControlValue } from "../external-control-contract.mjs";
 
 export function validateDesignerAdapterExports(adapter, control) {
     if (adapter.controlId !== control.id

@@ -69,7 +69,8 @@ export async function startPresetJourney(page, {
         downloadUrl: published.download_url, source: "copilot", tags: published.tags,
     };
     const snapshot = {
-        workspacePath: checkout, featureFlags: { generateCanvas: true },
+        featureFlags: { generateCanvas: true },
+        workspacePath: checkout,
         currentPhase: "constitution",
         setup: { pluginInstalled: true, cliInstalled: true, projectInitialized: true,
             skillsReloaded: true },
@@ -154,7 +155,7 @@ export async function startPresetJourney(page, {
             },
             log: async () => {},
             getState: async () => snapshot,
-            getInstance: () => ({ workspacePath: checkout }),
+            getInstance: () => ({ workspacePath: checkout, generateCanvas: true }),
             getInstalledWorkflow: (state) => readInstalledWorkflowInventory(state,
                 async (_executable, args) => ({ stdout: "[]" })),
         });

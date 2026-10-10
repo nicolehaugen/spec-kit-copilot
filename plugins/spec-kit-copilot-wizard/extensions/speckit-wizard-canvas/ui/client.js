@@ -9,6 +9,7 @@ import {
     currentExtensionFilter,
     currentBundleFilter,
 } from "./state.js";
+import { readGenerateCanvas } from "../contracts/generate-feature.mjs";
 // The message router touches every renderer. Everything below is imported
 // lazily-safe (used only inside handleServerMessage bodies at SSE-event
 // time, not at module load) so the circular edges between client.js and
@@ -99,8 +100,8 @@ export function createClient({
             es.onmessage = (event) => {
                 try {
                     onMessage(JSON.parse(event.data));
-                } catch {
-                    // Ignore malformed events; the next state event repairs the UI.
+                } catch (error) {
+                    onError("/api/events", error);
                 }
             };
             return es;
@@ -230,6 +231,7 @@ export function handleServerMessage(msg) {
             // without a usable snapshot. Never replace a valid UI state with
             // undefined; the next valid broadcast or refresh will repair it.
             if (!msg.data || typeof msg.data !== "object") break;
+            readGenerateCanvas(msg.data);
             state.snapshot = msg.data;
             reconcileCompositionRefresh(msg.data);
             updateCompositionRefreshButton();

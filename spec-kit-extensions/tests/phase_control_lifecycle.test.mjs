@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import * as stock from "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs";
 import * as vertical from "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs";
-import { validatePhaseState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
+import { validatePhaseState } from "../extension-canvas-design/generated-scaffold/contracts/external-host-adapter.mjs";
 import { phaseControlDom } from "./phase_control_dom_fixture.mjs";
 
 const phases = [

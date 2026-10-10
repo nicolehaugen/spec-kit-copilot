@@ -29,6 +29,25 @@ export function validateBadgeInputBinding(value, name) {
     }
 }
 
+export function validateBadgeInputAdapterIdentity(entry, binding, exports) {
+    const literalExport = (name, pattern) => {
+        const declaration = exports.find((item) => item.n === name);
+        if (!declaration || !/(?:^|\n)[ \t]*export[ \t]+const[ \t]+$/
+            .test(entry.document.slice(0, declaration.s))) return null;
+        return entry.document.slice(declaration.e).match(pattern)?.[1] ?? null;
+    };
+    const id = literalExport("controlId",
+        /^\s*=\s*["']([a-z][a-z0-9.-]{0,79})["']\s*;/);
+    const version = literalExport("contractVersion", /^\s*=\s*(1)\s*;/);
+    const declares = exports.some((item) => item.n === "declaresMarkdownOutput");
+    const expected = binding.capabilities?.includes("declare-markdown-output") === true;
+    if (id !== binding.control || version !== "1" || declares !== expected
+        || (expected
+            && literalExport("declaresMarkdownOutput", /^\s*=\s*(true)\s*;/) !== "true")) {
+        throw new Error(`${entry.name}: incompatible Designer badge input adapter for ${binding.rule}`);
+    }
+}
+
 export function resolveBadgeInputControls(loaded, types, rules) {
     const controls = loaded.filter((item) => item.kind === "designer.badge-input-control");
     const bindings = loaded.filter((item) => item.kind === "designer.badge-input-binding");
