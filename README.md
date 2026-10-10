@@ -68,7 +68,34 @@ Canonical repository skills live in `.github\skills`, not the shipping core
 - `dev-tools-speckit-wizard-local-generate-launch`: refresh, then explicitly enable Generate;
   leave phase selection, Designer launch/settings and Generate submission to the user.
 - `dev-tools-speckit-distribution`: prepare local metadata, orchestrate explicitly authorized
-  releases, or verify published installations.
+  releases, or verify published installations with required provider activation.
+- `dev-tools-speckit-clean-reset`: preview and confirm exact Wizard/core plugin
+  uninstalls, unused marketplace removal, runtime override reset, and cleanup of
+  only the two owned provider-disable entries; stop without reinstalling.
+
+Installed-open and distribution share canvas-free activation guidance in
+`.github\skills\dev-tools-speckit-wizard-installed-open\references\provider-state.md`.
+After install/enable, verify both providers belong to the intended common plugin
+installation, back up settings and clear only their exact IDs from
+`extensions.disabledExtensions`, reload, and require both running. Discover the
+callable `speckit_designer_reload_skills` tool before Wizard-to-Designer launch
+and check it again in the actual child. Clear persisted settings with live
+disabled state requires a new session/restart, not a successful install claim.
+
+The persistent disable-list change is scripted, not a manual JSON edit:
+
+```powershell
+node dev-tools\clear-provider-disables.mjs
+# Confirm the exact diff, then use its digest:
+node dev-tools\clear-provider-disables.mjs --apply --expect "<preview digest>"
+```
+
+The helper validates settings, removes only the two fixed provider IDs, preserves
+unrelated values, rejects stale previews and symlink/junction paths, retains dated
+sibling backups, and re-reads the result. Missing settings remain absent. It does
+not enable a plugin or reload providers; the skill still performs provider
+provenance, running-state and tool-availability checks. Clean-reset uses the same
+helper without activating providers.
 
 Use one active installed Wizard/Designer pair; sample/session previews are not
 installed-provider or functional journey evidence. For local Generate testing,
@@ -323,6 +350,25 @@ copilot plugin uninstall spec-kit-copilot-bugfix
 copilot plugin uninstall spec-kit-copilot-sdd
 copilot plugin uninstall spec-kit-copilot-wizard
 ```
+
+For a confirmation-gated maintainer reset, use the project skill
+`dev-tools-speckit-clean-reset`. Wizard and Designer are two providers of the
+Wizard plugin, not separate plugin installations. The skill previews exact
+installation provenance and uses marketplace-qualified uninstall identifiers
+where needed. It backs up settings and clears only
+`plugin:spec-kit-copilot-wizard:speckit-wizard-canvas` and
+`plugin:spec-kit-copilot-wizard:speckit-canvas-designer` from
+`extensions.disabledExtensions`, preserving every other entry.
+
+Only approved, unused marketplace registrations are removed, without forced
+removal. Approved runtime override files are reset using the existing
+preview/digest configuration helper, retaining backups and `{}` files needed by
+explicit selectors. Unrelated plugins, personal skills, existing projects and
+their Specify installations/catalog registrations, source folders, and backups
+remain untouched. Ambiguous targets, shared marketplaces, locked files, or stale
+providers are blockers, not a successful clean reset; stale providers require
+restart/new-session verification. Cleanup stops here. Installing a released
+version is a separate distribution-skill action.
 
 ## Usage
 

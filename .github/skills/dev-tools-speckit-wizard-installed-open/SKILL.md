@@ -10,33 +10,20 @@ Open the installed plugin, not a sample or session preview. `cwd` chooses its
 workspace, not its provider code. This skill may enable only the known installed
 plugin/providers; it never copies code or changes runtime configuration.
 
-1. Resolve the absolute current worktree. Inspect
-   `plugin:spec-kit-copilot-wizard:speckit-wizard-canvas` via
-   `extensions_manage`. Require the exact ID, `Source: plugin`, and
-   `extensions\speckit-wizard-canvas\extension.mjs` under an installed plugin
-   root, not this worktree or `session-state\...\extensions\`.
-   Derive the root; check `plugin.json` name `spec-kit-copilot-wizard`.
-   Stop and report unexpected identity/source/path; do not guess install paths.
-2. **Always** inspect `~\.copilot\settings.json` at
-   `extensions.disabledExtensions`, even if Wizard says running. Inspect
-   `plugin:spec-kit-copilot-wizard:speckit-canvas-designer` and require the exact
-   plugin identity and entry path under the same installed root.
-   Never enable unknown/non-plugin providers. If either exact ID is persistently
-   disabled, back up settings under the current session's `session-state\...\files\`,
-   then remove **only** these two exact IDs with a JSON-aware edit, preserving
-   every other setting and disabled entry. Re-read and confirm both are absent.
-   If the installed plugin itself is disabled, run
-   `copilot plugin enable spec-kit-copilot-wizard`.
-   After changes call `extensions_reload` and inspect both providers again.
-   Stop with status/startup logs on failed/disabled providers; if persisted
-   settings are clear but inspection still says disabled, require a new session.
-   Do not claim a future child's skill-reload tool is available without checking
-   both persisted disabled entries.
-3. Call `list_canvas_capabilities` with `canvasId: "speckit-wizard"` and
+1. Resolve the absolute current worktree and intended installed plugin.
+   Read `references\provider-state.md` relative to this skill and execute its
+   complete **Activation** procedure. This is required, not a verification note:
+   inspect both providers, back up and clear only their exact persistent disable
+   entries, reload, require both running, and discover the callable
+   `speckit_designer_reload_skills` tool. Stop on any failed gate; activation
+   itself must not open a canvas.
+   Its persistent settings step uses `node dev-tools\clear-provider-disables.mjs`
+   with preview, confirmation and digest-guarded apply; do not edit JSON manually.
+2. Call `list_canvas_capabilities` with `canvasId: "speckit-wizard"` and
    `extensionId: "plugin:spec-kit-copilot-wizard:speckit-wizard-canvas"`.
    Require the exact returned provider and an input schema supporting `cwd`
    and boolean `generateCanvas`. Reject incompatible installed versions.
-4. Call `open_canvas` with the same IDs and
+3. Call `open_canvas` with the same IDs and
    `instanceId: "wizard-installed-worktree"` (or supplied ID).
    For an ordinary initial open pass `{ "cwd": "<absolute worktree>" }`;
    omit `generateCanvas` so runtime `generateCanvasEnabled` is used.
