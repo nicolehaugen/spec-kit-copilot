@@ -88,3 +88,16 @@ export function requiresManagedRun(adapter) {
     return Array.isArray(adapter.requiredCapabilities)
         && adapter.requiredCapabilities.includes("workflow.managed-run.v1");
 }
+
+export function validateWorkflowAdapter(pageModule) {
+    if (pageModule.pageId !== "workflow" || pageModule.contractVersion !== 1
+        || typeof pageModule.mount !== "function") {
+        throw new Error("Incompatible Workflow page adapter");
+    }
+}
+
+export function validateWorkflowMount(workflowPage) {
+    if (typeof workflowPage?.update !== "function" || typeof workflowPage.dispose !== "function") {
+        throw new Error("Workflow page adapter must return update and dispose");
+    }
+}

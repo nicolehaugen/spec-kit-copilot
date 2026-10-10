@@ -9,8 +9,8 @@ import { normalizeObservedVersions } from "../contracts/specify-inventory.mjs";
 import { validateSaveRequest, validateSavedSettings,
     validateSavedSettingsMetadata } from "../contracts/designer-settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput, validateLastOpen } from "../contracts/host-open.mjs";
-import { checkSchema } from "../contracts/design-contributions.mjs";
-import { validateDesignerAdapterExports } from "../contracts/control-adapter.mjs";
+import { checkSchema } from "../contracts/external-design-contributions.mjs";
+import { validateDesignerAdapterExports } from "../contracts/external-control-adapter.mjs";
 
 test("browser and server share generation states and reject incompatible availability", () => {
     assert.equal(GENERATION_EXISTS, SERVER_EXISTS);

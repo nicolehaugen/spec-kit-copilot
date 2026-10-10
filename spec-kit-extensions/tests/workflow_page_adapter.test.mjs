@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { mount, pageId, contractVersion, renderStockPage } from "../extension-canvas-design/generated-host/workflow-page/generated-workflow-page-adapter.mjs";
-import { validateWorkflowPageState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
+import { validateWorkflowPageState } from "../extension-canvas-design/generated-scaffold/contracts/external-host-adapter.mjs";
 
 test("stock Workflow adapter stays within the packaged module byte limit", async () => {
     const bytes = await readFile(new URL(

@@ -7,7 +7,7 @@ import { createSetup, validateRuntimeSetup } from "../extension-canvas-design/ge
 import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
 import { createWorkflowRoutes } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { createServer } from "node:http";
-import { validatePhaseState } from "../extension-canvas-design/generated-scaffold/contracts/host-adapter.mjs";
+import { validatePhaseState } from "../extension-canvas-design/generated-scaffold/contracts/external-host-adapter.mjs";
 
 const phase = { skill: "speckit-specify" };
 const preset = { id: "real-preset", version: "1.0.0", enabled: true, priority: 12,

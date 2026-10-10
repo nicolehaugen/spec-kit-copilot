@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { load, JSON_SCHEMA } from "js-yaml";
 import { readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerOpenInputSchema } from "../../speckit-canvas-designer/contracts/host-open.mjs";
-import { checkSchema } from "../../speckit-canvas-designer/contracts/design-contributions.mjs";
+import { checkSchema } from "../../speckit-canvas-designer/contracts/external-design-contributions.mjs";
 import { normalizeInstalledWorkflowInventory } from "../contracts/specify-inventory.mjs";
 import { specifySpawnOptions } from "../env/specify-invocation.mjs";
 import { runtimeSettings } from "../env/runtime-settings.mjs";

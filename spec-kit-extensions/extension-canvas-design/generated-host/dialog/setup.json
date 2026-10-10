@@ -1,5 +1,5 @@
 {
-  "$schema": "../../schemas/generated.dialog-definition.schema.json",
+  "$schema": "../../schemas/external-generated.dialog-definition.schema.json",
   "schemaVersion": 1,
   "id": "generated-setup-dialog",
   "adapter": "generated-dialog-adapter",

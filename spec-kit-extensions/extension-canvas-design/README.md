@@ -3,6 +3,11 @@
 A Spec Kit extension that supplies settings pages, a page-loading command,
 and separate commands to generate and open workflow canvases for the Copilot Designer.
 
+See [External customization contracts](EXTERNAL-CONTRACTS.md) for the definition
+schemas, executable interfaces, host consumers, and boundary tests. `external-`
+filenames identify contributor-facing contracts; unprefixed internal contracts
+continue to govern host operations, persistence, transport, and integrity.
+
 ## What It Does
 
 Canvas Design **0.1.20** registers four JSON page templates, fifteen ordered
@@ -173,7 +178,7 @@ turn is active; reporting rechecks that evidence and rejects ended turns.
 An ended Run output unconfirmed does not block the existing confirmed Delete
 action for a discovered workflow directory. Metadata-only discard still refuses
 to remove a row when a directory appeared.
-The host-to-Workflow-page contract in `generated-scaffold/contracts/host-adapter.mjs`
+The host-to-Workflow-page contract in `generated-scaffold/contracts/external-host-adapter.mjs`
 defines pending rows' `hasWorkflowRunHistory` (boolean), `workflowRecoveryMessage`
 (string or null), and `status` (Not started, Request sent, Running, Unconfirmed,
 Run output unconfirmed, Completed, or Failed). Recovery messages explain discovered
@@ -268,9 +273,9 @@ the phase card or changing other phases. Project-scoped Constitution does not
 support generated phase confirmations. Autopilot cannot start when any workflow
 phase has a generated confirmation binding; run those phases manually instead.
 
-The named contracts are `schemas/generated.dialog-definition.schema.json`,
-`generated.phase-dialog-binding.schema.json`, `generated.button-control-definition.schema.json`,
-and `generated.button-placement.schema.json`. A dialog adapter exports
+The named contracts are `schemas/external-generated.dialog-definition.schema.json`,
+`external-generated.phase-dialog-binding.schema.json`, `external-generated.button-control-definition.schema.json`,
+and `external-generated.button-placement.schema.json`. A dialog adapter exports
 `dialogId = "stock.dialog"`, `contractVersion = 1`, and
 `mount({root, definition, context, onDecision})`, returning an instance (or a
 promise of one) with a decision promise (`confirmed` or `cancelled`) and `dispose()`.
@@ -442,7 +447,7 @@ alone does not add a fifth placement choice.
 
 Installing this extension does not install or open a Designer. The Designer
 contract is the `schemaVersion.const` in
-`schemas/designer.tab-definition.schema.json` (currently `1`). Bump that
+`schemas/external-designer.tab-definition.schema.json` (currently `1`). Bump that
 schema version and coordinate with the Designer provider when changing its
 supported interface; the extension release version alone does not establish
 compatibility.
@@ -615,7 +620,7 @@ code.
 The Designer, generator, and standalone generated app apply the same object
 contract and value rules: 1-10 named properties, each with 1-20 distinct,
 nonempty string options of at most 80 characters. The canonical
-`generated-scaffold/control-contract.mjs` is copied into generated apps;
+`generated-scaffold/external-control-contract.mjs` is copied into generated apps;
 the Wizard provider includes a byte-checked copy, without a runtime dependency
 on the design-time extension.
 The browser reports incompatible `controlId` or `valueContract` exports,
@@ -678,29 +683,29 @@ not the JSON document. No kind is inferred from a filename.
 
 | Kind | Shape | JSON Schema |
 | --- | --- | --- |
-| `designer.tab-definition` | Required or added Designer tab | [tab](schemas/designer.tab-definition.schema.json) |
-| `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/designer.setting-definition.schema.json) |
-| `generated.workflow-page-definition` | Required generated Workflow page, adapter reference, and supported destinations | [Workflow page](schemas/generated.workflow-page-definition.schema.json) |
+| `designer.tab-definition` | Required or added Designer tab | [tab](schemas/external-designer.tab-definition.schema.json) |
+| `designer.setting-definition` | Field placed in a Designer tab slot | [setting](schemas/external-designer.setting-definition.schema.json) |
+| `generated.workflow-page-definition` | Required generated Workflow page, adapter reference, and supported destinations | [Workflow page](schemas/external-generated.workflow-page-definition.schema.json) |
 | `generated.workflow-page-adapter` | Replaceable whole Workflow-page `.mjs` presentation | Module contract below |
-| `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/generated.field-placement.schema.json) |
-| `generated.phase-control-definition` | Required phase identity, placement, adapter reference, and optional phase view labels | [phase control](schemas/generated.phase-control-definition.schema.json) |
+| `generated.field-placement` | Typed field in a declared generated page slot | [field placement](schemas/external-generated.field-placement.schema.json) |
+| `generated.phase-control-definition` | Required phase identity, placement, adapter reference, and optional phase view labels | [phase control](schemas/external-generated.phase-control-definition.schema.json) |
 | `generated.phase-control-adapter` | Workflow phase control `.mjs` presentation | Module contract below |
-| `designer.badges-settings-definition` | Complete replaceable badge type list and default appearance, shared by Designer and generated canvases | [badges settings](schemas/designer.badges-settings-definition.schema.json) |
-| `generated.badge-rule-definition` | Evidence inputs, badge text placeholders, and evaluator reference | [badge rule](schemas/generated.badge-rule-definition.schema.json) |
+| `designer.badges-settings-definition` | Complete replaceable badge type list and default appearance, shared by Designer and generated canvases | [badges settings](schemas/external-designer.badges-settings-definition.schema.json) |
+| `generated.badge-rule-definition` | Evidence inputs, badge text placeholders, and evaluator reference | [badge rule](schemas/external-generated.badge-rule-definition.schema.json) |
 | `generated.badge-rule-adapter` | Self-contained `.mjs` evaluator | Module contract below |
-| `generated.added-page-definition` | Generated-only page | [generated page](schemas/generated.added-page-definition.schema.json) |
+| `generated.added-page-definition` | Generated-only page | [generated page](schemas/external-generated.added-page-definition.schema.json) |
 | `generated.added-page-renderer` | Generated-only `.mjs` renderer | Module contract below |
-| `shared.control-definition` | Shared typed control | [shared control](schemas/shared.control-definition.schema.json) |
+| `shared.control-definition` | Shared typed control | [shared control](schemas/external-shared.control-definition.schema.json) |
 | `designer.control-adapter` | Designer `.mjs` control adapter | Module contract below |
 | `generated.control-adapter` | Generated `.mjs` control adapter | Module contract below |
-| `generated.value-definition` | Generated constant or computed value | [generated value](schemas/generated.value-definition.schema.json) |
+| `generated.value-definition` | Generated constant or computed value | [generated value](schemas/external-generated.value-definition.schema.json) |
 | `generated.computed-value-provider` | Generated `.mjs` provider | Module contract below |
-| `generated.dialog-definition` | Named dialog content and decision labels | [dialog](schemas/generated.dialog-definition.schema.json) |
+| `generated.dialog-definition` | Named dialog content and decision labels | [dialog](schemas/external-generated.dialog-definition.schema.json) |
 | `generated.dialog-adapter` | Generated `.mjs` dialog presentation | Module contract below |
-| `generated.phase-dialog-binding` | Optional per-phase dialog reference | [phase binding](schemas/generated.phase-dialog-binding.schema.json) |
-| `generated.button-control-definition` | Named button identity and adapter reference | [button control](schemas/generated.button-control-definition.schema.json) |
+| `generated.phase-dialog-binding` | Optional per-phase dialog reference | [phase binding](schemas/external-generated.phase-dialog-binding.schema.json) |
+| `generated.button-control-definition` | Named button identity and adapter reference | [button control](schemas/external-generated.button-control-definition.schema.json) |
 | `generated.button-adapter` | Generated `.mjs` button presentation | Module contract below |
-| `generated.button-placement` | Setup or workflow button placement and action | [button placement](schemas/generated.button-placement.schema.json) |
+| `generated.button-placement` | Setup or workflow button placement and action | [button placement](schemas/external-generated.button-placement.schema.json) |
 
 Each JSON kind has a matching schema filename. The four required tabs are
 identified by their registered names; added tabs use the same document shape.

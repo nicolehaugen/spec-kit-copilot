@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { mount } from "../extension-canvas-design/generated-host/dialog/generated-dialog-adapter.mjs";
+import * as dialogBoundary from "../extension-canvas-design/generated-scaffold/contracts/external-dialog-button.mjs";
 
 function dialogRoot() {
     const document = { activeElement: null };
@@ -82,6 +83,7 @@ test("generated host mounts synchronous and asynchronous dialog and button adapt
             dispose: () => { dialogDisposals++; } });
         const buttonInstance = () => ({ dispose: () => { buttonDisposals++; } });
         const context = {
+            ...dialogBoundary,
             dialogs: [dialog], dialogCache: new Map(), dialogPending: false, dialogRoot, token: "test",
             buttons: [{ control: "dialog.trigger", page: "workflow", slot: "workflow.actions",
                 order: 0, label: "Review", dialog: dialog.id }],
@@ -128,6 +130,7 @@ test("generated host rejects overlapping dialog mounts and releases its reservat
     const root = { children: [], get childElementCount() { return this.children.length; },
         replaceChildren() { this.children = []; } };
     const context = {
+        ...dialogBoundary,
         dialogs: [dialog], dialogCache: new Map(), dialogPending: false, token: "test",
         $: () => root,
         fetch: async () => ({ ok: true, json: async () => dialog }),

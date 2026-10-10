@@ -1,5 +1,5 @@
-const imageContract = { type: "image", maxBytes: 32768,
-    mimeTypes: ["image/png", "image/jpeg", "image/gif", "image/webp"] };
+const { validateStockImageAdapter } = await import(
+    `../contracts/external-generated-controls.mjs${new URL(import.meta.url).search}`);
 
 export function createStockImageRenderer(registration, token, loadModule = (url) => import(url)) {
     const allowed = new Set(registration ? JSON.parse(registration.dataset.assets) : []);
@@ -12,12 +12,7 @@ export function createStockImageRenderer(registration, token, loadModule = (url)
             }
             module ??= loadModule(`${registration.dataset.module}?token=${encodeURIComponent(token)}`);
             const { mount, controlId, valueContract } = await module;
-            if (controlId !== "stock.image" || typeof mount !== "function"
-                || !valueContract || typeof valueContract !== "object"
-                || JSON.stringify(Object.entries(valueContract).sort())
-                    !== JSON.stringify(Object.entries(imageContract).sort())) {
-                throw new Error("Incompatible stock.image adapter");
-            }
+            validateStockImageAdapter(controlId, mount, valueContract);
             await mount({ root, field,
                 value: `/assets/${encodeURIComponent(asset.file)}?token=${encodeURIComponent(token)}`,
                 context: { alt, className } });

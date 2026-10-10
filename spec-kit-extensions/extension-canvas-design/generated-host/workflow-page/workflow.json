@@ -1,5 +1,5 @@
 {
-  "$schema": "../../schemas/generated.workflow-page-definition.schema.json",
+  "$schema": "../../schemas/external-generated.workflow-page-definition.schema.json",
   "schemaVersion": 2,
   "id": "workflow",
   "adapter": "generated-workflow-page-adapter",

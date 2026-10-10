@@ -80,13 +80,13 @@ test("Designer contract reads only from a real schemas directory", async (t) => 
     const dir = await fixture(t);
     const schemas = join(dir, "schemas");
     await mkdir(schemas);
-    await writeFile(join(schemas, "designer.tab-definition.schema.json"),
+    await writeFile(join(schemas, "external-designer.tab-definition.schema.json"),
         JSON.stringify({ properties: { schemaVersion: { const: 1 } } }));
     assert.equal(await readDesignerContract(dir), 1);
 
     const outside = await fixture(t);
     await mkdir(join(outside, "schemas"));
-    await writeFile(join(outside, "schemas", "designer.tab-definition.schema.json"),
+    await writeFile(join(outside, "schemas", "external-designer.tab-definition.schema.json"),
         JSON.stringify({ properties: { schemaVersion: { const: 2 } } }));
     await rm(schemas, { recursive: true });
     try {

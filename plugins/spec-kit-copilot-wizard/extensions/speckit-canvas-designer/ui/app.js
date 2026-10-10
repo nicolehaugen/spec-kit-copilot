@@ -542,10 +542,7 @@ function renderPage(pageId, invalidFieldId) {
                 const adapter = badgeInputAdapters.get(binding.adapter);
                 if (adapter instanceof Error) throw adapter;
                 if (!adapter) throw new Error(`Missing Designer badge input adapter ${binding.adapter}`);
-                if (adapter.controlId !== binding.control || adapter.contractVersion !== 1
-                    || typeof adapter.mount !== "function") {
-                    throw new Error(`Incompatible Designer badge input adapter ${binding.adapter}`);
-                }
+                adapterContract.validateBadgeInputAdapter(adapter, binding);
                 return adapter.mount({ root: mount, rule, inputs, phases, outputs, onChange });
             } });
         root.setAttribute("aria-busy", "false");
@@ -801,7 +798,7 @@ try {
         import(`/ui/identity-control.js?token=${encodeURIComponent(token)}`),
         import(`/ui/outputs-control.js?token=${encodeURIComponent(token)}`),
         import(`/ui/badges-control.js?token=${encodeURIComponent(token)}`),
-        import(`/ui/control-adapter-contract.js?token=${encodeURIComponent(token)}`),
+        import(`/ui/external-control-adapter-contract.js?token=${encodeURIComponent(token)}`),
     ]);
     const response = await fetch(`/api/state?token=${encodeURIComponent(token)}`);
     if (!response.ok) throw new Error(`Designer settings request failed (${response.status})`);

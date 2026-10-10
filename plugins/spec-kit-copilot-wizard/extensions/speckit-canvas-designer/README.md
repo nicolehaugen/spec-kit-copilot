@@ -6,17 +6,23 @@ Wizard and Designer canvases.
 
 The provider's `contracts/` directory names the Wizard handoff and open input
 (`wizard-handoff.mjs`, `host-open.mjs`), saved settings and save request
-(`designer-settings.mjs`), configured Badge instances (`badges.mjs`) and
-registered Badge definitions (`badge-definitions.mjs`), generation submission
+(`designer-settings.mjs`), configured Badge instances (`external-badges.mjs`) and
+registered Badge definitions (`external-badge-definitions.mjs`), generation submission
 and frozen request writer (`generation-request.mjs`), generated output status and
 bounded folder/Open actions (`generated-output.mjs`), Specify version inventory (`specify-inventory.mjs`),
-control adapter exports (`control-adapter.mjs`), and contribution field/schema
-rules (`design-contributions.mjs`). The existing readers and handlers retain
+control adapter exports (`external-control-adapter.mjs`), and contribution field/schema
+rules (`external-design-contributions.mjs`). Definition checks live in
+`external-definitions.mjs`; static executable export and self-contained-module
+requirements live in `external-executable-modules.mjs`. `external-` identifies
+contributor-facing contracts, while the unprefixed contracts govern internal
+host operations. The [external-contract index](../../../../spec-kit-extensions/extension-canvas-design/EXTERNAL-CONTRACTS.md)
+maps both Designer and generated-runtime interfaces to their consumers and tests.
+The existing readers and handlers retain
 filesystem confinement, UI lifecycle, and revision conflicts. The generator is
 independently packaged and validates request integrity with its own
 `scripts/contracts/generation-request.mjs`; it does not import the provider.
-The browser's matching mount, readiness, and draft-change rules live in
-`ui/control-adapter-contract.js`, served with the provider rather than loaded
+The browser's matching mount, readiness, badge input, and draft-change rules live in
+`ui/external-control-adapter-contract.js`, served with the provider rather than loaded
 from a preset.
 The browser-safe `ui/generated-output-state.js` defines status, reveal, Generate,
 Open, and error response shapes shared by the server and browser. Reveal responds
@@ -307,11 +313,15 @@ The provider loads without installed npm dependencies. The Wizard's environment
 setup checks and installs the Designer's renderer parser alongside its own YAML
 parser. Opening Designer directly without the parser reports an install instruction
 instead of failing at provider startup. For local tests, install dependencies with
-`npm ci` in this directory, then run:
+`npm ci` in this directory and ensure Specify CLI is available, then run:
 
 ```bash
 node --test plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/test/provider.test.mjs
 ```
+
+The resolved-template integration test requires a successful `specify --version`
+and fails rather than skipping when the CLI is unavailable. The Release Extension
+workflow installs Specify before running the Node.js integration tests.
 
 Canvas Design's [taxonomy, kind-named JSON Schemas, and executable module contracts](../../../../spec-kit-extensions/extension-canvas-design/README.md#template-taxonomy-and-schemas)
 define the registration and authoring surface. Required and added Designer tabs

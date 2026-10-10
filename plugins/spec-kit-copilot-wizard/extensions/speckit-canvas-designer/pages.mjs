@@ -1,19 +1,22 @@
+import { requiredExecutableExport, validateExecutableExports,
+    validateExecutableImports } from "./contracts/external-executable-modules.mjs";
+import { validateContribution, validateControl, validateGeneratedPage, validateWorkflowPage, validateFieldPlacement, validatePhaseControl, validateDialog, validatePhaseDialogBinding, validateButtonControl, validateButtonPlacement, validateValueSource } from "./contracts/external-definitions.mjs";
+export { validateDialog, validatePhaseDialogBinding, validateButtonControl,
+    validateButtonPlacement } from "./contracts/external-definitions.mjs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { Script } from "node:vm";
 import { fingerprint } from "./handoff.mjs";
-import { validControlContract } from "./contracts/control-adapter.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
 import { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
-import { RULES, resolvedField, checkSchema } from "./contracts/design-contributions.mjs";
-import { validateBadgeText, validateBadgeSettings, validateBadgeRule } from "./contracts/badge-definitions.mjs";
+import { RULES, resolvedField, checkSchema, validateTemplateRegistration } from "./contracts/external-design-contributions.mjs";
+import { validateBadgeText, validateBadgeSettings, validateBadgeRule } from "./contracts/external-badge-definitions.mjs";
 import { validateBadgeInputBinding, validateBadgeInputControl,
-    resolveBadgeInputControls } from "./contracts/badge-input-control.mjs";
-export { validateBadgeRule } from "./contracts/badge-definitions.mjs";
+    resolveBadgeInputControls, validateBadgeInputAdapterIdentity } from "./contracts/external-badge-input-control.mjs";
+export { validateBadgeRule } from "./contracts/external-badge-definitions.mjs";
 
 export { PAGE_NAME, isWindowsDeviceName } from "./contracts/host-open.mjs";
 const DEFAULT_PAGES = ["designer-essentials", "designer-artifacts",
@@ -29,15 +32,6 @@ const PAGE_PATTERN = new RegExp(PAGE_NAME);
 const DIALOG_KINDS = ["generated.dialog-definition", "generated.dialog-adapter",
     "generated.phase-dialog-binding", "generated.button-control-definition",
     "generated.button-adapter", "generated.button-placement"];
-const contractKeys = (document) => Object.keys(document).filter((key) => key !== "$schema");
-function schemaMetadata(document, name) {
-    if (document && typeof document === "object"
-        && Object.hasOwn(document, "$schema") && typeof document.$schema !== "string") {
-        throw new Error(`${name}: invalid $schema reference`);
-    }
-}
-// The generated shell uses "workflow" for its built-in page navigation.
-const RESERVED_GENERATED_PAGE_ID = "workflow";
 const ERROR_LIMIT = 512;
 class PageContentError extends Error {}
 class ContributionCollisionError extends Error {}
@@ -179,368 +173,6 @@ function buildModel(entries, schema) {
     return { pages, constraints, values, fieldOrigins };
 }
 
-function validateContribution(document, name, slots, fieldOrigins) {
-    schemaMetadata(document, name);
-    const keys = ["schemaVersion", "id", "host", "slot", "order", "field", "requires",
-        "generatedBinding"];
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).some((key) => !keys.includes(key))
-        || document.schemaVersion !== 1 || typeof document.id !== "string"
-        || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.id)
-        || document.host !== "designer" || !Number.isInteger(document.order)
-        || document.order < -100000 || document.order > 100000
-        || typeof document.slot !== "string") {
-        throw new Error(`${name}: invalid Canvas Design contribution`);
-    }
-    const field = document.field;
-    if (!field || typeof field !== "object" || Array.isArray(field)
-        || Object.keys(field).some((key) =>
-            !["id", "label", "description", "type", "default", "control", "maxLength", "required"].includes(key))
-        || typeof field.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(field.id)
-        || typeof field.label !== "string" || !field.label || field.label.length > 120
-        || (field.description !== undefined
-            && (typeof field.description !== "string" || field.description.length > 1000))
-        || !["string", "boolean", "object", "image"].includes(field.type)
-        || (Object.hasOwn(RULES, field.id) && RULES[field.id].type !== field.type)
-        || (field.type === "object"
-            ? !PAGE_PATTERN.test(field.control)
-            : field.control !== (field.type === "boolean" ? "stock.checkbox"
-                : field.type === "image" ? "stock.image" : "stock.text"))
-        || (field.maxLength !== undefined && (field.type !== "string"
-            || !Number.isInteger(field.maxLength) || field.maxLength < 1
-            || field.maxLength > 1000))
-        || (field.required !== undefined && (field.type !== "string" || field.required !== true))
-        || (Object.hasOwn(field, "default")
-            && (field.type !== "boolean" || typeof field.default !== "boolean"))) {
-        throw new Error(`${name}: incompatible field or control definition`);
-    }
-    if (document.requires !== undefined
-        && (!Array.isArray(document.requires)
-            || document.requires.length !== 1
-            || typeof document.requires[0] !== "string")) {
-        throw new Error(`${name}: requires must name exactly one control definition template`);
-    }
-    const binding = document.generatedBinding;
-    if (field.type === "image" && binding === undefined) {
-        throw new Error(`${name}: image asset requires a generated placement`);
-    }
-    if (binding !== undefined
-        && (!binding
-            || typeof binding !== "object" || Array.isArray(binding)
-            || (["object", "image"].includes(field.type)
-                ? (field.type === "image"
-                    ? Object.keys(binding).sort().join() !== (binding.page === undefined
-                        ? "presentation,slot" : "page,presentation,slot")
-                        || (binding.page !== undefined && !PAGE_PATTERN.test(binding.page))
-                    : Object.keys(binding).sort().join() !== "presentation,slot")
-                    || binding.presentation !== (field.type === "image" ? "asset" : "control")
-                    || (field.type === "image"
-                        ? binding.page === undefined
-                            ? !["header.brand", "workflow.intro"].includes(binding.slot)
-                            : typeof binding.slot !== "string"
-                                || !/^[a-z][a-z0-9.-]{0,79}$/.test(binding.slot)
-                        : binding.slot !== "details.content")
-                : field.type !== "string"
-                    || !(binding.presentation === "stock.readonly"
-                        && Object.keys(binding).every((key) => ["presentation", "section"].includes(key))
-                        || binding.presentation === "text"
-                        && Object.keys(binding).sort().join() === "presentation,slot"
-                        && ((field.id === "canvas.description" && binding.slot === "workflow.description")
-                            || (field.id === "canvas.workflowListName" && binding.slot === "workflow.heading"))))
-            || (binding.section !== undefined
-                && (!binding.section || typeof binding.section !== "object"
-                    || Array.isArray(binding.section)
-                    || Object.keys(binding.section).sort().join() !== "id,title"
-                    || typeof binding.section.id !== "string"
-                    || !/^[a-z][a-z0-9.-]{0,79}$/.test(binding.section.id)
-                    || typeof binding.section.title !== "string"
-                    || !binding.section.title.trim() || binding.section.title.length > 120)))) {
-        throw new Error(`${name}: incompatible generated binding`);
-    }
-    if (!slots.get(document.slot)?.slot) {
-        throw new Error(`${name}: unknown Designer slot ${document.slot}`);
-    }
-    if (fieldOrigins.has(field.id)) {
-        throw new Error(`${name}: duplicate field ${field.id} also defined by ${fieldOrigins.get(field.id)}`);
-    }
-    fieldOrigins.set(field.id, name);
-}
-
-function validateControl(document, name) {
-    schemaMetadata(document, name);
-    const properties = document?.value?.properties;
-    const image = document?.value?.type === "image";
-    const scalar = document?.value?.type === "string"
-        || document?.value?.type === "boolean";
-    const checkbox = document?.id === "stock.checkbox";
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "adapters,id,schemaVersion,value"
-        || document.schemaVersion !== 1
-        || (image ? document.id !== "stock.image"
-            : scalar ? document.id !== (checkbox ? "stock.checkbox" : "stock.text")
-                : !PAGE_PATTERN.test(document.id) || isWindowsDeviceName(document.id))
-        || !document.value || (image
-            ? Object.keys(document.value).sort().join() !== "maxBytes,mimeTypes,type"
-                || document.value.maxBytes !== 32 * 1024
-                || JSON.stringify(document.value.mimeTypes)
-                    !== '["image/png","image/jpeg","image/gif","image/webp"]'
-            : scalar
-                ? Object.keys(document.value).sort().join() !== "type"
-                    || document.value.type !== (checkbox ? "boolean" : "string")
-                : !validControlContract(document.value))
-        || !document.adapters || Object.keys(document.adapters).sort().join() !== "designer,generated"
-            && !(checkbox && Object.keys(document.adapters).sort().join() === "designer")
-        || !PAGE_PATTERN.test(document.adapters.designer)
-        || (!checkbox && !PAGE_PATTERN.test(document.adapters.generated))) {
-        throw new Error(`${name}: invalid shared control value contract or adapter references`);
-    }
-}
-
-function validateGeneratedPage(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).some((key) => !["id", "renderer", "schemaVersion", "title", "order", "values", "slots"].includes(key))
-        || document.schemaVersion !== 1 || document.id !== name
-        || [RESERVED_GENERATED_PAGE_ID, "setup"].includes(document.id) || isWindowsDeviceName(document.id)
-        || typeof document.title !== "string" || !document.title.trim()
-        || (document.order !== undefined && (!Number.isInteger(document.order)
-            || document.order < -100000 || document.order > 100000))
-        || document.title.length > 120 || typeof document.renderer !== "string"
-        || !PAGE_PATTERN.test(document.renderer)
-        || isWindowsDeviceName(document.renderer)
-        || (document.values !== undefined && (!Array.isArray(document.values)
-            || document.values.length > 100 || new Set(document.values).size !== document.values.length
-            || document.values.some((id) => typeof id !== "string"
-                || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(id))))
-        || (document.slots !== undefined && (!Array.isArray(document.slots)
-            || document.slots.length > 30
-            || new Set(document.slots.map((slot) => slot?.id)).size !== document.slots.length
-            || document.slots.some((slot) => !slot || typeof slot !== "object"
-                || Array.isArray(slot) || Object.keys(slot).join() !== "id"
-                || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id)
-                || slot.id === "workflow.phases")))) {
-        throw new Error(`${name}: invalid generated page definition`);
-    }
-}
-
-function validateWorkflowPage(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || !["id,order,schemaVersion,slots,title",
-            "adapter,badgeDestinations,id,order,schemaVersion,slots,title"].includes(
-            contractKeys(document).sort().join())
-        || document.schemaVersion !== (document.adapter ? 2 : 1)
-        || (document.adapter !== undefined && (typeof document.adapter !== "string"
-            || !PAGE_PATTERN.test(document.adapter) || isWindowsDeviceName(document.adapter)
-            || !Array.isArray(document.badgeDestinations)
-            || document.badgeDestinations.length > 4
-            || new Set(document.badgeDestinations).size !== document.badgeDestinations.length
-            || document.badgeDestinations.some((destination) =>
-                !["workflow.list", "workflow.summary", "phase.card", "phase.output"].includes(destination))))
-        || document.id !== "workflow" || name !== "generated-workflow"
-        || typeof document.title !== "string" || !document.title.trim()
-        || document.title.length > 120 || document.order !== 0
-        || !Array.isArray(document.slots) || document.slots.length < 1 || document.slots.length > 30
-        || document.slots[0]?.id !== "workflow.phases"
-        || new Set(document.slots.map((slot) => slot?.id)).size !== document.slots.length
-        || document.slots.some((slot) => !slot || typeof slot !== "object"
-            || Array.isArray(slot) || Object.keys(slot).join() !== "id"
-            || typeof slot.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(slot.id))) {
-        throw new Error(`${name}: invalid Workflow page definition`);
-    }
-}
-
-function validateFieldPlacement(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).some((key) =>
-            !["schemaVersion", "id", "page", "slot", "field", "order", "control"].includes(key))
-        || document.schemaVersion !== 1 || document.id !== name
-        || typeof document.page !== "string" || !PAGE_PATTERN.test(document.page)
-        || typeof document.slot !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(document.slot)
-        || document.page === "workflow"
-            && ["workflow.phases", "workflow.list", "workflow.summary"].includes(document.slot)
-        || typeof document.field !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.field)
-        || !Number.isInteger(document.order) || document.order < -100000 || document.order > 100000
-        || (document.control !== undefined && (typeof document.control !== "string"
-            || !/^[a-z][a-z0-9.-]{0,79}$/.test(document.control)))) {
-        throw new Error(`${name}: invalid generated field placement`);
-    }
-}
-
-function validatePhaseControl(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).some((key) =>
-            !["adapter", "id", "managedRun", "placement", "schemaVersion", "slots", "viewLabels"].includes(key))
-        || (document.managedRun !== undefined && typeof document.managedRun !== "boolean")
-        || document.schemaVersion !== 1 || document.id !== "workflow-phases"
-        || typeof document.adapter !== "string" || !PAGE_PATTERN.test(document.adapter)
-        || isWindowsDeviceName(document.adapter)
-        || !document.placement || typeof document.placement !== "object"
-        || Array.isArray(document.placement)
-        || Object.keys(document.placement).sort().join() !== "page,slot"
-        || document.placement.page !== "workflow"
-        || document.placement.slot !== "workflow.phases"
-        || (document.viewLabels !== undefined && (
-            !document.viewLabels || typeof document.viewLabels !== "object" || Array.isArray(document.viewLabels)
-            || Object.keys(document.viewLabels).length > 40
-            || Object.entries(document.viewLabels).some(([id, label]) =>
-                !/^(?:speckit\.)?[a-z0-9]+(?:[.-][a-z0-9]+)*$/.test(id)
-                || typeof label !== "string" || !label.trim() || label.length > 80
-                || /[\x00-\x1f\x7f]/.test(label))))
-        || (document.slots !== undefined
-            && (!Array.isArray(document.slots) || document.slots.length !== 2
-                || new Set(document.slots.map((slot) => slot?.id)).size !== 2
-                || document.slots.some((slot) => !slot || typeof slot !== "object"
-                    || Array.isArray(slot) || Object.keys(slot).join() !== "id"
-                    || !["phase.card", "phase.output"].includes(slot.id))))) {
-        throw new Error(`${name}: invalid phase control definition`);
-    }
-}
-
-function validLabel(value, max = 500) {
-    return typeof value === "string" && !!value.trim() && value.length <= max;
-}
-
-export function validateDialog(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "adapter,blocks,buttons,id,schemaVersion,title"
-        || document.schemaVersion !== 1 || document.id !== name
-        || !PAGE_PATTERN.test(document.adapter) || isWindowsDeviceName(document.adapter)
-        || !validLabel(document.title)
-        || !Array.isArray(document.blocks) || document.blocks.length < 1 || document.blocks.length > 20
-        || !document.buttons || typeof document.buttons !== "object"
-        || Array.isArray(document.buttons)
-        || Object.keys(document.buttons).sort().join() !== "cancel,confirm"
-        || !validLabel(document.buttons.cancel) || !validLabel(document.buttons.confirm)) {
-        throw new Error(`${name}: invalid generated dialog definition`);
-    }
-    const slots = new Set();
-    for (const block of document.blocks) {
-        if (!block || typeof block !== "object" || Array.isArray(block)) {
-            throw new Error(`${name}: invalid dialog block`);
-        }
-        const keys = Object.keys(block).sort().join();
-        if (["heading", "paragraph", "warning"].includes(block.type)
-            ? keys !== "text,type" || !validLabel(block.text)
-            : block.type === "list" ? keys !== "items,type"
-                || !Array.isArray(block.items) || !block.items.length || block.items.length > 20
-                || block.items.some((item) => !validLabel(item))
-                : block.type === "link" ? keys !== "href,text,type"
-                    || !validLabel(block.text) || typeof block.href !== "string"
-                    || block.href.length > 2048 || !/^https:\/\/[^\s]+$/.test(block.href)
-                    : block.type === "slot" ? keys !== "name,type"
-                        || !["pending-packages", "phase"].includes(block.name)
-                        || slots.has(block.name)
-                        : true) {
-            throw new Error(`${name}: invalid dialog block`);
-        }
-        if (block.type === "slot") slots.add(block.name);
-    }
-    if (name === "generated-setup-dialog" && !slots.has("pending-packages")) {
-        throw new Error(`${name}: setup dialog must show all pending packages`);
-    }
-}
-
-export function validatePhaseDialogBinding(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "dialog,id,phase,schemaVersion"
-        || document.schemaVersion !== 1 || document.id !== name
-        || !/^speckit\.[a-z][a-z0-9.-]{0,79}$/.test(document.phase)
-        || document.phase === "speckit.constitution"
-        || !PAGE_PATTERN.test(document.dialog)) {
-        throw new Error(`${name}: invalid phase dialog binding`);
-    }
-}
-
-export function validateButtonControl(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "adapter,id,schemaVersion"
-        || document.schemaVersion !== 1
-        || !((name === "generated-setup-button-control" && document.id === "project.setup-button")
-            || (document.id === "dialog.trigger" && PAGE_PATTERN.test(name)))
-        || !PAGE_PATTERN.test(document.adapter)) {
-        throw new Error(`${name}: invalid generated button control`);
-    }
-}
-
-export function validateButtonPlacement(document, name) {
-    schemaMetadata(document, name);
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).sort().join() !== "action,control,dialog,id,label,order,page,presentation,schemaVersion,slot"
-        || document.schemaVersion !== 1 || document.id !== name
-        || !["workflow", "setup"].includes(document.page)
-        || document.slot !== `${document.page}.actions`
-        || document.control !== (name === "generated-setup-button" ? "project.setup-button" : "dialog.trigger")
-        || !Number.isInteger(document.order) || document.order < -100000 || document.order > 100000
-        || !validLabel(document.label, 120)
-        || !["primary", "secondary"].includes(document.presentation)
-        || !PAGE_PATTERN.test(document.dialog)
-        || !document.action || typeof document.action !== "object"
-        || Array.isArray(document.action) || Object.keys(document.action).join() !== "type"
-        || document.action.type !== (name === "generated-setup-button" ? "project.setup" : "dialog.result")
-        || (name === "generated-setup-button") !== (document.page === "setup")) {
-        throw new Error(`${name}: invalid generated button placement`);
-    }
-}
-
-function validateValueSource(document, name, fieldOrigins) {
-    schemaMetadata(document, name);
-    const schema = document?.schema;
-    const source = document?.source;
-    const section = document?.section;
-    if (!document || typeof document !== "object" || Array.isArray(document)
-        || contractKeys(document).some((key) => !["schemaVersion", "id", "label", "schema",
-            "source", "presentation", "section"].includes(key))
-        || document.schemaVersion !== 1
-        || typeof document.id !== "string" || !/^[A-Za-z][A-Za-z0-9_.-]{0,79}$/.test(document.id)
-        || typeof document.label !== "string" || !document.label.trim() || document.label.length > 120
-        || !schema || typeof schema !== "object" || Array.isArray(schema)
-        || !(schema.type === "string"
-            && Object.keys(schema).every((key) => ["type", "maxLength"].includes(key))
-            && Number.isInteger(schema.maxLength) && schema.maxLength >= 1 && schema.maxLength <= 1000
-            || schema.type === "boolean" && Object.keys(schema).sort().join() === "type"
-            || schema.type === "object" && Object.keys(schema).sort().join() === "properties,type"
-                && schema.properties && typeof schema.properties === "object"
-                && !Array.isArray(schema.properties)
-                && Object.keys(schema.properties).length >= 1 && Object.keys(schema.properties).length <= 10
-                && Object.entries(schema.properties).every(([key, allowed]) =>
-                    /^[a-z][A-Za-z0-9]{0,39}$/.test(key)
-                    && Array.isArray(allowed) && allowed.length >= 1 && allowed.length <= 20
-                    && new Set(allowed).size === allowed.length
-                    && allowed.every((value) => typeof value === "string" && value.length >= 1 && value.length <= 80)))
-        || !source || typeof source !== "object" || Array.isArray(source)
-        || !(source.kind === "constant" && Object.keys(source).sort().join() === "kind,value"
-            || source.kind === "computed" && Object.keys(source).sort().join() === "kind,module"
-                && PAGE_PATTERN.test(source.module) && !isWindowsDeviceName(source.module))
-        || !["stock.readonly", "stock.editable", "processing-only"].includes(document.presentation)
-        || (source.kind === "computed" && document.presentation === "stock.editable")
-        || (section !== undefined && (!section || typeof section !== "object"
-            || Object.keys(section).sort().join() !== "id,title"
-            || typeof section.id !== "string" || !/^[a-z][a-z0-9.-]{0,79}$/.test(section.id)
-            || typeof section.title !== "string" || !section.title.trim() || section.title.length > 120))) {
-        throw new Error(`${name}: invalid Canvas Design value source`);
-    }
-    if (source.kind === "constant") {
-        const value = source.value;
-        if (schema.type === "string" && (typeof value !== "string" || value.length > schema.maxLength)
-            || schema.type === "boolean" && typeof value !== "boolean"
-            || schema.type === "object" && (!value || typeof value !== "object" || Array.isArray(value)
-                || Object.keys(value).sort().join() !== Object.keys(schema.properties).sort().join()
-                || Object.entries(schema.properties).some(([key, allowed]) => !allowed.includes(value[key])))) {
-            throw new Error(`${name}: invalid typed constant value`);
-        }
-    }
-    if (fieldOrigins.has(document.id)) {
-        throw new Error(`${name}: duplicate field ${document.id} also defined by ${fieldOrigins.get(document.id)}`);
-    }
-    fieldOrigins.set(document.id, name);
-}
-
 async function specifyInventory(project) {
     const options = await specifySpawnOptions(project, { encoding: "utf8", timeout: 10000,
         maxBuffer: 2 * 1024 * 1024 });
@@ -564,32 +196,7 @@ async function specifyInventory(project) {
 }
 
 async function verifyWinner(inventory, checkout, root, item, executable = false) {
-    const info = inventory.get(`template:${item.name}`);
-    const layers = info?.stack;
-    const winner = layers?.find((layer) => layer?.active === true);
-    const sourceLayer = item.sourceId === undefined ? undefined
-        : item.sourceId === "project" ? "project"
-            : item.sourceId.startsWith("extension:") ? "extension" : "preset";
-    const sourceId = sourceLayer === "project" ? "_"
-        : sourceLayer === "extension" ? item.sourceId.slice("extension:".length) : item.sourceId;
-    if (info?.id !== `template:${item.name}` || info.kind !== "template"
-        || info.name !== item.name || !Array.isArray(layers) || !layers.length
-        || layers.some((layer) => !layer || layer.strategy !== "replace")
-        || layers.filter((layer) => layer.active === true).length !== 1
-        || !winner || (sourceLayer !== undefined
-            && (winner.sourceId !== sourceId || winner.layer !== sourceLayer))
-        || typeof winner.sourcePath !== "string" || !winner.sourcePath) {
-        throw new Error(`${item.name}: registration must be a replace-only Specify template from ${item.sourceId}`);
-    }
-    if (typeof winner.sourceId !== "string"
-        || !(winner.layer === "project" && winner.sourceId === "_"
-            || winner.layer === "extension" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId)
-            || winner.layer === "preset" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(winner.sourceId))) {
-        throw new Error(`${item.name}: invalid active Specify template layer`);
-    }
-    if (executable && inventory.has(`script:${item.name}`)) {
-        throw new Error(`${item.name}: native Specify script registrations are not supported for executable adapters/renderers`);
-    }
+    const winner = validateTemplateRegistration(inventory, item, executable);
     const expected = resolve(checkout, winner.sourcePath);
     const submitted = resolve(checkout, item.path);
     if (!inside(root, expected) || !inside(root, submitted) || expected !== submitted) {
@@ -754,75 +361,15 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
                     throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: ${error.message}`, { cause: error });
                 }
-                if (imports.some((entry) => entry.d !== -2)) {
-                    throw new Error(`${item.name}: ${item.kind === "generated.added-page-renderer"
-                        ? "generated renderer" : item.kind === "generated.computed-value-provider"
-                            ? "computed value provider" : "control adapter"} must be self-contained; module imports are not packaged`);
-                }
-                const requiredExport = item.kind === "generated.added-page-renderer" ? "renderPage"
-                    : item.kind === "generated.badge-rule-adapter" ? "evaluate"
-                    : item.kind === "generated.phase-control-adapter" ? "mount"
-                    : item.kind === "generated.computed-value-provider" ? "provideValue" : "mount";
+                validateExecutableImports(item, imports);
+                const requiredExport = requiredExecutableExport(item.kind);
                 const check = spawnSync("node", ["--check", "--input-type=module"],
                     { input: document, encoding: "utf8", timeout: 5000, maxBuffer: 128 * 1024 });
                 if (check.error || check.status !== 0) {
                     throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
                         ? "generated renderer" : item.kind}: ${check.stderr || check.error || "module validation failed"}`);
                 }
-                if (!exports.some((entry) => entry.n === requiredExport)) {
-                    throw new Error(`${item.name}: invalid ${item.kind === "generated.added-page-renderer"
-                        ? "generated renderer" : item.kind}: missing ${requiredExport} export`);
-                }
-                if (["generated.dialog-adapter", "generated.button-adapter"].includes(item.kind)
-                    && (!exports.some((entry) => entry.n === "contractVersion")
-                        || !exports.some((entry) => entry.n === (item.kind === "generated.dialog-adapter"
-                            ? "dialogId" : "controlId")))) {
-                    throw new Error(`${item.name}: adapter is missing contractVersion or identity export`);
-                }
-                if (item.kind === "generated.workflow-page-adapter"
-                    && (!exports.some((entry) => entry.n === "pageId")
-                        || !exports.some((entry) => entry.n === "contractVersion"))) {
-                    throw new Error(`${item.name}: Workflow page adapter is missing pageId or contractVersion export`);
-                }
-                if (item.kind === "generated.phase-control-adapter"
-                    && (!exports.some((entry) => entry.n === "controlId")
-                        || !exports.some((entry) => entry.n === "contractVersion"))) {
-                    throw new Error(`${item.name}: phase control adapter is missing controlId or contractVersion export`);
-                }
-                if (item.kind === "designer.control-adapter"
-                    && !exports.some((entry) => entry.n === "validate")) {
-                    throw new Error(`${item.name}: Designer adapter is missing validate export`);
-                }
-                if (item.kind === "generated.badge-rule-adapter"
-                    && !exports.some((entry) => entry.n === "contractVersion")) {
-                    throw new Error(`${item.name}: badge adapter is missing contractVersion export`);
-                }
-                if (item.kind === "designer.badge-input-adapter"
-                    && (!exports.some((entry) => entry.n === "contractVersion")
-                        || !exports.some((entry) => entry.n === "controlId"))) {
-                    throw new Error(`${item.name}: Designer badge input adapter is missing contractVersion or controlId export`);
-                }
-                if (item.kind === "generated.computed-value-provider") {
-                    const declarations = [...document.matchAll(/(^|\n)\s*export\s+(?:(?:async\s+)?function|const)\s+provideValue\b/g)];
-                    if (exports.length !== 1 || declarations.length !== 1
-                        || declarations[0].index + declarations[0][0].lastIndexOf("provideValue")
-                            !== exports[0].s) {
-                        throw new Error(`${item.name}: value provider must use a direct export function provideValue or export const provideValue declaration; named re-exports are not supported`);
-                    }
-                    const body = document.replace(
-                        /(^|\n)\s*export\s+(?=(?:async\s+)?function\s+provideValue\b|const\s+provideValue\b)/g, "$1");
-                    try {
-                        new Script(`"use strict"; const workflow = null;\nconst provide = (() => {\n${body}\n`
-                            + "return provideValue;\n})();\n"
-                            + "if (typeof provide !== 'function') throw new Error('provideValue must be a function');\n"
-                            + "const result = provide({ workflow });\n"
-                            + "if (result && typeof result.then === 'function') throw new Error('Async providers are not supported');\n"
-                            + "JSON.stringify(result);");
-                    } catch (error) {
-                        throw new Error(`${item.name}: value provider cannot run as a generated script: ${error.message}`,
-                            { cause: error });
-                    }
-                }
+                validateExecutableExports(item, document, exports, requiredExport);
             }
         }
         loaded.push({ ...item, path, hash, ...(document === undefined ? {} : { document }) });
@@ -883,18 +430,7 @@ async function loadTemplates(templates, pageEntries, pageNames, fieldOrigins, sp
         const { init, parse } = await import("es-module-lexer/minimal");
         await init();
         const [, exports] = parse(entry.document);
-        const literalExport = (name, pattern) => {
-            const declaration = exports.find((item) => item.n === name);
-            if (!declaration || !/(?:^|\n)[ \t]*export[ \t]+const[ \t]+$/
-                .test(entry.document.slice(0, declaration.s))) return null;
-            return entry.document.slice(declaration.e).match(pattern)?.[1] ?? null;
-        };
-        const id = literalExport("controlId",
-            /^\s*=\s*["']([a-z][a-z0-9.-]{0,79})["']\s*;/);
-        const version = literalExport("contractVersion", /^\s*=\s*(1)\s*;/);
-        if (id !== binding.control || version !== "1") {
-            throw new Error(`${entry.name}: incompatible Designer badge input adapter for ${binding.rule}`);
-        }
+        validateBadgeInputAdapterIdentity(entry, binding, exports);
     }
     const workflowPages = loaded.filter((item) => item.kind === "generated.workflow-page-definition");
     if (!workflowPages.length) compositionErrors.push("Generated Workflow page is not registered");
@@ -1198,7 +734,7 @@ async function context(project) {
     const specify = join(checkout, ".specify");
     if (await realpath(specify) !== specify) throw new Error("Designer .specify directory escapes the project");
     const schemaPath = join(specify, "extensions", "extension-canvas-design", "schemas",
-        "designer.tab-definition.schema.json");
+        "external-designer.tab-definition.schema.json");
     let schema;
     try {
         // Presets replace page content; the installed extension supplies the evolving validation contract.
