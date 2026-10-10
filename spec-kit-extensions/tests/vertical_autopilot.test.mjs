@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -236,6 +236,67 @@ test("refresh reconnects a message-less dispatch when its live turn arrives afte
     assert.equal(JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0].messageId, "late-message");
     await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
         confirmation: "discard" }), /agent turn has not ended/);
+});
+
+for (const kind of ["directory", "artifact"]) {
+test(`recovered active turn accepts its ${kind} report and rejects reports after ending`, async (t) => {
+    const fixture = await setup(t);
+    const itemId = await prepareNewWorkflow(fixture.runtime);
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    saved.runs = [{ runId: "interrupted", before: [], item: itemId,
+        phase: "specify", sessionId: "test-session", instanceId: "panel", args: "",
+        status: "Running", artifact: null, messageId: "recovered" }];
+    await writeFile(fixture.stateFile, JSON.stringify(saved));
+    const events = [
+        { type: "user.message", data: { messageId: "recovered", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ];
+    fixture.setEvents(events);
+    const runtime = await fixture.restart();
+    await runtime.snapshot();
+    await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+    await writeFile(join(fixture.project, "specs", "demo", "spec.md"), "Specification");
+    const report = (panel) => kind === "directory"
+        ? runtime.reportSlug({ phaseRunId: "interrupted", slug: "demo" }, panel)
+        : runtime.report({ phaseRunId: "interrupted", path: "specs/demo/spec.md" }, panel);
+    await assert.rejects(report("other-panel"), /Unknown or stale phase reporting request/);
+    assert.equal((await report("panel")).accepted, true);
+    fixture.setEvents([...events, { type: "assistant.turn_end", data: { turnId: "turn" } }]);
+    fixture.active();
+    const before = await readFile(fixture.stateFile, "utf8");
+    await assert.rejects(report("panel"), /Unknown or stale phase reporting request/);
+    assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+});
+}
+
+test("confirmed Delete removes a discovered directory after an unconfirmed run ends", async (t) => {
+    const fixture = await setup(t);
+    const { runtime } = fixture;
+    const itemId = await prepareNewWorkflow(runtime);
+    await runtime.run({ itemId, phase: "specify", args: "" }, "panel");
+    await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    await runtime.refresh();
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+        revision: (await runtime.snapshot()).revision }), /unfinished phase/);
+    fixture.setEvents([
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+        { type: "assistant.turn_end", data: { turnId: "turn" } },
+    ]);
+    const snapshot = await runtime.refresh();
+    assert.equal(snapshot.items.find((row) => row.id === itemId).status, "Run output unconfirmed");
+    await assert.rejects(runtime.removePending({ itemId, revision: snapshot.revision,
+        confirmation: "discard" }), /workflow directory appeared/);
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "wrong",
+        revision: snapshot.revision }), /confirmation does not match/);
+    assert.deepEqual(await runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+        revision: snapshot.revision }), { deleted: "specs/demo" });
+    await assert.rejects(stat(join(fixture.project, "specs", "demo")), { code: "ENOENT" });
+    assert.equal((await runtime.snapshot()).items.some((row) => row.id === "specs/demo"), false);
 });
 
 test("many attempts share one verified directory inventory per snapshot", async (t) => {

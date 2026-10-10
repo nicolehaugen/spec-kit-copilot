@@ -168,6 +168,11 @@ New stays available while editing, and Remove discards an unstarted row without
 deleting any directory. Pending rows and their phase drafts survive a reload.
 An external extension reload during a phase can interrupt reporting. A live turn
 remains Running; a finished turn without a reported directory is marked Run output unconfirmed.
+Recovered runs can report directories and artifacts only while their matched
+turn is active; reporting rechecks that evidence and rejects ended turns.
+An ended Run output unconfirmed does not block the existing confirmed Delete
+action for a discovered workflow directory. Metadata-only discard still refuses
+to remove a row when a directory appeared.
 The host-to-Workflow-page contract in `generated-scaffold/contracts/host-adapter.mjs`
 defines pending rows' `hasWorkflowRunHistory` (boolean), `workflowRecoveryMessage`
 (string or null), and `status` (Not started, Request sent, Running, Unconfirmed,

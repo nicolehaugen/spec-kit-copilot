@@ -988,15 +988,23 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             throw error;
         } finally { dispatching = false; }
     }
-    function reportingRun(input, instanceId) {
+    async function reportingRun(input, instanceId) {
         const run = state.runs.find((entry) => entry.runId === input?.phaseRunId);
-        if (!run || (!busy.value && !(run.autopilotId && liveRuns.has(run.autopilotId)))
+        let recoveredActive = false;
+        if (run && recoveryRuns.has(run.runId)) {
+            const events = await session.getEvents();
+            recoveredActive = !!run.messageId && phaseTurnState(events, run.messageId).active
+                && runActivity(run, events) === "active";
+            if (recoveredActive) liveRuns.add(run.runId);
+            else liveRuns.delete(run.runId);
+        }
+        if (!run || (!recoveredActive && !busy.value && !(run.autopilotId && liveRuns.has(run.autopilotId)))
             || !liveRuns.has(run.runId) || run.sessionId !== session.sessionId || run.instanceId !== instanceId
             || ["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) throw new UserError("Unknown or stale phase reporting request.");
         return run;
     }
     async function reportSlug(input, instanceId) {
-        const run = reportingRun(input, instanceId);
+        const run = await reportingRun(input, instanceId);
         if (phaseFor(run.phase).project || (!newItem(run.item) && !run.confirmedSlug)) throw new UserError("Only a new workflow can report a directory slug.");
         if (!validSlug(input.slug)) throw new UserError("Use an artifact folder name (slug) with lowercase letters, numbers, and single hyphens, not a reserved filename.");
         if (run.confirmedSlug && run.slug !== input.slug) throw new UserError("This run already reported a different workflow directory.");
@@ -1032,7 +1040,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 .filter(Boolean).map((path) => path.replace("<slug>", input.slug)) })) };
     }
     async function report(input, instanceId) {
-        const run = reportingRun(input, instanceId);
+        const run = await reportingRun(input, instanceId);
         const step = phaseFor(run.phase);
         let path, item;
         path = safePath(input.path);
@@ -1196,7 +1204,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }
             if (state.runs.some((run) => (run.item === item.id
                 || (newItem(run.item) && !run.before.includes(item.id)))
-                && !["Completed", "Failed"].includes(run.status))) {
+                && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
             await deleteConfinedDirectory(cwd, item.id);
