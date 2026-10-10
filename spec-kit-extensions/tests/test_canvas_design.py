@@ -235,7 +235,7 @@ class CanvasDesignPackageTests(unittest.TestCase):
         )
         self.assertEqual(
             entry["documentation"],
-            "https://github.com/nicolehaugen/spec-kit-copilot/blob/main/"
+            "https://github.com/nicolehaugen/spec-kit-copilot/blob/staging-canvas/"
             f"spec-kit-extensions/{EXTENSION_ID}/README.md",
         )
         for path in (EXTENSIONS / "README.md", PACKAGE / "README.md"):

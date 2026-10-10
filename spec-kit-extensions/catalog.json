@@ -12,7 +12,7 @@
       "repository": "https://github.com/nicolehaugen/spec-kit-copilot",
       "download_url": "https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.20/extension-canvas-design.zip",
       "homepage": "https://github.com/nicolehaugen/spec-kit-copilot",
-      "documentation": "https://github.com/nicolehaugen/spec-kit-copilot/blob/main/spec-kit-extensions/extension-canvas-design/README.md",
+      "documentation": "https://github.com/nicolehaugen/spec-kit-copilot/blob/staging-canvas/spec-kit-extensions/extension-canvas-design/README.md",
       "license": "MIT",
       "requires": {
         "speckit_version": ">=1.0.7"
