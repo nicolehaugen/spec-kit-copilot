@@ -1,6 +1,6 @@
 export const generateCanvasInputSchema = {
     type: "boolean",
-    description: "Enable experimental Generate canvas. New instances use runtime settings (otherwise false) when omitted; reopening without this field preserves the current value.",
+    description: "Enable experimental Generate canvas. On initial open, omission uses the runtime setting (default false). On reopen of the same instance, omission preserves its current value and does not reset it to the runtime setting. Explicit true or false sets the value on either open.",
 };
 export const featureFlagsSchema = {
     type: "object",

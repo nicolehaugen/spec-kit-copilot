@@ -13,6 +13,9 @@ true or false replaces it. Non-booleans, including null, are rejected.
 Every Wizard snapshot includes `featureFlags: { generateCanvas: boolean }`.
 The UI shows the Generate button only when this value is true. Missing flags
 on an older snapshot are treated as disabled by the UI.
+Both initial REST and live SSE snapshots are validated before replacing UI
+state. Incompatible SSE flags preserve the last accepted snapshot and report
+the error through the transport's existing error handler.
 
 Authenticated POST `/api/designer/launch` returns HTTP 403 with the existing
 JSON error envelope and message `Generate canvas is disabled` when the instance
