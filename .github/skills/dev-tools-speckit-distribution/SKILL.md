@@ -1,5 +1,5 @@
 ---
-name: speckit-distribution
+name: dev-tools-speckit-distribution
 description: 'Prepare fork/upstream distribution metadata, explicitly release selected components, or verify published installs. USE FOR: repository-maintainer marketplace/catalog preparation and authorized release orchestration. DO NOT USE FOR: ordinary runtime settings, automatic publication, development version bumps, or replacing Specify consumer skills.'
 argument-hint: '[prepare|release|verify-install] [upstream|fork|custom JSON]'
 ---
@@ -16,7 +16,7 @@ No automatic workflow mutation or second packaging pipeline.
    `config\distribution.upstream.example.json`,
    `config\distribution.fork.example.json`, or an explicitly supplied custom
    JSON. Examples are choices, not inferred from the branch.
-2. Run `node scripts\prepare-distribution.mjs --config "<JSON path>"`.
+2. Run `node dev-tools\prepare-distribution.mjs --config "<JSON path>"`.
    Show its actual affected-file diff, locators, and printed install commands.
    Only with explicit approval repeat with `--apply --expect "<preview digest>"`.
    Preserve sibling dated backups. Re-preview conflicts; never force overwrite.
@@ -63,7 +63,7 @@ No automatic workflow mutation or second packaging pipeline.
    registrations explicitly rather than blindly adding duplicates.
 2. Activate corresponding runtime settings explicitly with preview/confirmation
    and provider reload/restart. Use a single active installed provider pair;
-   `speckit-wizard-installed-open` can explicitly enable Generate.
+   `dev-tools-speckit-wizard-installed-open` can explicitly enable Generate.
    Check actual installed provider versions/provenance and both persisted
    disabled entries. Do **not** use installed-refresh to verify a published path.
 3. Use no local-source overrides. Retrieve the **published archives selected by
@@ -72,5 +72,4 @@ No automatic workflow mutation or second packaging pipeline.
    Designer and generated output. Report unavailable/incompatible hosted packages
    as release-readiness concerns, never as local-source success.
 
-Personal skill duplicates require authorized, backed-up migration and
-`/skills reload`; this skill never silently modifies the user's skills directory.
+Leave personal skills untouched; use `/skills reload` to discover this project skill.

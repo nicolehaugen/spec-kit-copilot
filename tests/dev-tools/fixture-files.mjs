@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 export const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 
 export async function workspace(t) {
-  const path = resolve(repositoryRoot, 'tests', 'configuration', `.scratch-${randomUUID()}`);
+  const path = resolve(repositoryRoot, 'tests', 'dev-tools', `.scratch-${randomUUID()}`);
   await mkdir(path);
   t.after(() => rm(path, { recursive: true, force: true }));
   return path;

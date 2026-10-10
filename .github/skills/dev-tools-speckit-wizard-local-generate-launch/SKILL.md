@@ -1,22 +1,22 @@
 ---
-name: speckit-wizard-local-generate-launch
+name: dev-tools-speckit-wizard-local-generate-launch
 description: "Launch local Generate testing with this worktree's installed Wizard and Designer and explicitly enabled Generate. USE FOR: unreleased local generation changes. DO NOT USE FOR: publishing, automatically submitting generation, sample previews, or claiming child package installation from a Wizard open."
 argument-hint: '[wizard instance ID] [requested runtime settings setup]'
 ---
 
 # Launch local Generate testing
 
-Local development launcher, not an unattended generation run. This replaces
-`speckit-wizard-local-generate`; no compatibility duplicate is installed.
+Local development launcher, not an unattended generation run. The `dev-tools-`
+prefix distinguishes this project launcher from personal development skills.
 
 1. Record `git status --short`; require both current-worktree provider entry
    files under `plugins\spec-kit-copilot-wizard\extensions\`.
    Never use the main checkout or session-local previews.
-2. Invoke `speckit-wizard-installed-refresh` for **both providers**, retaining
+2. Invoke `dev-tools-speckit-wizard-installed-refresh` for **both providers**, retaining
    inventory, customization approval, backup, identity, hash and reload checks.
    Forward runtime setup only if requested; ordinary launch must not rewrite
    settings. Stop on partial refresh or failed/incompatible providers.
-3. Invoke `speckit-wizard-installed-open` with the supplied instance ID or
+3. Invoke `dev-tools-speckit-wizard-installed-open` with the supplied instance ID or
    `wizard-installed-worktree`, **explicitly requesting Generate**.
    Require `plugin:spec-kit-copilot-wizard:speckit-wizard-canvas`,
    this worktree's absolute `cwd`, and `input.generateCanvas: true`.
@@ -42,6 +42,4 @@ Local development launcher, not an unattended generation run. This replaces
 Separate local-source evidence from hosted release readiness. Hosted readiness
 requires the actual published ZIPs selected by the catalogs and a journey with
 no local overrides. Do not bump versions or publish for routine testing.
-Personal old/same-name skills stay untouched unless migration is explicitly
-authorized: identify copies, back up before retirement, then `/skills reload`
-and verify project discovery.
+Leave personal skills untouched; run `/skills reload` and verify project discovery.

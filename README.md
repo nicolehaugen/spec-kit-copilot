@@ -31,12 +31,12 @@ desktop file selects defaults.
 From the current worktree, using PowerShell:
 
 ```powershell
-node scripts\configure-runtime.mjs show
-node scripts\configure-runtime.mjs use-fork
+node dev-tools\configure-runtime.mjs show
+node dev-tools\configure-runtime.mjs use-fork
 # Review the diff and effective settings; then use that preview's digest:
-node scripts\configure-runtime.mjs use-fork --apply --expect "<preview expect digest>"
-node scripts\configure-runtime.mjs use-defaults
-node scripts\configure-runtime.mjs use-defaults --apply --expect "<new preview digest>"
+node dev-tools\configure-runtime.mjs use-fork --apply --expect "<preview expect digest>"
+node dev-tools\configure-runtime.mjs use-defaults
+node dev-tools\configure-runtime.mjs use-defaults --apply --expect "<new preview digest>"
 ```
 
 `use-fork` uses `config\runtime-settings.fork.example.json`, merging its overrides
@@ -60,14 +60,14 @@ marketplace to restore published code.
 Canonical repository skills live in `.github\skills`, not the shipping core
 `skills` plugin:
 
-- `speckit-wizard-installed-refresh`: compare inventories, back up and hash-verify
+- `dev-tools-speckit-wizard-installed-refresh`: compare inventories, back up and hash-verify
   both installed providers from this worktree; configure settings only on request.
-- `speckit-wizard-installed-open`: verify the exact installed plugin/provider and
+- `dev-tools-speckit-wizard-installed-open`: verify the exact installed plugin/provider and
   persisted disabled settings; ordinary opening uses the configured Generate
   default, explicit Generate requests enable it, focus-only reopening preserves it.
-- `speckit-wizard-local-generate-launch`: refresh, then explicitly enable Generate;
+- `dev-tools-speckit-wizard-local-generate-launch`: refresh, then explicitly enable Generate;
   leave phase selection, Designer launch/settings and Generate submission to the user.
-- `speckit-distribution`: prepare local metadata, orchestrate explicitly authorized
+- `dev-tools-speckit-distribution`: prepare local metadata, orchestrate explicitly authorized
   releases, or verify published installations.
 
 Use one active installed Wizard/Designer pair; sample/session previews are not
@@ -78,9 +78,9 @@ Verify actual child installations, resolved contributions and generated output
 before claiming end-to-end success. Do not modify symlinked Specify development
 installations.
 
-The launcher replaces `speckit-wizard-local-generate` without a compatibility
-duplicate. Same-name/old personal skills remain untouched: explicitly authorize
-backing up/retiring duplicates, then `/skills reload` and verify project discovery.
+Development helpers live in `dev-tools` and project development skills use the
+`dev-tools-` prefix to distinguish them from shipping and personal skills.
+Personal skills remain untouched. Run `/skills reload` and verify project discovery.
 
 ### Distribution and releases
 
@@ -88,10 +88,10 @@ Select `config\distribution.upstream.example.json`,
 `config\distribution.fork.example.json`, or custom JSON explicitly:
 
 ```powershell
-node scripts\prepare-distribution.mjs --config config\distribution.fork.example.json
+node dev-tools\prepare-distribution.mjs --config config\distribution.fork.example.json
 # Only after reviewing the affected-file diff:
-node scripts\prepare-distribution.mjs --config config\distribution.fork.example.json --apply --expect "<preview expect digest>"
-node --test tests\configuration\*.test.mjs
+node dev-tools\prepare-distribution.mjs --config config\distribution.fork.example.json --apply --expect "<preview expect digest>"
+node --test tests\dev-tools\*.test.mjs
 ```
 
 Configuration declares GitHub repository, catalog ref and marketplace display

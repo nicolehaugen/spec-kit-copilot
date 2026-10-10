@@ -73,7 +73,7 @@ async function main() {
   const [command = 'show', ...args] = process.argv.slice(2);
   const options = parseArgs(args, ['file', 'source', 'expect']);
   if (options.help || command === '--help') {
-    console.log('node scripts/configure-runtime.mjs show|use-fork|use-defaults [--file PATH] [--source JSON] [--apply --expect DIGEST]\nPreview is the default. use-fork merges selected overrides; use-defaults backs up and writes {}.');
+    console.log('node dev-tools/configure-runtime.mjs show|use-fork|use-defaults [--file PATH] [--source JSON] [--apply --expect DIGEST]\nPreview is the default. use-fork merges selected overrides; use-defaults backs up and writes {}.');
     return;
   }
   console.log(JSON.stringify(await configureRuntime(command, options), null, 2));

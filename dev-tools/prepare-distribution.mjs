@@ -106,7 +106,7 @@ export async function prepareDistribution(config, options = {}, { repositoryRoot
 async function main() {
   const options = parseArgs(process.argv.slice(2), ['config', 'expect']);
   if (options.help) {
-    console.log('node scripts/prepare-distribution.mjs --config JSON [--apply --expect DIGEST]\nPreview is the default; apply requires the matching preview digest. No publish or version side effects.');
+    console.log('node dev-tools/prepare-distribution.mjs --config JSON [--apply --expect DIGEST]\nPreview is the default; apply requires the matching preview digest. No publish or version side effects.');
     return;
   }
   if (!options.config) throw new Error('--config is required; select an upstream, fork, or custom JSON file explicitly.');

@@ -1,5 +1,5 @@
 ---
-name: speckit-wizard-installed-refresh
+name: dev-tools-speckit-wizard-installed-refresh
 description: 'Refresh both installed Wizard and Designer providers from the current worktree for local development, optionally setting runtime configuration when requested. USE FOR: testing worktree changes through installed plugin canvases. DO NOT USE FOR: publishing, updating marketplace metadata, modifying source, or sample/session previews.'
 argument-hint: '[open-wizard] [fork|defaults|custom settings setup]'
 ---
@@ -14,10 +14,10 @@ preview, write to the main checkout, or modify personal skill copies.
    Check `plugin.json` names `spec-kit-copilot-wizard` and both
    `extensions\speckit-wizard-canvas\extension.mjs` and
    `extensions\speckit-canvas-designer\extension.mjs` exist. Record
-   `git status --short`. Run `node scripts\configure-runtime.mjs show`.
+   `git status --short`. Run `node dev-tools\configure-runtime.mjs show`.
    Fail visibly on invalid configuration; do not mask it with defaults.
 2. **Only when requested**, set up fork/default/custom runtime settings:
-   preview `node scripts\configure-runtime.mjs use-fork` (custom:
+   preview `node dev-tools\configure-runtime.mjs use-fork` (custom:
    `--source "<settings JSON>"`) or `use-defaults`. Optional `--file` selects
    an explicit destination; normally use the user-level file for desktop and
    child sessions. Present the actual replacement diff and effective settings,
@@ -64,12 +64,12 @@ preview, write to the main checkout, or modify personal skill copies.
    session/restart. Do not implicitly open a canvas just to perform refresh.
    Check explicit `SPECKIT_CONFIG_FILE` selection in children rather than assuming
    environment inheritance; prefer the default user-level file for desktop.
-   If an open was requested, invoke `speckit-wizard-installed-open`, forwarding
+   If an open was requested, invoke `dev-tools-speckit-wizard-installed-open`, forwarding
    an explicit Generate request only when requested. Do not launch Designer
    or run phases. Compare final Git status with the starting state.
    Never print loopback tokens or claim child setup succeeded from opening Wizard.
 
 Switching runtime settings does not restore published provider code. Use an
 explicit marketplace install/update when the user requests that restoration.
-Same-name personal skills require explicit backup/retirement authorization and
-`/skills reload`; never silently migrate or modify them.
+The `dev-tools-` prefix distinguishes this project skill from personal skills.
+Leave personal copies untouched; use `/skills reload` to discover project changes.

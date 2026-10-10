@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { configureRuntime } from '../../scripts/configure-runtime.mjs';
+import { configureRuntime } from '../../dev-tools/configure-runtime.mjs';
 import { DEFAULT_SETTINGS_PATH, runtimeDefaults } from '../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/runtime-config.mjs';
 import { readJson, repositoryRoot, workspace, write } from './fixture-files.mjs';
 
@@ -133,7 +133,7 @@ test('fork repository example is usable and does not change settings without app
 
 test('helper imports and help do not read a broken configured file at startup', () => {
   const result = spawnSync(process.execPath, [
-    resolve(repositoryRoot, 'scripts', 'configure-runtime.mjs'), '--help',
+    resolve(repositoryRoot, 'dev-tools', 'configure-runtime.mjs'), '--help',
   ], { env: { ...process.env, SPECKIT_CONFIG_FILE: 'invalid-relative-selector' }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Preview is the default/);

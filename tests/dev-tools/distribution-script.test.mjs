@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, readdir, symlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
-import { prepareDistribution, validateDistribution } from '../../scripts/prepare-distribution.mjs';
-import { applyChanges, fingerprint, patchJson } from '../../scripts/configuration-files.mjs';
-import { validatePresetCatalog } from '../../scripts/validate-preset-catalog.mjs';
+import { prepareDistribution, validateDistribution } from '../../dev-tools/prepare-distribution.mjs';
+import { applyChanges, fingerprint, patchJson } from '../../dev-tools/configuration-files.mjs';
+import { validatePresetCatalog } from '../../dev-tools/validate-preset-catalog.mjs';
 import { distributionFixture, readJson, repositoryRoot, workspace, write } from './fixture-files.mjs';
 
 const config = {

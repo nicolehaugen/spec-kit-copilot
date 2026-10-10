@@ -9,12 +9,12 @@ plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/test-results/
 .github/skills/*
 !.github/skills/refresh-generated-canvas/
 !.github/skills/speckit-designer-preview/
-!.github/skills/speckit-wizard-installed-refresh/
-!.github/skills/speckit-wizard-installed-open/
-!.github/skills/speckit-wizard-local-generate-launch/
-!.github/skills/speckit-distribution/
+!.github/skills/dev-tools-speckit-wizard-installed-refresh/
+!.github/skills/dev-tools-speckit-wizard-installed-open/
+!.github/skills/dev-tools-speckit-wizard-local-generate-launch/
+!.github/skills/dev-tools-speckit-distribution/
 *.backup-*
-tests/configuration/.scratch-*/
+tests/dev-tools/.scratch-*/
 specs/
 css-baseline-*.png
 css-c*.png

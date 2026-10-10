@@ -1,5 +1,5 @@
 ---
-name: speckit-wizard-installed-open
+name: dev-tools-speckit-wizard-installed-open
 description: 'Open or focus the installed Spec Kit Wizard for the current worktree, using configured Generate defaults unless explicitly requested. USE FOR: installed Wizard opening and Designer launch testing. DO NOT USE FOR: refreshing, configuring, sample/session previews, launching Designer, or running phases.'
 argument-hint: '[canvas instance ID] [enable Generate]'
 ---
@@ -53,7 +53,7 @@ plugin/providers; it never copies code or changes runtime configuration.
    do not infer a reopened instance's flag from configuration alone.
    Report mismatches rather than success; never launch Designer or submit Generate.
 
-Opening does not refresh code. Use `speckit-wizard-installed-refresh` explicitly
+Opening does not refresh code. Use `dev-tools-speckit-wizard-installed-refresh` explicitly
 for source changes. Runtime settings are resolved at provider startup, not live.
-Do not claim Designer readiness merely because Wizard opened. Personal duplicates
-are not modified; explicit migration and `/skills reload` are required to retire them.
+Do not claim Designer readiness merely because Wizard opened. Leave personal
+skills unchanged; use `/skills reload` to discover project changes.
