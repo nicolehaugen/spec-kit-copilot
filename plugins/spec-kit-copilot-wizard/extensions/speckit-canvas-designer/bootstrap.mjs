@@ -150,7 +150,8 @@ export function createDesignerBootstrap({
                     failure.message = `${failure.message}; diagnostics could not be saved: ${diagnosticError.message}`.slice(0, 2048);
                 }
             }
-            await log?.(failure.message, "error");
+            try { await log?.(failure.message, "error"); }
+            catch (logError) { console.error(failure.message, logError); }
             return validateBootstrapOutput({ schemaVersion: 1, status: "failure", error: failure,
                 ...(record && context ? { handoffId: reference.handoffId,
                     diagnosticsPath: bootstrapDiagnosticPath(context.root, reference.handoffId) } : {}) });

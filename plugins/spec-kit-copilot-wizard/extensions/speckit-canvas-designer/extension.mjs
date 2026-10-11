@@ -70,7 +70,7 @@ async function reloadSessionSkills() {
 const bootstrap = createDesignerBootstrap({
     checkNative: () => assertBootstrapCapabilities(session.rpc),
     getContext: (invocation) => bootstrapSessionContext(session, invocation),
-    reloadSkills: reloadSessionSkills,
+    reloadSkills: () => session.rpc.skills.reload(),
     openCanvas: (input) => session.rpc.tools.execute({ name: "open_canvas", arguments: input }),
     listOpenCanvases: () => session.rpc.canvas.listOpen(),
     log: (message, level) => session.log(message, { level }),

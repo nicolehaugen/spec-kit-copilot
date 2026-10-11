@@ -13,6 +13,7 @@ import {
     fingerprint, handoffDirectory, HANDOFF_LIMIT, readHandoff, validateHandoff,
     validateHandoffId,
 } from "../handoff.mjs";
+import { readBootstrapRecord, writeBootstrapRecord } from "../bootstrap-artifacts.mjs";
 import { shellHtml, startShell } from "../server.mjs";
 import { previewModel } from "../preview.mjs";
 import { assertPageCommand, loadResolvedDesignerPages as loadPages, readFrozenAsset } from "../pages.mjs";
@@ -5086,14 +5087,20 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         export class CanvasError extends Error {
             constructor(code, message) { super(message); this.code = code; }
         }
+        export const session = {
+            sessionId: "designer-provider-test", workspacePath: ${JSON.stringify(workspace)},
+            rpc: { metadata: { snapshot: async () => ({
+                sessionId: "designer-provider-test", workspacePath: ${JSON.stringify(workspace)},
+                workingDirectory: ${JSON.stringify(project)} }) },
+                skills: { reload: async () => ({ errors: [], warnings: [] }) },
+                tools: { execute: async () => { throw new Error("Unexpected native open"); } },
+                canvas: { listOpen: async () => { throw new Error("Unexpected native snapshot"); } } },
+            log: async () => {}
+        };
         export const joinSession = async ({ canvases, tools }) => {
             globalThis.__designerTestCanvas = canvases[0];
             globalThis.__designerTestTools = tools;
-            return { workspacePath: ${JSON.stringify(workspace)},
-                rpc: { metadata: { snapshot: async () => ({
-                    workingDirectory: ${JSON.stringify(project)} }) },
-                    skills: { reload: async () => ({ errors: [], warnings: [] }) } },
-                log: async () => {} };
+            return session;
         };
     `);
     const inventorySource = await readFile(join(extension, "open-state.mjs"), "utf8");
@@ -5167,6 +5174,39 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
             handoffId: ID, pages: entries, templates: [],
         } }), (error) => error.code === "designer_handoff_invalid");
         await saveHandoff(workspace);
+        await t.test("registered bootstrap preserves failed host reload diagnostics", async () => {
+            const { session } = await import(pathToFileURL(join(sdk, "extension.mjs")).href);
+            const diagnostics = { errors: ["Host skill reload failed"], warnings: ["Host reload warning"] };
+            const reload = session.rpc.skills.reload;
+            session.rpc.skills.reload = async () => diagnostics;
+            try {
+                const folder = handoffDirectory(workspace, ID);
+                const launchRef = { sourceSessionId: "source-session",
+                    sourceRoot: join(workspace, "source-session"), handoffId: ID,
+                    sha256: createHash("sha256").update(await readFile(join(folder, "handoff.json"))).digest("hex") };
+                await writeFile(join(folder, "setup-record.json"), JSON.stringify({
+                    schemaVersion: 1, handoffId: ID, handoffHash: launchRef.sha256,
+                }));
+                await writeBootstrapRecord(workspace, ID, { schemaVersion: 1, launchRef,
+                    skillsReloaded: false, opening: false,
+                    install: { stage: "installed", timings: {}, warnings: [] } });
+                const result = await tools[0].handler({
+                    schemaVersion: 1, stage: "finalize-open", launchRef,
+                });
+                assert.equal(result.resultType, "failure");
+                const failure = JSON.parse(result.textResultForLlm);
+                assert.equal(failure.error.code, "designer_skill_reload_failed");
+                assert.match(failure.error.message, /Host skill reload failed/);
+                const record = await readBootstrapRecord(workspace, ID);
+                assert.deepEqual(record.reload, diagnostics);
+                assert.equal(record.skillsReloaded, false);
+                assert.equal(record.finalize, undefined);
+                assert.equal(record.nativeResult, undefined);
+                await assert.rejects(tools[1].handler(), /Session skill reload failed: Host skill reload failed/);
+            } finally {
+                session.rpc.skills.reload = reload;
+            }
+        });
         const partial = await canvas.open({ instanceId: "partial", input: {
             handoffId: ID, pages: entries.slice(1), templates: [],
         } });

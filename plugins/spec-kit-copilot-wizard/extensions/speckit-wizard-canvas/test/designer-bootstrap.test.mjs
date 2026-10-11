@@ -277,6 +277,34 @@ test("failed reload remains explicit and retryable without running finalize", as
     assert.ok(f.errors.length);
 });
 
+test("secondary logging failures cannot mask bootstrap failures or block retries", async (t) => {
+    const logged = [];
+    t.mock.method(console, "error", (...args) => logged.push(args));
+    const f = await fixture(t);
+    const logError = new Error("Session closed while logging");
+    const run = createDesignerBootstrap({ ...f.deps,
+        reloadSkills: async () => ({ errors: ["Host skill reload failed"], warnings: [] }),
+        log: async () => { throw logError; },
+    });
+    const invalid = await run({ schemaVersion: 2 });
+    assert.equal(invalid.status, "failure");
+    assert.equal(invalid.error.code, "designer_bootstrap_request_failed");
+    assert.doesNotThrow(() => validateBootstrapOutput(invalid));
+    assert.equal((await run(f.request("install"))).status, "installed");
+    const failure = await run(f.request("finalize-open"));
+    assert.equal(failure.status, "failure");
+    assert.equal(failure.error.code, "designer_skill_reload_failed");
+    assert.match(failure.error.message, /Host skill reload failed/);
+    assert.doesNotThrow(() => validateBootstrapOutput(failure));
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.deepEqual(record.reload.errors, ["Host skill reload failed"]);
+    assert.deepEqual(record.error, failure.error);
+    assert.equal(logged.length, 2);
+    assert.match(logged[1][0], /Host skill reload failed/);
+    assert.equal(logged[1][1], logError);
+    assert.equal((await f.run(f.request("finalize-open"))).status, "shell-opened");
+});
+
 test("known native denials allow explicit retry without a second skills reload", async (t) => {
     const f = await fixture(t);
     let opens = 0;

@@ -73,7 +73,10 @@ resolution/open fallback.
 
 Full stage/native results remain beside the child `handoff.json` in
 `bootstrap.json`, bounded to 16 MiB to retain complete maximum-sized Unicode
-inventories. Model-facing results contain status, warning count, timings, and
+inventories. Bootstrap retains the host's full reload diagnostics, including
+failed reloads, before validation; these failures stop finalization and remain
+retryable. Failed session logging falls back to stderr without replacing the
+original failure result. Model-facing results contain status, warning count, timings, and
 diagnostic path, not pages/templates. Native tool display text can be truncated
 by the host; success is verified against the complete `canvas.listOpen()` snapshot,
 not by parsing that display text. A verified native snapshot means only
