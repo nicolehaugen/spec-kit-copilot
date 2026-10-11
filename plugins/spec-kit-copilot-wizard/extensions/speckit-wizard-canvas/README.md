@@ -178,7 +178,9 @@ Starting a refresh detaches previous output inference and clears its timers
 immediately. Asynchronous refresh work captures its owning refresh before
 awaiting; lifecycle helpers only update that owner while it is still current.
 Output completion, failures, and timeouts also require the same inference
-object. Superseded setup returns an explicit error and does not enqueue another
+object. The instance retains that inference owner after completion, with or
+without an explicit refresh, until new inference setup or a new refresh replaces
+it. Superseded setup returns an explicit error and does not enqueue another
 turn. These checks protect in-flight callbacks, not an older agent reply that
 first arrives after a new refresh starts: the existing action/HTTP payloads
 contain no refresh-run identifier. Composition and evidence-cache persistence

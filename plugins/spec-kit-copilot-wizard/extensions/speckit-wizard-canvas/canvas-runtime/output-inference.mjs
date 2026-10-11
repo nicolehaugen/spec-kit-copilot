@@ -9,7 +9,7 @@ export function beginOutputInference(inst, requests, refresh) {
     if (!isCurrentRefresh(inst, refresh)) throw new Error("Output inference superseded by a newer refresh");
     if (inst.outputInference?.timer) clearTimeout(inst.outputInference.timer);
     inst.outputInference = null;
-    if (refresh) refresh.inference = null;
+    inst.outputInferenceOwner = null;
     if (!requests.length) return null;
     if (!inst.url || !inst.token) throw new Error("Artifact inference endpoint unavailable");
     const inference = { refresh, status: "updating", total: requests.length,
@@ -19,7 +19,7 @@ export function beginOutputInference(inst, requests, refresh) {
     }, 10 * 60 * 1000);
     inference.timer.unref?.();
     inst.outputInference = inference;
-    if (refresh) refresh.inference = inference;
+    inst.outputInferenceOwner = inference;
     inst.broadcast({ type: "invalidate", reason: "output inference started" });
     const endpoint = new URL("/api/artifact-targets", inst.url);
     endpoint.searchParams.set("token", inst.token);
@@ -32,8 +32,8 @@ export function finishOutputInference(inst, inference, commands) {
     if (!inference.pending.size) {
         clearTimeout(inference.timer);
         inst.outputInference = null;
-        // Keep the owner's reference so a later send error still belongs to this
-        // work after successful output completion, but not after replacement.
+        // Retain outputInferenceOwner through completion, including without a
+        // refresh, so awaiting callers distinguish completion from replacement.
         finishRefreshPart(inst, "outputs", inference.refresh);
     }
 }

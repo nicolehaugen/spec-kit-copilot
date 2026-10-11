@@ -43,7 +43,7 @@ import { isCurrentRefresh } from "../refresh-status.mjs";
  */
 async function applyCatalogPush(inst, ctx, cfg) {
     const refresh = inst.refreshStatus;
-    const inference = refresh ? refresh.inference : inst.outputInference;
+    const inference = inst.outputInferenceOwner ?? null;
     const pushed = Array.isArray(ctx.input?.items) ? ctx.input.items : [];
 
     // 1) Re-hydrate from cached catalog sources (fresh install state via
@@ -97,7 +97,7 @@ async function applyCatalogPush(inst, ctx, cfg) {
     );
     if (!cfg.runComposition) return { ok: true };
     if (!isCurrentRefresh(inst, refresh)
-        || (refresh ? refresh.inference : inst.outputInference) !== inference) {
+        || (inst.outputInferenceOwner ?? null) !== inference) {
         throw new Error("Catalog output inference superseded by newer refresh work");
     }
     const requests = snap.artifactInferenceRequests ?? [];

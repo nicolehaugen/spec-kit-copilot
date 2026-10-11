@@ -112,7 +112,7 @@ export async function dispatchKindPrompt(inst, kind, payload, {
     if (kind === "composition.refresh") {
         const refresh = startRefresh(inst);
         let inference = null;
-        const ownsWork = () => isCurrentRefresh(inst, refresh) && refresh.inference === inference;
+        const ownsWork = () => isCurrentRefresh(inst, refresh) && inst.outputInferenceOwner === inference;
         const ensureCurrent = () => {
             if (!ownsWork()) throw new Error("Composition refresh superseded by newer refresh work");
         };

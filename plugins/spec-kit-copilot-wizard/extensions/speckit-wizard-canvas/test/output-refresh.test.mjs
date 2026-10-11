@@ -182,19 +182,45 @@ for (const replacement of ["refresh", "inference"]) {
     });
 }
 
-test("a catalog push can finish when its existing output work completes during persistence", async () => {
+for (const refreshing of [false, true]) {
+    test(`a catalog push ${refreshing ? "with" : "without"} a refresh can finish when its output completes during persistence`, async () => {
+        await actionFixture(async (inst) => {
+            if (refreshing) startRefresh(inst);
+            beginOutputInference(inst, [request], inst.refreshStatus);
+            const inference = inst.outputInference;
+            inst.broadcast = (frame) => {
+                if (frame.type === "state") finishOutputInference(inst, inference, ["speckit.plan"]);
+            };
+            const action = catalogActions.find(({ name }) => name === "showExtensionCatalog");
+            const result = await action.handler({ instanceId: inst.instanceId, input: { items: [] } });
+            assert.equal(result.ok, true);
+            assert.equal(inference.pending.size, 0);
+            assert.equal(inference.timer._destroyed, true);
+            if (!refreshing) assert.equal(inst.refreshStatus, undefined);
+        });
+    });
+}
+
+test("a refresh-less catalog push rejects replacement work even if the replacement completes during persistence", async () => {
     await actionFixture(async (inst) => {
-        startRefresh(inst);
         beginOutputInference(inst, [request], inst.refreshStatus);
-        const inference = inst.outputInference;
+        const previous = inst.outputInference;
+        let replacement;
         inst.broadcast = (frame) => {
-            if (frame.type === "state") finishOutputInference(inst, inference, ["speckit.plan"]);
+            if (frame.type !== "state" || replacement) return;
+            beginOutputInference(inst, [request], inst.refreshStatus);
+            replacement = inst.outputInference;
+            finishOutputInference(inst, replacement, ["speckit.plan"]);
         };
         const action = catalogActions.find(({ name }) => name === "showExtensionCatalog");
-        const result = await action.handler({ instanceId: inst.instanceId, input: { items: [] } });
-        assert.equal(result.ok, true);
-        assert.equal(inference.pending.size, 0);
-        assert.equal(inference.timer._destroyed, true);
+        await assert.rejects(action.handler({ instanceId: inst.instanceId, input: { items: [] } }),
+            /superseded/);
+        assert.ok(replacement);
+        assert.notEqual(replacement, previous);
+        assert.equal(previous.pending.size, 1);
+        assert.equal(replacement.pending.size, 0);
+        assert.equal(inst.outputInference, null);
+        assert.equal(inst.refreshStatus, undefined);
     });
 });
 
