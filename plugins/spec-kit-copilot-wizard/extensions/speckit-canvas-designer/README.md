@@ -71,6 +71,27 @@ run with external `node` rather than the embedded Copilot host executable;
 missing capabilities or verifier are explicit failures, with no legacy manual
 resolution/open fallback.
 
+**Trust boundary and installation approval.** Bootstrap assumes a trusted local
+agent acting on behalf of the machine's user. In the Designer launch dialog,
+selecting a community-provided preset, extension, or bundle requires explicit
+confirmation of a warning; cancellation leaves it unselected. Optional built-in
+packages are selected with checkboxes before the user launches Designer. The
+required Canvas Design extension is shown as a preselected, non-optional
+dependency. These controls reduce unintended or uninformed installations through
+the normal dialog flow.
+
+The launch-reference SHA-256 and handoff fingerprint verify integrity, not
+authenticated human approval. A caller able to stage a substitute handoff and
+steer the agent into invoking bootstrap can recompute the hashes; approval fields
+are not host-issued consent credentials. The dialog controls do not protect
+against that direct forged-reference path. Authenticated launch provenance is
+deferred hardening within this accepted trusted-local-agent boundary, not a
+protection supplied by the current contract. Installed packages may contain
+scripts or adapters that execute with the user's permissions; local operation
+does not make malicious package execution harmless. This boundary does not
+establish Copilot App's effective tool-permission policy or claim permission
+equivalence between shell and bootstrap invocations.
+
 Full stage/native results remain beside the child `handoff.json` in
 `bootstrap.json`, bounded to 16 MiB to retain complete maximum-sized Unicode
 inventories. Bootstrap retains the host's full reload diagnostics, including
