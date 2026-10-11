@@ -423,9 +423,10 @@ addition to) the hosted registry entry:
   compatible Designer tab schema version.
   **Release readiness:** the earlier published `0.1.19` archive lacks
   `generated-phase-control` and `generated-phase-adapter`; its hosted launch
-  stops at `verify-base`. The staging catalog selects the published `0.1.20`
-  archive, which passes `verify-base` after installation from that catalog.
-  This verifies base compatibility, not an entire hosted Designer journey.
+  stops at `verify-base`. The staging catalog selects `0.1.21`; verify the
+  actual published archive after installation from that catalog.
+  Passing `verify-base` establishes base compatibility, not an entire hosted
+  Designer journey.
 - The parent agent creates the same app-native default-branch worktree with a
   compact launch reference, not inline handoff JSON. In that child, the LLM
   explicitly calls `speckit_designer_bootstrap` twice: first with
