@@ -174,6 +174,15 @@ refresh cannot finish. Merely opening the Phases tab does not start an
 inference turn.
 An unreadable output cache marks an active inference incomplete immediately,
 rather than leaving the refresh pending until its fallback timeout.
+Starting a refresh detaches previous output inference and clears its timers
+immediately. Asynchronous refresh work captures its owning refresh before
+awaiting; lifecycle helpers only update that owner while it is still current.
+Output completion, failures, and timeouts also require the same inference
+object. Superseded setup returns an explicit error and does not enqueue another
+turn. These checks protect in-flight callbacks, not an older agent reply that
+first arrives after a new refresh starts: the existing action/HTTP payloads
+contain no refresh-run identifier. Composition and evidence-cache persistence
+semantics are unchanged.
 Effective skill and script sources, as well as the artifact evidence cache, are
 read through a single file handle with path/identity checks and a 512 KiB cap,
 so changing a workspace file during a refresh cannot bypass the read limit.

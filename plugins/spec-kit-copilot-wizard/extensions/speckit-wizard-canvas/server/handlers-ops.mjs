@@ -4,8 +4,7 @@
 
 import { commandId, effectiveSource, readEvidenceCache, writeEvidenceCache } from "../artifact-evidence.mjs";
 import { normalizeAgentArtifactEntry, validateAgentArtifactEvidence } from "../contracts/agent-artifacts.mjs";
-import { failOutputInference } from "../canvas-runtime/output-inference.mjs";
-import { finishRefreshPart } from "../canvas-runtime/refresh-status.mjs";
+import { failOutputInference, finishOutputInference } from "../canvas-runtime/output-inference.mjs";
 
 import { applyPatch, writeState } from "../state/store.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
@@ -114,11 +113,8 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     const inst = getInstance();
     if (!inst?.workspacePath) return jsonError(res, 400, "workspace path unavailable");
     const inference = inst.outputInference;
-    const failInference = () => {
-        if (inference && inst.outputInference === inference) failOutputInference(inst);
-    };
     const rejectOutput = (key, status, message) => {
-        if (inference?.pending.has(commandId(key))) failInference();
+        if (inference?.pending.has(commandId(key))) failOutputInference(inst, inference);
         return jsonError(res, status, message);
     };
 
@@ -156,7 +152,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
         if (normalized) cleaned[key] = normalized;
     }
     if (!Object.keys(cleaned).length) {
-        if (inference?.status === "updating") failInference();
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 400, "no valid entries");
     }
 
@@ -165,7 +161,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     try {
         existing = await readCache(inst.workspacePath);
     } catch (error) {
-        if (inference?.status === "updating") failInference();
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 500, `Artifact cache was not overwritten: ${error.message}`);
     }
     for (const [key, entry] of Object.entries(cleaned)) {
@@ -185,26 +181,18 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     };
     const payload = JSON.stringify(merged, null, 2) + "\n";
     if (Buffer.byteLength(payload) > 512 * 1024) {
-        if (inference?.status === "updating") failInference();
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 400, "Artifact-target cache exceeds its size limit");
     }
 
     try {
         await writeCache(inst.workspacePath, payload);
     } catch (err) {
-        if (inference?.status === "updating") failInference();
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }
-    if (inference && inst.outputInference === inference) {
-        for (const [key, entry] of Object.entries(cleaned)) {
-            if (entry.outputEvidence) inference.pending.delete(commandId(key));
-        }
-        if (!inference.pending.size) {
-            clearTimeout(inference.timer);
-            inst.outputInference = null;
-            finishRefreshPart(inst, "outputs");
-        }
-    }
+    finishOutputInference(inst, inference,
+        Object.keys(cleaned).filter((key) => cleaned[key].outputEvidence));
 
     const added = Object.keys(cleaned).length;
     // Nudge the client to re-fetch state so the phase cards pick up the

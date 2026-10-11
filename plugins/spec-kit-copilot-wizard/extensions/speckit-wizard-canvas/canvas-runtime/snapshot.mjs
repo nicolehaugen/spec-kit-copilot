@@ -61,6 +61,7 @@ import { collectArtifactEvidence } from "../artifact-evidence.mjs";
 import { attachOutputEvidence } from "./output-availability.mjs";
 
 export async function snapshot(inst) {
+    const refresh = inst.refreshStatus;
     // Preset precedence: consume the order the `speckit-preset` skill
     // published on its last refresh (cached in inst.cachedComposition
     // and mirrored to state.json). That order came from the CLI via the
@@ -163,7 +164,8 @@ export async function snapshot(inst) {
         const overlay = overlayCachedComposition(inst.cachedComposition);
         if (overlay) snap.composition = overlay;
     }
-    await attachOutputEvidence(inst, scan, snap, await collectArtifactEvidence(inst.workspacePath, snap));
+    await attachOutputEvidence(inst, scan, snap, await collectArtifactEvidence(inst.workspacePath, snap),
+        undefined, refresh);
     // Expose the transient skills-reload diagnostic (populated by
     // /api/skills/reload) so the UI can gate setup completion on the
     // live SDK result rather than a persisted flag or a folder probe.

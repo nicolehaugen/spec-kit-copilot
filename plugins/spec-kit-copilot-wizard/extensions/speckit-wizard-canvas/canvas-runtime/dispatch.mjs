@@ -28,7 +28,7 @@ import { activeArtifactsForCommand } from "../pipeline/active-artifacts.mjs";
 import { runFastComposition } from "./composition-apply.mjs";
 import { snapshot } from "./snapshot.mjs";
 import { beginOutputInference, failOutputInference } from "./output-inference.mjs";
-import { startRefresh, setRefreshWork, failRefresh } from "./refresh-status.mjs";
+import { startRefresh, setRefreshWork, failRefresh, isCurrentRefresh } from "./refresh-status.mjs";
 import {
     buildPrompt,
     buildWorkflowSlashCommand,
@@ -91,7 +91,10 @@ async function probeInstalledCounts(workspacePath) {
 // Throws `UnknownActionKindError` (from prompts.mjs) if kind is unknown —
 // callers convert that into their surface-appropriate error shape (HTTP
 // 400 vs. `{ ok: false, error }` action result).
-export async function dispatchKindPrompt(inst, kind, payload) {
+export async function dispatchKindPrompt(inst, kind, payload, {
+    compose = runFastComposition, getSnapshot = snapshot, getInstalledCounts = probeInstalledCounts,
+    send = (request) => sessionAdapter().send(request),
+} = {}) {
     const workspacePath = inst?.workspacePath ?? null;
 
     // Special path for the "Refresh Now" button on the Composition tab.
@@ -107,15 +110,29 @@ export async function dispatchKindPrompt(inst, kind, payload) {
     // the LLM Stage 2 prompt when the assembler reports Stage 2 is needed
     // (novel commands, wraps/prepends/appends directives, etc.).
     if (kind === "composition.refresh") {
-        startRefresh(inst);
+        const refresh = startRefresh(inst);
+        let inference = null;
+        const ownsWork = () => isCurrentRefresh(inst, refresh) && refresh.inference === inference;
+        const ensureCurrent = () => {
+            if (!ownsWork()) throw new Error("Composition refresh superseded by newer refresh work");
+        };
+        const failWork = () => {
+            if (!ownsWork()) return;
+            failOutputInference(inst, inference);
+            failRefresh(inst, refresh);
+        };
         try {
-            const fast = await runFastComposition(inst, { reason: "refresh-button" });
+            const fast = await compose(inst, { reason: "refresh-button" });
+            ensureCurrent();
             if (!fast?.ok) throw new Error(`Composition refresh failed: ${fast?.reason ?? "unknown error"}`);
-            const requests = (await snapshot(inst)).artifactInferenceRequests ?? [];
-            const endpoint = beginOutputInference(inst, requests);
-            setRefreshWork(inst, { pipeline: fast.stage2Needed, outputs: !!endpoint });
+            const requests = (await getSnapshot(inst)).artifactInferenceRequests ?? [];
+            ensureCurrent();
+            const endpoint = beginOutputInference(inst, requests, refresh);
+            inference = inst.outputInference;
+            setRefreshWork(inst, { pipeline: fast.stage2Needed, outputs: !!endpoint }, refresh);
             if (!fast.stage2Needed && !endpoint) return { kind, fastComposition: true };
-            const counts = await probeInstalledCounts(workspacePath);
+            const counts = await getInstalledCounts(workspacePath);
+            ensureCurrent();
             const context = { workspacePath, preset: inst?.state?.preset,
                 composition: inst?.state?.composition, ...counts };
             const prompts = [];
@@ -124,14 +141,20 @@ export async function dispatchKindPrompt(inst, kind, payload) {
                 commands: requests, origin: endpoint.origin, token: inst.token,
             }, context));
             const prompt = prompts.join("\n\n---\n\n");
-            await dispatchPromptToSession({ prompt, onError: () => {
-                failOutputInference(inst);
-                failRefresh(inst);
-            } });
+            await dispatchPromptToSession({
+                prompt,
+                send: (request) => {
+                    ensureCurrent();
+                    return send(request);
+                },
+                onError: (error) => {
+                    failWork();
+                    void sessionAdapter().log(`Composition refresh: ${error.message}`, "warn");
+                },
+            });
             return { prompt, kind };
         } catch (error) {
-            failOutputInference(inst);
-            failRefresh(inst);
+            failWork();
             throw error;
         }
     }
