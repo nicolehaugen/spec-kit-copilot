@@ -1,4 +1,7 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHandler } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server.mjs";
 import releaseCatalog from "../../spec-kit-extensions/catalog.json" with { type: "json" };
@@ -72,6 +75,11 @@ const handler = createHandler({
         },
     },
     log: async (message) => { console.error(message); },
+    stageDesignerHandoff: async (_session, handoff) => ({
+        sourceSessionId: "e2e-source", sourceRoot: join(tmpdir(), "e2e-source"),
+        handoffId: handoff.handoffId,
+        sha256: createHash("sha256").update(JSON.stringify(handoff)).digest("hex"),
+    }),
     getState: async () => snapshot,
     getInstance: () => ({ workspacePath: repoPath, generateCanvas: true }),
     broadcast: () => {},

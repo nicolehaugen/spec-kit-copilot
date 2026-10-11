@@ -117,7 +117,8 @@ export async function runSpecify(project, args, run = exec, { confirmApprovedSou
         output = await execution;
     }
     catch (error) {
-        throw new Error(`Specify ${args.slice(0, 3).join(" ")} failed: ${error.stderr || error.message}`, { cause: error });
+        const diagnostics = [error.stdout, error.stderr].filter(Boolean).join("\n") || error.message;
+        throw new Error(`Specify ${args.slice(0, 3).join(" ")} failed: ${diagnostics}`, { cause: error });
     }
     const { stdout = "", stderr = "" } = output;
     if (WARNING.test(`${stdout}\n${stderr}`)) {
@@ -644,7 +645,7 @@ export async function finalizeDesignerSetup(project, root, id, hash, {
         shell: false,
     });
     options.env = { ...options.env, COLUMNS: "8192", NO_COLOR: "1" };
-    const { stdout, stderr = "" } = await run(process.execPath, [verifier, project], options);
+    const { stdout, stderr = "" } = await run("node", [verifier, project], options);
     if (stderr.trim()) throw new Error(`Designer composition verification warning: ${stderr}`);
     const result = JSON.parse(stdout);
     if (!Array.isArray(result.pages) || !Array.isArray(result.templates)) {

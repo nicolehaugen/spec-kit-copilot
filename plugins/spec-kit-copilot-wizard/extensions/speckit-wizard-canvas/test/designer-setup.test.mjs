@@ -41,7 +41,7 @@ async function fixture(t, { installed = empty, selections = empty,
     const skill = join(project, ".github", "skills", "speckit-extension-canvas-design-load-page", "SKILL.md");
     async function run(binary, args, options) {
         calls.push(args);
-        if (binary === process.execPath) {
+        if (binary === "node") {
             return { stdout: JSON.stringify({
                 pages: [{ name: "designer-essentials", path: join(project, "page.json"),
                     kind: "designer.tab-definition", strategy: "replace" }],
@@ -167,12 +167,40 @@ test("finalize rejects a verifier payload incompatible with the Designer open sc
         ...f.deps,
         run: async (binary, args, options) => {
             const result = await f.run(binary, args, options);
-            if (binary !== process.execPath) return result;
+            if (binary !== "node") return result;
             const payload = JSON.parse(result.stdout);
             payload.pages[0].timings = { finalize: 1 };
             return { ...result, stdout: JSON.stringify(payload) };
         },
     }), /Designer open input.pages\[0\]: unsupported property timings/);
+});
+
+test("finalize runs the verifier with Node rather than the embedded Copilot executable", async (t) => {
+    const f = await fixture(t);
+    await installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps);
+    const executable = process.execPath;
+    const binaries = [];
+    try {
+        process.execPath = join(f.project, "copilot.exe");
+        const result = await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, {
+            ...f.deps,
+            run: async (binary, args, options) => {
+                binaries.push(binary);
+                if (binary === "node") {
+                    assert.equal(options.shell, false);
+                    assert.equal(options.cwd, f.project);
+                    assert.ok(options.env.PATH || options.env.Path);
+                    assert.equal(args[1], f.project);
+                }
+                return f.run(binary, args, options);
+            },
+        });
+        assert.equal(result.stage, "ready");
+        assert.equal(binaries.filter((binary) => binary === "node").length, 1);
+        assert.ok(!binaries.includes(process.execPath));
+    } finally {
+        process.execPath = executable;
+    }
 });
 
 test("older package requires manual Specify resolution, never an empty open input", async (t) => {
@@ -182,6 +210,20 @@ test("older package requires manual Specify resolution, never an empty open inpu
     assert.equal(result.stage, "manual-resolution");
     assert.equal(Object.hasOwn(result, "pages"), false);
     assert.equal(Object.hasOwn(result, "openInput"), false);
+});
+
+test("failed Specify commands preserve stdout and stderr diagnostics and their cause", async () => {
+    const cause = Object.assign(new Error("Command failed"), {
+        stdout: "Preset 'test' is already installed", stderr: "Additional diagnostic",
+    });
+    await assert.rejects(runSpecify(process.cwd(), ["preset", "add", "--dev"], async () => {
+        throw cause;
+    }), (error) => {
+        assert.match(error.message, /Preset 'test' is already installed/);
+        assert.match(error.message, /Additional diagnostic/);
+        assert.strictEqual(error.cause, cause);
+        return true;
+    });
 });
 
 test("setup rejects a changed handoff before any installation", async (t) => {
@@ -580,7 +622,7 @@ test("real Specify composes commands and resolves templates in a fresh child", {
         rm(root, { recursive: true, force: true })]));
     const source = fileURLToPath(new URL("../../../../../spec-kit-extensions/extension-canvas-design/", import.meta.url))
         .replace(/[\\/]$/, "");
-    const preset = fileURLToPath(new URL("../../../../../spec-kit-presets/copilot-canvas-design-test/", import.meta.url))
+    const preset = fileURLToPath(new URL("../../../../../tests/fixtures/test-presets/copilot-canvas-design-test/", import.meta.url))
         .replace(/[\\/]$/, "");
     const id = randomUUID();
     const handoff = buildDesignerHandoff({

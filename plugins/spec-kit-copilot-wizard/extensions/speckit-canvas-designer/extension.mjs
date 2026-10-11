@@ -9,6 +9,9 @@ import { freshDesignerSettings } from "./settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from "./contracts/host-open.mjs";
 import { loadLastOpen, replaceLastOpen } from "./open-state.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
+import { createDesignerBootstrap } from "./bootstrap.mjs";
+import { assertBootstrapCapabilities, BOOTSTRAP_TOOL, bootstrapInputSchema,
+    bootstrapSessionContext } from "./contracts/bootstrap.mjs";
 
 const servers = new Map();
 const opening = new Map();
@@ -64,8 +67,26 @@ async function reloadSessionSkills() {
     return diagnostics;
 }
 
+const bootstrap = createDesignerBootstrap({
+    checkNative: () => assertBootstrapCapabilities(session.rpc),
+    getContext: (invocation) => bootstrapSessionContext(session, invocation),
+    reloadSkills: () => session.rpc.skills.reload(),
+    openCanvas: (input) => session.rpc.tools.execute({ name: "open_canvas", arguments: input }),
+    listOpenCanvases: () => session.rpc.canvas.listOpen(),
+    log: (message, level) => session.log(message, { level }),
+});
+
 const session = await joinSession({
     tools: [{
+        name: BOOTSTRAP_TOOL,
+        description: "Run this child session's LLM-invoked Designer install or finalize-open stage from a frozen launch reference. Transfers and opens complete payloads internally; does not create sessions or run stages automatically.",
+        parameters: bootstrapInputSchema,
+        handler: async (args, invocation) => {
+            const result = await bootstrap(args, invocation);
+            return { textResultForLlm: JSON.stringify(result),
+                resultType: result.status === "failure" ? "failure" : "success" };
+        },
+    }, {
         name: "speckit_designer_reload_skills",
         description: "Reload this session's skills after package installation. Reports reload failures; does not install anything.",
         parameters: { type: "object", properties: {}, additionalProperties: false },

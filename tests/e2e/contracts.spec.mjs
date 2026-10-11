@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test, expect } from "./playwright.mjs";
@@ -6,6 +6,7 @@ import { startServer } from "../../plugins/spec-kit-copilot-wizard/extensions/sp
 import { readInstalledWorkflowInventory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server/handlers-designer.mjs";
 import { validateHandoff } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/wizard-handoff.mjs";
 import { handoffDirectory, readHandoff } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
+import { transferDesignerHandoff } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/bootstrap-artifacts.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
 import releaseCatalog from "../../spec-kit-extensions/catalog.json" with { type: "json" };
 
@@ -21,6 +22,7 @@ const scratchRoot = fileURLToPath(new URL("../../", import.meta.url));
 test("raw Specify inventory survives a browser launch and the Wizard handoff opens Designer", async ({ page }) => {
     const checkout = await mkdtemp(join(scratchRoot, ".wizard-contract-checkout-"));
     const child = await mkdtemp(join(scratchRoot, ".designer-contract-child-"));
+    const sourceRoot = join(checkout, "source-session");
     let server, shell;
     const prompts = [];
     const calls = [];
@@ -47,10 +49,16 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
     };
     try {
         await mkdir(join(checkout, ".specify"));
+        await mkdir(sourceRoot);
         server = await startServer("contract-e2e", {
             session: {
+                sessionId: "source-session",
+                workspacePath: sourceRoot,
                 send: async (input) => { prompts.push(input.prompt); },
                 rpc: {
+                    metadata: { snapshot: async () => ({
+                        sessionId: "source-session", workspacePath: sourceRoot, workingDirectory: checkout,
+                    }) },
                     extensions: { list: async () => ({ extensions: [{
                         id: "plugin:spec-kit-copilot-wizard:speckit-canvas-designer",
                         source: "plugin", status: "running",
@@ -85,8 +93,10 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
         expect(new Set(calls)).toEqual(new Set([
             "preset list --json", "extension list --json", "bundle list --json",
         ]));
-        const [, json] = prompts[0].match(/HANDOFF_JSON:\s*(\{[^\n]+\})/) ?? [];
-        expect(json).toBeTruthy();
+        const [, referenceText] = prompts[0].match(/LAUNCH_REFERENCE:\s*(\{[^\n]+\})/) ?? [];
+        expect(referenceText).toBeTruthy();
+        const reference = JSON.parse(referenceText);
+        const json = await readFile(join(handoffDirectory(sourceRoot, reference.handoffId), "handoff.json"), "utf8");
         const handoff = validateHandoff(JSON.parse(json), JSON.parse(json).handoffId);
         expect(handoff.workflow.selectedPhases).toEqual(["constitution", "specify"]);
         expect(handoff.workflow.outputEvidence.constitution.outputs)
@@ -102,8 +112,7 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
             downloadUrl: runtime.downloadUrl,
         }]);
         const folder = handoffDirectory(child, handoff.handoffId);
-        await mkdir(folder, { recursive: true });
-        await writeFile(join(folder, "handoff.json"), json);
+        await transferDesignerHandoff(reference, { sessionId: "child-session", root: child, project: checkout });
         expect(await readHandoff(child, handoff.handoffId)).toEqual(handoff);
         const model = { pages: [{ id: "designer-essentials", page: "designer-essentials",
             title: "Essentials", fields: [] }],
