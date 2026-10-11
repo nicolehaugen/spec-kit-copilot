@@ -225,7 +225,7 @@ export async function readEvidenceCache(cwd, openFile = open) {
     }
 }
 
-export async function writeEvidenceCache(cwd, payload, renameFile = rename) {
+export async function writeEvidenceCache(cwd, payload, renameFile = rename, beforeCommit = () => {}) {
     const root = await realpath(cwd);
     const directory = join(root, ".speckit-wizard");
     await mkdir(directory, { recursive: true });
@@ -254,6 +254,7 @@ export async function writeEvidenceCache(cwd, payload, renameFile = rename) {
             || opened.dev !== current.dev || opened.ino !== current.ino) {
             throw new Error("Unsafe artifact cache temporary file");
         }
+        beforeCommit();
         await renameFile(temp, target);
     } catch (error) {
         if (opened) {

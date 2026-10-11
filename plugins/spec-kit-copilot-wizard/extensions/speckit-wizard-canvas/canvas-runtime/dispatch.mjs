@@ -109,10 +109,12 @@ export async function dispatchKindPrompt(inst, kind, payload, {
     // milliseconds regardless of agent state — and only fall through to
     // the LLM Stage 2 prompt when the assembler reports Stage 2 is needed
     // (novel commands, wraps/prepends/appends directives, etc.).
-    if (kind === "composition.refresh") {
-        const refresh = startRefresh(inst);
-        let inference = null;
-        const ownsWork = () => isCurrentRefresh(inst, refresh) && inst.outputInferenceOwner === inference;
+    const outputsOnly = kind === "extension.inferArtifactTargets";
+    if (kind === "composition.refresh" || kind === "composition.inferPipeline" || outputsOnly) {
+        const refresh = outputsOnly ? inst.refreshStatus : startRefresh(inst);
+        let inference = inst.outputInferenceOwner ?? null;
+        const ownsWork = () => isCurrentRefresh(inst, refresh)
+            && (inst.outputInferenceOwner ?? null) === inference;
         const ensureCurrent = () => {
             if (!ownsWork()) throw new Error("Composition refresh superseded by newer refresh work");
         };
@@ -122,23 +124,24 @@ export async function dispatchKindPrompt(inst, kind, payload, {
             failRefresh(inst, refresh);
         };
         try {
-            const fast = await compose(inst, { reason: "refresh-button" });
+            const fast = outputsOnly ? { ok: true, stage2Needed: false }
+                : await compose(inst, { reason: "refresh-button" });
             ensureCurrent();
             if (!fast?.ok) throw new Error(`Composition refresh failed: ${fast?.reason ?? "unknown error"}`);
             const requests = (await getSnapshot(inst)).artifactInferenceRequests ?? [];
             ensureCurrent();
             const endpoint = beginOutputInference(inst, requests, refresh);
             inference = inst.outputInference;
-            setRefreshWork(inst, { pipeline: fast.stage2Needed, outputs: !!endpoint }, refresh);
+            if (!outputsOnly) setRefreshWork(inst, { pipeline: fast.stage2Needed, outputs: !!endpoint }, refresh);
             if (!fast.stage2Needed && !endpoint) return { kind, fastComposition: true };
             const counts = await getInstalledCounts(workspacePath);
             ensureCurrent();
             const context = { workspacePath, preset: inst?.state?.preset,
                 composition: inst?.state?.composition, ...counts };
             const prompts = [];
-            if (fast.stage2Needed) prompts.push(buildPrompt(kind, payload, context));
+            if (fast.stage2Needed) prompts.push(buildPrompt(kind, { runId: refresh.id }, context));
             if (endpoint) prompts.push(buildPrompt("extension.inferArtifactTargets", {
-                commands: requests, origin: endpoint.origin, token: inst.token,
+                commands: requests, endpoint: endpoint.toString(),
             }, context));
             const prompt = prompts.join("\n\n---\n\n");
             await dispatchPromptToSession({

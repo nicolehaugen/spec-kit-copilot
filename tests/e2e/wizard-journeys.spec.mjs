@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { test, expect } from "./playwright.mjs";
-import { collectArtifactEvidence, effectiveSource } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/artifact-evidence.mjs";
+import { collectArtifactEvidence, effectiveSource, readEvidenceCache } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/artifact-evidence.mjs";
 import { compositionActions } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/canvas-runtime/actions/composition.mjs";
 import { phaseActions } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/canvas-runtime/actions/phase.mjs";
 import { runFastComposition } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/canvas-runtime/composition-apply.mjs";
@@ -624,7 +624,58 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         await expect(progress).toHaveText("Updating…");
         await expect.poll(() => prompts.length).toBe(1);
         expect(prompts[0]).toContain(review);
+        let pipelineRunId = prompts[0].match(/showInferredPipeline\(\{ runId: "([0-9a-f-]+)"/)?.[1];
+        let artifactEndpoint = prompts[0].match(/POST (http:\/\/\S+) with JSON/)?.[1];
+        expect(pipelineRunId).toBe(inst.refreshStatus.id);
+        expect(new URL(artifactEndpoint).searchParams.get("runId")).toBe(inst.outputInference.id);
         expect([...inst.outputInference.pending]).toEqual([[review, source.fingerprint]]);
+        const oldPipelineRunId = pipelineRunId;
+        const oldArtifactEndpoint = artifactEndpoint;
+        const replacement = await page.request.post(new URL(`/api/prompt?token=${server.token}`, server.url).href,
+            { data: { kind: "composition.refresh", payload: {} } });
+        expect(replacement.status()).toBe(202);
+        await expect.poll(() => prompts.length).toBe(2);
+        pipelineRunId = prompts[1].match(/showInferredPipeline\(\{ runId: "([0-9a-f-]+)"/)?.[1];
+        artifactEndpoint = prompts[1].match(/POST (http:\/\/\S+) with JSON/)?.[1];
+        expect(pipelineRunId).toBe(inst.refreshStatus.id);
+        expect(pipelineRunId).not.toBe(oldPipelineRunId);
+        expect(new URL(artifactEndpoint).searchParams.get("runId")).toBe(inst.outputInference.id);
+        expect(artifactEndpoint).not.toBe(oldArtifactEndpoint);
+        const compositionBefore = JSON.stringify(inst.cachedComposition);
+        const stateBefore = await readFile(join(root, ".speckit-wizard", "state.json"), "utf8");
+        const cacheBefore = await readEvidenceCache(root);
+        const currentRefresh = inst.refreshStatus;
+        const currentInference = inst.outputInference;
+        const delayedPipeline = await compositionActions[0].handler({ instanceId: id, input: {
+            runId: oldPipelineRunId,
+            inferredPipeline: { shape: "standalone",
+                pipeline: [...inst.cachedComposition.inferredPipeline.pipeline].reverse(),
+                unplaced: [], rationale: "Delayed prior ordering" },
+        } });
+        expect(delayedPipeline.ok).toBe(false);
+        expect(delayedPipeline.inferredPipelineStatus.reason).toContain("runId is no longer current");
+        for (const fingerprint of [source.fingerprint, "0".repeat(64)]) {
+            const delayedOutput = await page.request.post(oldArtifactEndpoint, { data: { entries: {
+                [`commands/${review}`]: { outputEvidence: { fingerprint, primaryIndex: null,
+                    candidates: [{ kind: "unknown", source: "inference", effect: "unknown",
+                        evidence: "Delayed prior output inference" }] } },
+            } } });
+            expect(delayedOutput.status()).toBe(409);
+            expect((await delayedOutput.json()).error).toContain("runId is no longer current");
+        }
+        expect(JSON.stringify(inst.cachedComposition)).toBe(compositionBefore);
+        expect(await readFile(join(root, ".speckit-wizard", "state.json"), "utf8")).toBe(stateBefore);
+        expect(await readEvidenceCache(root)).toEqual(cacheBefore);
+        expect(inst.refreshStatus).toBe(currentRefresh);
+        expect(currentRefresh.status).toBe("refreshing");
+        expect(currentRefresh.pipelinePending).toBe(true);
+        expect(currentRefresh.outputsPending).toBe(true);
+        expect(inst.outputInference).toBe(currentInference);
+        expect(currentInference.status).toBe("updating");
+        expect([...currentInference.pending]).toEqual([[review, source.fingerprint]]);
+        expect(currentInference.timer._destroyed).toBe(false);
+        await expect(progress).toHaveText("Updating…");
+        await expect(refresh).toHaveAttribute("aria-busy", "true");
         await page.getByRole("tab", { name: "Phases" }).click();
         await expect(page.locator("#pipeline-banner")).toContainText("Updating pipeline and output details");
         await page.locator("#stepper .step").filter({ hasText: /review/i }).click();
@@ -635,6 +686,7 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         expect(inst.state.pipeline.some((item) => item.id === "converge")).toBe(true);
         await page.getByRole("tab", { name: "Setup" }).click();
         const result = await compositionActions[0].handler({ instanceId: id, input: {
+            runId: pipelineRunId,
             inferredPipeline: {
                 shape: "standalone",
                 pipeline: ["commands/speckit.constitution", "commands/speckit.plan",
@@ -654,7 +706,7 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
                     effect: "creates", evidence: "Review skill declares an additional checklist" },
             ],
         };
-        const response = await page.request.post(new URL(`/api/artifact-targets?token=${server.token}`, server.url).href,
+        const response = await page.request.post(artifactEndpoint,
             { data: { entries: { [`commands/${review}`]: { outputEvidence: evidence } } } });
         expect(response.status(), await response.text()).toBe(200);
         expect(inst.refreshStatus.status).toBe("up-to-date");
@@ -674,10 +726,10 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         await page.locator("#phase-card .phase-cust-chain-toggle")
             .filter({ hasText: "more" }).click();
         await expect(page.locator("#phase-card")).toContainText("specs/<slug>/reviews/checklist.md");
-        finishTurns[0]();
+        for (const finish of finishTurns) finish();
         await page.locator("#phase-card").getByRole("button", { name: "Run phase" }).click();
-        await expect.poll(() => prompts.length).toBe(2);
-        expect(prompts[1]).toContain("speckit-extension-wizard-flow-test-review");
+        await expect.poll(() => prompts.length).toBe(3);
+        expect(prompts[2]).toContain("speckit-extension-wizard-flow-test-review");
         await expect(page.locator("#phase-card").getByRole("status")).toHaveText("Request sent");
         await expect(page.locator("#phase-card").getByRole("button", { name: "Rerun phase" })).toBeEnabled();
         expect(inst.cachedComposition.artifacts.some((artifact) =>

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, test } from "node:test";
 import { setSession } from "../canvas-runtime/instances.mjs";
+import { beginOutputInference } from "../canvas-runtime/output-inference.mjs";
 import { buildStateSnapshot } from "../canvas-runtime/snapshot-builder.mjs";
 import {
     ACTION_KINDS,
@@ -35,7 +36,9 @@ import {
 afterEach(() => {
     __resetRunTrackerForTests();
     setSession(null);
+    for (const timer of outputTimers.splice(0)) clearTimeout(timer);
 });
+const outputTimers = [];
 
 describe("server", () => {
 // Tests for server.mjs — createHandler with mock req/res + injected deps.
@@ -368,6 +371,16 @@ function tmpWorkspace() {
     return dir;
 }
 
+function artifactDeps(workspacePath) {
+    const inst = { workspacePath, state: {}, url: "http://127.0.0.1:1234",
+        token: "secret-token", broadcast() {} };
+    const endpoint = beginOutputInference(inst,
+        [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }], inst.refreshStatus);
+    outputTimers.push(inst.outputInference.timer);
+    return { ...baseDeps({ getInstance: () => inst }),
+        artifactEndpoint: endpoint.pathname + endpoint.search };
+}
+
 // NOTE: The "writes a fresh cache with valid entries" happy path is
 // exercised end-to-end by the S5 artifact-targets round-trip integration
 // test (server-write → scanner-read). Below we keep only the negative and
@@ -387,7 +400,7 @@ test("POST /api/artifact-targets: merges into an existing cache without clobberi
                 },
             }),
         );
-        const deps = baseDeps({ getInstance: () => ({ workspacePath: ws, state: {} }) });
+        const deps = artifactDeps(ws);
         const h = createHandler(deps);
         const body = JSON.stringify({
             entries: {
@@ -396,7 +409,7 @@ test("POST /api/artifact-targets: merges into an existing cache without clobberi
         });
         const req = mockReq({
             method: "POST",
-            url: "/api/artifact-targets?token=secret-token",
+            url: deps.artifactEndpoint,
             headers: { "content-type": "application/json" },
             body,
         });
@@ -414,7 +427,7 @@ test("POST /api/artifact-targets: merges into an existing cache without clobberi
 test("POST /api/artifact-targets: drops non-commands/ keys and missing writesTo", async () => {
     const ws = tmpWorkspace();
     try {
-        const deps = baseDeps({ getInstance: () => ({ workspacePath: ws, state: {} }) });
+        const deps = artifactDeps(ws);
         const h = createHandler(deps);
         const body = JSON.stringify({
             entries: {
@@ -426,7 +439,7 @@ test("POST /api/artifact-targets: drops non-commands/ keys and missing writesTo"
         });
         const req = mockReq({
             method: "POST",
-            url: "/api/artifact-targets?token=secret-token",
+            url: deps.artifactEndpoint,
             headers: { "content-type": "application/json" },
             body,
         });
@@ -443,12 +456,12 @@ test("POST /api/artifact-targets: drops non-commands/ keys and missing writesTo"
 test("POST /api/artifact-targets: rejects when no valid entries remain", async () => {
     const ws = tmpWorkspace();
     try {
-        const deps = baseDeps({ getInstance: () => ({ workspacePath: ws, state: {} }) });
+        const deps = artifactDeps(ws);
         const h = createHandler(deps);
         const body = JSON.stringify({ entries: { "templates/x": { writesTo: "y" } } });
         const req = mockReq({
             method: "POST",
-            url: "/api/artifact-targets?token=secret-token",
+            url: deps.artifactEndpoint,
             headers: { "content-type": "application/json" },
             body,
         });
@@ -464,17 +477,51 @@ test("POST /api/artifact-targets: rejects when no valid entries remain", async (
 test("POST /api/artifact-targets: rejects missing entries object", async () => {
     const ws = tmpWorkspace();
     try {
-        const deps = baseDeps({ getInstance: () => ({ workspacePath: ws, state: {} }) });
+        const deps = artifactDeps(ws);
         const h = createHandler(deps);
         const req = mockReq({
             method: "POST",
-            url: "/api/artifact-targets?token=secret-token",
+            url: deps.artifactEndpoint,
             headers: { "content-type": "application/json" },
             body: JSON.stringify({}),
         });
         const res = mockRes();
         await h(req, res);
         assert.equal(res.statusCode, 400);
+    } finally {
+        rmSync(ws, { recursive: true, force: true });
+    }
+});
+
+test("HTTP artifact replies require the originating endpoint runId before any cache mutation", async () => {
+    const ws = tmpWorkspace();
+    try {
+        const deps = artifactDeps(ws);
+        const inst = deps.getInstance();
+        const oldUrl = deps.artifactEndpoint;
+        beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }],
+            inst.refreshStatus);
+        const current = inst.outputInference;
+        outputTimers.push(current.timer);
+        const handler = createHandler(deps);
+        for (const [url, status] of [
+            ["/api/artifact-targets?token=secret-token", 400],
+            ["/api/artifact-targets?token=secret-token&runId=bad", 400],
+            [oldUrl, 409],
+        ]) {
+            const res = mockRes();
+            await handler(mockReq({ method: "POST", url,
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ entries: { "commands/speckit.plan": { writesTo: "specs/<slug>/plan.md" } } }),
+            }), res);
+            assert.equal(res.statusCode, status);
+            assert.match(JSON.parse(res.body).error, /runId/);
+            assert.equal(inst.outputInference, current);
+            assert.equal(current.status, "updating");
+            assert.equal(current.pending.size, 1);
+            assert.equal(current.timer._destroyed, false);
+            assert.ok(!existsSync(join(ws, ".speckit-wizard", "artifact-targets.json")));
+        }
     } finally {
         rmSync(ws, { recursive: true, force: true });
     }
@@ -690,6 +737,12 @@ test("S5: artifact-targets round-trip — POST writes cache, scanner surfaces ar
 
         // POST via real server handler.
         const deps = baseDeps({ workspacePath: ws });
+        const inst = { workspacePath: ws, state: {}, url: "http://127.0.0.1:1234",
+            token: "secret-token", broadcast() {} };
+        const endpoint = beginOutputInference(inst,
+            [{ commandId: "speckit.assess.intake", fingerprint: "a".repeat(64) }], inst.refreshStatus);
+        outputTimers.push(inst.outputInference.timer);
+        deps.getInstance = () => inst;
         const h = createHandler(deps);
         const body = JSON.stringify({
             entries: {
@@ -702,7 +755,7 @@ test("S5: artifact-targets round-trip — POST writes cache, scanner surfaces ar
         });
         const req = mockReq({
             method: "POST",
-            url: "/api/artifact-targets?token=secret-token",
+            url: endpoint.pathname + endpoint.search,
             headers: { "content-type": "application/json" },
             body,
         });
@@ -963,7 +1016,10 @@ test("S1×S2: every ACTION_KIND builds a non-empty prompt without throwing", () 
     // buildPrompt would throw or return empty. Guards the closed-enum
     // contract from both sides simultaneously.
     for (const kind of ACTION_KINDS) {
-        const out = buildPrompt(kind, {}, { workspacePath: "/ws" });
+        const runId = "00000000-0000-4000-8000-000000000001";
+        const out = buildPrompt(kind, { runId,
+            endpoint: `http://127.0.0.1:1234/api/artifact-targets?token=test&runId=${runId}` },
+            { workspacePath: "/ws" });
         assert.equal(typeof out, "string", `kind ${kind} must produce a string`);
         assert.ok(out.length > 0, `kind ${kind} produced an empty prompt`);
     }

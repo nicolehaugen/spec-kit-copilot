@@ -4,6 +4,7 @@
 
 import { commandId, effectiveSource, readEvidenceCache, writeEvidenceCache } from "../artifact-evidence.mjs";
 import { normalizeAgentArtifactEntry, validateAgentArtifactEvidence } from "../contracts/agent-artifacts.mjs";
+import { assertReplyRunId, ReplyRunError } from "../contracts/agent-replies.mjs";
 import { failOutputInference, finishOutputInference } from "../canvas-runtime/output-inference.mjs";
 
 import { applyPatch, writeState } from "../state/store.mjs";
@@ -108,11 +109,20 @@ export async function handlePipelineMutation(res, body, { getState, broadcast, g
 //   templates from the opening paragraph →
 //   agent POSTs { entries: {...} } here →
 //   scanner picks up the new cache on the next scan tick.
-export async function handleArtifactTargets(res, body, { broadcast, getInstance,
+export async function handleArtifactTargets(res, body, { broadcast, getInstance, runId,
     readSource = effectiveSource, readCache = readEvidenceCache, writeCache = writeEvidenceCache }) {
     const inst = getInstance();
     if (!inst?.workspacePath) return jsonError(res, 400, "workspace path unavailable");
     const inference = inst.outputInference;
+    const requireCurrentReply = () => assertReplyRunId(runId,
+        inst.outputInference === inference && inference?.status === "updating"
+            && inst.refreshStatus === inference.refresh ? inference.id : null);
+    try {
+        requireCurrentReply();
+    } catch (error) {
+        if (!(error instanceof ReplyRunError)) throw error;
+        return jsonError(res, error.status, error.message);
+    }
     const rejectOutput = (key, status, message) => {
         if (inference?.pending.has(commandId(key))) failOutputInference(inst, inference);
         return jsonError(res, status, message);
@@ -186,8 +196,10 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     }
 
     try {
-        await writeCache(inst.workspacePath, payload);
+        requireCurrentReply();
+        await writeCache(inst.workspacePath, payload, undefined, requireCurrentReply);
     } catch (err) {
+        if (err instanceof ReplyRunError) return jsonError(res, err.status, err.message);
         if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }

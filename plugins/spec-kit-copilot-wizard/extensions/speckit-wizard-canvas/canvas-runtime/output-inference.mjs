@@ -1,4 +1,5 @@
 import { commandId } from "../artifact-evidence.mjs";
+import { randomUUID } from "node:crypto";
 import { failRefresh, finishRefreshPart, isCurrentRefresh } from "./refresh-status.mjs";
 
 function isCurrentInference(inst, inference) {
@@ -12,7 +13,7 @@ export function beginOutputInference(inst, requests, refresh) {
     inst.outputInferenceOwner = null;
     if (!requests.length) return null;
     if (!inst.url || !inst.token) throw new Error("Artifact inference endpoint unavailable");
-    const inference = { refresh, status: "updating", total: requests.length,
+    const inference = { id: randomUUID(), refresh, status: "updating", total: requests.length,
         pending: new Map(requests.map(({ commandId: id, fingerprint }) => [commandId(id), fingerprint])) };
     inference.timer = setTimeout(() => {
         failOutputInference(inst, inference, "output inference timed out");
@@ -23,6 +24,7 @@ export function beginOutputInference(inst, requests, refresh) {
     inst.broadcast({ type: "invalidate", reason: "output inference started" });
     const endpoint = new URL("/api/artifact-targets", inst.url);
     endpoint.searchParams.set("token", inst.token);
+    endpoint.searchParams.set("runId", inference.id);
     return endpoint;
 }
 

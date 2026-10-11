@@ -9,7 +9,7 @@ import { artifactPath, collectArtifactEvidence, effectiveSource, readEvidenceCac
 import { handleArtifactTargets } from "../server/handlers-ops.mjs";
 import { attachOutputEvidence, outputAvailability } from "../canvas-runtime/output-availability.mjs";
 import { fsDeps } from "../canvas-runtime/instances.mjs";
-import { beginOutputInference } from "../canvas-runtime/output-inference.mjs";
+import { beginOutputInference, failOutputInference, finishOutputInference } from "../canvas-runtime/output-inference.mjs";
 import { finishRefreshPart, setRefreshWork, startRefresh } from "../canvas-runtime/refresh-status.mjs";
 import { hydrateExtensionArtifactsFromCache } from "../project-scanner/extension-artifacts.mjs";
 
@@ -33,6 +33,67 @@ async function fixture(run) {
 
 function response() {
     return { writeHead(status) { this.status = status; }, end(text) { this.body = JSON.parse(text); } };
+}
+
+for (const refreshing of [false, true]) {
+    for (const reply of ["missing", "malformed", "delayed same fingerprint", "delayed old fingerprint", "duplicate", "expired"]) {
+        test(`${reply} artifact reply ${refreshing ? "with" : "without"} refresh cannot touch cache or current work`, async () => {
+            await fixture(async ({ root, write }) => {
+                const baseline = '{"version":1,"entries":{"commands/kept":{"description":"Keep me"}}}';
+                await write(".speckit-wizard/artifact-targets.json", baseline);
+                const frames = [];
+                const inst = { workspacePath: root, url: "http://127.0.0.1:1234", token: "test",
+                    broadcast: (frame) => frames.push(frame) };
+                if (refreshing) startRefresh(inst);
+                const fingerprint = (await effectiveSource(root, "plan")).fingerprint;
+                const request = { commandId: "speckit.plan", fingerprint };
+                const oldEndpoint = beginOutputInference(inst, [request], inst.refreshStatus);
+                const oldRunId = oldEndpoint.searchParams.get("runId");
+                if (reply.startsWith("delayed")) {
+                    if (refreshing) startRefresh(inst);
+                    beginOutputInference(inst, [request], inst.refreshStatus);
+                }
+                const current = inst.outputInference;
+                if (reply === "duplicate") finishOutputInference(inst, current, ["speckit.plan"]);
+                if (reply === "expired") failOutputInference(inst, current);
+                const refresh = inst.refreshStatus;
+                frames.length = 0;
+                let reads = 0, writes = 0;
+                const res = response();
+                try {
+                    await handleArtifactTargets(res, { entries: {
+                        "commands/speckit.plan": { outputEvidence: {
+                            fingerprint: reply === "delayed old fingerprint" ? "0".repeat(64) : fingerprint,
+                            primaryIndex: null, candidates: [{ kind: "unknown", source: "inference",
+                                effect: "unknown", evidence: "No known portable output" }],
+                        } },
+                    } }, {
+                        getInstance: () => inst, broadcast: (frame) => frames.push(frame),
+                        runId: reply === "missing" ? undefined : reply === "malformed" ? "bad" : oldRunId,
+                        readSource: async () => { reads++; return { fingerprint }; },
+                        readCache: async () => { reads++; return { entries: {} }; },
+                        writeCache: async () => { writes++; },
+                    });
+                    assert.equal(res.status, reply === "missing" || reply === "malformed" ? 400 : 409);
+                    assert.match(res.body.error, /runId/);
+                    assert.equal(reads, 0);
+                    assert.equal(writes, 0);
+                    assert.equal(await readFile(join(root, ".speckit-wizard", "artifact-targets.json"), "utf8"), baseline);
+                    assert.equal(inst.outputInference, reply === "duplicate" ? null : current);
+                    assert.equal(inst.refreshStatus, refresh);
+                    if (reply !== "duplicate") {
+                        assert.equal(current.status, reply === "expired" ? "incomplete" : "updating");
+                        assert.deepEqual([...current.pending], [["plan", fingerprint]]);
+                        assert.equal(current.timer._destroyed, reply === "expired");
+                    }
+                    assert.deepEqual(frames, []);
+                } finally {
+                    clearTimeout(current.timer);
+                    clearTimeout(inst.refreshStatus?.timer);
+                }
+            });
+        });
+    }
 }
 
 test("rejects traversal, symlink-like and invalid primary output evidence", () => {
@@ -462,7 +523,7 @@ test("unreadable cache immediately marks active output inference incomplete", as
         const res = response();
         await handleArtifactTargets(res, { entries: {
             "commands/speckit.plan": { writesTo: "specs/<slug>/plan.md" },
-        } }, { getInstance: () => inst, broadcast: (event) => events.push(event) });
+        } }, { getInstance: () => inst, runId: inst.outputInference.id, broadcast: (event) => events.push(event) });
         assert.equal(res.status, 500);
         assert.match(res.body.error, /Artifact cache was not overwritten/);
         assert.equal(inst.outputInference.status, "incomplete");
@@ -488,7 +549,8 @@ test("oversized and unwritable artifact caches fail an active inference immediat
             beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }], inst.refreshStatus);
             const res = response();
             await handleArtifactTargets(res, { entries: { "commands/speckit.plan": entry } },
-                { getInstance: () => inst, broadcast: (event) => events.push(event), ...options });
+                { getInstance: () => inst, runId: inst.outputInference.id,
+                    broadcast: (event) => events.push(event), ...options });
             assert.equal(res.status, status);
             assert.match(res.body.error, message);
             assert.equal(inst.outputInference.status, "incomplete");
@@ -508,7 +570,7 @@ test("an empty filtered inference response fails refresh immediately", async () 
         const res = response();
         await handleArtifactTargets(res, { entries: {
             "commands/speckit.plan": {},
-        } }, { getInstance: () => inst, broadcast: (event) => events.push(event) });
+        } }, { getInstance: () => inst, runId: inst.outputInference.id, broadcast: (event) => events.push(event) });
         assert.equal(res.status, 400);
         assert.match(res.body.error, /no valid entries/);
         assert.equal(inst.outputInference.status, "incomplete");
@@ -539,7 +601,7 @@ test("current evidence completes inference after skill or helper fingerprints ch
                         candidates: [{ kind: "file", path: "plan.md", relativeTo: "feature",
                             source: "inference", effect: "creates", evidence: "Writes FEATURE_DIR/plan.md." }],
                     } },
-                } }, { getInstance: () => inst, broadcast() {} });
+                } }, { getInstance: () => inst, runId: inference.id, broadcast() {} });
                 assert.equal(res.status, 200);
                 assert.equal((await readEvidenceCache(root)).entries["commands/speckit.plan"]
                     .outputEvidence.fingerprint, current.fingerprint);
@@ -579,7 +641,7 @@ test("partial evidence clears only submitted outputs, not metadata-only commands
                         source: "inference", effect: "creates", evidence: "Writes FEATURE_DIR/plan.md." }],
                 } },
                 "commands/speckit.tasks": { description: "Task generation" },
-            } }, { getInstance: () => inst, broadcast() {} });
+            } }, { getInstance: () => inst, runId: inference.id, broadcast() {} });
             assert.equal(res.status, 200);
             assert.deepEqual([...inference.pending.keys()], ["tasks"]);
             assert.equal(inst.outputInference, inference);
@@ -607,7 +669,7 @@ test("stale evidence is rejected without completing pending inference", async ()
                     candidates: [{ kind: "unknown", source: "inference", effect: "unknown",
                         evidence: "No fixed output established." }],
                 } },
-            } }, { getInstance: () => inst, broadcast() {} });
+            } }, { getInstance: () => inst, runId: inference.id, broadcast() {} });
             assert.equal(res.status, 409);
             assert.equal(inference.pending.size, 1);
             assert.equal(inference.status, "incomplete");
@@ -638,15 +700,19 @@ for (const replacement of ["refresh", "inference", "both"]) {
                             source: "inference", effect: "creates", evidence: "Writes FEATURE_DIR/plan.md." }],
                     } },
                 } }, {
-                    getInstance: () => inst, broadcast() {},
-                    writeCache: async (cwd, payload) => {
+                    getInstance: () => inst, runId: previous.id, broadcast() {},
+                    writeCache: async (cwd, payload, renameFile, beforeCommit) => {
                         if (replacement !== "inference") startRefresh(inst);
                         if (replacement !== "refresh") beginOutputInference(inst, [request], inst.refreshStatus);
                         setRefreshWork(inst, { pipeline: false, outputs: true }, inst.refreshStatus);
-                        await writeEvidenceCache(cwd, payload);
+                        await writeEvidenceCache(cwd, payload, renameFile, beforeCommit);
                     },
                 });
-                assert.equal(res.status, 200);
+                assert.equal(res.status, 409);
+                assert.match(res.body.error, /runId is no longer current/);
+                assert.deepEqual((await readEvidenceCache(root)).entries, {});
+                assert.ok(!(await readdir(join(root, ".speckit-wizard")))
+                    .some((name) => name.endsWith(".tmp")));
                 assert.notEqual(inst.outputInference, previous);
                 assert.equal(previous.pending.size, 1);
                 if (replacement === "refresh") {
@@ -680,7 +746,7 @@ test("an older artifact failure cannot fail a refresh-only retry before its infe
             await handleArtifactTargets(res, { entries: {
                 "commands/speckit.plan": { writesTo: "specs/<slug>/plan.md" },
             } }, {
-                getInstance: () => inst, broadcast() {},
+                getInstance: () => inst, runId: previous.id, broadcast() {},
                 readCache: async () => {
                     startRefresh(inst);
                     throw new Error("old cache read failed");
@@ -728,7 +794,8 @@ for (const failure of ["fingerprint rejection", "invalid evidence", "source read
                         source: "inference", effect: "creates", evidence: "Writes FEATURE_DIR/plan.md." },
                 ],
             } };
-            const deps = { getInstance: () => inst, broadcast: (event) => events.push(event) };
+            const deps = { getInstance: () => inst, runId: previous.id,
+                broadcast: (event) => events.push(event) };
             let status, message;
             if (["fingerprint rejection", "invalid evidence", "source read"].includes(failure)) {
                 deps.readSource = async () => {
@@ -786,8 +853,11 @@ test("endpoint rejects stale evidence and merges current candidates without eras
                 writesTo: "specs/<slug>/old.md", source: "manual", argsHint: "Keep this hint",
             } },
         }));
-        const inst = { workspacePath: root, broadcast() {} };
-        const deps = { getInstance: () => inst, broadcast() {} };
+        const inst = { workspacePath: root, url: "http://127.0.0.1:1234", token: "test", broadcast() {} };
+        beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }],
+            inst.refreshStatus);
+        const inference = inst.outputInference;
+        const deps = { getInstance: () => inst, runId: inference.id, broadcast() {} };
         const candidate = { kind: "file", path: "plan.md", relativeTo: "feature",
             source: "inference", effect: "creates", evidence: "The skill writes FEATURE_DIR/plan.md." };
         const entry = { outputEvidence: { fingerprint: "0".repeat(64),
@@ -795,11 +865,17 @@ test("endpoint rejects stale evidence and merges current candidates without eras
         const stale = response();
         await handleArtifactTargets(stale, { entries: { "commands/speckit.plan": entry } }, deps);
         assert.equal(stale.status, 409);
+        beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }],
+            inst.refreshStatus);
+        deps.runId = inst.outputInference.id;
         entry.outputEvidence.fingerprint = (await effectiveSource(root, "plan")).fingerprint;
         const unsafe = response();
         entry.outputEvidence.candidates = [{ ...candidate, path: "../secrets.md" }];
         await handleArtifactTargets(unsafe, { entries: { "commands/speckit.plan": entry } }, deps);
         assert.equal(unsafe.status, 400);
+        beginOutputInference(inst, [{ commandId: "speckit.plan", fingerprint: "a".repeat(64) }],
+            inst.refreshStatus);
+        deps.runId = inst.outputInference.id;
         entry.outputEvidence.candidates = [candidate];
         const valid = response();
         await handleArtifactTargets(valid, { entries: { "commands/speckit.plan": entry } }, deps);

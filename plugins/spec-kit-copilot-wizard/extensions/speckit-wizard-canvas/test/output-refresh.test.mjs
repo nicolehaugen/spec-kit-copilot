@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
@@ -13,6 +13,20 @@ import { attachOutputEvidence } from "../canvas-runtime/output-availability.mjs"
 import { compositionActions } from "../canvas-runtime/actions/composition.mjs";
 import { catalogActions } from "../canvas-runtime/actions/catalog.mjs";
 import { allInstances, getInstance } from "../canvas-runtime/instances.mjs";
+import { assertReplyRunId, replyRunIdSchema } from "../contracts/agent-replies.mjs";
+import { inferredPipelineInputSchema } from "../contracts/agent-pipeline.mjs";
+
+test("both reply paths share the originating run ID contract", () => {
+    const id = randomUUID();
+    assert.equal(inferredPipelineInputSchema.properties.runId, replyRunIdSchema);
+    assert.ok(inferredPipelineInputSchema.required.includes("runId"));
+    assert.doesNotThrow(() => assertReplyRunId(id, id));
+    for (const invalid of [undefined, null, 1, "", "not-a-run", "00000000-0000-4000-8000-00000000000A"]) {
+        assert.throws(() => assertReplyRunId(invalid, id), { status: 400 });
+    }
+    assert.throws(() => assertReplyRunId(id, randomUUID()), { status: 409 });
+    assert.throws(() => assertReplyRunId(id, null), { status: 409 });
+});
 
 const request = { commandId: "speckit.plan", fingerprint: "a".repeat(64) };
 const instance = () => ({ url: "http://127.0.0.1:1234", token: "test-token", broadcast() {} });
@@ -44,6 +58,84 @@ async function actionFixture(run) {
         allInstances().delete(id);
         await rm(root, { recursive: true, force: true });
     }
+}
+
+for (const reply of ["missing", "malformed", "delayed", "duplicate", "expired"]) {
+    test(`${reply} pipeline reply cannot change persisted ordering or complete the current refresh`, async () => {
+        await actionFixture(async (inst) => {
+            const pipeline = ["commands/speckit.specify", "commands/speckit.plan", "commands/speckit.tasks"];
+            const composition = { artifacts: pipeline.map((id) => ({ id, kind: "command" })),
+                inferredPipeline: { shape: "standalone", pipeline, unplaced: [], rationale: "Current order" } };
+            inst.cachedComposition = composition;
+            inst.state = { composition };
+            await mkdir(join(inst.workspacePath, ".speckit-wizard"));
+            const statePath = join(inst.workspacePath, ".speckit-wizard", "state.json");
+            const saved = JSON.stringify(inst.state);
+            await writeFile(statePath, saved);
+            startRefresh(inst);
+            const oldRunId = inst.refreshStatus.id;
+            if (reply === "delayed") startRefresh(inst);
+            if (reply === "duplicate") finishRefreshPart(inst, "pipeline", inst.refreshStatus);
+            if (reply === "expired") failRefresh(inst, inst.refreshStatus);
+            const current = inst.refreshStatus;
+            const frames = [];
+            inst.broadcast = (frame) => frames.push(frame);
+            const result = await compositionActions[0].handler({ instanceId: inst.instanceId, input: {
+                runId: reply === "missing" ? undefined : reply === "malformed" ? "bad" : oldRunId,
+                inferredPipeline: { shape: "standalone", pipeline: [...pipeline].reverse(),
+                    unplaced: [], rationale: "Delayed old order" },
+            } });
+            assert.equal(result.ok, false);
+            assert.equal(result.inferredPipelineStatus.accepted, false);
+            assert.match(result.inferredPipelineStatus.reason,
+                reply === "missing" || reply === "malformed" ? /runId is required/ : /runId is no longer current/);
+            assert.equal(inst.cachedComposition, composition);
+            assert.equal(await readFile(statePath, "utf8"), saved);
+            assert.equal(inst.refreshStatus, current);
+            assert.equal(current.status, reply === "expired" ? "incomplete" : "refreshing");
+            assert.equal(current.pipelinePending, reply !== "duplicate");
+            assert.deepEqual(frames, []);
+        });
+    });
+}
+
+test("pipeline prompt requires the captured runId and artifact prompts retain the full originating endpoint", () => {
+    const runId = randomUUID();
+    const endpoint = `http://127.0.0.1:1234/api/artifact-targets?token=test-token&runId=${randomUUID()}`;
+    assert.throws(() => buildCompositionPrompt("composition.refresh", {}, {},
+        { workspacePath: "C:\\workspace" }), /runId is required/);
+    const pipeline = buildCompositionPrompt("composition.refresh", { runId }, {},
+        { workspacePath: "C:\\workspace" });
+    assert.ok(pipeline.includes(`showInferredPipeline({ runId: "${runId}"`));
+    assert.match(pipeline, /never read a newer runId/);
+    const outputs = buildCompositionPrompt("extension.inferArtifactTargets",
+        { commands: [request], endpoint }, {}, { workspacePath: "C:\\workspace" });
+    assert.ok(outputs.includes(`POST ${endpoint}`));
+    assert.match(outputs, /Never reconstruct it or substitute a newer endpoint/);
+});
+
+for (const kind of ["composition.refresh", "composition.inferPipeline", "extension.inferArtifactTargets"]) {
+    test(`${kind} dispatch issues its own correlated prompt rather than trusting caller run IDs`, async () => {
+        const inst = instance();
+        const sent = [];
+        try {
+            const result = await dispatchKindPrompt(inst, kind, { runId: randomUUID(), endpoint: "caller-endpoint" },
+                dispatchDeps((message) => sent.push(message)));
+            await new Promise(setImmediate);
+            assert.equal(sent.length, 1);
+            const runId = inst.outputInference.id;
+            assert.ok(result.prompt.includes(`runId=${runId}`));
+            assert.ok(!result.prompt.includes("caller-endpoint"));
+            if (kind !== "extension.inferArtifactTargets") {
+                assert.ok(result.prompt.includes(`runId: "${inst.refreshStatus.id}"`));
+            } else {
+                assert.equal(inst.refreshStatus, undefined);
+            }
+        } finally {
+            clearTimeout(inst.refreshStatus?.timer);
+            clearTimeout(inst.outputInference?.timer);
+        }
+    });
 }
 
 test("starting a refresh immediately detaches old output inference and both timers", () => {
@@ -146,10 +238,12 @@ test("a pipeline accepted before an await cannot complete a refresh started duri
         const pipeline = ["commands/speckit.specify", "commands/speckit.plan", "commands/speckit.tasks"];
         inst.cachedComposition = { artifacts: pipeline.map((id) => ({ id, kind: "command" })) };
         startRefresh(inst);
+        const runId = inst.refreshStatus.id;
         inst.broadcast = (frame) => {
             if (frame.type === "composition") startRefresh(inst);
         };
         const result = await compositionActions[0].handler({ instanceId: inst.instanceId, input: {
+            runId,
             inferredPipeline: { shape: "standalone", pipeline,
                 unplaced: [], rationale: "Specify, plan, then tasks" },
         } });
@@ -430,7 +524,8 @@ test("inference prompts require copying fresh fingerprints rather than transcrib
             { workspacePath: "C:\\workspace", skill: "speckit-extension" }),
         buildCompositionPrompt("extension.inferArtifactTargets",
             { commands: [{ commandId: "speckit.plan", skillPath: ".github/skills/speckit-plan/SKILL.md",
-                fingerprint: "a".repeat(64) }], origin: "http://127.0.0.1:1234", token: "test-token" },
+                fingerprint: "a".repeat(64) }],
+                endpoint: "http://127.0.0.1:1234/api/artifact-targets?token=test-token&runId=00000000-0000-4000-8000-000000000001" },
             {}, { workspacePath: "C:\\workspace", skill: "speckit-plan" }),
     ]) {
         assert.match(prompt, /GET \/api\/state on the artifactInferenceEndpoint origin with the same token/);

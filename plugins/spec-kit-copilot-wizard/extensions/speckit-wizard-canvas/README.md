@@ -109,7 +109,9 @@ without blocking unrelated PRs on a skipped workflow.
 
 `contracts/agent-pipeline.mjs`, `agent-artifacts.mjs`, and `agent-phase.mjs`
 define the agent's inferred pipeline, artifact evidence, and phase action
-inputs. `contracts/wizard-state.mjs` normalizes persisted state, including
+inputs. `contracts/agent-replies.mjs` defines the shared originating-run ID
+format and rejection semantics for pipeline and artifact replies.
+`contracts/wizard-state.mjs` normalizes persisted state, including
 older records; `contracts/specify-inventory.mjs` normalizes raw CLI responses.
 Action handlers, state persistence, prompt dispatch, and subprocess execution
 remain at their existing boundaries. Designer handoff validation lives in the
@@ -181,10 +183,20 @@ Output completion, failures, and timeouts also require the same inference
 object. The instance retains that inference owner after completion, with or
 without an explicit refresh, until new inference setup or a new refresh replaces
 it. Superseded setup returns an explicit error and does not enqueue another
-turn. These checks protect in-flight callbacks, not an older agent reply that
-first arrives after a new refresh starts: the existing action/HTTP payloads
-contain no refresh-run identifier. Composition and evidence-cache persistence
-semantics are unchanged.
+turn. Agent replies also carry their originating run ID:
+`showInferredPipeline({runId, inferredPipeline})` copies the refresh prompt's
+ID; artifact POSTs use the complete returned `artifactInferenceEndpoint`,
+including its inference-specific `runId` query parameter, even without an
+explicit refresh. Never replace an old ID using a newer state snapshot.
+Missing/malformed IDs are rejected (HTTP 400); stale, completed, or expired IDs
+are rejected (HTTP 409). Pipeline actions return `ok: false` with
+`inferredPipelineStatus.accepted: false` and the concrete rejection reason.
+Rejection happens before pipeline application or artifact source/cache reads;
+the artifact writer also rechecks ownership before its atomic cache commit.
+These are nonpersistent correlation IDs, not authentication credentials.
+Old uncorrelated callers must use a newly issued prompt/endpoint; there is no
+legacy fallback. Delayed replies cannot fail or complete replacement work.
+Cache/state formats and retry availability are unchanged.
 Effective skill and script sources, as well as the artifact evidence cache, are
 read through a single file handle with path/identity checks and a 512 KiB cap,
 so changing a workspace file during a refresh cannot bypass the read limit.
@@ -259,10 +271,10 @@ accordingly. The extension registers **13 actions** across four groups:
 
 **LLM-driven inference:**
 - `showInferredPipeline` — target of the `composition.inferPipeline`
-  prompt; the agent pushes an inferred `{ shape, pipeline, unplaced,
-  rationale }` ordering derived from `state.composition.artifacts` +
-  fetched READMEs. Partial-merge preserves the assembler-owned
-  composition slice.
+  prompt; the agent copies its originating `runId` alongside an inferred
+  `{ shape, pipeline, unplaced, rationale }` ordering derived from
+  `state.composition.artifacts` + fetched READMEs. Missing or stale IDs are
+  rejected before applying. Partial-merge preserves the assembler-owned slice.
 
 **Phase-tracking callbacks (agent → wizard after `runPhase`):**
 - `setPhaseStatus` — update the status (and optional artifact path) of

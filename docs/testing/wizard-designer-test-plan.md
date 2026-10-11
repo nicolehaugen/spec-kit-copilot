@@ -63,7 +63,7 @@ Fixture acceptance: manifests parse; every declared file exists; package IDs, co
 |---|---|---|---|
 | W13 | P0 browser | Click Refresh with layer preset/flow extension; hold fake agent. | Button is busy; Composition says Refreshing; Phases banner indicates refresh; phase cards remain usable. |
 | W14 | Same P0 journey | Submit accepted inferred pipeline, then current-fingerprint output evidence. | Fixture command appears in suggested stepper after accepted pipeline; existing assembled stacks remain; refresh stays pending until outputs arrive; owned output paths appear; busy clears and brief completion appears. |
-| W15 | P1 browser + lower-level variants | Fast-only fixture; separately fail/retry. | Fast path does not require agent; incomplete refresh shows retry and new refresh ID on retry. Invalid/stale evidence is rejected lower-level. |
+| W15 | Same P0 journey + lower-level variants | Request a replacement refresh through real HTTP while the fake agent is held; deliver old pipeline and artifact replies, then current replies. Separately exercise fast-only and failure recovery. | Original prompt run IDs reject delayed replies before persisted ordering, cache, pending work, or timers change, including same/old fingerprints. Current correlated replies complete normally. Lower-level covers missing/malformed, completed/expired IDs and refresh-less inference. Fast path needs no agent; incomplete refresh and phase retries remain available. |
 
 ### W6. Shape and navigate pipeline
 | Case | Level | Action | Assert |
