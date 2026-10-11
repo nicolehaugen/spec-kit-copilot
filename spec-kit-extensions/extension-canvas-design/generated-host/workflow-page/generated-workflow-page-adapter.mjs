@@ -1,10 +1,8 @@
 export const capabilities = ["workflow.badges.project.v1"];
 export const pageId = "workflow";
 export const contractVersion = 1;
-
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g,
     (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
-
 export function renderStockPage(root, definition) {
     const { canvas, mainPageAsset, readOnlyFields, textPlacements, generatedControls,
         hasConstitution, hasBadges, hasValues, fieldSlots } = definition;
@@ -14,11 +12,11 @@ export function renderStockPage(root, definition) {
         item.id === "canvas.description" && item.slot === "workflow.description");
     const intro = `<div><h2 id="workflow-heading">${heading
         ? `<span data-stock-text="workflow.heading" data-field-id="canvas.workflowListName"
-            data-text-label="${escapeHtml(heading.label)}">${escapeHtml(canvas.workflowListName)}</span>`
+data-text-label="${escapeHtml(heading.label)}">${escapeHtml(canvas.workflowListName)}</span>`
         : escapeHtml(canvas.workflowListName)} <span class="muted" id="workflow-count">(0)</span></h2>
         <p class="collection-description muted"${description
         ? ` data-stock-text="workflow.description" data-field-id="canvas.description"
-            data-text-label="${escapeHtml(description.label)}"` : ""}>${escapeHtml(canvas.description)}</p></div>`;
+data-text-label="${escapeHtml(description.label)}"` : ""}>${escapeHtml(canvas.description)}</p></div>`;
     const groups = new Map();
     for (const field of readOnlyFields) {
         const id = field.section?.id ?? "";
@@ -68,7 +66,10 @@ ${hasBadges ? '<p id="workflow-badge-diagnostics" class="muted" role="status" hi
 <p id="workflow-list-status" class="muted" role="status" hidden></p>
 <p id="workflow-action-error" class="workflow-error" role="alert" hidden></p>
 </section>
-${hasConstitution ? `<section id="constitution-card" class="constitution-card" aria-label="Constitution">
+<div class="workflow-workspace">
+${hasConstitution ? `<div class="project-foundation">
+<h2>Project foundation</h2>
+<section id="constitution-card" class="constitution-card" aria-label="Constitution">
 <div class="constitution-summary"><strong>Constitution</strong><span class="muted">
 Applies to all workflows</span><span class="muted" id="constitution-status" role="status">Checking...</span>
 ${hasBadges && definition.badgeDestinations.includes("phase.card")
@@ -83,7 +84,7 @@ ${hasBadges && definition.badgeDestinations.includes("phase.output")
 <button class="btn btn-secondary" id="view-constitution" type="button"
 aria-describedby="constitution-artifact-status" hidden>View</button>
 <button class="btn btn-secondary" id="run-constitution" type="button">Create constitution</button>
-</div></section>` : ""}
+</div></section></div>` : ""}
 ${details}
 ${hasValues ? '<section id="canvas-values" class="phase-card" aria-label="Canvas values"><h2>Canvas values</h2><div id="canvas-value-list"></div><p id="canvas-value-errors" role="alert"></p></section>' : ""}
 ${generatedControls.map(({ id, label, adapter, control, properties, value }) =>
@@ -93,9 +94,11 @@ data-field-label="${escapeHtml(label)}" data-control-type="${escapeHtml(control)
 data-contract="${escapeHtml(JSON.stringify({ type: "object", properties }))}"
 data-module="/controls/${escapeHtml(adapter)}.mjs"
 data-value="${escapeHtml(JSON.stringify(value))}"></div></section>`).join("")}
+<h2 id="selected-workflow-heading" hidden></h2>
 <div id="workflow-pipeline" hidden></div>
 ${fieldSlots.map((id) =>
 `<section class="phase-card" data-workflow-slot="${escapeHtml(id)}"></section>`).join("")}
+</div>
 <dialog id="delete-workflow-dialog" aria-labelledby="delete-workflow-title">
 <h2 id="delete-workflow-title">Delete <span id="delete-workflow-name"></span>?</h2>
 <p>This permanently deletes the selected workflow directory and everything in it:</p>
@@ -112,7 +115,6 @@ Project principles</span><textarea class="phase-input-control" id="constitution-
 <button class="btn btn-primary" id="send-constitution" type="button">Create constitution</button>
 </footer></dialog>` : ""}`;
 }
-
 export function mount({ root, definition, state, actions }) {
     if (!root || definition?.id !== pageId || typeof actions?.selectWorkflow !== "function"
         || typeof actions?.mountPhase !== "function") {
@@ -121,10 +123,10 @@ export function mount({ root, definition, state, actions }) {
     if (definition.canvas) renderStockPage(root, definition);
     const find = (id) => root.querySelector(`#${id}`)
         ?? (id.startsWith("setup-") ? document.getElementById(id) : null);
-    const workflowIdentity = find("workflow-identity");
-    let phaseControl;
+    const editor = find("workflow-identity");
+    let control;
     let query = "";
-    let previousRows;
+    let rowBadges;
     const onSearch = (event) => {
         query = event.target.value;
         filter();
@@ -178,12 +180,18 @@ export function mount({ root, definition, state, actions }) {
         find("workflow-constitution-note").hidden = model.constitutionReady || !model.items.length;
         const pipeline = find("workflow-pipeline");
         pipeline.hidden = !phases.length;
-        pipeline.classList.toggle("workflow-pipeline-idle", !model.items.some((item) => item.id === model.selected));
+        const selected = model.items.find((item) => item.id === model.selected);
+        pipeline.classList.toggle("workflow-pipeline-idle", !selected);
+        const heading = find("selected-workflow-heading");
+        if (heading) {
+            heading.hidden = !selected || !phases.length;
+            heading.textContent = selected ? `Selected workflow: ${selected.label}` : "";
+        }
         const badgeRows = JSON.stringify(model.badges?.items ?? {});
         const matches = rows.children.length === model.items.length
             && model.items.every((entry, index) => rows.children[index].dataset.workflowId === entry.id)
-            && previousRows === badgeRows;
-        previousRows = badgeRows;
+            && rowBadges === badgeRows;
+        rowBadges = badgeRows;
         const scroll = find("workflow-list").scrollTop;
         if (!matches) rows.replaceChildren(...model.items.map((entry) => {
             const row = document.createElement("div");
@@ -253,9 +261,8 @@ export function mount({ root, definition, state, actions }) {
             remove.textContent = discard ? "Discard pending row" : entry.pending ? "Remove" : "Delete";
             remove.ariaLabel = `${remove.textContent} ${entry.label}`;
         }
-        const editor = workflowIdentity;
-        editor.hidden = !model.items.some((item) => item.id === model.selected && item.pending);
-        const selectedRow = [...rows.children].find((row) => row.dataset.workflowId === model.selected);
+        editor.hidden = !selected?.pending;
+        const selectedRow = rows.children[model.items.indexOf(selected)];
         if (!editor.hidden && selectedRow && editor.parentElement !== selectedRow) selectedRow.append(editor);
         const summary = find("workflow-badge-summary");
         if (summary) {
@@ -489,7 +496,8 @@ export function mount({ root, definition, state, actions }) {
             find("constitution-args").required = !available;
         }
         const input = find("workflow-slug");
-        const pending = model.items.some((item) => item.id === model.selected && item.pending);
+        const item = model.items.find((entry) => entry.id === model.selected);
+        const pending = item?.pending;
         if (input && pending) {
             const error = state.slugTouched && input.value.trim() ? state.slugError : "";
             find("workflow-slug-error").textContent = error;
@@ -497,7 +505,6 @@ export function mount({ root, definition, state, actions }) {
             input.setAttribute("aria-invalid", String(Boolean(error)));
         }
         const first = model.phases.find((entry) => !entry.project);
-        const item = model.items.find((entry) => entry.id === model.selected);
         const locked = !pending || Boolean(item?.status && !["Not started", "Failed"].includes(item.status))
             || Boolean(state.sending && state.sending.phase === first?.id)
             || ["Request sent", "Running"].includes(model.statuses[first?.id]?.status);
@@ -514,16 +521,16 @@ export function mount({ root, definition, state, actions }) {
             if (document.activeElement !== input && !state.inputPending) input.value = pending
                 ? model.slug : item?.slug ?? "";
         }
-        if (phaseControl) phaseControl.update(state.phaseState);
+        if (control) control.update(state.phaseState);
         find("workflow-pipeline").querySelectorAll("[data-phase-index]")
             .forEach((button) => { button.disabled = !item; });
         const mobile = find("mobile-phase-select");
         if (mobile) mobile.disabled = !item;
     }
     const initial = state.phaseState;
-    phaseControl = actions.mountPhase(find("workflow-pipeline"), initial);
-    if (!phaseControl || typeof phaseControl.update !== "function"
-        || typeof phaseControl.dispose !== "function") throw new Error("Invalid phase control instance");
+    control = actions.mountPhase(find("workflow-pipeline"), initial);
+    if (!control || typeof control.update !== "function"
+        || typeof control.dispose !== "function") throw new Error("Invalid phase control instance");
     return {
         update(next) {
             state = next;
@@ -539,7 +546,7 @@ export function mount({ root, definition, state, actions }) {
             root.removeEventListener("input", onInput);
             root.removeEventListener("focusout", onFocusOut);
             root.removeEventListener("click", onClick);
-            phaseControl.dispose();
+            control.dispose();
         },
     };
 }

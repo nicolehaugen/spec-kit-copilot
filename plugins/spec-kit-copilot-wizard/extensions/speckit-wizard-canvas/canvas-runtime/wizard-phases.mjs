@@ -166,7 +166,8 @@ export const SKILL_BY_KIND = Object.freeze({
     // Payload shape: `{ commands: [{ commandId, skillPath }], origin, token }`.
     // The agent reads each `skillPath`, extracts the `.specify/…/<file>.md`
     // path template from the skill's opening paragraph, and POSTs the
-    // results back to `${origin}/api/artifact-targets?token=${token}`. The
+    // results back to the originating artifactInferenceEndpoint, including
+    // its token and runId query parameters. The
     // wizard scanner then reads `.speckit-wizard/artifact-targets.json`
     // on the next tick and lights up the "Writes to" link on each
     // extension phase card. Skill choice is `speckit-extension` because

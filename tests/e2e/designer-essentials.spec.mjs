@@ -318,7 +318,7 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
     await expect(steps).toHaveCount(3);
     await expect(steps.nth(0).getByRole("heading", { name: "Generate" })).toBeVisible();
     await expect(steps.nth(1).getByRole("heading", { name: "Open" })).toBeVisible();
-    await expect(steps.nth(2).getByRole("heading", { name: "Share · Optional" })).toBeVisible();
+    await expect(steps.nth(2).getByRole("heading", { name: "Share", exact: true })).toBeVisible();
     await expect(steps.locator(".step-index")).toHaveText(["1", "2", "3"]);
     await expect(steps.nth(1)).toContainText("Open your generated canvas in this session.");
     await expect(page.locator("#open-status")).toHaveText("Generate the canvas first.");
@@ -332,7 +332,7 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
     await expect(page.locator("#open-output-folder")).toHaveText(".github/extensions/first-canvas/");
     await expect(page.locator("#share-project-copy")).toBeHidden();
     await expect(page.locator("#share-target-note")).toContainText("Generate and verify");
-    await expect(page.getByRole("heading", { name: "Share · Optional" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Share", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Personal extension" })).toBeVisible();
     await expect(page.locator("#generation-status")).toHaveText("Not generated");
     await expect(page.locator("#open-generated-canvas")).toBeDisabled();

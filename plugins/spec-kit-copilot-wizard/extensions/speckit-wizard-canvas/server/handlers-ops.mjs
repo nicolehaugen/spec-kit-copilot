@@ -4,8 +4,9 @@
 
 import { commandId, effectiveSource, readEvidenceCache, writeEvidenceCache } from "../artifact-evidence.mjs";
 import { normalizeAgentArtifactEntry, validateAgentArtifactEvidence } from "../contracts/agent-artifacts.mjs";
-import { failOutputInference } from "../canvas-runtime/output-inference.mjs";
-import { finishRefreshPart } from "../canvas-runtime/refresh-status.mjs";
+import { assertReplyRunId, ReplyRunError } from "../contracts/agent-replies.mjs";
+import { failOutputInference, finishOutputInference } from "../canvas-runtime/output-inference.mjs";
+import { commitOwnedFile } from "../canvas-runtime/owned-commit.mjs";
 
 import { applyPatch, writeState } from "../state/store.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
@@ -109,12 +110,22 @@ export async function handlePipelineMutation(res, body, { getState, broadcast, g
 //   templates from the opening paragraph →
 //   agent POSTs { entries: {...} } here →
 //   scanner picks up the new cache on the next scan tick.
-export async function handleArtifactTargets(res, body, { broadcast, getInstance,
-    writeCache = writeEvidenceCache }) {
+export async function handleArtifactTargets(res, body, { broadcast, getInstance, runId,
+    readSource = effectiveSource, readCache = readEvidenceCache, writeCache = writeEvidenceCache }) {
     const inst = getInstance();
     if (!inst?.workspacePath) return jsonError(res, 400, "workspace path unavailable");
+    const inference = inst.outputInference;
+    const requireCurrentReply = () => assertReplyRunId(runId,
+        inst.outputInference === inference && inference?.status === "updating"
+            && inst.refreshStatus === inference.refresh ? inference.id : null);
+    try {
+        requireCurrentReply();
+    } catch (error) {
+        if (!(error instanceof ReplyRunError)) throw error;
+        return jsonError(res, error.status, error.message);
+    }
     const rejectOutput = (key, status, message) => {
-        if (inst.outputInference?.pending.has(commandId(key))) failOutputInference(inst);
+        if (inference?.pending.has(commandId(key))) failOutputInference(inst, inference);
         return jsonError(res, status, message);
     };
 
@@ -133,7 +144,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
         let outputEvidence;
         if (entry?.outputEvidence !== undefined) {
             try {
-                const current = await effectiveSource(inst.workspacePath, commandId(key));
+                const current = await readSource(inst.workspacePath, commandId(key));
                 if (!current || entry.outputEvidence?.fingerprint !== current.fingerprint) {
                     return rejectOutput(key, 409, `Artifact evidence fingerprint mismatch for ${key}`);
                 }
@@ -152,16 +163,16 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
         if (normalized) cleaned[key] = normalized;
     }
     if (!Object.keys(cleaned).length) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 400, "no valid entries");
     }
 
     // Read existing cache (if any) so we merge instead of clobber.
     let existing;
     try {
-        existing = await readEvidenceCache(inst.workspacePath);
+        existing = await readCache(inst.workspacePath);
     } catch (error) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 500, `Artifact cache was not overwritten: ${error.message}`);
     }
     for (const [key, entry] of Object.entries(cleaned)) {
@@ -181,32 +192,26 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     };
     const payload = JSON.stringify(merged, null, 2) + "\n";
     if (Buffer.byteLength(payload) > 512 * 1024) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 400, "Artifact-target cache exceeds its size limit");
     }
 
     try {
-        await writeCache(inst.workspacePath, payload);
+        requireCurrentReply();
+        await writeCache(inst.workspacePath, payload, undefined, (temp, target) =>
+            commitOwnedFile(temp, target, requireCurrentReply, () => {
+                finishOutputInference(inst, inference,
+                    Object.keys(cleaned).filter((key) => cleaned[key].outputEvidence));
+                if (inst.outputInferenceOwner === inference && inst.refreshStatus === inference.refresh) {
+                    broadcast({ type: "invalidate", reason: "artifact-targets updated" });
+                }
+            }));
     } catch (err) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (err instanceof ReplyRunError) return jsonError(res, err.status, err.message);
+        if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }
-    for (const [key, entry] of Object.entries(cleaned)) {
-        const id = commandId(key);
-        if (entry.outputEvidence && inst.outputInference?.pending.get(id) === entry.outputEvidence.fingerprint) {
-            inst.outputInference.pending.delete(id);
-        }
-    }
-    if (inst.outputInference && !inst.outputInference.pending.size) {
-        clearTimeout(inst.outputInference.timer);
-        inst.outputInference = null;
-        finishRefreshPart(inst, "outputs");
-    }
-
     const added = Object.keys(cleaned).length;
-    // Nudge the client to re-fetch state so the phase cards pick up the
-    // new artifact paths without waiting for the next tick.
-    broadcast({ type: "invalidate", reason: "artifact-targets updated" });
     return jsonRes(res, 200, { ok: true, merged: added, path: ".speckit-wizard/artifact-targets.json" });
 }
 

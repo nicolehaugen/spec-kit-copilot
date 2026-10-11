@@ -225,7 +225,9 @@ export async function readEvidenceCache(cwd, openFile = open) {
     }
 }
 
-export async function writeEvidenceCache(cwd, payload, renameFile = rename) {
+// Owned callers supply a synchronous commitFile(temp, target); ordinary
+// scanner writes retain the asynchronous atomic rename.
+export async function writeEvidenceCache(cwd, payload, renameFile = rename, commitFile) {
     const root = await realpath(cwd);
     const directory = join(root, ".speckit-wizard");
     await mkdir(directory, { recursive: true });
@@ -254,7 +256,8 @@ export async function writeEvidenceCache(cwd, payload, renameFile = rename) {
             || opened.dev !== current.dev || opened.ino !== current.ino) {
             throw new Error("Unsafe artifact cache temporary file");
         }
-        await renameFile(temp, target);
+        if (commitFile) commitFile(temp, target);
+        else await renameFile(temp, target);
     } catch (error) {
         if (opened) {
             try {

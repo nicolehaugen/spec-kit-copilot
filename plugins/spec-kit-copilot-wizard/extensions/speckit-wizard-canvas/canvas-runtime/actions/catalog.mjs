@@ -11,6 +11,7 @@ import { reloadSkillsIfInstalledSetChanged } from "../instances.mjs";
 import { UnknownActionKindError } from "../../prompts.mjs";
 import { dispatchKindPrompt } from "../dispatch.mjs";
 import { beginOutputInference } from "../output-inference.mjs";
+import { isCurrentRefresh } from "../refresh-status.mjs";
 
 /**
  * Shared body of the three showXCatalog handlers.
@@ -41,6 +42,8 @@ import { beginOutputInference } from "../output-inference.mjs";
  * @param {string} cfg.reason           - passed through to runFastComposition
  */
 async function applyCatalogPush(inst, ctx, cfg) {
+    const refresh = inst.refreshStatus;
+    const inference = inst.outputInferenceOwner ?? null;
     const pushed = Array.isArray(ctx.input?.items) ? ctx.input.items : [];
 
     // 1) Re-hydrate from cached catalog sources (fresh install state via
@@ -93,8 +96,12 @@ async function applyCatalogPush(inst, ctx, cfg) {
         cfg.kind === "preset" && cfg.activePresetId ? { preset: cfg.activePresetId } : null,
     );
     if (!cfg.runComposition) return { ok: true };
+    if (!isCurrentRefresh(inst, refresh)
+        || (inst.outputInferenceOwner ?? null) !== inference) {
+        throw new Error("Catalog output inference superseded by newer refresh work");
+    }
     const requests = snap.artifactInferenceRequests ?? [];
-    const endpoint = beginOutputInference(inst, requests);
+    const endpoint = beginOutputInference(inst, requests, refresh);
     return { ok: true, artifactInferenceRequests: requests,
         ...(endpoint ? { artifactInferenceEndpoint: endpoint.toString() } : {}) };
 }

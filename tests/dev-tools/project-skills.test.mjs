@@ -18,3 +18,14 @@ test('project development skill frontmatter matches its directory', async () => 
     assert.match(text, /argument-hint:/);
   }
 });
+
+test('installed Wizard open skill explicitly enables Generate on initial opens and reopens', async () => {
+  const text = await readFile(resolve(repositoryRoot, '.github', 'skills',
+    'dev-tools-speckit-wizard-installed-open', 'SKILL.md'), 'utf8');
+  assert.match(text, /enable Generate on both initial opens and reopens/);
+  assert.match(text, /\{ "cwd": "<absolute worktree>", "generateCanvas": true \}/);
+  assert.match(text, /explicitly requests Generate disabled/);
+  assert.match(text, /"generateCanvas": false/);
+  assert.match(text, /featureFlags.generateCanvas` is `true` by default/);
+  assert.doesNotMatch(text, /omit `generateCanvas`|Focus-only reopening omits/);
+});

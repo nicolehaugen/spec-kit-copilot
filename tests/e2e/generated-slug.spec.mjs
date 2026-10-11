@@ -932,11 +932,17 @@ test("disabled custom slugs leave the artifact directory unresolved until Specif
         await expect(page.locator("#workflow-name")).toBeVisible();
         await expect(page.locator("#workflow-slug")).toBeHidden();
         await expect(page.locator("#constitution-card")).toHaveCount(0);
-        expect(await page.evaluate(() => {
+        await expect(page.locator("#selected-workflow-heading")).toHaveText("Selected workflow: Workflow 2");
+        const gaps = await page.evaluate(() => {
             const collection = document.querySelector("#instance-collection").getBoundingClientRect();
+            const heading = document.querySelector("#selected-workflow-heading").getBoundingClientRect();
             const navigation = document.querySelector("#phase-navigation").getBoundingClientRect();
-            return navigation.top - collection.bottom;
-        })).toBeLessThanOrEqual(28);
+            return [heading.top - collection.bottom, navigation.top - heading.bottom];
+        });
+        for (const gap of gaps) {
+            expect(gap).toBeGreaterThanOrEqual(16);
+            expect(gap).toBeLessThanOrEqual(28);
+        }
         await expect(page.locator("#phase-output-prompt")).toHaveText(
             "Run the phase to resolve the output path.");
         await expect(page.locator("#browse-output-folder")).toBeHidden();
@@ -1231,17 +1237,51 @@ test("Constitution guidance saves once after typing and flushes before sending",
     }
 });
 
-test("one workflow header, compact constitution and legible narrow phase navigation", async ({ page }) => {
+test("one workflow header, compact constitution and legible narrow phase navigation", async ({ page }, testInfo) => {
     const canvas = await openGeneratedCanvas(true,
         ["constitution", "specify", "clarify", "plan", "tasks", "taskstoissues", "analyze", "checklist", "implement"]);
+    const expectAlignedWorkspace = async () => {
+        const edges = await page.evaluate(() => {
+            const list = document.querySelector("#workflow-list").getBoundingClientRect();
+            const workspace = document.querySelector(".workflow-workspace");
+            const bounds = workspace.getBoundingClientRect();
+            const surface = getComputedStyle(workspace, "::before");
+            const constitution = document.querySelector("#constitution-card").getBoundingClientRect();
+            const phase = document.querySelector("#phase-card").getBoundingClientRect();
+            return {
+                left: bounds.left + parseFloat(surface.left) - list.left,
+                right: bounds.right - parseFloat(surface.right) - list.right,
+                cardLeft: constitution.left - phase.left,
+                cardRight: constitution.right - phase.right,
+                leftGutter: constitution.left - list.left,
+                rightGutter: list.right - constitution.right,
+            };
+        });
+        for (const edge of [edges.left, edges.right, edges.cardLeft, edges.cardRight]) {
+            expect(Math.abs(edge)).toBeLessThanOrEqual(1);
+        }
+        expect(edges.leftGutter).toBeGreaterThanOrEqual(12);
+        expect(edges.rightGutter).toBeGreaterThanOrEqual(12);
+        expect(Math.abs(edges.leftGutter - edges.rightGutter)).toBeLessThanOrEqual(1);
+    };
     try {
         await page.setViewportSize({ width: 390, height: 780 });
         await page.goto(canvas.url);
         await expect(page.locator("#instance-collection")).toBeVisible();
         expect(await page.evaluate(() => {
             const body = document.querySelector("#workflow-content");
-            return [...body.children].slice(0, 3).map((child) => child.id);
+            return [...body.querySelectorAll("#setup-surface, #instance-collection, #constitution-card")]
+                .map((child) => child.id);
         })).toEqual(["setup-surface", "instance-collection", "constitution-card"]);
+        await expect(page.locator("#workflow-content > .workflow-workspace")).toHaveCount(1);
+        await expect(page.locator(".workflow-workspace > .project-foundation")).toBeVisible();
+        await expect(page.locator(".project-foundation > h2")).toHaveText("Project foundation");
+        await expect(page.locator(".project-foundation > #constitution-card")).toHaveCount(1);
+        await expect(page.locator(".workflow-workspace #constitution-card")).toHaveCount(1);
+        await expect(page.locator(".workflow-workspace > #selected-workflow-heading")).toHaveCount(1);
+        expect(await page.locator("#phase-card").evaluate((element) =>
+            element.closest(".workflow-workspace") === document.querySelector("#constitution-card")
+                .closest(".workflow-workspace"))).toBe(true);
         await expect(page.locator("#instance-collection .collection-description")).toHaveText("Workflow canvas.");
         await expect(page.locator("#current-workflow-title")).toHaveCount(0);
         await expect(page.locator("#feature-select")).toHaveCount(0);
@@ -1250,14 +1290,26 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await expect(page.locator("#workflow-list .instance-row")).toHaveCount(1);
         await expect(page.locator("#workflow-empty")).toBeHidden();
         await expect(page.locator("#workflow-name")).toHaveValue("Workflow 1");
+        await expect(page.locator("#selected-workflow-heading")).toHaveText("Selected workflow: Workflow 1");
         await expect(page.locator("#constitution-status")).toHaveText("Needed before starting a workflow");
         await expect(page.locator(".stepper")).toBeVisible();
         await expect(page.locator('[data-phase-index="0"]')).toBeEnabled();
         await expect(page.locator("#phase-card")).toBeVisible();
+        await expectAlignedWorkspace();
+        const foundationGaps = await page.evaluate(() => {
+            const collection = document.querySelector("#instance-collection").getBoundingClientRect();
+            const foundation = document.querySelector(".project-foundation").getBoundingClientRect();
+            const heading = document.querySelector("#selected-workflow-heading").getBoundingClientRect();
+            return [foundation.top - collection.bottom, heading.top - foundation.bottom];
+        });
+        for (const gap of foundationGaps) {
+            expect(gap).toBeGreaterThanOrEqual(32);
+            expect(gap).toBeLessThanOrEqual(40);
+        }
         expect(await page.evaluate(() => {
-            const constitution = document.querySelector("#constitution-card").getBoundingClientRect();
+            const heading = document.querySelector("#selected-workflow-heading").getBoundingClientRect();
             const navigation = document.querySelector("#phase-navigation").getBoundingClientRect();
-            return navigation.top - constitution.bottom;
+            return navigation.top - heading.bottom;
         })).toBeLessThanOrEqual(28);
         await expect(page.locator("#workflow-action-error")).toBeHidden();
         await expect(page.locator("#view-constitution")).toBeHidden();
@@ -1277,6 +1329,38 @@ test("one workflow header, compact constitution and legible narrow phase navigat
         await expect(page.locator("#constitution-prerequisite")).toBeHidden();
         await expect(page.locator("#view-constitution")).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const surface = await page.locator(".workflow-workspace").evaluate((element) => {
+            const style = getComputedStyle(element, "::before");
+            const probe = document.createElement("span");
+            probe.style.backgroundColor = "var(--background-color-secondary)";
+            element.append(probe);
+            const expectedBackground = getComputedStyle(probe).backgroundColor;
+            probe.remove();
+            return { background: style.backgroundColor, expectedBackground,
+                borderWidth: style.borderTopWidth, borderStyle: style.borderTopStyle };
+        });
+        const tint = surface.background;
+        expect(tint).not.toBe("rgba(0, 0, 0, 0)");
+        expect(tint).toBe(surface.expectedBackground);
+        expect(surface.borderWidth).toBe("1px");
+        expect(surface.borderStyle).toBe("solid");
+        await page.locator("#workflow-name").fill("Customer dashboard");
+        await expect(page.locator("#selected-workflow-heading")).toHaveText("Selected workflow: Customer dashboard");
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.screenshot({ path: testInfo.outputPath("workspace-narrow.png"), fullPage: true });
+        await page.locator("#theme-toggle").click();
+        expect(await page.locator(".workflow-workspace").evaluate((element) =>
+            getComputedStyle(element, "::before").backgroundColor)).not.toBe(tint);
+        await expectAlignedWorkspace();
+        await expect(page.locator("#run-phase")).toBeVisible();
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await expect(page.locator("#selected-workflow-heading")).toBeVisible();
+        await expectAlignedWorkspace();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.screenshot({ path: testInfo.outputPath("workspace-wide.png"), fullPage: true });
+        await page.locator("#theme-toggle").click();
+        await expectAlignedWorkspace();
     } finally {
         await canvas.close();
     }

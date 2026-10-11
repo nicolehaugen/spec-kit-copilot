@@ -32,6 +32,14 @@ and adapter. `shared-controls/` contains definitions and adapters used by both
 hosts. `generated-scaffold/` is the static app scaffold; Generate
 copies the resolved generated-host assets into its `pages/` directory, so the
 finished app does not depend on this extension at runtime.
+The stock Workflow page preserves its list and controls. Below the list, one
+shared theme-aware secondary-background block with a thin neutral outline holds
+both the Project foundation section and the phase workspace. The foundation
+heading separates the project-wide Constitution and its existing actions from
+the selected workflow heading above phase navigation. The shared block's outer
+edges align with the workflow list, with equal interior gutters around the
+Constitution and phase cards. These are stock-adapter presentation, not new
+customization slots or host capabilities.
 `scripts/contracts/generation-request.mjs` checks the frozen request's IDs
 and SHA-256 integrity before materialization. The generated app packages
 `generated-scaffold/contracts/` with agent action/response, host adapter,

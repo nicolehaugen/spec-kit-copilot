@@ -63,7 +63,7 @@ No automatic workflow mutation or second packaging pipeline.
    registrations explicitly rather than blindly adding duplicates.
 2. Activate corresponding runtime settings explicitly with preview/confirmation
    and provider reload/restart. Use a single active installed provider pair;
-   `dev-tools-speckit-wizard-installed-open` can explicitly enable Generate.
+   `dev-tools-speckit-wizard-installed-open` enables Generate by default.
    Check actual installed provider versions/provenance and both persisted
    disabled entries. Do **not** use installed-refresh to verify a published path.
 3. Use no local-source overrides. Retrieve the **published archives selected by

@@ -1,9 +1,11 @@
 export { validateInferredPipeline } from "../pipeline/validate.mjs";
+import { replyRunIdSchema } from "./agent-replies.mjs";
 
 export const inferredPipelineInputSchema = {
     type: "object",
-    required: ["inferredPipeline"],
+    required: ["runId", "inferredPipeline"],
     properties: {
+        runId: replyRunIdSchema,
         inferredPipeline: {
             type: "object",
             description: "LLM-emitted best-guess pipeline order derived from the artifacts, manifests, and READMEs in state. Two shapes are legal: `augmented-canonical` (canonical spine with extension commands inserted) and `standalone` (self-contained pipeline that replaces the canonical spine — used by discovery-track extensions like `assess`). Every id in `pipeline`/`unplaced` must be a command artifact id in state — i.e. `commands/<full-command-id>` (e.g. `commands/speckit.specify`). For `augmented-canonical`, the five canonical anchors `commands/speckit.{constitution,specify,plan,tasks,implement}` are required.",

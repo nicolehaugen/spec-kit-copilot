@@ -88,13 +88,13 @@ export async function outputAvailability(cwd, candidate, specsDir, observed = nu
         ...(folderPath ? { folderPath } : {}) };
 }
 
-export async function attachOutputEvidence(inst, scan, snap, outputs, readCache = readEvidenceCache) {
+export async function attachOutputEvidence(inst, scan, snap, outputs, readCache = readEvidenceCache,
+    refresh = inst.refreshStatus) {
     snap.artifactEvidence = outputs.evidence;
     snap.artifactInferenceRequests = outputs.requests;
     snap.artifactEvidenceIncomplete = outputs.incomplete;
     snap.warnings.push(...outputs.warnings);
-    if (outputs.incomplete) failRefresh(inst);
-    const refresh = inst.refreshStatus;
+    if (outputs.incomplete) failRefresh(inst, refresh);
     if (outputs.requests.length && refresh?.status === "up-to-date") {
         // A scan started before evidence was accepted may finish afterward.
         // Recheck the cache before letting that older snapshot demote a completed refresh.

@@ -246,7 +246,9 @@ function _enqueueWrite(workspacePath, task) {
     return next;
 }
 
-export async function writeState(workspacePath, state, deps) {
+// An owned caller may supply a synchronous commitFile(temp, target) that
+// checks ownership, swaps the prepared file, and publishes without yielding.
+export async function writeState(workspacePath, state, deps, commitFile) {
     const dirPath = join(workspacePath, STATE_DIR);
     const filePath = join(workspacePath, STATE_FILE);
     const normalized = normalizeState(state);
@@ -269,12 +271,13 @@ export async function writeState(workspacePath, state, deps) {
     await _enqueueWrite(workspacePath, async () => {
         await deps.mkdir(dirPath, { recursive: true });
         const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
-        await deps.writeFile(tmpPath, payload, "utf8");
         try {
-            await rename(tmpPath, filePath);
+            await deps.writeFile(tmpPath, payload, "utf8");
+            if (commitFile) commitFile(tmpPath, filePath);
+            else await rename(tmpPath, filePath);
         } catch (err) {
-            // Rename failed (e.g. Windows AV holds the target). Best-effort
-            // cleanup of the tmp file so it doesn't linger, then rethrow.
+            // Preparation or swap failed. Clean up the temporary file and
+            // preserve the destination before surfacing the error.
             try { await unlink(tmpPath); } catch { /* ignore */ }
             throw err;
         }

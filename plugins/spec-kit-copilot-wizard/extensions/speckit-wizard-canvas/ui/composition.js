@@ -679,7 +679,8 @@ export function renderCompositionProgress() {
     const label = document.getElementById("comp-meta-text");
     if (!meta || !label) return;
     const text = compositionProgressText(state.snapshot, state.compositionRequested);
-    label.textContent = text === "Ready" || text === "Up to date" ? "" : text;
+    label.textContent = text === "Refreshing…" ? "Updating…"
+        : text === "Refresh incomplete — retry" ? "Update incomplete" : "";
     meta.dataset.progress = text === "Refreshing…" ? "updating"
         : text === "Refresh incomplete — retry" ? "incomplete" : "idle";
 }
