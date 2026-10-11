@@ -10,8 +10,8 @@ import { getSession, sessionAdapter, setSession } from "../canvas-runtime/instan
 import { createDesignerBootstrap } from "../../speckit-canvas-designer/bootstrap.mjs";
 import { bootstrapDiagnosticPath, readBootstrapRecord, stageDesignerHandoff,
     transferDesignerHandoff, writeBootstrapRecord } from "../../speckit-canvas-designer/bootstrap-artifacts.mjs";
-import { assertBootstrapCapabilities, bootstrapSessionContext, DESIGNER_CANVAS,
-    DESIGNER_PROVIDER, DIAGNOSTIC_LIMIT, nativeOpenSnapshot, validateBootstrapInput,
+import { assertBootstrapCapabilities, assertDiagnosticSize, bootstrapSessionContext, DESIGNER_CANVAS,
+    DESIGNER_PROVIDER, DIAGNOSTIC_ERROR_RESERVE, DIAGNOSTIC_LIMIT, nativeOpenSnapshot, validateBootstrapInput,
     validateBootstrapOutput, validateBootstrapRecord } from "../../speckit-canvas-designer/contracts/bootstrap.mjs";
 import { HANDOFF_LIMIT, readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 
@@ -157,6 +157,21 @@ test("diagnostic byte limit is enforced without overwriting the previous artifac
     await assert.rejects(writeBootstrapRecord(f.context.root, f.handoff.handoffId, record), /exceed 16 MiB/);
     const saved = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
     assert.equal(Buffer.byteLength(JSON.stringify(saved)), DIAGNOSTIC_LIMIT);
+});
+
+test("diagnostic preflight measures exact JSON bytes without serializing rejected data", (t) => {
+    const shared = { text: "\u4e00\u{1f600}\ud800x\udfff\"\\\b\t\n\f\r\u0000\u001f" };
+    const value = { "quoted\"\u0000key": [shared, shared, true, false, null, -0, 1.25] };
+    const bytes = Buffer.byteLength(JSON.stringify(value));
+    t.mock.method(JSON, "stringify", () => { throw new Error("Unexpected serialization"); });
+    assert.equal(assertDiagnosticSize(value, bytes), bytes);
+    assert.throws(() => assertDiagnosticSize(value, bytes - 1), { code: "designer_diagnostic_limit" });
+    for (const malformed of [
+        new Array(1), { toJSON() { throw new Error("Unexpected toJSON"); } },
+        { get text() { throw new Error("Unexpected getter"); } },
+    ]) {
+        assert.throws(() => assertDiagnosticSize(malformed), { code: "designer_diagnostic_invalid" });
+    }
 });
 
 test("bootstrap validates additive request/result contracts and native capabilities", async (t) => {
@@ -523,6 +538,142 @@ test("success-shaped native replies require a complete matching host snapshot", 
         record.opening = false;
         await writeBootstrapRecord(f.context.root, f.handoff.handoffId, record);
     }
+});
+
+test("oversized native payloads are rejected before serialization and preserve failure diagnostics", async (t) => {
+    const large = "x".repeat(DIAGNOSTIC_LIMIT + 1);
+    for (const [name, reply] of [
+        ["success text", { resultType: "success", textResultForLlm: large }],
+        ["failure text", { resultType: "failure", textResultForLlm: large }],
+        ["denial error", { resultType: "denied", textResultForLlm: "", error: large }],
+        ["timeout metadata", { resultType: "timeout", textResultForLlm: "", sessionLog: large }],
+        ["binary content", { resultType: "rejected", textResultForLlm: "",
+            binaryResultsForLlm: [{ data: large, mimeType: "image/png" }] }],
+        ["escaped text", { resultType: "success",
+            textResultForLlm: "\u0000".repeat(Math.floor(DIAGNOSTIC_LIMIT / 6)) }],
+    ]) {
+        await t.test(name, async (t) => {
+            const f = await fixture(t);
+            const run = createDesignerBootstrap({ ...f.deps, openCanvas: async () => reply });
+            await run(f.request("install"));
+            const stringify = JSON.stringify;
+            let serializedReply = false;
+            t.mock.method(JSON, "stringify", (...args) => {
+                if (args[0] === reply || args[0]?.nativeResult === reply) serializedReply = true;
+                return stringify(...args);
+            });
+            const failure = await run(f.request("finalize-open"));
+            assert.equal(failure.error.code, "designer_native_result_invalid");
+            assert.doesNotMatch(failure.error.message, /diagnostics could not be saved/);
+            assert.equal(serializedReply, false);
+            const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+            assert.deepEqual(record.error, failure.error);
+            assert.equal(Object.hasOwn(record, "nativeResult"), false);
+            assert.equal(record.opening, true);
+            assert.ok(Buffer.byteLength(stringify(record)) <= DIAGNOSTIC_LIMIT);
+        });
+    }
+});
+
+test("malformed native payloads cannot poison the persisted record", async (t) => {
+    const circular = { resultType: "success", textResultForLlm: "{}" };
+    circular.self = circular;
+    for (const [name, reply] of [
+        ["circular data", circular],
+        ["non-JSON data", { resultType: "success", textResultForLlm: "{}", toolTelemetry: 1n }],
+        ["invalid error", { resultType: "denied", textResultForLlm: "", error: {} }],
+    ]) {
+        await t.test(name, async (t) => {
+            const f = await fixture(t);
+            const run = createDesignerBootstrap({ ...f.deps, openCanvas: async () => reply });
+            await run(f.request("install"));
+            const failure = await run(f.request("finalize-open"));
+            assert.equal(failure.error.code, "designer_native_result_invalid");
+            assert.doesNotMatch(failure.error.message, /diagnostics could not be saved/);
+            const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+            assert.deepEqual(record.error, failure.error);
+            assert.equal(Object.hasOwn(record, "nativeResult"), false);
+            assert.equal(record.opening, true);
+        });
+    }
+});
+
+test("a native result must fit the full record budget and leave room for failure details", async (t) => {
+    const f = await fixture(t);
+    const reply = { resultType: "success", textResultForLlm: "x".repeat(DIAGNOSTIC_LIMIT - 128) };
+    assert.ok(Buffer.byteLength(JSON.stringify(reply)) < DIAGNOSTIC_LIMIT);
+    const run = createDesignerBootstrap({ ...f.deps, openCanvas: async () => reply });
+    await run(f.request("install"));
+    const failure = await run(f.request("finalize-open"));
+    assert.equal(failure.error.code, "designer_diagnostic_limit");
+    assert.doesNotMatch(failure.error.message, /diagnostics could not be saved/);
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.deepEqual(record.error, failure.error);
+    assert.equal(Object.hasOwn(record, "nativeResult"), false);
+    assert.equal(record.opening, true);
+    assert.ok(Buffer.byteLength(JSON.stringify(record)) <= DIAGNOSTIC_LIMIT);
+    f.setOpen([{ canvasId: DESIGNER_CANVAS, extensionId: DESIGNER_PROVIDER,
+        instanceId: `designer-${f.handoff.handoffId}`, input: f.input }]);
+    assert.equal((await run(f.request("finalize-open"))).status, "shell-opened");
+});
+
+test("oversized host snapshots are not retained or allowed to clear the opening guard", async (t) => {
+    const f = await fixture(t);
+    const reply = { resultType: "success", textResultForLlm: "truncated display" };
+    const run = createDesignerBootstrap({ ...f.deps, openCanvas: async (request) => {
+        f.setOpen([{ ...request, title: "x".repeat(DIAGNOSTIC_LIMIT) }]);
+        return reply;
+    } });
+    await run(f.request("install"));
+    const failure = await run(f.request("finalize-open"));
+    assert.equal(failure.error.code, "designer_diagnostic_limit");
+    assert.doesNotMatch(failure.error.message, /diagnostics could not be saved/);
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.deepEqual(record.error, failure.error);
+    assert.deepEqual(record.nativeResult, reply);
+    assert.equal(Object.hasOwn(record, "openSnapshot"), false);
+    assert.equal(record.opening, true);
+});
+
+test("near-budget native denials retain full results and compact errors without blocking retry", async (t) => {
+    const f = await fixture(t);
+    let opens = 0;
+    const run = createDesignerBootstrap({ ...f.deps, openCanvas: async (request) => {
+        if (++opens !== 1) return f.deps.openCanvas(request);
+        const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+        const reply = { resultType: "denied", textResultForLlm: "", error: "" };
+        const overhead = Buffer.byteLength(JSON.stringify({ ...record, opening: false, nativeResult: reply }));
+        reply.error = "x".repeat(DIAGNOSTIC_LIMIT - DIAGNOSTIC_ERROR_RESERVE - overhead);
+        return reply;
+    } });
+    await run(f.request("install"));
+    const failure = await run(f.request("finalize-open"));
+    assert.equal(failure.error.code, "designer_native_open_denied");
+    assert.equal(failure.error.message.length, 2048);
+    assert.doesNotMatch(failure.error.message, /diagnostics could not be saved/);
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.deepEqual(record.error, failure.error);
+    assert.ok(record.nativeResult.error.length > 15 * 1024 * 1024);
+    assert.ok(Buffer.byteLength(JSON.stringify(record)) <= DIAGNOSTIC_LIMIT);
+    assert.equal(record.opening, false);
+    assert.equal((await run(f.request("finalize-open"))).status, "shell-opened");
+    assert.equal(opens, 2);
+});
+
+test("valid native structured metadata remains complete in diagnostics", async (t) => {
+    const f = await fixture(t);
+    let reply;
+    const run = createDesignerBootstrap({ ...f.deps, openCanvas: async (request) => {
+        reply = { ...await f.deps.openCanvas(request), sessionLog: "Full native log",
+            toolTelemetry: { timings: [1, 2], complete: true },
+            contents: [{ type: "text", text: "Native content" }],
+            binaryResultsForLlm: [{ data: "aGVsbG8=", mimeType: "text/plain" }] };
+        return reply;
+    } });
+    await run(f.request("install"));
+    assert.equal((await run(f.request("finalize-open"))).status, "shell-opened");
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.deepEqual(record.nativeResult, reply);
 });
 
 test("incompatible native outcomes and mounted inputs cannot report shell-opened", async (t) => {

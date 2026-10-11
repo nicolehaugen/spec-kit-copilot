@@ -8,6 +8,7 @@ export const BOOTSTRAP_TOOL = "speckit_designer_bootstrap";
 export const DESIGNER_PROVIDER = "plugin:spec-kit-copilot-wizard:speckit-canvas-designer";
 export const DESIGNER_CANVAS = "speckit-canvas-designer";
 export const DIAGNOSTIC_LIMIT = 16 * 1024 * 1024;
+export const DIAGNOSTIC_ERROR_RESERVE = 16 * 1024;
 export const launchReferenceSchema = {
     type: "object", additionalProperties: false,
     required: ["sourceSessionId", "sourceRoot", "handoffId", "sha256"],
@@ -159,6 +160,76 @@ export function validateFinalizeInput(input, id) {
         throw new BootstrapError("designer_finalize_invalid", "Finalize did not return the complete requested Designer inventory.");
     }
     return input;
+}
+
+export function assertDiagnosticSize(value, limit = DIAGNOSTIC_LIMIT) {
+    let remaining = limit;
+    const ancestors = new Set();
+    const invalid = () => {
+        throw new BootstrapError("designer_diagnostic_invalid",
+            "Designer bootstrap diagnostics must contain bounded plain JSON data.");
+    };
+    const take = (bytes) => {
+        remaining -= bytes;
+        if (remaining < 0) {
+            throw new BootstrapError("designer_diagnostic_limit",
+                "Designer bootstrap diagnostics exceed 16 MiB or its reserved failure budget.");
+        }
+    };
+    const string = (text) => {
+        take(Buffer.byteLength(text) + 2);
+        // JSON escaping adds bytes beyond UTF-8, including for lone surrogates.
+        for (const [character] of text.matchAll(/["\\\u0000-\u001f\uD800-\uDFFF]/gu)) {
+            const code = character.charCodeAt(0);
+            take(code >= 0xD800 ? 3 : code < 0x20 && !"\b\t\n\f\r".includes(character) ? 5 : 1);
+        }
+    };
+    const visit = (item, depth = 0) => {
+        if (typeof item === "string") return string(item);
+        if (item === null || typeof item === "boolean"
+            || (typeof item === "number" && Number.isFinite(item))) {
+            return take(String(item).length);
+        }
+        if (!item || typeof item !== "object" || depth > 100 || ancestors.has(item)
+            || (!Array.isArray(item) && ![Object.prototype, null].includes(Object.getPrototypeOf(item)))) {
+            invalid();
+        }
+        const toJSON = Object.getOwnPropertyDescriptor(item, "toJSON");
+        if (toJSON && (!Object.hasOwn(toJSON, "value") || typeof toJSON.value === "function")) invalid();
+        ancestors.add(item);
+        take(2);
+        let first = true;
+        const array = Array.isArray(item);
+        const keys = array ? Array.prototype.keys.call(item) : Object.keys(item);
+        for (const key of keys) {
+            if (!first) take(1);
+            first = false;
+            const descriptor = Object.getOwnPropertyDescriptor(item, key);
+            if (!descriptor || !Object.hasOwn(descriptor, "value")) invalid();
+            if (!array) { string(key); take(1); }
+            visit(descriptor.value, depth + 1);
+        }
+        ancestors.delete(item);
+    };
+    visit(value);
+    return limit - remaining;
+}
+
+export function normalizeNativeOpenResult(result) {
+    try {
+        if (typeof result !== "string" && (!result || typeof result !== "object"
+            || !["success", "failure", "timeout", "rejected", "denied"].includes(result.resultType)
+            || (result.resultType === "success" && typeof result.textResultForLlm !== "string")
+            || (result.textResultForLlm !== undefined && typeof result.textResultForLlm !== "string")
+            || (result.error !== undefined && typeof result.error !== "string"))) {
+            throw new Error("Invalid native result shape");
+        }
+        assertDiagnosticSize(result);
+        return JSON.parse(JSON.stringify(result));
+    } catch (cause) {
+        throw new BootstrapError("designer_native_result_invalid",
+            "Native Designer opening returned invalid or oversized JSON data.", { cause });
+    }
 }
 
 export function nativeOpenText(result) {

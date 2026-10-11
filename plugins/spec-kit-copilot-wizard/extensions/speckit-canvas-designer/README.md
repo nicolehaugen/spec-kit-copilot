@@ -97,7 +97,14 @@ equivalence between shell and bootstrap invocations.
 
 Full stage/native results remain beside the child `handoff.json` in
 `bootstrap.json`, bounded to 16 MiB to retain complete maximum-sized Unicode
-inventories. Bootstrap retains the host's full reload diagnostics, including
+inventories. JSON byte size, including escaping, is checked before serialization.
+Native replies are normalized as bounded JSON before retention, including
+non-success replies and structured metadata. Retained replies and snapshots must
+fit the complete record budget, reserving 16 KiB for a compact failure diagnostic.
+Malformed or oversized replies are not retained and do not clear the unknown
+opening guard. Valid replies remain complete; persisted error summaries are
+limited to the same 2048 characters as the tool response.
+Bootstrap retains the host's full reload diagnostics, including
 failed reloads, before validation; these failures stop finalization and remain
 retryable. Before dispatching a skill reload, bootstrap persists the optional
 `reloadPending: true` guard. A timeout does not cancel the RPC: an explicit

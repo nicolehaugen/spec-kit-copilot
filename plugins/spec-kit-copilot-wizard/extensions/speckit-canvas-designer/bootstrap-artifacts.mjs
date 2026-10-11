@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { link, lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { HANDOFF_LIMIT, validateHandoff, validateHandoffId } from "./handoff.mjs";
-import { BootstrapError, bootstrapSessionContext, DIAGNOSTIC_LIMIT,
+import { assertDiagnosticSize, BootstrapError, bootstrapSessionContext, DIAGNOSTIC_LIMIT,
     validateLaunchReference } from "./contracts/bootstrap.mjs";
 
 async function directories(root, id, create = false) {
@@ -148,6 +148,7 @@ export function bootstrapDiagnosticPath(root, id) {
 }
 
 export async function writeBootstrapRecord(root, id, record) {
+    assertDiagnosticSize(record);
     const bytes = Buffer.from(JSON.stringify(record), "utf8");
     if (bytes.length > DIAGNOSTIC_LIMIT) throw new Error("Designer bootstrap diagnostics exceed 16 MiB");
     return writeBytes(root, id, "bootstrap.json", bytes, true);

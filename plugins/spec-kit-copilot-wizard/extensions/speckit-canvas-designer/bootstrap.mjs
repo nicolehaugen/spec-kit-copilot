@@ -2,7 +2,8 @@ import { isAbsolute } from "node:path";
 import { readHandoff } from "./handoff.mjs";
 import { bootstrapDiagnosticPath, readBootstrapRecord, requireSetupRecord,
     transferDesignerHandoff, writeBootstrapRecord } from "./bootstrap-artifacts.mjs";
-import { BootstrapError, DESIGNER_CANVAS, DESIGNER_PROVIDER, nativeOpenSnapshot, nativeOpenText,
+import { assertDiagnosticSize, BootstrapError, DESIGNER_CANVAS, DESIGNER_PROVIDER,
+    DIAGNOSTIC_ERROR_RESERVE, DIAGNOSTIC_LIMIT, nativeOpenSnapshot, nativeOpenText, normalizeNativeOpenResult,
     validateBootstrapInput, validateBootstrapOutput, validateBootstrapRecord, validateFinalizeInput,
     validateOpenSnapshot, validateSetupStageResult } from "./contracts/bootstrap.mjs";
 
@@ -63,7 +64,14 @@ export function createDesignerBootstrap({
             record = await readBootstrapRecord(context.root, reference.handoffId);
             if (record) validateBootstrapRecord(record, reference);
             else record = { schemaVersion: 1, launchRef: reference, skillsReloaded: false, opening: false };
-            const save = () => writeBootstrapRecord(context.root, reference.handoffId, record);
+            const save = async (updates = {}) => {
+                const next = { ...record, ...updates };
+                const details = { ...next, opening: false };
+                delete details.error;
+                assertDiagnosticSize(details, DIAGNOSTIC_LIMIT - DIAGNOSTIC_ERROR_RESERVE);
+                await writeBootstrapRecord(context.root, reference.handoffId, next);
+                record = next;
+            };
             if (stage === "install") {
                 if (record.reloadPending) {
                     throw new BootstrapError("designer_skill_reload_pending",
@@ -139,9 +147,7 @@ export function createDesignerBootstrap({
             const existing = await findOpen();
             if (existing) {
                 validateOpenSnapshot(existing, reference.handoffId, input);
-                record.opening = false;
-                record.openSnapshot = existing;
-                await save();
+                await save({ opening: false, openSnapshot: existing });
                 return status(record, context, true);
             }
             if (record.opening) {
@@ -151,25 +157,24 @@ export function createDesignerBootstrap({
             record.opening = true;
             delete record.error;
             await save();
-            record.nativeResult = await bounded(() => openCanvas({
+            const nativeResult = normalizeNativeOpenResult(await bounded(() => openCanvas({
                 canvasId: DESIGNER_CANVAS, extensionId: DESIGNER_PROVIDER,
                 instanceId: `designer-${reference.handoffId}`, input,
-            }), nativeTimeoutMs, "designer_native_open_unknown");
-            await save();
+            }), nativeTimeoutMs, "designer_native_open_unknown"));
+            await save({ nativeResult });
             nativeOpenText(record.nativeResult);
             if (typeof record.nativeResult === "string") {
                 validateOpenSnapshot(nativeOpenSnapshot(record.nativeResult), reference.handoffId, input);
             }
-            record.openSnapshot = validateOpenSnapshot(await findOpen(), reference.handoffId, input);
-            record.opening = false;
-            await save();
+            const openSnapshot = validateOpenSnapshot(await findOpen(), reference.handoffId, input);
+            await save({ opening: false, openSnapshot });
             return status(record, context, true);
         } catch (error) {
             const failure = { code: error instanceof BootstrapError ? error.code
                 : `designer_bootstrap_${stage.replaceAll("-", "_")}_failed`,
             message: String(error.message || error).slice(0, 2048) };
             if (record && context) {
-                record.error = { ...failure, message: String(error.message || error) };
+                record.error = { ...failure };
                 if (error.knownOutcome) record.opening = false;
                 try { await writeBootstrapRecord(context.root, reference.handoffId, record); }
                 catch (diagnosticError) {
