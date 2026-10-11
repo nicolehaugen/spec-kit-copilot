@@ -212,6 +212,69 @@ test("source metadata rejects an identical checkout and artifact root before sta
         "handoffs", handoff.handoffId)), { code: "ENOENT" });
 });
 
+test("source metadata rejects directory aliases of the same root before staging", async (t) => {
+    const f = await fixture(t);
+    const alias = join(f.folder, "session-alias");
+    await symlink(f.session.workspacePath, alias, process.platform === "win32" ? "junction" : "dir");
+    for (const [root, project] of [
+        [f.session.workspacePath, alias],
+        [alias, f.session.workspacePath],
+    ]) {
+        const session = { sessionId: f.session.sessionId, workspacePath: root,
+            rpc: { metadata: { snapshot: async () => ({
+                sessionId: f.session.sessionId, workspacePath: root, workingDirectory: project,
+            }) } } };
+        const handoff = { ...f.handoff, handoffId: randomUUID() };
+        await assert.rejects(bootstrapSessionContext(session), { code: "designer_session_metadata_invalid" });
+        await assert.rejects(stageDesignerHandoff(session, handoff), { code: "designer_session_metadata_invalid" });
+        await assert.rejects(lstat(join(f.session.workspacePath, "speckit-canvas-designer",
+            "handoffs", handoff.handoffId)), { code: "ENOENT" });
+    }
+});
+
+test("distinct aliased metadata roots return canonical paths for staging and child setup", async (t) => {
+    const f = await fixture(t);
+    const sourceAlias = join(f.folder, "source-alias");
+    const childAlias = join(f.folder, "child-alias");
+    const projectAlias = join(f.folder, "checkout-alias");
+    for (const [target, alias] of [
+        [f.session.workspacePath, sourceAlias],
+        [f.context.root, childAlias],
+        [f.context.project, projectAlias],
+    ]) {
+        await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
+    }
+    const source = { sessionId: f.session.sessionId, workspacePath: sourceAlias,
+        rpc: { metadata: { snapshot: async () => ({
+            sessionId: f.session.sessionId, workspacePath: sourceAlias, workingDirectory: projectAlias,
+        }) } } };
+    assert.deepEqual(await bootstrapSessionContext(source), {
+        sessionId: f.session.sessionId, root: f.session.workspacePath, project: f.context.project,
+    });
+    assert.deepEqual(await stageDesignerHandoff(source, f.handoff), f.reference);
+    const child = { sessionId: f.context.sessionId, workspacePath: childAlias,
+        rpc: { metadata: { snapshot: async () => ({
+            sessionId: f.context.sessionId, workspacePath: childAlias, workingDirectory: projectAlias,
+        }) } } };
+    const context = await bootstrapSessionContext(child, { sessionId: f.context.sessionId });
+    assert.deepEqual(context, f.context);
+    const run = createDesignerBootstrap({ ...f.deps, getContext: async () => context });
+    assert.equal((await run(f.request("install"))).status, "installed");
+    assert.equal((await run(f.request("finalize-open"))).status, "shell-opened");
+});
+
+test("unresolvable metadata roots fail explicitly before staging", async (t) => {
+    const f = await fixture(t);
+    const original = await f.session.rpc.metadata.snapshot();
+    f.session.rpc.metadata.snapshot = async () => ({
+        ...original, workingDirectory: join(f.folder, "missing-checkout"),
+    });
+    await assert.rejects(bootstrapSessionContext(f.session), (error) =>
+        error.code === "designer_session_metadata_invalid" && error.cause?.code === "ENOENT");
+    await assert.rejects(stageDesignerHandoff(f.session, f.handoff),
+        { code: "designer_session_metadata_invalid" });
+});
+
 test("Wizard staging uses the late-bound native session adapter", async (t) => {
     const f = await fixture(t);
     const previous = getSession();

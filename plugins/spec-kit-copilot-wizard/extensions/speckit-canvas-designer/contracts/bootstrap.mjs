@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { checkSchema } from "./external-design-contributions.mjs";
@@ -135,8 +136,20 @@ export async function bootstrapSessionContext(session, invocation) {
         throw new BootstrapError("designer_session_metadata_invalid",
             "Designer checkout and session-state root are unavailable or conflicting in native session metadata.");
     }
-    return { sessionId: metadata.sessionId, root: session.workspacePath,
-        project: metadata.workingDirectory };
+    let root, project;
+    try {
+        [root, project] = await Promise.all([
+            realpath(session.workspacePath), realpath(metadata.workingDirectory),
+        ]);
+    } catch (cause) {
+        throw new BootstrapError("designer_session_metadata_invalid",
+            "Designer checkout and session-state root could not be resolved.", { cause });
+    }
+    if (root === project) {
+        throw new BootstrapError("designer_session_metadata_invalid",
+            "Designer checkout and session-state root resolve to the same directory.");
+    }
+    return { sessionId: metadata.sessionId, root, project };
 }
 
 export function validateFinalizeInput(input, id) {

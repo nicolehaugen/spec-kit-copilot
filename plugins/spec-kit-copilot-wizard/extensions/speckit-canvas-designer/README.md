@@ -70,7 +70,9 @@ reload must be available. The package must include `scripts/verify-launch.mjs`,
 run with external `node` rather than the embedded Copilot host executable;
 missing capabilities or verifier are explicit failures, with no legacy manual
 resolution/open fallback. Native session metadata must identify distinct checkout
-and session-state roots; identical paths fail before handoff staging writes files.
+and session-state roots. Both paths are resolved canonically before comparison
+and use; filesystem aliases of the same directory fail before handoff staging
+writes files.
 
 **Trust boundary and installation approval.** Bootstrap assumes a trusted local
 agent acting on behalf of the machine's user. In the Designer launch dialog,
