@@ -10,6 +10,7 @@ import { startServer as startWizardServer } from "../../plugins/spec-kit-copilot
 import { readInstalledWorkflowInventory } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/server/handlers-designer.mjs";
 import { validateHandoff } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/contracts/wizard-handoff.mjs";
 import { handoffDirectory, readHandoff } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/handoff.mjs";
+import { transferDesignerHandoff } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/bootstrap-artifacts.mjs";
 import { loadResolvedDesignerPages } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/pages.mjs";
 import { loadDesignerSettings } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/settings.mjs";
 import { startShell } from "../../plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/server.mjs";
@@ -62,6 +63,7 @@ export async function startPresetJourney(page, {
     const workspace = await mkdtemp(join(repository, ".pj-"));
     const checkout = join(workspace, "wizard");
     const project = join(workspace, "project");
+    const sourceRoot = join(workspace, "source-session");
     const presetPath = join(fixturePath, presetId);
     const published = releaseCatalog.extensions["extension-canvas-design"];
     const catalogBase = {
@@ -139,10 +141,16 @@ export async function startPresetJourney(page, {
     };
     try {
         await mkdir(join(checkout, ".specify"), { recursive: true });
+        await mkdir(sourceRoot);
         wizard = await startWizardServer(randomUUID(), {
             session: {
+                sessionId: "source-session",
+                workspacePath: sourceRoot,
                 send: async ({ prompt }) => { prompts.push(prompt); },
                 rpc: {
+                    metadata: { snapshot: async () => ({
+                        sessionId: "source-session", workspacePath: sourceRoot, workingDirectory: checkout,
+                    }) },
                     extensions: { list: async () => ({ extensions: [{
                         id: "plugin:spec-kit-copilot-wizard:speckit-canvas-designer",
                         source: "plugin", status: "running",
@@ -174,10 +182,13 @@ export async function startPresetJourney(page, {
             .getByRole("checkbox").all()) await expect(checkbox).toBeChecked();
         await dialog.getByRole("button", { name: "Launch designer" }).click();
         await expect.poll(() => prompts.length).toBe(1);
-        const [, json] = prompts[0].match(/HANDOFF_JSON:\r?\n([^\r\n]+)/) ?? [];
-        expect(json, "Wizard must dispatch one unmodified HANDOFF_JSON line").toBeTruthy();
+        const [, referenceText] = prompts[0].match(/LAUNCH_REFERENCE:\r?\n([^\r\n]+)/) ?? [];
+        expect(referenceText, "Wizard must dispatch a source-owned launch reference").toBeTruthy();
+        const reference = JSON.parse(referenceText);
+        const json = await readFile(join(handoffDirectory(sourceRoot, reference.handoffId), "handoff.json"), "utf8");
         journey.handoffJson = json;
-        journey.handoffHash = createHash("sha256").update(json, "utf8").digest("hex");
+        journey.handoffHash = reference.sha256;
+        expect(createHash("sha256").update(json, "utf8").digest("hex")).toBe(reference.sha256);
         const parsed = JSON.parse(json);
         journey.handoff = validateHandoff(parsed, parsed.handoffId);
         expect(journey.handoff.workflow.selectedPhases).toEqual(selectedPhases);
@@ -193,8 +204,7 @@ export async function startPresetJourney(page, {
         wizard = undefined;
 
         const folder = handoffDirectory(workspace, journey.handoff.handoffId);
-        await mkdir(folder, { recursive: true });
-        await writeFile(join(folder, "handoff.json"), json, "utf8");
+        await transferDesignerHandoff(reference, { sessionId: "child-session", root: workspace, project });
         expect(await readFile(join(folder, "handoff.json"), "utf8")).toBe(json);
         expect(await readHandoff(workspace, journey.handoff.handoffId,
             undefined, journey.handoffHash)).toEqual(journey.handoff);

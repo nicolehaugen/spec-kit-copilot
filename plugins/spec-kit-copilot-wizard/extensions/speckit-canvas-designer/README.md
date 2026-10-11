@@ -24,6 +24,12 @@ independently packaged and validates request integrity with its own
 The browser's matching mount, readiness, badge input, and draft-change rules live in
 `ui/external-control-adapter-contract.js`, served with the provider rather than loaded
 from a preset.
+The additive, nonvisual `contracts/bootstrap.mjs` defines
+`speckit_designer_bootstrap`: versioned launch references, explicit LLM-invoked
+`install` and `finalize-open` stages, compact results, and native opening checks.
+It registers no customizable UI, so it needs no definition/renderer template
+pair. `bootstrap-artifacts.mjs` confines exact-byte transfers and diagnostics to
+identified session roots; `bootstrap.mjs` reuses the Wizard's setup routines.
 The browser-safe `ui/generated-output-state.js` defines status, reveal, Generate,
 Open, and error response shapes shared by the server and browser. Reveal responds
 with the folder actually opened: the extensions parent before generation, or
@@ -44,17 +50,38 @@ template composition, project setup, or the published hosted package.
 The Wizard hands approved customizations to a separate child session. That
 session initializes Spec Kit in Copilot skills mode if needed, installs the
 released `extension-canvas-design` package, approved Designer selections, and
-the Wizard's active runtime presets, extensions and bundles through the Spec Kit
-skills. It restores the runtime preset/extension priorities recorded by the
+the Wizard's active runtime presets, extensions and bundles through real Specify
+operations. It restores the runtime preset/extension priorities recorded by the
 Wizard and verifies IDs, versions, enabled states and priorities before opening
 Designer; unreproducible packages fail launch rather than being omitted. Local
 development selections may override a hosted package only if the frozen runtime
-identity, version and priority remain reproducible. The child reloads skills
-once after installation. The composed
-`speckit-extension-canvas-design-load-page` skill checks every explicitly
-declared template against one `specify artifact list --json` inventory before opening Designer. It opens the
-official provider once with the complete typed inventory of page names,
-paths, asset kinds and replacement strategies.
+identity, version and priority remain reproducible. The child LLM explicitly
+invokes bootstrap `install`, then `finalize-open`.
+These stages reuse the real Specify install/finalize helpers; source code does
+not run setup automatically or shortcut package composition. The second stage
+reloads skills once after a successful install, verifies the composed
+`speckit-extension-canvas-design-load-page` skill and its explicitly declared
+templates through Specify, and passes the complete typed inventory of names,
+paths, asset kinds and replacement strategies directly to native `open_canvas`
+through `session.rpc.tools.execute({name,arguments})`. The model carries only a
+bounded launch reference; it does not write or reproduce the full handoff or
+open input. Native invocation, canvas snapshots, session metadata, and skill
+reload must be available. The package must include `scripts/verify-launch.mjs`,
+run with external `node` rather than the embedded Copilot host executable;
+missing capabilities or verifier are explicit failures, with no legacy manual
+resolution/open fallback.
+
+Full stage/native results remain beside the child `handoff.json` in
+`bootstrap.json`, bounded to 16 MiB to retain complete maximum-sized Unicode
+inventories. Model-facing results contain status, warning count, timings, and
+diagnostic path, not pages/templates. Native tool display text can be truncated
+by the host; success is verified against the complete `canvas.listOpen()` snapshot,
+not by parsing that display text. A verified native snapshot means only
+`shell-opened`, not that all pages loaded or generation is
+ready. A stable handoff-derived instance is used to reconcile interrupted opens
+without automatically opening twice. This local development path must be
+verified independently of the published archive selected by the hosted catalog;
+worktree success does not establish hosted release readiness.
 Preset and project overrides are honored. The provider obtains a fresh inventory
 at open and checks submitted names and paths against the active layers. Failed CLI resolution, incomplete
 page lists, unsafe paths and invalid handoffs fail opening. A resolved page whose winning file is missing or unreadable prevents opening;

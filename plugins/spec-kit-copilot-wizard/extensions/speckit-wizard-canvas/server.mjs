@@ -354,6 +354,7 @@ export function createHandler(deps) {
                             getState, getInstance, session, log,
                             enableProviderForSession: deps.enableDesignerProvider,
                             getInstalledWorkflow: deps.getInstalledWorkflow,
+                            stageHandoff: deps.stageDesignerHandoff,
                         });
                     },
                     "/api/designer/local-source": async () => {

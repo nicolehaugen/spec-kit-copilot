@@ -360,8 +360,11 @@ addition to) the hosted registry entry:
   the file. Its subsequent read-only preflight checks the
   session-root handoff bytes against the hash in the launch prompt, as well as
   Specify CLI version, project setup, and approved local paths and manifest
-  IDs. The child agent writes the exact UTF-8 JSON from the prompt without a
-  trailing newline or BOM and checks its hash before preflight. This exact-byte
+  IDs. Wizard source stages the exact UTF-8 JSON in its session artifacts,
+  without a trailing newline or BOM. The child bootstrap transfers those bytes
+  by a bounded source-session reference and checks the launch hash before any
+  installation. It never writes into `files/` or derives its destination from
+  model-authored paths. This exact-byte
   check applies at preflight only; later `verify-local` calls validate the
   handoff but do not compare its bytes to that launch hash.
   After local installation and later overrides, the child checks the installed
@@ -389,25 +392,46 @@ addition to) the hosted registry entry:
   stops at `verify-base`. The staging catalog selects the published `0.1.20`
   archive, which passes `verify-base` after installation from that catalog.
   This verifies base compatibility, not an entire hosted Designer journey.
-- After the child agent creates a default-branch worktree and writes the
-  unchanged handoff JSON, it runs `designer-setup.mjs install` for conditional
-  Specify initialization and ordered package setup. The runner returns explicit
-  errors, version warnings, and stage durations; a missing or outdated CLI
-  sends the agent to the existing setup/upgrade skill. The agent calls
-  `speckit_designer_reload_skills` once, then runs `designer-setup.mjs finalize`
-  to recheck inventories and obtain `openInput` with the complete verified
-  `handoffId`, `pages`, and `templates`. Only `openInput` goes to the Designer
-  canvas; the runner's sibling `timings` and `warnings` are for reporting.
+- The parent agent creates the same app-native default-branch worktree with a
+  compact launch reference, not inline handoff JSON. In that child, the LLM
+  explicitly calls `speckit_designer_bootstrap` twice: first with
+  `{schemaVersion:1,stage:"install",launchRef}`, then, after `installed`, with
+  `{schemaVersion:1,stage:"finalize-open",launchRef}`. The source-owned
+  `contracts/bootstrap.mjs` defines the nonvisual tool boundary; it requires no
+  customizable UI definition/renderer pair. No setup runs at registration or
+  session creation. The first call transfers the handoff and invokes
+  `installDesignerSetup()` for real Specify initialization, installation, and
+  verification. Missing/outdated Specify sends the LLM to the existing
+  setup/upgrade skill. The second call reloads skills once for that install,
+  invokes `finalizeDesignerSetup()` for real Specify inventory/composition
+  checks, and passes its complete `openInput` directly through the installed
+  SDK's native `session.rpc.tools.execute({name:"open_canvas",arguments})`.
+  Only `openInput` goes to Designer, not sibling `timings` or `warnings`.
+  The tool returns compact `installed`, `shell-opened`, or explicit `failure`
+  status with warning count, stage timings, and a diagnostics path. Full install,
+  reload, finalize, and native results remain in handoff-adjacent `bootstrap.json`
+  (bounded to 16 MiB, including maximum-sized Unicode inventories). Native tool
+  display text can be truncated; the complete `canvas.listOpen()` snapshot is
+  authoritative for provider/canvas/instance/input verification. The model never
+  needs to regenerate their payloads.
   Installation and resolution never run in the Wizard checkout. The handoff
   schema, `202 { queued: true }` launch response, and official canvas open input
-  remain unchanged.
-- Newer Canvas Design packages run a read-only verifier over the **generated,
+  remain unchanged. Native tool invocation, canvas snapshots, session metadata,
+  and skill reload are required; unsupported runtimes fail visibly, without a
+  CLI-created session or an LLM-authored opening fallback.
+- Canvas Design must supply a read-only verifier over the **generated,
   composed** load-page skill and Specify's per-name resolution/stack metadata.
   It produces the complete pages/templates input only when all registrations
-  check out. Compatible older hosted packages without that verifier continue
-  to use the generated skill's existing manual per-name checks. The official
-  Designer is opened once; shell availability alone does not assert all pages
-  loaded or generation readiness.
+  check out. Packages lacking `scripts/verify-launch.mjs` fail this launch path;
+  legacy manual resolution is not supported. The bootstrap checks native
+  provider/canvas/instance identity and the entire returned input. Explicit
+  native denial/failure is retryable without a second successful skill reload.
+  An interrupted or timed-out open is reconciled against the stable native
+  instance; an unknown outcome never triggers an automatic second open.
+  Shell availability alone does not assert all pages loaded or generation
+  readiness. Worktree/local-source verification is separate from verifying the
+  published archive selected by the hosted catalog; routine development does
+  not bump versions or publish releases.
 - Local selections reset when the dialog is closed after a **successful**
   launch (matching the existing reset behavior for hosted selections), but
   are retained if the launch fails, so you can fix the problem and retry

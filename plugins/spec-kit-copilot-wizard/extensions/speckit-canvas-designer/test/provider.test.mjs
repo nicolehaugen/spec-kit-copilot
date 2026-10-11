@@ -5019,7 +5019,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     await mkdir(sdk, { recursive: true });
     await mkdir(extension);
     for (const file of ["extension.mjs", "preview.mjs", "handoff.mjs", "open-state.mjs", "server.mjs", "pages.mjs", "external-control-contract.mjs",
-        "settings.mjs", "generation.mjs", "image.mjs"]) {
+        "settings.mjs", "generation.mjs", "image.mjs", "bootstrap.mjs", "bootstrap-artifacts.mjs"]) {
         await copyFile(join(source, file), join(extension, file));
     }
     await cp(join(source, "contracts"), join(extension, "contracts"), { recursive: true });
@@ -5109,7 +5109,13 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
     delete globalThis.__designerTestCanvas;
     const tools = globalThis.__designerTestTools;
     delete globalThis.__designerTestTools;
-    assert.deepEqual(tools.map((tool) => tool.name), ["speckit_designer_reload_skills"]);
+    assert.deepEqual(tools.map((tool) => tool.name),
+        ["speckit_designer_bootstrap", "speckit_designer_reload_skills"]);
+    assert.equal(tools[0].parameters.properties.schemaVersion.const, 1);
+    assert.deepEqual(tools[0].parameters.properties.stage.enum, ["install", "finalize-open"]);
+    const incompatible = await tools[0].handler({ schemaVersion: 2 });
+    assert.equal(incompatible.resultType, "failure");
+    assert.equal(JSON.parse(incompatible.textResultForLlm).status, "failure");
     assert.deepEqual(canvas.actions ?? [], []);
     assert.deepEqual(canvas.inputSchema.required, undefined);
     assert.equal(canvas.inputSchema.properties.preview.type, "boolean");
