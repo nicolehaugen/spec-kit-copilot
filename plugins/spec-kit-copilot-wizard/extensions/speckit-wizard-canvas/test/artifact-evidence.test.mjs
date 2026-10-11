@@ -660,6 +660,81 @@ test("an older artifact write cannot complete a newer inference run", async () =
     });
 });
 
+for (const failure of ["fingerprint rejection", "invalid evidence", "source read", "cache read",
+    "cache size", "cache write"]) {
+    test(`an older artifact ${failure} failure cannot fail a newer inference run`, async () => {
+        await fixture(async ({ root }) => {
+            const current = await effectiveSource(root, "plan");
+            const request = { commandId: "speckit.plan", fingerprint: current.fingerprint };
+            const events = [];
+            const inst = { workspacePath: root, url: "http://127.0.0.1:1234", token: "test",
+                broadcast: (event) => events.push(event) };
+            const restart = () => {
+                startRefresh(inst);
+                beginOutputInference(inst, [request]);
+                setRefreshWork(inst, { pipeline: false, outputs: true });
+            };
+            restart();
+            const previous = inst.outputInference;
+            const entry = { outputEvidence: {
+                fingerprint: failure === "fingerprint rejection" ? "0".repeat(64) : current.fingerprint,
+                primaryIndex: 0,
+                candidates: failure === "invalid evidence" ? [] : [
+                    { kind: "file", path: "plan.md", relativeTo: "feature",
+                        source: "inference", effect: "creates", evidence: "Writes FEATURE_DIR/plan.md." },
+                ],
+            } };
+            const deps = { getInstance: () => inst, broadcast: (event) => events.push(event) };
+            let status, message;
+            if (["fingerprint rejection", "invalid evidence", "source read"].includes(failure)) {
+                deps.readSource = async () => {
+                    restart();
+                    if (failure === "source read") throw new Error("source unavailable");
+                    return current;
+                };
+                status = failure === "fingerprint rejection" ? 409 : 400;
+                message = failure === "fingerprint rejection" ? /fingerprint mismatch/
+                    : failure === "invalid evidence" ? /Inference must report a result/ : /source unavailable/;
+            } else if (failure === "cache write") {
+                deps.writeCache = async () => {
+                    restart();
+                    throw new Error("disk unavailable");
+                };
+                status = 500;
+                message = /write failed: disk unavailable/;
+            } else {
+                deps.readCache = async () => {
+                    restart();
+                    if (failure === "cache read") throw new Error("cache unavailable");
+                    return { entries: {
+                        "commands/speckit.large": { description: "x".repeat(512 * 1024) },
+                    } };
+                };
+                status = failure === "cache read" ? 500 : 400;
+                message = failure === "cache read" ? /Artifact cache was not overwritten: cache unavailable/
+                    : /exceeds its size limit/;
+            }
+            const res = response();
+            try {
+                await handleArtifactTargets(res, { entries: { "commands/speckit.plan": entry } }, deps);
+                assert.equal(res.status, status);
+                assert.match(res.body.error, message);
+                assert.notEqual(inst.outputInference, previous);
+                assert.equal(previous.status, "updating");
+                assert.equal(inst.outputInference.status, "updating");
+                assert.deepEqual([...inst.outputInference.pending], [["plan", current.fingerprint]]);
+                assert.equal(inst.outputInference.timer._destroyed, false);
+                assert.equal(inst.refreshStatus.status, "refreshing");
+                assert.ok(!events.some(({ reason }) => reason === "output inference failed"));
+            } finally {
+                clearTimeout(previous.timer);
+                clearTimeout(inst.outputInference?.timer);
+                clearTimeout(inst.refreshStatus.timer);
+            }
+        });
+    });
+}
+
 test("endpoint rejects stale evidence and merges current candidates without erasing manual hints", async () => {
     await fixture(async ({ root, write }) => {
         await write(".speckit-wizard/artifact-targets.json", JSON.stringify({

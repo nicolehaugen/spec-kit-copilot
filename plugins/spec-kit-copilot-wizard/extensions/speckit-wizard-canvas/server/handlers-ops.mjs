@@ -110,12 +110,15 @@ export async function handlePipelineMutation(res, body, { getState, broadcast, g
 //   agent POSTs { entries: {...} } here →
 //   scanner picks up the new cache on the next scan tick.
 export async function handleArtifactTargets(res, body, { broadcast, getInstance,
-    writeCache = writeEvidenceCache }) {
+    readSource = effectiveSource, readCache = readEvidenceCache, writeCache = writeEvidenceCache }) {
     const inst = getInstance();
     if (!inst?.workspacePath) return jsonError(res, 400, "workspace path unavailable");
     const inference = inst.outputInference;
+    const failInference = () => {
+        if (inference && inst.outputInference === inference) failOutputInference(inst);
+    };
     const rejectOutput = (key, status, message) => {
-        if (inst.outputInference?.pending.has(commandId(key))) failOutputInference(inst);
+        if (inference?.pending.has(commandId(key))) failInference();
         return jsonError(res, status, message);
     };
 
@@ -134,7 +137,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
         let outputEvidence;
         if (entry?.outputEvidence !== undefined) {
             try {
-                const current = await effectiveSource(inst.workspacePath, commandId(key));
+                const current = await readSource(inst.workspacePath, commandId(key));
                 if (!current || entry.outputEvidence?.fingerprint !== current.fingerprint) {
                     return rejectOutput(key, 409, `Artifact evidence fingerprint mismatch for ${key}`);
                 }
@@ -153,16 +156,16 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
         if (normalized) cleaned[key] = normalized;
     }
     if (!Object.keys(cleaned).length) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (inference?.status === "updating") failInference();
         return jsonError(res, 400, "no valid entries");
     }
 
     // Read existing cache (if any) so we merge instead of clobber.
     let existing;
     try {
-        existing = await readEvidenceCache(inst.workspacePath);
+        existing = await readCache(inst.workspacePath);
     } catch (error) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (inference?.status === "updating") failInference();
         return jsonError(res, 500, `Artifact cache was not overwritten: ${error.message}`);
     }
     for (const [key, entry] of Object.entries(cleaned)) {
@@ -182,14 +185,14 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     };
     const payload = JSON.stringify(merged, null, 2) + "\n";
     if (Buffer.byteLength(payload) > 512 * 1024) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (inference?.status === "updating") failInference();
         return jsonError(res, 400, "Artifact-target cache exceeds its size limit");
     }
 
     try {
         await writeCache(inst.workspacePath, payload);
     } catch (err) {
-        if (inst.outputInference?.status === "updating") failOutputInference(inst);
+        if (inference?.status === "updating") failInference();
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }
     if (inference && inst.outputInference === inference) {

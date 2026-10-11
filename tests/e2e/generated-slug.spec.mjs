@@ -932,11 +932,17 @@ test("disabled custom slugs leave the artifact directory unresolved until Specif
         await expect(page.locator("#workflow-name")).toBeVisible();
         await expect(page.locator("#workflow-slug")).toBeHidden();
         await expect(page.locator("#constitution-card")).toHaveCount(0);
-        expect(await page.evaluate(() => {
+        await expect(page.locator("#selected-workflow-heading")).toHaveText("Selected workflow: Workflow 2");
+        const gaps = await page.evaluate(() => {
             const collection = document.querySelector("#instance-collection").getBoundingClientRect();
+            const heading = document.querySelector("#selected-workflow-heading").getBoundingClientRect();
             const navigation = document.querySelector("#phase-navigation").getBoundingClientRect();
-            return navigation.top - collection.bottom;
-        })).toBeLessThanOrEqual(28);
+            return [heading.top - collection.bottom, navigation.top - heading.bottom];
+        });
+        for (const gap of gaps) {
+            expect(gap).toBeGreaterThanOrEqual(16);
+            expect(gap).toBeLessThanOrEqual(28);
+        }
         await expect(page.locator("#phase-output-prompt")).toHaveText(
             "Run the phase to resolve the output path.");
         await expect(page.locator("#browse-output-folder")).toBeHidden();
