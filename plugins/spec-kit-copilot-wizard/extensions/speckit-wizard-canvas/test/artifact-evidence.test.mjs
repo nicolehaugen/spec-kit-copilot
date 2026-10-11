@@ -96,6 +96,74 @@ for (const refreshing of [false, true]) {
     }
 }
 
+for (const refreshing of [false, true]) {
+    for (const boundary of ["before swap", "queued during swap"]) {
+        test(`artifact replacement ${boundary} ${refreshing ? "with" : "without"} refresh is ordered against the actual commit`, async () => {
+            await fixture(async ({ root, write }) => {
+                const baseline = '{"version":1,"entries":{"commands/kept":{"description":"Keep me"}}}';
+                await write(".speckit-wizard/artifact-targets.json", baseline);
+                const frames = [];
+                const inst = { workspacePath: root, url: "http://127.0.0.1:1234", token: "test",
+                    broadcast: (frame) => frames.push(frame) };
+                if (refreshing) startRefresh(inst);
+                const fingerprint = (await effectiveSource(root, "plan")).fingerprint;
+                const requests = [{ commandId: "speckit.plan", fingerprint }];
+                beginOutputInference(inst, requests, inst.refreshStatus);
+                const original = inst.outputInference;
+                const replace = () => {
+                    if (refreshing) startRefresh(inst);
+                    beginOutputInference(inst, requests, inst.refreshStatus);
+                    frames.length = 0;
+                };
+                let asynchronousRenames = 0;
+                const res = response();
+                try {
+                    await handleArtifactTargets(res, { entries: { "commands/speckit.plan": { outputEvidence: {
+                        fingerprint, primaryIndex: null, candidates: [{ kind: "unknown", source: "inference",
+                            effect: "unknown", evidence: "No known portable output" }],
+                    } } } }, { getInstance: () => inst, runId: original.id,
+                        broadcast: (frame) => frames.push(frame),
+                        writeCache: (cwd, payload, unused, commitFile) => writeEvidenceCache(cwd, payload,
+                            async () => {
+                                asynchronousRenames++;
+                                await new Promise(setImmediate);
+                                replace();
+                                throw new Error("Owned commits must not enter an asynchronous swap");
+                            }, (temp, target) => {
+                                if (boundary === "before swap") replace();
+                                else queueMicrotask(replace);
+                                commitFile(temp, target);
+                                assert.equal(inst.outputInference, null);
+                                assert.equal(original.pending.size, 0);
+                            }),
+                    });
+                    assert.equal(res.status, boundary === "before swap" ? 409 : 200);
+                    assert.equal(asynchronousRenames, 0);
+                    assert.notEqual(inst.outputInference, original);
+                    assert.equal(inst.outputInference.status, "updating");
+                    assert.equal(inst.outputInference.timer._destroyed, false);
+                    assert.deepEqual([...inst.outputInference.pending], [["plan", fingerprint]]);
+                    if (refreshing) assert.equal(inst.refreshStatus.status, "refreshing");
+                    if (boundary === "before swap") {
+                        assert.match(res.body.error, /runId is no longer current/);
+                        assert.equal(await readFile(join(root, ".speckit-wizard", "artifact-targets.json"), "utf8"), baseline);
+                    } else {
+                        assert.equal((await readEvidenceCache(root)).entries["commands/speckit.plan"]
+                            .outputEvidence.fingerprint, fingerprint);
+                    }
+                    assert.deepEqual(frames, []);
+                    assert.deepEqual((await readdir(join(root, ".speckit-wizard")))
+                        .filter((name) => name.endsWith(".tmp")), []);
+                } finally {
+                    clearTimeout(original.timer);
+                    clearTimeout(inst.outputInference?.timer);
+                    clearTimeout(inst.refreshStatus?.timer);
+                }
+            });
+        });
+    }
+}
+
 test("rejects traversal, symlink-like and invalid primary output evidence", () => {
     for (const path of ["../secret.md", "C:\\secret.md", "/secret.md",
         "specs/<slug>/<slug>/a.md", ".github/skills/a.md", "docs/con.md"]) {

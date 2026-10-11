@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
@@ -11,8 +11,11 @@ import { failRefresh, finishRefreshPart, setRefreshWork, startRefresh } from "..
 import { validateCandidates } from "../artifact-evidence.mjs";
 import { attachOutputEvidence } from "../canvas-runtime/output-availability.mjs";
 import { compositionActions } from "../canvas-runtime/actions/composition.mjs";
+import { runFastComposition } from "../canvas-runtime/composition-apply.mjs";
 import { catalogActions } from "../canvas-runtime/actions/catalog.mjs";
-import { allInstances, getInstance } from "../canvas-runtime/instances.mjs";
+import { allInstances, fsDeps, getInstance } from "../canvas-runtime/instances.mjs";
+import { commitOwnedFile } from "../canvas-runtime/owned-commit.mjs";
+import { normalizeState, writeState } from "../state/store.mjs";
 import { assertReplyRunId, replyRunIdSchema } from "../contracts/agent-replies.mjs";
 import { inferredPipelineInputSchema } from "../contracts/agent-pipeline.mjs";
 
@@ -58,6 +61,281 @@ async function actionFixture(run) {
         allInstances().delete(id);
         await rm(root, { recursive: true, force: true });
     }
+}
+
+for (const replacement of ["refresh", "inference"]) {
+    test(`owned swap and publication finish before a queued ${replacement} replacement`, async () => {
+        await actionFixture(async (inst) => {
+            startRefresh(inst);
+            beginOutputInference(inst, [request], inst.refreshStatus);
+            const refresh = inst.refreshStatus;
+            const inference = inst.outputInference;
+            const temp = join(inst.workspacePath, "prepared.tmp");
+            const target = join(inst.workspacePath, "committed.json");
+            await writeFile(temp, "current payload");
+            let published = false;
+            commitOwnedFile(temp, target, () => {
+                assert.equal(inst.refreshStatus, refresh);
+                assert.equal(inst.outputInference, inference);
+                queueMicrotask(() => {
+                    if (replacement === "refresh") startRefresh(inst);
+                    beginOutputInference(inst, [request], inst.refreshStatus);
+                });
+            }, () => {
+                assert.equal(inst.refreshStatus, refresh);
+                assert.equal(inst.outputInference, inference);
+                published = true;
+            });
+            assert.equal(published, true);
+            assert.equal(inst.outputInference, inference);
+            await new Promise(setImmediate);
+            assert.notEqual(inst.outputInference, inference);
+            assert.equal(await readFile(target, "utf8"), "current payload");
+        });
+    });
+}
+
+test("owned swap rejects a stale owner and never publishes after a failed rename", async () => {
+    await actionFixture(async (inst) => {
+        const temp = join(inst.workspacePath, "prepared.tmp");
+        const target = join(inst.workspacePath, "committed.json");
+        await writeFile(temp, "new payload");
+        await writeFile(target, "old payload");
+        let published = false;
+        assert.throws(() => commitOwnedFile(temp, target, () => {
+            throw new Error("stale owner");
+        }, () => { published = true; }), /stale owner/);
+        assert.equal(await readFile(target, "utf8"), "old payload");
+        assert.equal(published, false);
+        assert.throws(() => commitOwnedFile(join(inst.workspacePath, "missing.tmp"), target,
+            () => {}, () => { published = true; }), { code: "ENOENT" });
+        assert.equal(await readFile(target, "utf8"), "old payload");
+        assert.equal(published, false);
+    });
+});
+
+for (const pause of ["state read", "queued state write", "temporary state write"]) {
+    for (const replacementFails of [false, true]) {
+        test(`pipeline replacement during ${pause}${replacementFails ? " with failed assembly" : ""} preserves saved and cached ordering`, async () => {
+            await actionFixture(async (inst) => {
+                const order = ["commands/speckit.specify", "commands/speckit.plan", "commands/speckit.tasks"];
+                const composition = { artifacts: order.map((id) => ({ id, kind: "command" })),
+                    inferredPipeline: { shape: "standalone", pipeline: order, unplaced: [], rationale: "Keep this order" } };
+                inst.cachedComposition = composition;
+                inst.state = normalizeState({ composition, currentPhase: "plan" });
+                await mkdir(join(inst.workspacePath, ".speckit-wizard"));
+                const statePath = join(inst.workspacePath, ".speckit-wizard", "state.json");
+                const saved = JSON.stringify(inst.state, null, 2) + "\n";
+                await writeFile(statePath, saved);
+                startRefresh(inst);
+                const oldRefresh = inst.refreshStatus;
+                const originalDeps = { ...fsDeps };
+                const entered = deferred(), release = deferred();
+                const frames = [];
+                inst.broadcast = (frame) => frames.push(frame);
+                let blocker;
+                try {
+                    if (pause === "queued state write") {
+                        const blocking = deferred();
+                        blocker = writeState(inst.workspacePath, inst.state, {
+                            ...fsDeps, mkdir: async () => { blocking.resolve(); await release.promise; },
+                            writeFile: async () => {}, rename: async () => {},
+                        });
+                        await blocking.promise;
+                    }
+                    fsDeps.readFile = async (path, ...args) => {
+                        if (path === statePath && pause !== "temporary state write") {
+                            entered.resolve();
+                            if (pause === "state read") await release.promise;
+                        }
+                        return originalDeps.readFile(path, ...args);
+                    };
+                    fsDeps.writeFile = async (path, ...args) => {
+                        await originalDeps.writeFile(path, ...args);
+                        if (pause === "temporary state write" && path.endsWith(".tmp")) {
+                            entered.resolve();
+                            await release.promise;
+                        }
+                    };
+                    const running = compositionActions[0].handler({ instanceId: inst.instanceId, input: {
+                        runId: oldRefresh.id,
+                        inferredPipeline: { shape: "standalone", pipeline: [...order].reverse(),
+                            unplaced: [], rationale: "Superseded old reply" },
+                    } });
+                    await entered.promise;
+                    await new Promise(setImmediate);
+                    assert.equal(inst.cachedComposition, composition);
+                    assert.equal(await readFile(statePath, "utf8"), saved);
+                    startRefresh(inst);
+                    if (replacementFails) failRefresh(inst, inst.refreshStatus);
+                    const current = inst.refreshStatus;
+                    const currentState = inst.state;
+                    frames.length = 0;
+                    release.resolve();
+                    const result = await running;
+                    await blocker;
+                    assert.equal(result.ok, false);
+                    assert.equal(result.inferredPipelineStatus.accepted, false);
+                    assert.match(result.inferredPipelineStatus.reason, /runId is no longer current/);
+                    assert.equal(inst.refreshStatus, current);
+                    assert.equal(current.status, replacementFails ? "incomplete" : "refreshing");
+                    assert.equal(current.pipelinePending, true);
+                    assert.equal(current.outputsPending, true);
+                    assert.equal(inst.cachedComposition, composition);
+                    assert.equal(inst.state, currentState);
+                    assert.equal(await readFile(statePath, "utf8"), saved);
+                    assert.deepEqual((await readdir(join(inst.workspacePath, ".speckit-wizard")))
+                        .filter((name) => name.endsWith(".tmp")), []);
+                    assert.deepEqual(frames, []);
+                } finally {
+                    release.resolve();
+                    await blocker;
+                    Object.assign(fsDeps, originalDeps);
+                }
+            });
+        });
+    }
+}
+
+test("pipeline replacement during the postcommit scan cannot publish or install an old snapshot", async () => {
+    await actionFixture(async (inst) => {
+        const order = ["commands/speckit.specify", "commands/speckit.plan", "commands/speckit.tasks"];
+        const composition = { artifacts: order.map((id) => ({ id, kind: "command" })) };
+        inst.cachedComposition = composition;
+        inst.state = normalizeState({ composition, currentPhase: "plan" });
+        await mkdir(join(inst.workspacePath, ".speckit-wizard"));
+        const statePath = join(inst.workspacePath, ".speckit-wizard", "state.json");
+        await writeFile(statePath, JSON.stringify(inst.state));
+        startRefresh(inst);
+        const oldRefresh = inst.refreshStatus;
+        const originalRead = fsDeps.readFile;
+        const entered = deferred(), release = deferred();
+        let stateReads = 0;
+        const frames = [];
+        try {
+            fsDeps.readFile = async (path, ...args) => {
+                if (path === statePath && ++stateReads === 2) {
+                    entered.resolve();
+                    await release.promise;
+                }
+                return originalRead(path, ...args);
+            };
+            const running = compositionActions[0].handler({ instanceId: inst.instanceId, input: {
+                runId: oldRefresh.id, inferredPipeline: { shape: "standalone", pipeline: order,
+                    unplaced: [], rationale: "Committed before replacement" },
+            } });
+            await entered.promise;
+            assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")).composition.inferredPipeline.pipeline, order);
+            assert.equal(oldRefresh.pipelinePending, false);
+            const duplicate = await compositionActions[0].handler({ instanceId: inst.instanceId, input: {
+                runId: oldRefresh.id, inferredPipeline: { shape: "standalone", pipeline: [...order].reverse(),
+                    unplaced: [], rationale: "Duplicate before the first scan returns" },
+            } });
+            assert.equal(duplicate.ok, false);
+            assert.equal(duplicate.inferredPipelineStatus.accepted, false);
+            assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")).composition.inferredPipeline.pipeline, order);
+            startRefresh(inst);
+            const currentState = normalizeState({ currentPhase: "tasks" });
+            const currentScan = { marker: "new scan" };
+            const currentComposition = { ...composition, refreshedAt: "new composition" };
+            inst.state = currentState;
+            inst.cwdBoundState = currentScan;
+            inst.cachedComposition = currentComposition;
+            inst.broadcast = (frame) => frames.push(frame);
+            release.resolve();
+            const result = await running;
+            assert.equal(result.inferredPipelineStatus.accepted, true);
+            assert.equal(inst.state, currentState);
+            assert.equal(inst.cwdBoundState, currentScan);
+            assert.equal(inst.cachedComposition, currentComposition);
+            assert.equal(inst.refreshStatus.pipelinePending, true);
+            assert.deepEqual(frames, []);
+        } finally {
+            release.resolve();
+            fsDeps.readFile = originalRead;
+        }
+    });
+});
+
+for (const failure of ["preparation", "swap"]) {
+    test(`failed pipeline ${failure} does not publish staged composition or report persistence success`, async () => {
+        await actionFixture(async (inst) => {
+            const order = ["commands/speckit.specify", "commands/speckit.plan", "commands/speckit.tasks"];
+            const composition = { artifacts: order.map((id) => ({ id, kind: "command" })) };
+            inst.cachedComposition = composition;
+            inst.state = normalizeState({ composition });
+            const originalState = inst.state;
+            startRefresh(inst);
+            const originalWrite = fsDeps.writeFile;
+            const frames = [];
+            inst.broadcast = (frame) => frames.push(frame);
+            try {
+                fsDeps.writeFile = async (path, ...args) => {
+                    await originalWrite(path, ...args);
+                    if (failure === "preparation") throw new Error("temporary write failed");
+                    await rm(path);
+                };
+                await assert.rejects(compositionActions[0].handler({ instanceId: inst.instanceId, input: {
+                    runId: inst.refreshStatus.id, inferredPipeline: { shape: "standalone", pipeline: order,
+                        unplaced: [], rationale: "Cannot commit this payload" },
+                } }), failure === "preparation" ? /temporary write failed/ : { code: "ENOENT" });
+                assert.equal(inst.cachedComposition, composition);
+                assert.equal(inst.state, originalState);
+                assert.equal(inst.refreshStatus.pipelinePending, true);
+                assert.deepEqual(frames, []);
+                assert.deepEqual((await readdir(join(inst.workspacePath, ".speckit-wizard")))
+                    .filter((name) => name.endsWith(".tmp")), []);
+            } finally {
+                fsDeps.writeFile = originalWrite;
+            }
+        });
+    });
+}
+
+for (const refreshing of [false, true]) {
+    test(`superseded fast composition ${refreshing ? "with" : "without"} a prior refresh cannot commit staged state`, async () => {
+        await actionFixture(async (inst) => {
+            const composition = { artifacts: [], presets: [], extensions: [] };
+            inst.cachedComposition = composition;
+            inst.state = normalizeState({ composition });
+            const originalState = inst.state;
+            await mkdir(join(inst.workspacePath, ".speckit-wizard"));
+            const statePath = join(inst.workspacePath, ".speckit-wizard", "state.json");
+            const saved = JSON.stringify(inst.state, null, 2) + "\n";
+            await writeFile(statePath, saved);
+            if (refreshing) startRefresh(inst);
+            const originalWrite = fsDeps.writeFile;
+            const entered = deferred(), release = deferred();
+            const frames = [];
+            inst.broadcast = (frame) => frames.push(frame);
+            try {
+                fsDeps.writeFile = async (path, ...args) => {
+                    await originalWrite(path, ...args);
+                    entered.resolve();
+                    await release.promise;
+                };
+                const running = runFastComposition(inst, { reason: "refresh-button" });
+                await entered.promise;
+                startRefresh(inst);
+                failRefresh(inst, inst.refreshStatus);
+                frames.length = 0;
+                release.resolve();
+                const result = await running;
+                assert.equal(result.ok, false);
+                assert.match(result.reason, /superseded/);
+                assert.equal(await readFile(statePath, "utf8"), saved);
+                assert.equal(inst.cachedComposition, composition);
+                assert.equal(inst.state, originalState);
+                assert.equal(inst.refreshStatus.status, "incomplete");
+                assert.deepEqual(frames.filter((frame) => ["state", "composition"].includes(frame.type)), []);
+                assert.deepEqual((await readdir(join(inst.workspacePath, ".speckit-wizard")))
+                    .filter((name) => name.endsWith(".tmp")), []);
+            } finally {
+                release.resolve();
+                fsDeps.writeFile = originalWrite;
+            }
+        });
+    });
 }
 
 for (const reply of ["missing", "malformed", "delayed", "duplicate", "expired"]) {

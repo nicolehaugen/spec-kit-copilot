@@ -191,8 +191,19 @@ explicit refresh. Never replace an old ID using a newer state snapshot.
 Missing/malformed IDs are rejected (HTTP 400); stale, completed, or expired IDs
 are rejected (HTTP 409). Pipeline actions return `ok: false` with
 `inferredPipelineStatus.accepted: false` and the concrete rejection reason.
-Rejection happens before pipeline application or artifact source/cache reads;
-the artifact writer also rechecks ownership before its atomic cache commit.
+Rejection happens before pipeline application or artifact source/cache reads.
+Both state and evidence writers use `canvas-runtime/owned-commit.mjs` for
+owned writes: preparation remains asynchronous, but the final owner check,
+atomic rename, and in-memory publication run in one non-yielding section.
+Only that final rename is synchronous; refresh/inference replacement cannot
+interleave while the swap is pending, and no lock is held across scanning or
+agent work. Unowned writes retain their existing asynchronous rename.
+Pipeline replies and the fast assembler stage composition/state until this
+commit succeeds, rather than publishing it before persistence. Pipeline and
+output completion are part of commit publication, preventing duplicates
+during the later scan. A superseded postcommit snapshot cannot update the
+instance or emit a stale state frame. Commit failures propagate explicitly;
+rejected/failed writes clean up their prepared temporary files.
 These are nonpersistent correlation IDs, not authentication credentials.
 Old uncorrelated callers must use a newly issued prompt/endpoint; there is no
 legacy fallback. Delayed replies cannot fail or complete replacement work.

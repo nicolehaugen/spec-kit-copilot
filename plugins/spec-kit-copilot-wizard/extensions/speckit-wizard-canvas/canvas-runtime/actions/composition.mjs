@@ -26,19 +26,20 @@ export const compositionActions = [
         handler: (ctx) =>
             withInstance(ctx, async (inst) => {
                 const refresh = inst.refreshStatus;
+                const isCurrent = () => inst.refreshStatus === refresh;
+                const assertCurrent = () => assertReplyRunId(ctx.input?.runId,
+                    isCurrent() && refresh?.status === "refreshing" && refresh.pipelinePending ? refresh.id : null);
                 try {
-                    assertReplyRunId(ctx.input?.runId,
-                        refresh?.status === "refreshing" && refresh.pipelinePending ? refresh.id : null);
+                    assertCurrent();
+                    const result = await applyComposition(inst, { inferredPipeline: ctx.input.inferredPipeline },
+                        { assertCurrent, isCurrent,
+                            onCommitted: () => finishRefreshPart(inst, "pipeline", refresh) });
+                    return { ok: true, inferredPipelineStatus: result.inferredPipelineStatus };
                 } catch (error) {
                     if (!(error instanceof ReplyRunError)) throw error;
                     return { ok: false, inferredPipelineStatus: { accepted: false,
                         provided: ctx.input?.inferredPipeline !== undefined, reason: error.message } };
                 }
-                const result = await applyComposition(inst, { inferredPipeline: ctx.input.inferredPipeline });
-                if (result.inferredPipelineStatus?.accepted) finishRefreshPart(inst, "pipeline", refresh);
-                // Surface inferredPipeline acceptance so the LLM sees the
-                // drop in-turn (silent-drop was the previous failure mode).
-                return { ok: true, inferredPipelineStatus: result.inferredPipelineStatus };
             }),
     },
 ];

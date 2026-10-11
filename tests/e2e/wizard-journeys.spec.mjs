@@ -631,9 +631,39 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         expect([...inst.outputInference.pending]).toEqual([[review, source.fingerprint]]);
         const oldPipelineRunId = pipelineRunId;
         const oldArtifactEndpoint = artifactEndpoint;
-        const replacement = await page.request.post(new URL(`/api/prompt?token=${server.token}`, server.url).href,
-            { data: { kind: "composition.refresh", payload: {} } });
-        expect(replacement.status()).toBe(202);
+        const originalWrite = fsDeps.writeFile;
+        let releaseWrite, writeEntered;
+        const release = new Promise((resolve) => { releaseWrite = resolve; });
+        const entered = new Promise((resolve) => { writeEntered = resolve; });
+        let paused = false;
+        try {
+            fsDeps.writeFile = async (path, ...args) => {
+                await originalWrite(path, ...args);
+                if (!paused && path.startsWith(join(root, ".speckit-wizard", "state.json."))) {
+                    paused = true;
+                    writeEntered();
+                    await release;
+                }
+            };
+            const oldReply = compositionActions[0].handler({ instanceId: id, input: {
+                runId: oldPipelineRunId,
+                inferredPipeline: { shape: "standalone",
+                    pipeline: [...inst.cachedComposition.inferredPipeline.pipeline].reverse(),
+                    unplaced: [], rationale: "Reply paused during temporary-file preparation" },
+            } });
+            await entered;
+            const replacement = page.request.post(new URL(`/api/prompt?token=${server.token}`, server.url).href,
+                { data: { kind: "composition.refresh", payload: {} } });
+            await expect.poll(() => inst.refreshStatus.id).not.toBe(oldPipelineRunId);
+            releaseWrite();
+            const rejected = await oldReply;
+            expect(rejected.ok).toBe(false);
+            expect(rejected.inferredPipelineStatus.reason).toContain("runId is no longer current");
+            expect((await replacement).status()).toBe(202);
+        } finally {
+            releaseWrite();
+            fsDeps.writeFile = originalWrite;
+        }
         await expect.poll(() => prompts.length).toBe(2);
         pipelineRunId = prompts[1].match(/showInferredPipeline\(\{ runId: "([0-9a-f-]+)"/)?.[1];
         artifactEndpoint = prompts[1].match(/POST (http:\/\/\S+) with JSON/)?.[1];

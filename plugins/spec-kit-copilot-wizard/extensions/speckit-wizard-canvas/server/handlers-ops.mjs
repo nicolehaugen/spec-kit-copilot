@@ -6,6 +6,7 @@ import { commandId, effectiveSource, readEvidenceCache, writeEvidenceCache } fro
 import { normalizeAgentArtifactEntry, validateAgentArtifactEvidence } from "../contracts/agent-artifacts.mjs";
 import { assertReplyRunId, ReplyRunError } from "../contracts/agent-replies.mjs";
 import { failOutputInference, finishOutputInference } from "../canvas-runtime/output-inference.mjs";
+import { commitOwnedFile } from "../canvas-runtime/owned-commit.mjs";
 
 import { applyPatch, writeState } from "../state/store.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
@@ -197,19 +198,20 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
 
     try {
         requireCurrentReply();
-        await writeCache(inst.workspacePath, payload, undefined, requireCurrentReply);
+        await writeCache(inst.workspacePath, payload, undefined, (temp, target) =>
+            commitOwnedFile(temp, target, requireCurrentReply, () => {
+                finishOutputInference(inst, inference,
+                    Object.keys(cleaned).filter((key) => cleaned[key].outputEvidence));
+                if (inst.outputInferenceOwner === inference && inst.refreshStatus === inference.refresh) {
+                    broadcast({ type: "invalidate", reason: "artifact-targets updated" });
+                }
+            }));
     } catch (err) {
         if (err instanceof ReplyRunError) return jsonError(res, err.status, err.message);
         if (inference?.status === "updating") failOutputInference(inst, inference);
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }
-    finishOutputInference(inst, inference,
-        Object.keys(cleaned).filter((key) => cleaned[key].outputEvidence));
-
     const added = Object.keys(cleaned).length;
-    // Nudge the client to re-fetch state so the phase cards pick up the
-    // new artifact paths without waiting for the next tick.
-    broadcast({ type: "invalidate", reason: "artifact-targets updated" });
     return jsonRes(res, 200, { ok: true, merged: added, path: ".speckit-wizard/artifact-targets.json" });
 }
 

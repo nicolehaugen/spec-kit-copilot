@@ -60,7 +60,9 @@ import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs"
 import { collectArtifactEvidence } from "../artifact-evidence.mjs";
 import { attachOutputEvidence } from "./output-availability.mjs";
 
-export async function snapshot(inst) {
+// Owned persistence scans may be superseded after committing; return null
+// instead of installing or broadcasting their now-stale derived state.
+export async function snapshot(inst, isCurrent = () => true) {
     const refresh = inst.refreshStatus;
     // Preset precedence: consume the order the `speckit-preset` skill
     // published on its last refresh (cached in inst.cachedComposition
@@ -75,6 +77,7 @@ export async function snapshot(inst) {
         ? { ...fsDeps, presetOrder }
         : fsDeps;
     const scan = await scanWorkspace(inst.workspacePath, scanDeps);
+    if (!isCurrent()) return null;
     inst.cwdBoundState = scan;
     // Merge cached env probe results into the snapshot.
     if (inst.cachedProbes?.summary) {
@@ -164,8 +167,10 @@ export async function snapshot(inst) {
         const overlay = overlayCachedComposition(inst.cachedComposition);
         if (overlay) snap.composition = overlay;
     }
-    await attachOutputEvidence(inst, scan, snap, await collectArtifactEvidence(inst.workspacePath, snap),
-        undefined, refresh);
+    const outputs = await collectArtifactEvidence(inst.workspacePath, snap);
+    if (!isCurrent()) return null;
+    await attachOutputEvidence(inst, scan, snap, outputs, undefined, refresh);
+    if (!isCurrent()) return null;
     // Expose the transient skills-reload diagnostic (populated by
     // /api/skills/reload) so the UI can gate setup completion on the
     // live SDK result rather than a persisted flag or a folder probe.
