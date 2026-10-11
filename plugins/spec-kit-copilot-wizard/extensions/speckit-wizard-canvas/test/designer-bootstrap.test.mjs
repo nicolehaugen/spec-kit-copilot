@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -12,7 +12,7 @@ import { bootstrapDiagnosticPath, readBootstrapRecord, stageDesignerHandoff,
     transferDesignerHandoff, writeBootstrapRecord } from "../../speckit-canvas-designer/bootstrap-artifacts.mjs";
 import { assertBootstrapCapabilities, bootstrapSessionContext, DESIGNER_CANVAS,
     DESIGNER_PROVIDER, DIAGNOSTIC_LIMIT, nativeOpenSnapshot, validateBootstrapInput,
-    validateBootstrapOutput } from "../../speckit-canvas-designer/contracts/bootstrap.mjs";
+    validateBootstrapOutput, validateBootstrapRecord } from "../../speckit-canvas-designer/contracts/bootstrap.mjs";
 import { HANDOFF_LIMIT, readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 
 const empty = { presets: [], extensions: [], bundles: [] };
@@ -199,6 +199,19 @@ test("authoritative checkout/root metadata rejects mismatches and parent executi
     assert.deepEqual(f.calls, []);
 });
 
+test("source metadata rejects an identical checkout and artifact root before staging", async (t) => {
+    const f = await fixture(t);
+    const original = await f.session.rpc.metadata.snapshot();
+    f.session.rpc.metadata.snapshot = async () => ({
+        ...original, workingDirectory: f.session.workspacePath,
+    });
+    const handoff = { ...f.handoff, handoffId: randomUUID() };
+    await assert.rejects(bootstrapSessionContext(f.session), { code: "designer_session_metadata_invalid" });
+    await assert.rejects(stageDesignerHandoff(f.session, handoff), { code: "designer_session_metadata_invalid" });
+    await assert.rejects(lstat(join(f.session.workspacePath, "speckit-canvas-designer",
+        "handoffs", handoff.handoffId)), { code: "ENOENT" });
+});
+
 test("Wizard staging uses the late-bound native session adapter", async (t) => {
     const f = await fixture(t);
     const previous = getSession();
@@ -275,6 +288,100 @@ test("failed reload remains explicit and retryable without running finalize", as
     assert.equal(record.skillsReloaded, false);
     assert.deepEqual(record.reload.errors, ["reload failed"]);
     assert.ok(f.errors.length);
+});
+
+test("reload timeout retries reuse the pending RPC and preserve its late result", async (t) => {
+    const f = await fixture(t);
+    let complete, reloads = 0;
+    const run = createDesignerBootstrap({ ...f.deps, nativeTimeoutMs: 50,
+        reloadSkills: () => {
+            reloads++;
+            return new Promise((resolve) => { complete = resolve; });
+        },
+    });
+    await run(f.request("install"));
+    assert.equal((await run(f.request("finalize-open"))).error.code, "designer_skill_reload_timeout");
+    const pending = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.equal(pending.reloadPending, true);
+    assert.equal(pending.skillsReloaded, false);
+    assert.equal((await run(f.request("finalize-open"))).error.code, "designer_skill_reload_timeout");
+    assert.equal((await run(f.request("install"))).error.code, "designer_skill_reload_pending");
+    assert.equal(reloads, 1);
+    assert.deepEqual(f.calls, ["install"]);
+    complete({ errors: [], warnings: ["Late reload warning"] });
+    const opened = await run(f.request("finalize-open"));
+    assert.equal(opened.status, "shell-opened");
+    assert.equal(opened.warningCount, 2);
+    assert.equal(reloads, 1);
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.equal(record.skillsReloaded, true);
+    assert.equal(Object.hasOwn(record, "reloadPending"), false);
+    assert.deepEqual(record.reload, { errors: [], warnings: ["Late reload warning"] });
+});
+
+test("a restarted provider cannot repeat or reset an unknown reload", async (t) => {
+    const f = await fixture(t);
+    let complete, reloads = 0;
+    const run = createDesignerBootstrap({ ...f.deps, nativeTimeoutMs: 50,
+        reloadSkills: () => {
+            reloads++;
+            return new Promise((resolve) => { complete = resolve; });
+        },
+    });
+    await run(f.request("install"));
+    assert.equal((await run(f.request("finalize-open"))).error.code, "designer_skill_reload_timeout");
+    const restarted = createDesignerBootstrap({ ...f.deps, reloadSkills: async () => {
+        reloads++;
+        return { errors: [], warnings: [] };
+    } });
+    assert.equal((await restarted(f.request("finalize-open"))).error.code, "designer_skill_reload_unknown");
+    assert.equal((await restarted(f.request("install"))).error.code, "designer_skill_reload_pending");
+    assert.equal(reloads, 1);
+    assert.deepEqual(f.calls, ["install"]);
+    assert.equal((await readBootstrapRecord(f.context.root, f.handoff.handoffId)).reloadPending, true);
+    complete({ errors: [], warnings: [] });
+    assert.equal((await run(f.request("finalize-open"))).status, "shell-opened");
+    assert.equal(reloads, 1);
+});
+
+test("late reload rejection is surfaced and permits a fresh explicit retry", async (t) => {
+    const f = await fixture(t);
+    let rejectReload, reloads = 0;
+    const run = createDesignerBootstrap({ ...f.deps, nativeTimeoutMs: 50,
+        reloadSkills: () => ++reloads === 1
+            ? new Promise((_, reject) => { rejectReload = reject; })
+            : Promise.resolve({ errors: [], warnings: [] }),
+    });
+    await run(f.request("install"));
+    assert.equal((await run(f.request("finalize-open"))).error.code, "designer_skill_reload_timeout");
+    rejectReload(new Error("Late host RPC failure"));
+    const failure = await run(f.request("finalize-open"));
+    assert.equal(failure.status, "failure");
+    assert.match(failure.error.message, /Late host RPC failure/);
+    assert.deepEqual(f.calls, ["install"]);
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.equal(record.skillsReloaded, false);
+    assert.equal(Object.hasOwn(record, "reloadPending"), false);
+    assert.equal((await run(f.request("finalize-open"))).status, "shell-opened");
+    assert.equal(reloads, 2);
+});
+
+test("pending reload records require an installed, not-yet-reloaded stage", async (t) => {
+    const f = await fixture(t);
+    await f.run(f.request("install"));
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.doesNotThrow(() => validateBootstrapRecord(record, f.reference));
+    assert.doesNotThrow(() => validateBootstrapRecord({ ...record, reloadPending: true }, f.reference));
+    for (const invalid of [
+        { ...record, reloadPending: "true" },
+        { ...record, reloadPending: false },
+        { ...record, reloadPending: true, install: undefined },
+        { ...record, reloadPending: true, skillsReloaded: true,
+            reload: { errors: [], warnings: [] } },
+    ]) {
+        assert.throws(() => validateBootstrapRecord(invalid, f.reference),
+            { code: "designer_bootstrap_record_invalid" });
+    }
 });
 
 test("secondary logging failures cannot mask bootstrap failures or block retries", async (t) => {

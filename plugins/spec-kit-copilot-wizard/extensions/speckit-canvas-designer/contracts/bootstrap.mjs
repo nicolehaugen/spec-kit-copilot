@@ -98,7 +98,9 @@ export function validateBootstrapRecord(record, reference) {
     if (!record || record.schemaVersion !== 1 || !isDeepStrictEqual(record.launchRef, reference)
         || typeof record.skillsReloaded !== "boolean" || typeof record.opening !== "boolean"
         || Object.keys(record).some((name) => !["schemaVersion", "launchRef", "skillsReloaded",
-            "opening", "install", "reload", "finalize", "nativeResult", "openSnapshot", "error"].includes(name))
+            "opening", "install", "reload", "reloadPending", "finalize", "nativeResult", "openSnapshot", "error"].includes(name))
+        || (Object.hasOwn(record, "reloadPending") && record.reloadPending !== true)
+        || (record.reloadPending && (!record.install || record.skillsReloaded))
         || (record.skillsReloaded && (!record.install
             || !Array.isArray(record.reload?.errors) || record.reload.errors.length
             || !Array.isArray(record.reload?.warnings)
@@ -128,7 +130,8 @@ export async function bootstrapSessionContext(session, invocation) {
         || (invocation && invocation.sessionId !== metadata.sessionId)
         || !isAbsolute(metadata.workingDirectory ?? "")
         || !isAbsolute(session.workspacePath ?? "")
-        || metadata.workspacePath !== session.workspacePath) {
+        || metadata.workspacePath !== session.workspacePath
+        || metadata.workingDirectory === session.workspacePath) {
         throw new BootstrapError("designer_session_metadata_invalid",
             "Designer checkout and session-state root are unavailable or conflicting in native session metadata.");
     }

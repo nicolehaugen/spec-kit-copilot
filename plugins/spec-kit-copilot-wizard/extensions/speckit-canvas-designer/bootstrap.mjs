@@ -38,6 +38,7 @@ export function createDesignerBootstrap({
     install = installSetup, finalize = finalizeSetup, nativeTimeoutMs = 120000,
 }) {
     const active = new Set();
+    const pendingReloads = new Map();
     return async (request, invocation) => {
         let context, record, reference, key;
         let stage = "request";
@@ -64,6 +65,10 @@ export function createDesignerBootstrap({
             else record = { schemaVersion: 1, launchRef: reference, skillsReloaded: false, opening: false };
             const save = () => writeBootstrapRecord(context.root, reference.handoffId, record);
             if (stage === "install") {
+                if (record.reloadPending) {
+                    throw new BootstrapError("designer_skill_reload_pending",
+                        "A previous skill reload may still be running; use finalize-open to reconcile it or start a new launch.");
+                }
                 if (record.opening || record.nativeResult) {
                     throw new BootstrapError("designer_already_opened", "Designer opening already began; use finalize-open to reconcile it or start a new launch.");
                 }
@@ -83,7 +88,28 @@ export function createDesignerBootstrap({
             }
             await requireSetupRecord(context.root, reference.handoffId, reference.sha256);
             if (!record.skillsReloaded) {
-                record.reload = await bounded(() => reloadSkills(), nativeTimeoutMs, "designer_skill_reload_timeout");
+                let pending = pendingReloads.get(key);
+                if (record.reloadPending && !pending) {
+                    throw new BootstrapError("designer_skill_reload_unknown",
+                        "The previous skill reload outcome is unknown after a provider restart. Start a new Designer launch; bootstrap will not reload twice.");
+                }
+                if (!pending) {
+                    record.reloadPending = true;
+                    await save();
+                    pending = Promise.resolve().then(() => reloadSkills());
+                    pendingReloads.set(key, pending);
+                }
+                try {
+                    record.reload = await bounded(() => pending, nativeTimeoutMs, "designer_skill_reload_timeout");
+                } catch (error) {
+                    if (!(error instanceof BootstrapError && error.code === "designer_skill_reload_timeout")) {
+                        delete record.reloadPending;
+                        pendingReloads.delete(key);
+                    }
+                    throw error;
+                }
+                delete record.reloadPending;
+                pendingReloads.delete(key);
                 if (!Array.isArray(record.reload?.errors) || !Array.isArray(record.reload?.warnings)
                     || [...record.reload.errors, ...record.reload.warnings].some((message) => typeof message !== "string")
                     || record.reload.errors.length) {

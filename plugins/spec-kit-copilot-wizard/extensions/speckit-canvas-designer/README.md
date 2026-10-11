@@ -69,7 +69,8 @@ open input. Native invocation, canvas snapshots, session metadata, and skill
 reload must be available. The package must include `scripts/verify-launch.mjs`,
 run with external `node` rather than the embedded Copilot host executable;
 missing capabilities or verifier are explicit failures, with no legacy manual
-resolution/open fallback.
+resolution/open fallback. Native session metadata must identify distinct checkout
+and session-state roots; identical paths fail before handoff staging writes files.
 
 **Trust boundary and installation approval.** Bootstrap assumes a trusted local
 agent acting on behalf of the machine's user. In the Designer launch dialog,
@@ -96,7 +97,14 @@ Full stage/native results remain beside the child `handoff.json` in
 `bootstrap.json`, bounded to 16 MiB to retain complete maximum-sized Unicode
 inventories. Bootstrap retains the host's full reload diagnostics, including
 failed reloads, before validation; these failures stop finalization and remain
-retryable. Failed session logging falls back to stderr without replacing the
+retryable. Before dispatching a skill reload, bootstrap persists the optional
+`reloadPending: true` guard. A timeout does not cancel the RPC: an explicit
+`finalize-open` retry in the same provider awaits that retained RPC and records its
+result rather than dispatching another. A completed reload failure clears the
+guard and permits another explicit retry. After a provider restart, a pending
+guard without the retained RPC reports an unknown outcome and requires a new
+Designer launch; reinstalling cannot reset that guard. Records without the guard
+remain valid. Failed session logging falls back to stderr without replacing the
 original failure result. Model-facing results contain status, warning count, timings, and
 diagnostic path, not pages/templates. Native tool display text can be truncated
 by the host; success is verified against the complete `canvas.listOpen()` snapshot,
