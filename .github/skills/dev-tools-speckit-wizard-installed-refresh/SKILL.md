@@ -65,7 +65,7 @@ preview, write to the main checkout, or modify personal skill copies.
    Check explicit `SPECKIT_CONFIG_FILE` selection in children rather than assuming
    environment inheritance; prefer the default user-level file for desktop.
    If an open was requested, invoke `dev-tools-speckit-wizard-installed-open`, forwarding
-   an explicit Generate request only when requested. Do not launch Designer
+   any explicit Generate disable request; its default is enabled. Do not launch Designer
    or run phases. Compare final Git status with the starting state.
    Never print loopback tokens or claim child setup succeeded from opening Wizard.
 

@@ -113,6 +113,7 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
     writeCache = writeEvidenceCache }) {
     const inst = getInstance();
     if (!inst?.workspacePath) return jsonError(res, 400, "workspace path unavailable");
+    const inference = inst.outputInference;
     const rejectOutput = (key, status, message) => {
         if (inst.outputInference?.pending.has(commandId(key))) failOutputInference(inst);
         return jsonError(res, status, message);
@@ -191,16 +192,15 @@ export async function handleArtifactTargets(res, body, { broadcast, getInstance,
         if (inst.outputInference?.status === "updating") failOutputInference(inst);
         return jsonError(res, 500, `write failed: ${err?.message ?? err}`);
     }
-    for (const [key, entry] of Object.entries(cleaned)) {
-        const id = commandId(key);
-        if (entry.outputEvidence && inst.outputInference?.pending.get(id) === entry.outputEvidence.fingerprint) {
-            inst.outputInference.pending.delete(id);
+    if (inference && inst.outputInference === inference) {
+        for (const [key, entry] of Object.entries(cleaned)) {
+            if (entry.outputEvidence) inference.pending.delete(commandId(key));
         }
-    }
-    if (inst.outputInference && !inst.outputInference.pending.size) {
-        clearTimeout(inst.outputInference.timer);
-        inst.outputInference = null;
-        finishRefreshPart(inst, "outputs");
+        if (!inference.pending.size) {
+            clearTimeout(inference.timer);
+            inst.outputInference = null;
+            finishRefreshPart(inst, "outputs");
+        }
     }
 
     const added = Object.keys(cleaned).length;

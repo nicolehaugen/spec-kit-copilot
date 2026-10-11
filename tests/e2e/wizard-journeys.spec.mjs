@@ -470,7 +470,7 @@ test("phase can be rerun while the first agent turn is unanswered", async ({ pag
     });
 });
 
-test("failed composition inference exposes retry and starts a new refresh", async ({ page }) => {
+test("failed composition inference exposes retry and starts a new refresh", async ({ page }, testInfo) => {
     let attempts = 0;
     await withWizardCheckout(page, async ({ root, inst, prompts }) => {
         await cp(presetPath, join(root, ".specify", "presets", preset.id), { recursive: true });
@@ -486,7 +486,26 @@ test("failed composition inference exposes retry and starts a new refresh", asyn
         await page.locator('#setup-stepper .step[data-substep="composition"]').click();
         const refresh = page.getByRole("button", { name: "Refresh composition" });
         await refresh.click();
-        await expect(page.locator("#comp-meta-text")).toContainText("Refresh incomplete");
+        await expect(page.locator("#comp-meta-text")).toHaveText("Update incomplete");
+        const status = page.locator("#comp-meta");
+        await expect(status).toHaveAttribute("role", "status");
+        await expect(status).toHaveAttribute("aria-live", "polite");
+        await expect(status.locator("button")).toHaveCount(0);
+        for (const [width, theme] of [[1280, "light"], [480, "dark"]]) {
+            await page.setViewportSize({ width, height: 720 });
+            await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+            const buttonBox = await refresh.boundingBox();
+            const statusBox = await status.boundingBox();
+            expect(buttonBox).toBeTruthy();
+            expect(statusBox).toBeTruthy();
+            expect(statusBox.y).toBeGreaterThanOrEqual(buttonBox.y + buttonBox.height);
+            const color = (locator) => locator.evaluate((el) => getComputedStyle(el).color);
+            expect(await color(refresh)).not.toBe(await color(status));
+            await expect(refresh).toBeEnabled();
+            await page.locator('.setup-substep-panel[data-substep="composition"] .panel-header').screenshot({
+                path: testInfo.outputPath(`refresh-status-${width}-${theme}.png`),
+            });
+        }
         const failedId = inst.refreshStatus.id;
         await refresh.click();
         await expect.poll(() => inst.refreshStatus.id).not.toBe(failedId);
@@ -602,12 +621,12 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
         await expect(refresh).toBeVisible();
         await refresh.click();
         await expect(refresh).toHaveAttribute("aria-busy", "true");
-        await expect(progress).toContainText("Refreshing");
+        await expect(progress).toHaveText("Updating…");
         await expect.poll(() => prompts.length).toBe(1);
         expect(prompts[0]).toContain(review);
         expect([...inst.outputInference.pending]).toEqual([[review, source.fingerprint]]);
         await page.getByRole("tab", { name: "Phases" }).click();
-        await expect(page.locator("#pipeline-banner")).toContainText("Refreshing pipeline");
+        await expect(page.locator("#pipeline-banner")).toContainText("Updating pipeline and output details");
         await page.locator("#stepper .step").filter({ hasText: /review/i }).click();
         await expect(page.locator("#phase-card")).toContainText("Updating outputs");
         await page.locator('#more-commands [data-command-id="converge"]').click();
@@ -624,7 +643,7 @@ test("refresh keeps Composition and Phases pending until pipeline and output evi
             },
         } });
         expect(result.inferredPipelineStatus.accepted).toBe(true);
-        await expect(progress).toContainText("Refreshing");
+        await expect(progress).toHaveText("Updating…");
         await expect(refresh).toHaveAttribute("aria-busy", "true");
         const evidence = {
             fingerprint: source.fingerprint, primaryIndex: 0,

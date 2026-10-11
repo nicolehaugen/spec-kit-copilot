@@ -240,11 +240,11 @@ test("Composition leaves the Refresh button as the only idle label without hidin
         }
         state.snapshot = { refreshStatus: "refreshing" };
         renderCompositionProgress();
-        assert.equal(label.textContent, "Refreshing…");
+        assert.equal(label.textContent, "Updating…");
         assert.equal(meta.dataset.progress, "updating");
         state.snapshot = { refreshStatus: "incomplete" };
         renderCompositionProgress();
-        assert.equal(label.textContent, "Refresh incomplete — retry");
+        assert.equal(label.textContent, "Update incomplete");
         assert.equal(meta.dataset.progress, "incomplete");
     } finally {
         state.snapshot = previousSnapshot;
@@ -275,7 +275,7 @@ test("Phases shows a prominent transient refresh status and persistent retry gui
         renderPipelineBanner();
         assert.match(banner.innerHTML, /role="status" aria-live="polite" data-progress="updating"/);
         assert.match(banner.innerHTML, /pipeline-refresh-spinner" aria-hidden="true"/);
-        assert.match(banner.innerHTML, /Refreshing pipeline from installed presets and extensions/);
+        assert.match(banner.innerHTML, /Updating pipeline and output details…/);
         assert.match(banner.innerHTML, /<\/header>\s*<div class="pipeline-refresh-status"/);
 
         state.snapshot.refreshStatus = "up-to-date";

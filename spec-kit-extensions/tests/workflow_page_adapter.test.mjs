@@ -33,6 +33,28 @@ test("stock adapter owns setup, constitution, values, phase and contributed mark
     assert.doesNotMatch(root.innerHTML, /data-badge-slot="workflow.summary"/);
     assert.match(root.innerHTML, /&lt;unsafe&gt;|&lt;script&gt;/);
     assert.doesNotMatch(root.innerHTML, /<script>/);
+    assert.ok(root.innerHTML.indexOf('id="instance-collection"')
+        < root.innerHTML.indexOf('class="workflow-workspace"'));
+    assert.ok(root.innerHTML.indexOf('class="workflow-workspace"')
+        < root.innerHTML.indexOf('class="project-foundation"'));
+    assert.ok(root.innerHTML.indexOf('<h2>Project foundation</h2>')
+        < root.innerHTML.indexOf('id="constitution-card"'));
+    assert.ok(root.innerHTML.indexOf('id="constitution-card"')
+        < root.innerHTML.indexOf('id="selected-workflow-heading"'));
+    assert.match(root.innerHTML, /class="workflow-workspace">\s*<div class="project-foundation">\s*<h2>Project foundation<\/h2>/);
+    assert.ok(root.innerHTML.indexOf('id="selected-workflow-heading"')
+        < root.innerHTML.indexOf('id="workflow-pipeline"'));
+    assert.match(root.innerHTML, /id="selected-workflow-heading"[^>]* hidden/);
+});
+
+test("project foundation is omitted when Constitution is not configured", () => {
+    const root = { innerHTML: "" };
+    renderStockPage(root, { canvas: { displayName: "Demo", workflowListName: "Workflows" },
+        readOnlyFields: [], textPlacements: [], generatedControls: [],
+        hasConstitution: false, hasBadges: false, badgeDestinations: [], fieldSlots: [] });
+    assert.doesNotMatch(root.innerHTML, /project-foundation|constitution-card|constitution-dialog/);
+    assert.match(root.innerHTML, /class="workflow-workspace"/);
+    assert.match(root.innerHTML, /id="selected-workflow-heading"[^>]* hidden/);
 });
 
 test("Constitution output badge is in the visible actions area of the Workflow page", () => {
@@ -194,7 +216,8 @@ test("workflow identity survives rebuilding a selected row after evidence change
     const rows = new Element("div", "workflow-rows");
     for (const id of ["setup-surface", "workflow-search", "workflow-count", "new-workflow",
         "workflow-constitution-note", "workflow-pipeline", "workflow-list",
-        "workflow-empty", "workflow-search-field", "workflow-list-status"]) {
+        "workflow-empty", "workflow-search-field", "workflow-list-status",
+        "selected-workflow-heading"]) {
         root.append(new Element("div", id));
     }
     root.append(rows, identity);
@@ -221,6 +244,8 @@ test("workflow identity survives rebuilding a selected row after evidence change
         slugError: "", pendingLabel: () => null,
     });
     update({});
+    assert.equal(root.querySelector("#selected-workflow-heading").hidden, false);
+    assert.equal(root.querySelector("#selected-workflow-heading").textContent, "Selected workflow: Draft");
     assert.equal(identity.parentElement, rows.children[0]);
     assert.equal(root.querySelector("#workflow-slug").closest(".field").hidden, false);
     update({ draft: [{ text: "Ready", color: "amber", showIn: ["workflow-list"] }] });
@@ -231,9 +256,18 @@ test("workflow identity survives rebuilding a selected row after evidence change
         items: [{ id: "saved", label: "Saved", slug: "saved", pending: false }],
     }, phaseState: {}, inputPending: false, pendingLabel: () => null });
     assert.equal(identity.hidden, true);
+    assert.equal(root.querySelector("#selected-workflow-heading").textContent, "Selected workflow: Saved");
+    page.update({ model: { ...model({}), selected: "missing" },
+        phaseState: {}, inputPending: false, pendingLabel: () => null });
+    assert.equal(root.querySelector("#selected-workflow-heading").hidden, true);
+    assert.equal(root.querySelector("#selected-workflow-heading").textContent, "");
     update({});
     assert.equal(identity.hidden, false);
     assert.equal(identity.parentElement, rows.children[0]);
+    assert.equal(root.querySelector("#selected-workflow-heading").textContent, "Selected workflow: Draft");
+    page.update({ model: { ...model({}), phases: [] },
+        phaseState: {}, inputPending: false, pendingLabel: () => null });
+    assert.equal(root.querySelector("#selected-workflow-heading").hidden, true);
     page.dispose();
 });
 

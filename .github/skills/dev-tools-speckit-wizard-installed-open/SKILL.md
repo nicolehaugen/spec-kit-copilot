@@ -1,7 +1,7 @@
 ---
 name: dev-tools-speckit-wizard-installed-open
-description: 'Open or focus the installed Spec Kit Wizard for the current worktree, using configured Generate defaults unless explicitly requested. USE FOR: installed Wizard opening and Designer launch testing. DO NOT USE FOR: refreshing, configuring, sample/session previews, launching Designer, or running phases.'
-argument-hint: '[canvas instance ID] [enable Generate]'
+description: 'Open or focus the installed Spec Kit Wizard for the current worktree with Generate enabled by default. USE FOR: installed Wizard opening and Designer launch testing. DO NOT USE FOR: refreshing, configuring, sample/session previews, launching Designer, or running phases.'
+argument-hint: '[canvas instance ID] [disable Generate]'
 ---
 
 # Open the installed Spec Kit Wizard
@@ -38,19 +38,18 @@ plugin/providers; it never copies code or changes runtime configuration.
    and boolean `generateCanvas`. Reject incompatible installed versions.
 4. Call `open_canvas` with the same IDs and
    `instanceId: "wizard-installed-worktree"` (or supplied ID).
-   For an ordinary initial open pass `{ "cwd": "<absolute worktree>" }`;
-   omit `generateCanvas` so runtime `generateCanvasEnabled` is used.
-   For an **explicit Generate request** pass the same `cwd` and
-   `"generateCanvas": true`. Focus-only reopening omits the flag and
-   preserves existing instance state; it does not reset to defaults.
+   By default, enable Generate on both initial opens and reopens: pass
+   `{ "cwd": "<absolute worktree>", "generateCanvas": true }`.
+   Do not omit the flag or preserve a previously disabled instance by default.
+   If the user explicitly requests Generate disabled, pass the same `cwd` and
+   `"generateCanvas": false` instead. This is a per-instance override;
+   do not change runtime configuration or `generateCanvasEnabled`.
    Confirm the exact returned provider and requested workspace. Read the mounted
    Wizard's existing read-only `/api/state` snapshot, and verify
-   `featureFlags.generateCanvas` agrees with the explicit request or preserved
-   state. Do not require a new configuration-summary payload or assume echoed
+   `featureFlags.generateCanvas` is `true` by default, or `false` for an explicit
+   disable request. Do not require a new configuration-summary payload or assume echoed
    open input proves the effective flag. Keep authentication/loopback tokens
    private; never print token-bearing URLs.
-   A fresh ordinary open should agree with effective runtime configuration;
-   do not infer a reopened instance's flag from configuration alone.
    Report mismatches rather than success; never launch Designer or submit Generate.
 
 Opening does not refresh code. Use `dev-tools-speckit-wizard-installed-refresh` explicitly

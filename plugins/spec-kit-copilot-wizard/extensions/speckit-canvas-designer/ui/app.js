@@ -450,7 +450,7 @@ function renderPage(pageId, invalidFieldId) {
             openGenerated);
         const share = element("section", undefined, "generate-step generate-share");
         share.setAttribute("aria-labelledby", "generate-share-title");
-        const shareTitle = element("h2", "Share · Optional");
+        const shareTitle = element("h2", "Share");
         shareTitle.id = "generate-share-title";
         shareTitle.prepend(element("span", "3", "step-index"));
         shareTitle.firstChild.setAttribute("aria-hidden", "true");
