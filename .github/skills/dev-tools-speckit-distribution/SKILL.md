@@ -61,12 +61,29 @@ No automatic workflow mutation or second packaging pipeline.
    Specify consumer operations; do not rewrite those skills as publishers.
    Catalogs need `--install-allowed` to permit installation; reconcile existing
    registrations explicitly rather than blindly adding duplicates.
-2. Activate corresponding runtime settings explicitly with preview/confirmation
-   and provider reload/restart. Use a single active installed provider pair;
-   `dev-tools-speckit-wizard-installed-open` can explicitly enable Generate.
-   Check actual installed provider versions/provenance and both persisted
-   disabled entries. Do **not** use installed-refresh to verify a published path.
-3. Use no local-source overrides. Retrieve the **published archives selected by
+2. Configure corresponding runtime settings explicitly with preview/confirmation
+   using `node dev-tools\configure-runtime.mjs`; require its matching preview
+   digest before apply and retain backups. Installation/enabling alone does not
+   activate the providers. Do **not** use installed-refresh to verify a published path.
+3. **Required install step: activate both installed providers.** Read
+   `.github\skills\dev-tools-speckit-wizard-installed-open\references\provider-state.md`
+   and execute its complete **Activation** procedure without opening a canvas.
+   Inspect both exact IDs and match their common installed root and provenance
+   to the intended installation. Back up settings and remove only their two
+   exact IDs from `extensions.disabledExtensions`, preserving all other entries.
+   Use the reference's `node dev-tools\clear-provider-disables.mjs` preview and
+   confirmed digest/apply procedure, not a manual settings edit.
+   Reload and require both running; clear persisted settings with live disabled
+   state requires a new session/restart and stops this install journey.
+4. **Require Designer reload-skills availability before launch.** Discover the
+   callable `speckit_designer_reload_skills` tool; stop if unavailable. Only after
+   activation and tool discovery may an explicitly requested Wizard-to-Designer
+   journey proceed. Use `dev-tools-speckit-wizard-installed-open` to open Wizard,
+   forwarding an explicit Generate request only when requested. Require the
+   tool again in the actual Designer child before setup and require success at
+   its post-install reload step. Do not invoke it prematurely, assume child
+   inheritance, or substitute plain-text `/skills reload`.
+5. Use no local-source overrides. Retrieve the **published archives selected by
    the catalogs**, compare actual versions/content/contracts, and verify child
    Canvas Design and vertical-control installations, resolved contributions,
    Designer and generated output. Report unavailable/incompatible hosted packages
