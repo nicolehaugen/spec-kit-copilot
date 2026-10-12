@@ -1,6 +1,6 @@
 # Copilot Vertical Phase Control
 
-This Specify preset replaces the generated Canvas Design Workflow page's phase
+Version **1.0.1** of this Specify preset replaces the generated Canvas Design Workflow page's phase
 adapter with a vertical, numbered step list and a Copilot Autopilot action.
 The Wizard and Designer do not gain a new appearance setting: select this preset
 alongside `extension-canvas-design` before Generate. The generated app packages

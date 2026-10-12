@@ -3,7 +3,7 @@ schema_version: "1.0"
 preset:
   id: "copilot-vertical-phase-control"
   name: "Copilot Vertical Phase Control"
-  version: "1.0.0"
+  version: "1.0.1"
   description: "Copilot Autopilot and a vertical phase list for the generated Canvas Design Workflow page."
   author: "spec-kit-copilot"
   license: "MIT"

@@ -10,7 +10,7 @@ continue to govern host operations, persistence, transport, and integrity.
 
 ## What It Does
 
-Canvas Design **0.1.20** registers four JSON page templates, fifteen ordered
+Canvas Design **0.1.21** registers four JSON page templates, fifteen ordered
 stock field templates, reusable text and checkbox definitions with Designer
 adapters, a shared image definition with paired adapters, and a source-owned
 Workflow page definition, phase control definition with its required placement,
@@ -537,7 +537,7 @@ specify extension add extension-canvas-design
 For a one-off installation without registering the catalog, use the release ZIP:
 
 ```powershell
-specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.20/extension-canvas-design.zip
+specify extension add extension-canvas-design --from https://github.com/nicolehaugen/spec-kit-copilot/releases/download/extension-canvas-design-v0.1.21/extension-canvas-design.zip
 ```
 
 The ZIP must be published before either installation method can succeed.
