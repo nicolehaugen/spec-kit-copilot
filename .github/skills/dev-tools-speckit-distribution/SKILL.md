@@ -21,13 +21,17 @@ No automatic workflow mutation or second packaging pipeline.
    Only with explicit approval repeat with `--apply --expect "<preview digest>"`.
    Preserve sibling dated backups. Re-preview conflicts; never force overwrite.
    The helper preserves IDs, versions, requirements, custom/unrelated metadata
-   and catalog entries, deriving only Canvas Design and vertical-control links
-   plus catalog self URLs and marketplace display metadata. It refuses
-   manifest/catalog version conflicts; reconcile only through an authorized edit.
+   and catalog entries, deriving Canvas Design and vertical-control links,
+   catalog self URLs, marketplace display metadata, and the plugin's packaged
+   Copilot catalog URLs/registration name from the same selected distribution.
+   Default/community catalogs and the Generate flag are preserved. It refuses
+   manifest/catalog version conflicts and invalid packaged settings; reconcile
+   only through an authorized edit.
 3. Review Git diff and validate the selected manifests/catalogs. Update related
    documentation manually if authorized. Print commands, do not execute them
    as part of prepare. Preparation does not make remote metadata available and
-   does not change runtime settings, commit, push, tag, publish, or bump versions.
+   does not change personal runtime overrides, reload providers, commit, push,
+   tag, publish, or bump versions.
 
 ## Release (explicit authorization required)
 
@@ -61,8 +65,11 @@ No automatic workflow mutation or second packaging pipeline.
    Specify consumer operations; do not rewrite those skills as publishers.
    Catalogs need `--install-allowed` to permit installation; reconcile existing
    registrations explicitly rather than blindly adding duplicates.
-2. Activate corresponding runtime settings explicitly with preview/confirmation
-   and provider reload/restart. Use a single active installed provider pair;
+2. Verify a fresh installed plugin uses the prepared packaged catalog defaults
+   without a personal catalog override. Reconcile existing overrides explicitly
+   with preview/confirmation; never overwrite them as part of installation.
+   Reload/restart after provider or settings changes. Use a single active
+   installed provider pair;
    `dev-tools-speckit-wizard-installed-open` enables Generate by default.
    Check actual installed provider versions/provenance and both persisted
    disabled entries. Do **not** use installed-refresh to verify a published path.

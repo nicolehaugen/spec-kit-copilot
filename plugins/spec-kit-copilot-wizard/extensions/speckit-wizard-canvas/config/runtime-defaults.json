@@ -1,8 +1,8 @@
 {
   "catalogs": {
     "copilot": {
-      "presets": "https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-presets/catalog.json",
-      "extensions": "https://raw.githubusercontent.com/github/spec-kit-copilot/main/spec-kit-extensions/catalog.json"
+      "presets": "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-presets/catalog.json",
+      "extensions": "https://raw.githubusercontent.com/nicolehaugen/spec-kit-copilot/staging-canvas/spec-kit-extensions/catalog.json"
     },
     "default": {
       "presets": "https://raw.githubusercontent.com/github/spec-kit/main/presets/catalog.json",
@@ -15,6 +15,6 @@
       "bundles": "https://raw.githubusercontent.com/github/spec-kit/main/bundles/catalog.community.json"
     }
   },
-  "copilotCatalogName": "spec-kit-copilot",
+  "copilotCatalogName": "spec-kit-staging",
   "generateCanvasEnabled": false
 }

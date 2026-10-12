@@ -27,6 +27,10 @@ export async function distributionFixture(t) {
     ['spec-kit-presets', 'catalog.json'],
     ['spec-kit-extensions', 'extension-canvas-design', 'extension.yml'],
     ['spec-kit-presets', 'copilot-vertical-phase-control', 'preset.yml'],
+    ['plugins', 'spec-kit-copilot-wizard', 'extensions', 'speckit-wizard-canvas', 'config', 'runtime-defaults.json'],
+    ['plugins', 'spec-kit-copilot-wizard', 'extensions', 'speckit-wizard-canvas', 'env', 'runtime-config.mjs'],
+    ['plugins', 'spec-kit-copilot-wizard', 'extensions', 'speckit-wizard-canvas', 'env', 'runtime-settings.mjs'],
+    ['plugins', 'spec-kit-copilot-wizard', 'extensions', 'speckit-wizard-canvas', 'catalog', 'sources.mjs'],
   ]) {
     await write(resolve(root, ...path), await readFile(resolve(repositoryRoot, ...path), 'utf8'));
   }

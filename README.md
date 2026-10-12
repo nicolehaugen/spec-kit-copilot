@@ -12,10 +12,11 @@ Copilot experience around it.
 
 ## Local Wizard configuration and distribution
 
-Runtime settings and distribution metadata are separate. Runtime settings select
-catalogs and the initial Generate flag without reinstalling provider code;
-marketplace/catalog distribution preparation changes local install metadata,
-not the configuration of a running Wizard.
+Distribution preparation aligns marketplace/catalog metadata with the plugin's
+packaged Copilot catalog defaults. Personal runtime settings can override those
+defaults and the initial Generate flag without reinstalling provider code.
+Preparing source files does not change personal overrides or the configuration
+of an already running Wizard.
 
 ### Runtime settings
 
@@ -55,6 +56,11 @@ shell's explicit selector is inherited by a child. Switching settings does not
 undo locally refreshed provider code; explicitly reinstall/update from the
 marketplace to restore published code.
 
+A newly installed plugin uses its prepared distribution's packaged catalog URLs
+and registration name without requiring a personal settings file. An existing
+personal override or `SPECKIT_CONFIG_FILE` still takes precedence; distribution
+preparation does not rewrite it.
+
 ### Project development skills
 
 Canonical repository skills live in `.github\skills`, not the shipping core
@@ -84,10 +90,11 @@ Personal skills remain untouched. Run `/skills reload` and verify project discov
 
 ### Distribution and releases
 
-Distribution configuration requires `copilotCatalogName` for the printed
-extension/preset registration commands. Set it to the same registration name
-as the runtime settings used for that distribution; preparation does not
-change runtime settings or migrate existing registrations.
+Distribution configuration requires `copilotCatalogName` for both the printed
+extension/preset registration commands and the plugin's packaged registration
+default. Preparation aligns the packaged Copilot catalog URLs with the selected
+repository/ref, but does not change personal runtime overrides or migrate existing
+registrations.
 
 Metadata changes are staged before application. If an apply fails, earlier
 writes are rolled back and the error lists retained backups. A rollback conflict
@@ -111,12 +118,18 @@ node --test tests\dev-tools\*.test.mjs
 
 Configuration declares GitHub repository, catalog ref and marketplace display
 metadata. Preparation derives catalog, documentation, installation and exact
-versioned ZIP links. It changes only marketplace display fields, catalog self URLs,
-and Canvas Design/vertical-control URL fields, preserving unrelated entries,
-formatting, IDs, versions and requirements. Manifest/catalog version conflicts or
-changed preview inputs stop the operation; overwritten files receive backups.
+versioned ZIP links. It updates marketplace display fields, catalog self URLs,
+Canvas Design/vertical-control URL fields, and the packaged
+`catalogs.copilot.presets`, `catalogs.copilot.extensions`, and `copilotCatalogName`
+in the Wizard's `config/runtime-defaults.json`. It preserves unrelated entries,
+formatting, IDs, versions, requirements, default/community catalog settings, and
+the Generate flag. Upstream, fork, and custom preparation use the same selected
+distribution for hosted metadata and packaged defaults. Manifest/catalog version
+conflicts, invalid packaged settings, or changed preview inputs stop the
+operation; overwritten files receive backups.
 Printed marketplace/Specify commands are **not executed**. Preparation does not
-publish catalogs, change workflows, commit, push, tag, or bump versions.
+write personal runtime overrides, reload providers, publish catalogs, change
+workflows, commit, push, tag, or bump versions.
 
 For an explicitly requested release, align only selected component versions and
 metadata/docs, validate, and commit/push only with authorization. Reuse the existing
@@ -126,8 +139,10 @@ Do not relocate unrelated upstream packages. Publish assets before promoting the
 served catalog/marketplace ref; publishing a ZIP does not update hosted catalogs.
 Never move an existing tag or replace a published ZIP for development testing.
 
-Hosted readiness requires the **actual published archives selected by the served
-catalogs**, installed without local-source overrides, and verified through
+Hosted readiness requires a freshly installed plugin to select the prepared
+catalogs without personal catalog overrides and verification using the
+**actual published archives selected by the served catalogs**. Packages must be
+installed without local-source overrides and exercised through
 Wizard/Designer/generated output. Local-source success is separate evidence;
 hosted incompatibility is a release-readiness concern, not a reason to routinely
 bump versions or publish development edits.

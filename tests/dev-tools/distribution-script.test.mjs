@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { chmod, mkdir, readFile, readdir, rename, stat, symlink, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import test from 'node:test';
 import { prepareDistribution, validateDistribution, manifestIdentity } from '../../dev-tools/prepare-distribution.mjs';
 import { applyChanges, fingerprint, patchJson } from '../../dev-tools/configuration-files.mjs';
@@ -13,22 +15,26 @@ const config = {
   marketplace: { name: 'fork-marketplace', ownerName: 'Fork Maintainer', description: 'Fork description' },
 };
 
-test('distribution preview/apply updates only owned metadata, preserves formatting, versions and unrelated entries', async t => {
+test('distribution preview/apply aligns owned metadata and packaged catalogs while preserving unrelated settings', async t => {
   const root = await distributionFixture(t);
   const marketplacePath = resolve(root, '.github', 'plugin', 'marketplace.json');
   const presetsPath = resolve(root, 'spec-kit-presets', 'catalog.json');
   const extensionsPath = resolve(root, 'spec-kit-extensions', 'catalog.json');
-  const original = await Promise.all([marketplacePath, presetsPath, extensionsPath].map(path => readFile(path, 'utf8')));
+  const defaultsPath = resolve(root, 'plugins', 'spec-kit-copilot-wizard', 'extensions',
+    'speckit-wizard-canvas', 'config', 'runtime-defaults.json');
+  const paths = [marketplacePath, presetsPath, extensionsPath, defaultsPath];
+  const original = await Promise.all(paths.map(path => readFile(path, 'utf8')));
   const preview = await prepareDistribution(config, {}, { repositoryRoot: root });
   assert.equal(preview.applied, false);
-  assert.deepEqual(await Promise.all([marketplacePath, presetsPath, extensionsPath].map(path => readFile(path, 'utf8'))), original);
+  assert.deepEqual(await Promise.all(paths.map(path => readFile(path, 'utf8'))), original);
+  assert.ok(preview.preview.includes(defaultsPath));
   assert.match(preview.commands[0], /\.git#feature\/catalogs/);
   for (const [index, kind] of [[4, 'extensions'], [5, 'presets']]) {
     assert.ok(preview.commands[index].includes(`catalog add ${preview.locators.catalogs[kind]} --name ${config.copilotCatalogName} --install-allowed`));
   }
   const applied = await prepareDistribution(config, { apply: true, expect: preview.expect }, { repositoryRoot: root });
-  assert.equal(applied.backups.length, 3);
-  for (let i = 0; i < original.length; i++) assert.equal(await readFile(applied.backups[i], 'utf8'), [original[0], original[2], original[1]][i]);
+  assert.equal(applied.backups.length, 4);
+  for (let i = 0; i < original.length; i++) assert.equal(await readFile(applied.backups[i], 'utf8'), [original[0], original[2], original[1], original[3]][i]);
   const marketplace = await readJson(marketplacePath);
   assert.deepEqual(marketplace.plugins, JSON.parse(original[0]).plugins);
   assert.equal(marketplace.metadata.version, JSON.parse(original[0]).metadata.version);
@@ -53,7 +59,70 @@ test('distribution preview/apply updates only owned metadata, preserves formatti
     }
     assert.equal(after.updated_at, before.updated_at);
   }
+  const beforeDefaults = JSON.parse(original[3]);
+  assert.deepEqual(await readJson(defaultsPath), {
+    ...beforeDefaults,
+    catalogs: { ...beforeDefaults.catalogs, copilot: {
+      ...beforeDefaults.catalogs.copilot,
+      presets: preview.locators.catalogs.presets,
+      extensions: preview.locators.catalogs.extensions,
+    } },
+    copilotCatalogName: config.copilotCatalogName,
+  });
+  const unrelatedDefaults = original[3].slice(original[3].indexOf('"default"'),
+    original[3].indexOf('"copilotCatalogName"'));
+  assert.ok((await readFile(defaultsPath, 'utf8')).includes(unrelatedDefaults));
   assert.equal((await prepareDistribution(config, {}, { repositoryRoot: root })).changed, false);
+});
+
+test('packaged defaults edits invalidate previews and remain intact until a fresh apply', async t => {
+  const root = await distributionFixture(t);
+  const context = { repositoryRoot: root };
+  const defaultsPath = resolve(root, 'plugins', 'spec-kit-copilot-wizard', 'extensions',
+    'speckit-wizard-canvas', 'config', 'runtime-defaults.json');
+  const marketplacePath = resolve(root, '.github', 'plugin', 'marketplace.json');
+  const originalMarketplace = await readFile(marketplacePath, 'utf8');
+  const preview = await prepareDistribution(config, {}, context);
+  const defaults = await readJson(defaultsPath);
+  defaults.generateCanvasEnabled = !defaults.generateCanvasEnabled;
+  defaults.catalogs.community.bundles = 'https://example.test/custom-community.json';
+  await write(defaultsPath, defaults);
+  await assert.rejects(prepareDistribution(config, { apply: true, expect: preview.expect }, context), /Conflict/);
+  assert.deepEqual(await readJson(defaultsPath), defaults);
+  assert.equal(await readFile(marketplacePath, 'utf8'), originalMarketplace);
+  const fresh = await prepareDistribution(config, {}, context);
+  await prepareDistribution(config, { apply: true, expect: fresh.expect }, context);
+  const applied = await readJson(defaultsPath);
+  assert.equal(applied.generateCanvasEnabled, defaults.generateCanvasEnabled);
+  assert.deepEqual(applied.catalogs.community, defaults.catalogs.community);
+});
+
+test('incompatible packaged defaults are rejected before any distribution files are written', async t => {
+  const root = await distributionFixture(t);
+  const context = { repositoryRoot: root };
+  const defaultsPath = resolve(root, 'plugins', 'spec-kit-copilot-wizard', 'extensions',
+    'speckit-wizard-canvas', 'config', 'runtime-defaults.json');
+  const marketplacePath = resolve(root, '.github', 'plugin', 'marketplace.json');
+  const originalMarketplace = await readFile(marketplacePath, 'utf8');
+  const originalDefaults = await readJson(defaultsPath);
+  const preview = await prepareDistribution(config, {}, context);
+  for (const invalid of [
+    { ...originalDefaults, generateCanvasEnabled: 'true' },
+    { ...originalDefaults, unknown: true },
+    { ...originalDefaults, catalogs: {
+      ...originalDefaults.catalogs,
+      community: { ...originalDefaults.catalogs.community, bundles: 'http://example.test/community.json' },
+    } },
+    { ...originalDefaults, catalogs: {
+      ...originalDefaults.catalogs, copilot: { extensions: originalDefaults.catalogs.copilot.extensions },
+    } },
+  ]) {
+    await write(defaultsPath, invalid);
+    await assert.rejects(prepareDistribution(config, { apply: true, expect: preview.expect }, context),
+      /boolean|Unknown|HTTPS|missing/);
+    assert.deepEqual(await readJson(defaultsPath), invalid);
+    assert.equal(await readFile(marketplacePath, 'utf8'), originalMarketplace);
+  }
 });
 
 test('custom fields and changed inputs are preserved; stale apply and incompatible manifests are refused', async t => {
@@ -260,6 +329,43 @@ test('checked-in distribution examples preview without writes and become idempot
     assert.equal(result.applied, false);
     await prepareDistribution(selected, { apply: true, expect: result.expect }, { repositoryRoot: root });
     assert.equal((await prepareDistribution(selected, {}, { repositoryRoot: root })).changed, false);
+  }
+});
+
+test('fresh prepared providers select upstream, fork and custom catalogs without personal overrides', async t => {
+  const root = await distributionFixture(t);
+  const home = resolve(root, 'isolated-home');
+  await mkdir(home);
+  const provider = resolve(root, 'plugins', 'spec-kit-copilot-wizard', 'extensions', 'speckit-wizard-canvas');
+  const originalDefaults = await readJson(resolve(provider, 'config', 'runtime-defaults.json'));
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  delete env.SPECKIT_CONFIG_FILE;
+  const variants = [
+    await readJson(resolve(repositoryRoot, 'config', 'distribution.upstream.example.json')),
+    await readJson(resolve(repositoryRoot, 'config', 'distribution.fork.example.json')),
+    config,
+  ];
+  for (const selected of variants) {
+    const preview = await prepareDistribution(selected, {}, { repositoryRoot: root });
+    await prepareDistribution(selected, { apply: true, expect: preview.expect }, { repositoryRoot: root });
+    const code = `const s = await import('./catalog/sources.mjs');
+      const r = await import('./env/runtime-settings.mjs');
+      console.log(JSON.stringify({ presets: s.PRESET_CATALOG_URL.copilot,
+        extensions: s.EXTENSION_CATALOG_URL.copilot, ...r.runtimeConfig }));`;
+    const { stdout } = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', code], {
+      cwd: provider, env, timeout: 10000,
+    });
+    const actual = JSON.parse(stdout);
+    assert.equal(actual.path, null);
+    assert.equal(actual.presets, preview.locators.catalogs.presets);
+    assert.equal(actual.extensions, preview.locators.catalogs.extensions);
+    assert.equal(actual.settings.catalogs.copilot.presets, actual.presets);
+    assert.equal(actual.settings.catalogs.copilot.extensions, actual.extensions);
+    assert.equal(actual.settings.copilotCatalogName, selected.copilotCatalogName);
+    assert.equal(actual.settings.generateCanvasEnabled, originalDefaults.generateCanvasEnabled);
+    assert.deepEqual(actual.settings.catalogs.default, originalDefaults.catalogs.default);
+    assert.deepEqual(actual.settings.catalogs.community, originalDefaults.catalogs.community);
+    assert.deepEqual(await readdir(home), []);
   }
 });
 

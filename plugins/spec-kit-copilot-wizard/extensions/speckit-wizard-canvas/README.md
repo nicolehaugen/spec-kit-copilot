@@ -8,6 +8,12 @@ optional overrides in `~/.copilot/spec-kit/runtime-settings.json`. Set
 override instead. Explicit missing files, malformed JSON, unknown keys, and
 invalid values fail startup with an error rather than reverting to defaults.
 
+Distribution preparation writes the selected repository/ref's Copilot catalog
+URLs and registration name into the packaged defaults. A fresh plugin installation
+therefore discovers that distribution's presets and extensions without a personal
+override. Existing personal settings and explicit selectors retain precedence;
+they are not rewritten by distribution preparation.
+
 Overrides support `catalogs.copilot.presets/extensions`,
 `catalogs.default.presets/extensions/bundles`,
 `catalogs.community.presets/extensions/bundles`, `copilotCatalogName`, and
@@ -21,8 +27,9 @@ choice. Explicit selectors must also reach child processes when used there.
 Generate defaults off. A `generateCanvas: true` canvas open explicitly enables
 it for that instance; omitted input preserves the value on reopening. The
 server rejects disabled launch requests as well as hiding the UI button.
-Marketplace identity and release ZIP metadata are distribution configuration,
-not runtime settings. Existing handoffs retain their approved install URLs.
+Marketplace identity, release ZIP metadata, and packaged Copilot catalog defaults
+are aligned distribution configuration. Personal runtime overrides remain separate.
+Existing handoffs retain their approved install URLs.
 
 A **visual, guided wizard** that brings Spec-Driven Development into an
 interactive canvas — a showcase of both the [Spec Kit `specify`

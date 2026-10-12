@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateRuntimeSettings } from '../plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/env/runtime-config.mjs';
 import { applyChanges, fingerprint, parseArgs, patchJson, preview, readOptional } from './configuration-files.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -92,6 +93,16 @@ export async function prepareDistribution(config, options = {}, { repositoryRoot
     ]) });
     locators.catalogs[target.group] = catalogUrl;
   }
+  const defaultsPath = resolve(repositoryRoot, 'plugins', 'spec-kit-copilot-wizard', 'extensions',
+    'speckit-wizard-canvas', 'config', 'runtime-defaults.json');
+  const beforeDefaults = await required(defaultsPath);
+  const afterDefaults = patchJson(beforeDefaults, [
+    [['catalogs', 'copilot', 'presets'], locators.catalogs.presets],
+    [['catalogs', 'copilot', 'extensions'], locators.catalogs.extensions],
+    [['copilotCatalogName'], config.copilotCatalogName],
+  ]);
+  validateRuntimeSettings(JSON.parse(afterDefaults));
+  changes.push({ path: defaultsPath, before: beforeDefaults, after: afterDefaults });
   const result = {
     preview: preview(changes), expect: fingerprint(changes),
     changed: changes.some(change => change.before !== change.after), applied: Boolean(options.apply),
@@ -104,7 +115,7 @@ export async function prepareDistribution(config, options = {}, { repositoryRoot
       `specify extension catalog add ${locators.catalogs.extensions} --name ${config.copilotCatalogName} --install-allowed`,
       `specify preset catalog add ${locators.catalogs.presets} --name ${config.copilotCatalogName} --install-allowed`,
     ],
-    notice: 'Only local marketplace and two catalog entries are prepared. Versions, requirements, unrelated packages and workflows are unchanged. Commands are NOT executed; commit, push, tags, releases and documentation updates are separate authorized operations.',
+    notice: 'Local marketplace, two catalog entries, and packaged Copilot catalog defaults are prepared. Personal runtime overrides, Generate/default/community settings, versions, requirements, unrelated packages and workflows are unchanged. Commands are NOT executed; commit, push, tags, releases and documentation updates are separate authorized operations.',
   };
   if (options.apply) result.backups = await applyChanges(changes, options.expect);
   return result;
