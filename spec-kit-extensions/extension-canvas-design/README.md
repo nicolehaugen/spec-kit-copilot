@@ -21,9 +21,11 @@ and phase adapter, badge types and evaluator rules, plus the
 project's preset-composed pages and explicitly named contribution templates,
 then opens the Designer with the complete resolved set.
 The second writes a maintained SDK entry point and workflow modules into a
-project extension directory, then validates the result in place; it does not
-reload extensions or open the app. The third reloads extensions in the child
-session, verifies the exact project provider and canvas, and opens that app.
+non-discoverable `generated-canvases/<canvas-id>/` source directory, using
+staging and validation; it never touches `.github/extensions/`, reloads, or
+opens the app. The third publishes those validated bytes into
+`.github/extensions/<canvas-id>/`, reloads in the child session, verifies the
+exact project provider and canvas, and opens that app.
 
 Replaceable templates are organized by host: `designer-host/` contains Designer
 tabs and settings, `generated-host/workflow-page/` contains the Workflow page,
@@ -590,19 +592,22 @@ Generate reports its target, canvas ID, request ID, warnings, and creation
 status in the child session chat, without reloading, inspecting, or opening
 the app. The separate Open action sends the same frozen handoff and request
 IDs to [open-generated](commands/open-generated.md). That command first checks
-the existing target and its provenance, then reloads extensions in the child
-session (which stops the Designer provider), verifies the exact running project
+the frozen request and generation receipt, publishes the validated source,
+then reloads extensions in the child session (which stops the Designer provider), verifies the exact running project
 provider with `scripts/validate-generated-open.mjs`, checks the canvas
 capabilities and opened instance, and reports success or the exact failure
 in chat. There is no in-panel retry after reload. After reset or clear it
-reloads before reopening the existing app, using its unique provenance
-when the frozen request file is no longer available; it does not regenerate
+reloads before reopening an already-published app, using its unique new-format
+receipt when the frozen request file is no longer available; it does not regenerate
 or assume reset registered the provider. Generation accepts an optional
 `--replace-existing=<prior-request-id>` fifth argument only after the Designer server authorizes
 replacement for the same handoff and existing target's provenance. The exported
 generator rejects a bare `true` in place of that request-bound token; no
-replacement permission is stored in the frozen request. Once the staged canvas
-is published, a locked prior backup does not undo that success: Generate returns
+replacement permission is stored in the frozen request. Runtime replacement
+requires a **separate Open confirmation**, carrying the observed prior request
+ID and full runtime-tree digest to `scripts/publish-generated.mjs`; Generate
+consent never authorizes it. Once staged source is installed, a locked prior
+source backup does not undo that success: Generate returns
 a warning with the remaining backup location for manual inspection and cleanup.
 The generated `canvas-config.json` records the versions observed in the child
 checkout's Specify inventory at Generate; changed versions produce warnings
@@ -726,25 +731,32 @@ catalog. Billing and generated-only pages have separate test fixtures.
 The [Generate command](commands/generate.md) consumes a frozen, integrity-checked
 request prepared by the Designer. It writes the **source-owned SDK entry point**
 and packaged workflow UI, theme, routes, and runtime modules into a new
-`.github/extensions/<canvas-id>/` directory, alongside the frozen configuration.
+`generated-canvases/<canvas-id>/` directory, alongside the frozen configuration
+and `generation-receipt.json`. An authoritative receipt also lives beside the
+session's frozen request. Only the current schema-2 generation protocol is
+supported; unsupported requests fail without migration.
 The entry point uses `joinSession` and `createCanvas` to register actions and a
 loopback HTTP server with open/close lifecycle handling. Generation does not call
-`create-canvas` or rewrite an SDK scaffold. It writes directly into the final
-directory without staging-directory renames.
+`create-canvas` or rewrite an SDK scaffold. It validates staging before exposing
+the final source directory; all staging and backups stay outside discovery.
 An existing target stops generation unless the Designer confirms a recognizable
 same-handoff target and passes its prior request ID; confirmed regeneration
-clears and rebuilds that directory in place, including manual edits, without
-backup or rollback. New creation refuses any occupied destination, including an
-empty directory. Failed generation removes its owned output so Generate can be
-retried; failed regeneration does not restore the previous canvas. Cleanup
-failures report the target path and error for inspection.
+replaces that source directory, including manual edits, with a guarded backup
+and rollback. New creation refuses any occupied destination, including an empty
+directory. Failed generation removes its owned staging; failed replacement
+restores the prior source. Cleanup failures report retained paths for inspection.
 Designer saves settings before dispatching Generate, then restores editing
 after the bounded submission. The entry point is written only after syntax
 and render validation succeeds. Generate does not reload or open the canvas.
-The separate Open command reloads and checks the exact project provider before
-opening. Reload may disconnect Designer; the child-session chat reports the
+The separate Open command validates exact source bytes, publishes with independent
+runtime consent and guarded rollback, then reloads and checks the exact project
+provider before opening. Identical published bytes are reused without rewriting.
+Reload may disconnect Designer; the child-session chat reports the
 outcome and can retry Open without regenerating. The user closes Designer
-manually once the Open handoff is accepted.
+manually once the Open handoff is accepted. Successful publication followed by
+an activation failure is **published, not opened**: retain the runtime and report
+the precise reload, registration, capability, or open failure. Never regenerate
+or toggle enablement preferences as an activation fallback.
 
 Presets can replace an existing page template or append instructions that add
 pages to the command. Adding a JSON file alone does not register a new page.

@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import {
     resolveGeneratedTarget, validateGeneratedProvider, validateGeneratedCanvas, validateGeneratedOpen,
 } from "../extension-canvas-design/scripts/validate-generated-open.mjs";
+import { publicationFixture } from "./publication_fixture.mjs";
+import { publishGenerated } from "../extension-canvas-design/scripts/publish-generated.mjs";
 
 const checkout = resolve("generated-registration-fixture");
 const canvasId = "my-workflow";
@@ -36,126 +38,92 @@ test("open-generated command validates existing provenance before reload and exa
     const command = await readFile(new URL("../extension-canvas-design/commands/open-generated.md",
         import.meta.url), "utf8");
     for (const required of [
-        "$ARGUMENTS", "handoffId", "requestId", "request.json", "settings-provenance.json",
-        "sourceFingerprint", "canvas-config.json", "extensions_reload", "extensions_manage",
+        "$ARGUMENTS", "handoffId", "requestId", "receipt", "integrity", "extensions_reload", "extensions_manage",
         "validate-generated-open.mjs", "list_canvas_capabilities", "open_canvas",
-        "generated-<requestId>", "after reset/clear", "exact error",
+        "generated-<requestId>", "After reset/clear", "exact error",
     ]) assert.ok(command.includes(required), required);
-    assert.match(command, /Require one\s+unique matching directory/);
-    assert.match(command, /A present but invalid request is\s+an error/);
-    assert.match(command, /in `target` mode/);
-    assert.match(command, /Do not read or scan the\s+metadata yourself/);
-    assert.match(command, /Do not fill in a\s+missing result ID/);
-    assert.match(command, /do not\s+regenerate/i);
-    assert.ok(command.includes("[A-Za-z0-9][A-Za-z0-9_-]{0,127}"));
-    assert.ok(command.indexOf("settings-provenance.json") < command.indexOf("Call `extensions_reload`"));
+    assert.match(command, /unique already-published new-format app/);
+    assert.match(command, /present invalid request always\s+fails/);
+    assert.match(command, /Never infer missing result IDs/);
+    assert.match(command, /Never delete a successful publication, regenerate/);
+    assert.ok(command.indexOf("publish-generated.mjs") < command.indexOf("Call `extensions_reload`"));
     assert.ok(command.indexOf("Call `extensions_reload`") < command.indexOf("Call `extensions_manage`"));
     assert.ok(command.indexOf("provider` mode") < command.indexOf("list_canvas_capabilities"));
-    assert.ok(command.indexOf("canvas` mode") < command.indexOf("Call `open_canvas`"));
-    assert.ok(command.indexOf("Call `open_canvas`") < command.indexOf("open` mode"));
+    assert.ok(command.indexOf("canvas` mode") < command.indexOf("call `open_canvas`"));
+    assert.ok(command.indexOf("call `open_canvas`") < command.indexOf("open` mode"));
 });
 
 test("generated target discovery validates the frozen request and unique reset fallback", async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "generated-open-"));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const project = join(root, "checkout");
-    const workspace = join(root, "session");
-    const parent = join(project, ".github", "extensions");
-    const canvas = join(parent, canvasId);
-    const fingerprint = "a".repeat(64);
-    const provenance = { handoffId: "handoff-1", requestId, sourceFingerprint: fingerprint };
-    await mkdir(canvas, { recursive: true });
-    await mkdir(workspace);
-    await writeFile(join(canvas, "settings-provenance.json"), JSON.stringify(provenance));
-    await writeFile(join(canvas, "canvas-config.json"), JSON.stringify({ canvas: { id: canvasId } }));
-    await writeFile(join(canvas, "extension.mjs"), "export {};");
-    const expectedTarget = { canvasId, target: `.github/extensions/${canvasId}/`, requestId };
-    assert.deepEqual(await resolveGeneratedTarget(project, workspace, "handoff-1", requestId), expectedTarget);
-    const cli = spawnSync(process.execPath, [script, "target", project, workspace, "handoff-1", requestId],
+    const f = await publicationFixture(t);
+    const { project, workspace } = f;
+    const handoffId = f.handoff.handoffId, requestId = f.first.requestId;
+    await f.generate();
+    const expectedTarget = { canvasId: f.values["canvas.id"], target: f.first.target,
+        publicationTarget: f.first.publicationTarget, requestId };
+    assert.deepEqual(await resolveGeneratedTarget(project, workspace, handoffId, requestId), expectedTarget);
+    const cli = spawnSync(process.execPath, [script, "target", project, workspace, handoffId, requestId],
         { encoding: "utf8" });
     assert.equal(cli.status, 0, cli.stderr);
     assert.deepEqual(JSON.parse(cli.stdout), expectedTarget);
 
-    const requestDir = join(workspace, "speckit-canvas-designer", "handoffs",
-        "handoff-1", "generations", requestId);
-    await mkdir(requestDir, { recursive: true });
-    const payload = { handoffId: "handoff-1", requestId, project,
-        target: expectedTarget.target, values: { "canvas.id": canvasId },
-        sourceFingerprint: fingerprint };
-    const request = { ...payload,
-        integrity: createHash("sha256").update(JSON.stringify(payload)).digest("hex") };
-    await writeFile(join(requestDir, "request.json"), JSON.stringify(request));
-    assert.deepEqual(await resolveGeneratedTarget(project, workspace, "handoff-1", requestId), expectedTarget);
-    const changedFingerprint = { ...payload, sourceFingerprint: "c".repeat(64) };
-    await writeFile(join(requestDir, "request.json"), JSON.stringify({
-        ...changedFingerprint,
-        integrity: createHash("sha256").update(JSON.stringify(changedFingerprint)).digest("hex"),
-    }));
-    await assert.rejects(resolveGeneratedTarget(project, workspace, "handoff-1", requestId),
-        /provenance does not match/);
+    const requestDir = f.requestFolder(requestId);
+    const request = await f.readRequest();
     await writeFile(join(requestDir, "request.json"), JSON.stringify({ ...request, target: "other" }));
-    await assert.rejects(resolveGeneratedTarget(project, workspace, "handoff-1", requestId),
+    await assert.rejects(resolveGeneratedTarget(project, workspace, handoffId, requestId),
         /integrity mismatch/);
     await writeFile(join(requestDir, "request.json"), JSON.stringify({ ...request, integrity: "0".repeat(64) }));
-    await assert.rejects(resolveGeneratedTarget(project, workspace, "handoff-1", requestId),
+    await assert.rejects(resolveGeneratedTarget(project, workspace, handoffId, requestId),
         /integrity mismatch/);
+    await writeFile(join(requestDir, "request.json"), JSON.stringify(request));
+    await publishGenerated(project, workspace, handoffId, requestId);
     await rm(join(requestDir, "request.json"));
+    assert.deepEqual(await resolveGeneratedTarget(project, workspace, handoffId, requestId), expectedTarget);
     try {
         await symlink(join(workspace, "missing-request.json"), join(requestDir, "request.json"), "file");
-        await assert.rejects(resolveGeneratedTarget(project, workspace, "handoff-1", requestId));
+        await assert.rejects(resolveGeneratedTarget(project, workspace, handoffId, requestId));
         await rm(join(requestDir, "request.json"));
     } catch (error) {
         if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
         t.diagnostic("Windows symlink creation is not permitted; request assertion skipped");
     }
-    const other = join(parent, "other-canvas");
+    const other = join(project, ".github", "extensions", "other-canvas");
     await mkdir(other);
-    await writeFile(join(other, "settings-provenance.json"), JSON.stringify(provenance));
-    await writeFile(join(other, "canvas-config.json"), JSON.stringify({ canvas: { id: "other-canvas" } }));
     await writeFile(join(other, "extension.mjs"), "export {};");
-    await assert.rejects(resolveGeneratedTarget(project, workspace, "handoff-1", requestId),
-        /expected one matching generated canvas, found 2/);
+    assert.deepEqual(await resolveGeneratedTarget(project, workspace, handoffId, requestId), expectedTarget);
 });
 
 test("generated target discovery rejects unsafe provenance, malformed metadata and foreign targets", async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "generated-open-unsafe-"));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    const project = join(root, "checkout");
-    const workspace = join(root, "session");
-    const canvas = join(project, ".github", "extensions", canvasId);
+    const f = await publicationFixture(t);
+    await f.generate();
+    const { project, workspace } = f;
+    const canvas = f.source;
     const provenanceFile = join(canvas, "settings-provenance.json");
-    const provenance = { handoffId: "handoff-1", requestId, sourceFingerprint: "b".repeat(64) };
-    await mkdir(canvas, { recursive: true });
-    await mkdir(workspace);
-    await writeFile(join(canvas, "canvas-config.json"), JSON.stringify({ canvas: { id: canvasId } }));
-    await writeFile(join(canvas, "extension.mjs"), "export {};");
-    const resolveTarget = () => resolveGeneratedTarget(project, workspace, "handoff-1", requestId);
-    await writeFile(provenanceFile, JSON.stringify({ handoffId: "handoff-1", requestId }));
-    await assert.rejects(resolveTarget(), /invalid generated provenance/);
+    const provenance = JSON.parse(await readFile(provenanceFile));
+    const resolveTarget = () => resolveGeneratedTarget(project, workspace, f.handoff.handoffId, f.first.requestId);
+    await writeFile(provenanceFile, JSON.stringify({ handoffId: provenance.handoffId, requestId: provenance.requestId }));
+    await assert.rejects(resolveTarget(), /provenance differs/);
     await writeFile(provenanceFile, JSON.stringify({ ...provenance, requestId: 123 }));
-    await assert.rejects(resolveTarget(), /invalid generated provenance/);
+    await assert.rejects(resolveTarget(), /provenance differs/);
     await writeFile(provenanceFile, "x".repeat(1024 * 1024 + 1));
-    await assert.rejects(resolveTarget(), /too large/);
+    await assert.rejects(resolveTarget(), /bounded regular file/);
     await writeFile(provenanceFile, JSON.stringify(provenance));
     await writeFile(join(canvas, "canvas-config.json"), JSON.stringify({ canvas: { id: "other-canvas" } }));
-    await assert.rejects(resolveTarget(), /canvas configuration does not match/);
-    await writeFile(join(canvas, "canvas-config.json"), JSON.stringify({ canvas: { id: canvasId } }));
-    assert.deepEqual((await resolveTarget()).canvasId, canvasId);
+    await assert.rejects(resolveTarget(), /provenance differs/);
     await rm(provenanceFile);
     try {
         await symlink(join(canvas, "canvas-config.json"), provenanceFile, "file");
-        await assert.rejects(resolveTarget(), /bounded regular session file/);
+        await assert.rejects(resolveTarget(), /bounded regular file/);
         await rm(provenanceFile);
     } catch (error) {
         if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
         t.diagnostic("Windows symlink creation is not permitted; metadata assertion skipped");
     }
-    const parent = join(project, ".github", "extensions");
-    const backup = join(project, ".github", "original-extensions");
+    const parent = join(project, "generated-canvases");
+    const backup = join(project, "original-generated-canvases");
     await rename(parent, backup);
     try {
         await symlink(backup, parent, process.platform === "win32" ? "junction" : "dir");
-        await assert.rejects(resolveTarget(), /unsafe directory/);
+        await assert.rejects(resolveTarget(), /Unsafe generated directory/);
         await rm(parent);
     } catch (error) {
         if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
@@ -195,6 +163,8 @@ test("generated registration rejects missing, duplicate, user-owned, wrong-path 
         [list, inspect(extensionId, "user")],
         [list, inspect(extensionId, "project", join(checkout, "other", "extension.mjs"))],
         [list, inspect(extensionId, "project", entry, "failed")],
+        [list, inspect(extensionId, "project", entry, "disabled")],
+        [list, inspect(extensionId, "project", entry, "stopped")],
     ]) {
         assert.throws(() => validateGeneratedProvider(registered, details, ...args),
             /Generated canvas registration:/);

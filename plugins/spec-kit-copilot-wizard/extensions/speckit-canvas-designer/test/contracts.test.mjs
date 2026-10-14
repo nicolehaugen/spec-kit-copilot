@@ -25,7 +25,8 @@ test("browser and server share generation states and reject incompatible availab
 });
 
 test("independently packaged generator accepts the exact Designer request and rejects tampering", () => {
-    const request = { schemaVersion: 1, handoffId: "handoff-1", requestId: "request-1",
+    const request = { schemaVersion: 2, handoffId: "handoff-1", requestId: "request-1",
+        target: "generated-canvases/sample/", publicationTarget: ".github/extensions/sample/",
         values: { "canvas.id": "sample" }, badges: [{ id: "ready" }] };
     const serialized = serializeGenerationRequest(request);
     assert.equal(serialized, JSON.stringify(request));

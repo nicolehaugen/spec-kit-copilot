@@ -50,7 +50,7 @@ async function fixture(t, generate = true) {
         "canvas.description": "A workflow", "canvas.workflowListName": "Workflows",
         "workflowSlug.userProvided": false };
     const first = await freezeGeneration({ project, workspace, model, values, handoff });
-    const sdk = join(project, ".github", "extensions", values["canvas.id"]);
+    const sdk = join(project, "generated-canvases", values["canvas.id"]);
     const next = await freezeGeneration({ project, workspace, model,
         values: { ...values, "canvas.displayName": "Second" }, handoff });
     if (generate) await materialize(project, workspace, handoff.handoffId, first.requestId);
@@ -105,7 +105,7 @@ test("published replacement reports a locked backup as a warning without losing 
         syncBuiltinESMExports();
     }
     assert.equal(result.canvasId, "my-workflow");
-    assert.equal(result.target, ".github/extensions/my-workflow/");
+    assert.equal(result.target, "generated-canvases/my-workflow/");
     assert.ok(backupDir);
     assert.equal(result.warnings.length, 1);
     assert.match(result.warnings[0], /replacement was published.*Locked backup fixture/);

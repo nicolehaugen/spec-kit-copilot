@@ -138,18 +138,22 @@ Fixture acceptance: manifests parse; every declared file exists; package IDs, co
 ### D8. Save, reopen, Generate
 | Case | Level | Action | Assert |
 |---|---|---|---|
-| D22 | P0 browser | Save an incomplete but structurally valid draft; reopen same handoff. | Fields/outputs restore; unchanged Save disabled; no template mutation. |
+| D22 | P0 browser + lower-level provider | Save a structurally valid draft; recover a tracked generation with no input, or launch explicitly anew. | Tracked recovery restores matching saved values/outputs/request and revisions; explicit new launch retains template defaults. Missing/invalid tracked requests fail; no template mutation. |
 | D23 | P1 browser | Stale revision conflict. | Visible error; in-memory edits preserved. |
-| D24 | P0 browser | Complete requirements and Generate. | Single queued request freezes values, outputs and revisions; duplicate submission prevented. |
+| D24 | P0 browser | Complete requirements and Generate. | Frozen values, outputs, badges and revisions; submission lock ends after acknowledgment, allowing retries. Only source under `generated-canvases/` changes; publication requires Open. |
 | D25 | P1 browser | Computed-provider approval or version drift using controlled Values fixture. | Source/hash approval; cancel sends nothing; approved request frozen; warning is visible without fake failure. |
 | D26 | Lower-level | Changed registered bytes or installed inventory. | Stale/malformed generation rejected or requires reopening. |
 
 ### G1. Generated canvas outcome
 | Case | Level | Action | Assert |
 |---|---|---|---|
-| G1 | P0 browser integration | Materialize a request built with controlled Canvas Design and a contribution preset. | Workflow page loads and *fixture-owned* title, field, phase order, output links and View default match confirmed Designer values. |
+| G1 | P0 browser integration | Generate, explicitly publish, then serve a request built with controlled Canvas Design and a contribution preset. | Workflow page loads and *fixture-owned* title, field, phase order, output links and View default match confirmed Designer values. Source-only Generate is not native activation evidence. |
 | G2 | P1 browser | Create/select workflow, run phase through fake session, refresh. | Workflow identity/draft and accepted result survive; navigation and viewer work. |
 | G3 | Lower-level plus one representative browser path | Swap vertical-phase-control or generated-page/values preset. | Declared adapter, asset and typed-value placements work; no full cross-product of packages. |
+| G4 | Lower-level + browser | Regenerate source, then Open over a published runtime. | Separate confirmations; prior runtime/digest bound to Open only. Changed snapshots reject; copy/install failures preserve prior bytes, rollback failures retain/report exact backups. Identical publication never rewrites. |
+| G5 | Lower-level | Tamper with requests, receipts, emitted bytes, extra files, paths or links; reset request artifacts. | Unsupported requests are not migrated. First publication requires the frozen request and authoritative receipt. Reset may reopen only a unique validated already-published new-format app. |
+| G6 | Isolated live host | Trigger discovery before Open, then publish/reload/inspect/capabilities/open. | No provider before publication; afterward exact project entry, running status and native identities. Activation failure leaves publication intact and reports **published, not opened**. No enablement changes. |
+| G7 | Lower-level SDK timing + isolated live host where available | Await open during resume before `joinSession` returns; close during startup or fail initialization. | Nonblocking loading URL, eventual shell or explicit escaped error, no uninitialized session access or cyclic wait, eventual shell cleanup. Live Designer rehydration remains separately blocked when installed and isolated source providers collide on bootstrap tool names; do not disable the installed provider to hide it. |
 
 ## Follow-on existing-test review
 

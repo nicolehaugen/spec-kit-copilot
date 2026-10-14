@@ -303,46 +303,58 @@ status check verifies the matching config, provenance, and final entry point
 before reporting **Canvas files created.** Superseded status checks cannot replace
 the current Canvas ID's status or error. A second click during submission is
 blocked, but Generate can dispatch again while awaiting the child-session agent
-if its first attempt stalls. If an earlier non-replacement request publishes
+if its first attempt stalls. If an earlier non-replacement request completes
 after a retry is accepted, its verified output remains openable even if the
 newer request fails. Inspect the child-session chat before retrying.
 These local checkout and session-artifact checks reject unsafe links and
 metadata; they do not coordinate with another local process replacing ordinary
 directories while Designer is using them. Avoid concurrent edits to these
 folders during Generate or Open.
-Reopening starts with template defaults while retaining the saved revision.
+Explicit new launches start with template defaults while retaining the saved
+revision. Same-session no-input recovery of a tracked generation restores only
+saved settings matching that immutable request, handoff fingerprint, checkout,
+model revision, values, outputs, and badges; mismatches fail explicitly.
 Generation requires both separate Generate and Open skills and a complete
-Wizard handoff; a hosted package with only the older combined Generate command
-is blocked rather than silently reloading Designer.
+Wizard handoff plus the installed package's schema-2/deferred-publication
+preflight. Incompatible hosted packages remain a release-readiness concern;
+use current approved local sources without a routine version bump or release.
 For a verified same-handoff target, **Regenerate canvas** confirms that all
-files, including manual edits, will be overwritten. The generator clears and
-rebuilds the final directory in place without staging, backup, or rollback.
-It writes the entry point only after validation and removes failed output so
-Generate can be retried; cleanup failures require folder inspection. Foreign or
+source files, including manual edits, will be overwritten. The generator validates
+staging and uses a guarded backup/rollback, all under `generated-canvases/`.
+It writes the entry point and digest receipt after validation, preserving an
+authoritative receipt beside the frozen request. Failed staging is cleaned;
+cleanup failures report retained paths for inspection. Foreign or
 incomplete output is not replaceable. The server rejects replacement fields
 when the target is absent; creation must be submitted without replacement,
 and replacement requires the matching verified prior request ID. If a target
 appears before creation, review it and confirm regeneration when it belongs
 to this handoff, or save a different Canvas ID. The target-folder link reveals
-`.github/extensions/` until the generated folder exists, and reveals
+`generated-canvases/` until the source folder exists, and reveals
 the generated folder afterward.
 **Open canvas** is available only after the generated files are verified.
 An accepted regeneration waits for its own verified output before enabling
 Open or Share, so the previous published version cannot disconnect Designer
 while replacement is pending. If regeneration fails or stalls, reopen Designer
-to clear that panel-local wait and recheck the target. Failed regeneration does
-not preserve the previous files; when cleanup succeeds, Generate can start again.
+to clear that panel-local wait and recheck the target. Failed regeneration
+preserves prior source through guarded rollback; the published runtime is
+untouched by Generate.
 Before dispatch, the Open step warns that registration disconnects Designer
 and shows the child-chat guidance. Generate and Open stay disabled after the
 opening request is accepted; an error before acceptance restores them. The
-child-session command reloads extensions, verifies the exact project provider,
-and opens its canvas. Reopen Designer to continue editing after registration;
+child-session command first publishes validated bytes into
+`.github/extensions/<canvas-id>/`, then reloads extensions, verifies the exact
+project provider and native identities, and opens its canvas. Runtime replacement
+requires a separate Open confirmation binding the prior request and runtime
+digest; Generate consent cannot authorize it. Identical publication is reused.
+If reload, registration, capabilities, or open fails after publication, report
+**published, not opened** with the exact stage, keeping the published files and
+enablement preferences unchanged. Reopen Designer to continue editing after registration;
 the child chat reports success or failure and can retry opening existing files
 without regenerating. There is no supported provider-initiated panel-close operation.
 Sharing remains optional instructions for a team project extension, a personal
 extension, or a plugin; no distribution happens automatically. The Share commit
-path appears only for the current Canvas ID's verified output when no
-regeneration is pending; otherwise the page asks for generation and verification.
+path appears only for the current Canvas ID's matching verified publication when no
+regeneration is pending; otherwise the page asks for Open/publication.
 At Generate, Designer checks the child checkout's Specify inventory for packages
 in the Wizard handoff and freezes their installed versions alongside the original
 Wizard snapshot. Unrelated installed packages do not affect version verification.
@@ -362,8 +374,10 @@ pages; there is no page-reload control or persisted page snapshot. After a
 successful handoff launch, the provider saves its complete resolved open
 inventory in the Designer session's `speckit-canvas-designer/last-open.json`.
 Restarting Designer in that same session with no input restores the most recent
-successful handoff and revalidates its pages and templates, but starts a fresh
-editable form rather than rehydrating saved values.
+successful handoff and revalidates its pages and templates. Without an active
+generation it starts a fresh editable form; with one it restores the validated
+matching saved settings and request ID. `active-generation.json` is handoff-adjacent,
+and a present invalid reference or missing request fails instead of resetting.
 An invalid saved inventory or missing handoff fails explicitly rather than
 opening a blank shell; an explicit launch can repair the saved inventory.
 Replacement saves the new inventory only when the open succeeds; if closing
@@ -375,6 +389,12 @@ launch still shows an empty shell. A different session cannot reuse this
 session's handoff or resolved inventory. Panels opened before this restore
 feature was installed have no `last-open.json`; launch once with the original
 complete resolved input to establish it.
+
+SDK registration may await a restored open callback before `joinSession` returns.
+The fixed-shell `startup.mjs` returns an immediate loading URL, then redirects
+after the session is ready, avoiding a cyclic wait and uninitialized session
+access. Failures are visible, and panel closure cancels/closes the eventual shell.
+Generated apps use the parity-tested maintained copy in their scaffold.
 
 A supplied `handoffId` must match the bounded handoff ID pattern; the provider
 checks the handoff structure, fingerprint, size, and session-artifact boundary.

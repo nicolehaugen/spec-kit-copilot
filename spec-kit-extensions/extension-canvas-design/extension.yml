@@ -20,10 +20,10 @@ provides:
       description: Resolve registered Canvas Design templates and open the Designer once.
     - name: speckit.extension-canvas-design.generate
       file: commands/generate.md
-      description: Generate a source-owned workflow canvas from frozen Designer Essentials.
+      description: Generate validated canvas source outside extension discovery.
     - name: speckit.extension-canvas-design.open-generated
       file: commands/open-generated.md
-      description: Register and open an existing generated workflow canvas from a frozen Designer request.
+      description: Publish validated generated source, then register and open its exact project canvas.
   templates:
     # Designer tabs: required pages for configuring the generated canvas.
     - name: designer-essentials

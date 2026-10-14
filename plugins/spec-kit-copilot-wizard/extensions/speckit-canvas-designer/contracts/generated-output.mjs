@@ -1,18 +1,29 @@
 import { constants } from "node:fs";
+import { execFile } from "node:child_process";
 import { lstat, open, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { outputTarget, validateCanvasId } from "../ui/generated-output-state.js";
+import { promisify } from "node:util";
+import { validateCanvasId } from "../ui/generated-output-state.js";
+import { validateOutputStatusResponse } from "../ui/generated-output-state.js";
+import { validateGenerationProtocol } from "./generation-request.mjs";
 
 export { validateCanvasId };
 
-export function validateOutputAction(input, { replace = false } = {}) {
-    const keys = replace && input?.replaceExisting === true
-        ? ["canvasId", "replaceExisting"] : ["canvasId"];
+export function validateOutputAction(input, { open: opening = false } = {}) {
+    const keys = ["canvasId", ...(opening ? ["requestId"] : []),
+        ...(opening && input?.replaceExisting === true
+            ? ["replaceExisting", "replaceRequestId", "expectedTargetDigest"] : [])];
     if (!input || typeof input !== "object" || Array.isArray(input)
         || Object.keys(input).sort().join() !== keys.sort().join()) {
         throw new Error("Invalid generated canvas action");
     }
     validateCanvasId(input.canvasId);
+    if (opening && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(input.requestId ?? "")
+        || input.replaceExisting === true
+            && (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(input.replaceRequestId ?? "")
+                || !/^[a-f0-9]{64}$/.test(input.expectedTargetDigest ?? "")))) {
+        throw new Error("Invalid generated canvas Open authorization");
+    }
     return input;
 }
 
@@ -59,48 +70,24 @@ export async function readGeneratedJson(parent, name, openFile = open, expectedP
     }
 }
 
-export async function generatedOutput(project, id, handoffId, readJson = readGeneratedJson) {
+const execFileAsync = promisify(execFile);
+const scripts = (project) => join(project, ".specify", "extensions", "extension-canvas-design", "scripts");
+
+export async function checkGenerationProtocol(project, run = execFileAsync) {
+    try {
+        const { stdout } = await run(process.execPath,
+            [join(scripts(project), "generate.mjs"), "--describe-contract"],
+            { cwd: project, timeout: 10000, maxBuffer: 128 * 1024 });
+        return validateGenerationProtocol(JSON.parse(stdout));
+    } catch (error) {
+        throw new Error(`Canvas Design does not support deferred publication. Launch with the current local Canvas Design source. ${error.message}`, { cause: error });
+    }
+}
+
+export async function generatedOutput(project, id, handoffId, workspace, run = execFileAsync) {
     validateCanvasId(id);
-    const root = await realpath(project);
-    const parent = join(root, ".github", "extensions");
-    const target = join(parent, id);
-    try {
-        if (await realpath(parent) !== parent) {
-            throw new Error("Generated extension parent escapes the checkout");
-        }
-    } catch (error) {
-        if (error.code === "ENOENT") return { status: "absent", target: outputTarget(id) };
-        throw error;
-    }
-    let folder;
-    try { folder = await lstat(target); }
-    catch (error) {
-        if (error.code === "ENOENT") return { status: "absent", target: outputTarget(id) };
-        throw error;
-    }
-    const result = { status: "foreign", target: outputTarget(id) };
-    if (!folder.isDirectory() || await realpath(target) !== target) return result;
-    try {
-        const config = await readJson(target, "canvas-config.json", open, folder);
-        const provenance = await readJson(target, "settings-provenance.json", open, folder);
-        if (config?.canvas?.id !== id || !provenance || typeof provenance !== "object"
-            || Array.isArray(provenance)
-            || Object.keys(provenance).sort().join() !== "handoffId,requestId,sourceFingerprint"
-            || provenance.handoffId !== handoffId
-            || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(provenance.requestId)
-            || !/^[a-f0-9]{64}$/.test(provenance.sourceFingerprint)) return result;
-        const entry = await lstat(join(target, "extension.mjs"));
-        const current = await lstat(target);
-        if (!current.isDirectory() || current.isSymbolicLink()
-            || current.dev !== folder.dev || current.ino !== folder.ino
-            || await realpath(target) !== target) return result;
-        return entry.isFile() ? { ...result, status: "ready", requestId: provenance.requestId }
-            : { ...result, status: "incomplete" };
-    } catch (error) {
-        if (error.code === "ENOENT") return { ...result, status: "incomplete" };
-        if (error instanceof SyntaxError || error.code === "ELOOP"
-            || ["Generated canvas metadata parent changed during read",
-                "Generated canvas metadata changed during read"].includes(error.message)) return result;
-        throw error;
-    }
+    const { stdout } = await run(process.execPath, [join(scripts(project), "validate-generated-open.mjs"),
+        "status", project, workspace, handoffId, id],
+    { cwd: project, timeout: 10000, maxBuffer: 128 * 1024 });
+    return validateOutputStatusResponse(JSON.parse(stdout), id);
 }

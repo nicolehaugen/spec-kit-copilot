@@ -95,7 +95,7 @@ async function fixture(t) {
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     return { project, workspace, prepared, model, values, templates,
         requestPath: join(folder, "generations", prepared.requestId, "request.json"),
-        sdk: join(project, ".github", "extensions", "text-canvas") };
+        sdk: join(project, "generated-canvases", "text-canvas") };
 }
 
 async function rewrite(path, edit) {

@@ -61,7 +61,9 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
             }
             const canvasId = new URL(route.request().url()).searchParams.get("canvasId");
             await route.fulfill({ json: { status: requests.ready ? "ready" : "absent",
-                target: `.github/extensions/${canvasId}/`, ...(requests.ready
+                target: `generated-canvases/${canvasId}/`,
+                publicationTarget: `.github/extensions/${canvasId}/`,
+                publication: requests.publication ?? { status: "absent" }, ...(requests.ready
                     ? { requestId: requests.readyRequestId ?? "test-generation" } : {}) } });
         } else if (path === "/api/reveal-output" || path === "/api/open-generated") {
             const action = route.request().postDataJSON();
@@ -74,8 +76,10 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
             (path === "/api/reveal-output" ? revealed : opened).push(action);
             await route.fulfill({ status: path === "/api/open-generated" ? 202 : 200,
                 json: { ...(path === "/api/open-generated" ? { status: "opening" } : {}),
+                    ...(path === "/api/open-generated" ? {
+                        publicationTarget: `.github/extensions/${action.canvasId}/` } : {}),
                     target: path === "/api/reveal-output" && !requests.ready
-                        ? ".github/extensions/" : `.github/extensions/${action.canvasId}/` } });
+                        ? "generated-canvases/" : `generated-canvases/${action.canvasId}/` } });
         } else if (path === "/api/save") {
             const request = route.request().postDataJSON();
             saved.push(request);
@@ -95,7 +99,8 @@ async function openDesigner(page, fields, extraPage, warnings = [], templates = 
                         ? "Cost code (billing.costCode)" : null;
             await route.fulfill(invalid
                 ? { status: 400, json: { error: `Invalid ${invalid}` } }
-                : { status: 202, json: { target: `.github/extensions/${request.values["canvas.id"]}/`,
+                : { status: 202, json: { target: `generated-canvases/${request.values["canvas.id"]}/`,
+                    publicationTarget: `.github/extensions/${request.values["canvas.id"]}/`,
                     requestId: request.replaceExisting ? "replacement-generation" : "test-generation",
                     warnings } });
         } else if (path === "/adapters/designer-control-adapter-text.mjs"
@@ -320,7 +325,7 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
     await expect(steps.nth(1).getByRole("heading", { name: "Open" })).toBeVisible();
     await expect(steps.nth(2).getByRole("heading", { name: "Share", exact: true })).toBeVisible();
     await expect(steps.locator(".step-index")).toHaveText(["1", "2", "3"]);
-    await expect(steps.nth(1)).toContainText("Open your generated canvas in this session.");
+    await expect(steps.nth(1)).toContainText("Publish and open your generated canvas in this session.");
     await expect(page.locator("#open-status")).toHaveText("Generate the canvas first.");
     const buttonStyles = await page.locator("#generate-canvas, #open-generated-canvas").evaluateAll(
         (buttons) => buttons.map((button) => {
@@ -328,10 +333,10 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
             return [style.backgroundColor, style.color, style.fontWeight, style.padding];
         }));
     expect(buttonStyles[0]).toEqual(buttonStyles[1]);
-    await expect(page.locator("#output-target")).toHaveText(".github/extensions/first-canvas/");
-    await expect(page.locator("#open-output-folder")).toHaveText(".github/extensions/first-canvas/");
+    await expect(page.locator("#output-target")).toHaveText("generated-canvases/first-canvas/");
+    await expect(page.locator("#open-output-folder")).toHaveText("generated-canvases/first-canvas/");
     await expect(page.locator("#share-project-copy")).toBeHidden();
-    await expect(page.locator("#share-target-note")).toContainText("Generate and verify");
+    await expect(page.locator("#share-target-note")).toContainText("Open to publish");
     await expect(page.getByRole("heading", { name: "Share", exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Personal extension" })).toBeVisible();
     await expect(page.locator("#generation-status")).toHaveText("Not generated");
@@ -345,7 +350,7 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
     await expect(page.locator("#open-generated-canvas")).toBeHidden();
     await page.getByRole("textbox", { name: /Canvas ID/ }).fill("second-canvas");
     await page.getByRole("tab", { name: "Generate" }).click();
-    await expect(page.locator("#output-target")).toHaveText(".github/extensions/second-canvas/");
+    await expect(page.locator("#output-target")).toHaveText("generated-canvases/second-canvas/");
     await expect(page.locator("#share-project-copy")).toBeHidden();
     await page.locator("#generate-canvas").click();
     await expect.poll(() => requests.length).toBe(1);
@@ -355,13 +360,17 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
     await page.reload();
     await page.getByRole("tab", { name: "Generate" }).click();
     await expect(page.locator("#generation-status")).toContainText("Canvas files created");
+    await expect(page.locator("#share-project-copy")).toBeHidden();
+    requests.publication = { status: "ready", requestId: "test-generation", digest: "a".repeat(64) };
+    await page.reload();
+    await page.getByRole("tab", { name: "Generate" }).click();
     await expect(page.locator("#share-project-path")).toHaveText(".github/extensions/second-canvas/");
     await expect(page.locator("#share-project-copy")).toBeVisible();
     await expect(page.locator("#generate-canvas")).toHaveText("Regenerate canvas");
     await expect(page.locator("#generate-canvas")).toBeEnabled();
     await expect(page.locator("#open-generated-canvas")).toBeEnabled();
     await expect(page.locator("#open-status")).toHaveText(
-        "Ready to open. Opening will disconnect Designer. If you want to keep using Designer in this session, reopen it after the canvas opens.");
+        "Ready to open. Open publishes the canvas and may disconnect Designer. Check the child-session chat for the result.");
     await page.locator("#generate-canvas").click();
     const confirm = page.getByRole("dialog", { name: "Replace generated canvas?" });
     await expect(confirm).toContainText("removes any manual edits");
@@ -399,9 +408,17 @@ test("Generate tab follows Canvas ID, then verifies files and offers guarded reg
     await expect(page.locator("#share-project-copy")).toBeHidden();
     requests.readyRequestId = "replacement-generation";
     await expect(page.locator("#open-generated-canvas")).toBeEnabled({ timeout: 15000 });
-    await expect(page.locator("#share-project-path")).toHaveText(".github/extensions/second-canvas/");
+    await expect(page.locator("#share-project-copy")).toBeHidden();
     await page.locator("#open-generated-canvas").click();
-    await expect.poll(() => requests.opened).toEqual([{ canvasId: "second-canvas" }]);
+    await expect(confirm).toContainText(".github/extensions/second-canvas/");
+    await expect(confirm).toContainText("published runtime");
+    await confirm.getByRole("button", { name: "Cancel" }).click();
+    expect(requests.opened).toEqual([]);
+    await page.locator("#open-generated-canvas").click();
+    await confirm.getByRole("button", { name: "Replace all files" }).click();
+    await expect.poll(() => requests.opened).toEqual([{ canvasId: "second-canvas",
+        requestId: "replacement-generation", replaceExisting: true,
+        replaceRequestId: "test-generation", expectedTargetDigest: "a".repeat(64) }]);
     await expect(page.locator("#open-status")).toContainText("Opening requested. Check the child-session chat.");
     await expect(page.locator("#generate-canvas")).toBeDisabled();
     await expect(page.locator("#open-generated-canvas")).toBeDisabled();
@@ -451,7 +468,7 @@ test("incompatible Open responses leave Designer usable and do not claim accepta
     await expect(page.locator("#open-generated-canvas")).toBeDisabled();
     release();
     await expect(page.locator("#page-error")).toHaveText("Invalid generated canvas opening response");
-    await expect(page.locator("#open-status")).toContainText("Ready to open. Opening will disconnect Designer.");
+    await expect(page.locator("#open-status")).toContainText("Ready to open. Open publishes the canvas");
     await expect(page.locator("#generate-canvas")).toBeEnabled();
     await expect(page.locator("#open-generated-canvas")).toBeEnabled();
     await page.unroute("**/api/open-generated?*", wrongProvider);
@@ -460,5 +477,5 @@ test("incompatible Open responses leave Designer usable and do not claim accepta
     await expect(page.locator("#generate-canvas")).toBeDisabled();
     await expect(page.locator("#open-generated-canvas")).toBeDisabled();
     await expect.poll(() => requests.opened.length).toBe(1);
-    expect(requests.opened).toEqual([{ canvasId: "ready-canvas" }]);
+    expect(requests.opened).toEqual([{ canvasId: "ready-canvas", requestId: "test-generation" }]);
 });

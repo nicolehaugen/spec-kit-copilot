@@ -4,9 +4,12 @@ import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
 import { readConfig, createWorkflowRoutes } from "./server.mjs";
 import { createRuntime } from "./runtime.mjs";
 import { agentActionSchemas } from "./contracts/agent-actions.mjs";
+import { createSessionStartup } from "./startup.mjs";
 
 const servers = new Map();
 const config = readConfig();
+const startup = createSessionStartup(config.canvas.displayName);
+let session;
 let runtime;
 let initializing;
 let lifecycle = Promise.resolve();
@@ -50,7 +53,23 @@ function opened(ctx, action) {
     return action(runtime);
 }
 
-const session = await joinSession({
+function closePanel(ctx) {
+    return withLifecycle(async () => {
+        const entry = servers.get(ctx.instanceId);
+        if (entry) {
+            servers.delete(ctx.instanceId);
+            entry.routes.close();
+            await new Promise((resolve, reject) => {
+                entry.server.close((error) => error ? reject(error) : resolve());
+                entry.server.closeAllConnections();
+            });
+            if (!servers.size && runtime) { runtime.close(); runtime = null; }
+        }
+    });
+}
+
+try {
+session = await joinSession({
     canvases: [
         createCanvas({
             id: config.canvas.id,
@@ -70,26 +89,23 @@ const session = await joinSession({
                     inputSchema: agentActionSchemas.report_autopilot_step,
                     handler: (ctx) => opened(ctx, (value) => value.reportAutopilotStep(ctx.input, ctx.instanceId)) },
             ],
-            open: (ctx) => withLifecycle(async () => {
+            open: (ctx) => startup.open(ctx, () => withLifecycle(async () => {
                 let entry = servers.get(ctx.instanceId);
                 if (!entry) {
                     entry = await startServer(ctx.instanceId);
                     servers.set(ctx.instanceId, entry);
                 }
                 return { title: config.canvas.displayName, url: entry.url };
-            }),
-            onClose: (ctx) => withLifecycle(async () => {
-                const entry = servers.get(ctx.instanceId);
-                if (entry) {
-                    servers.delete(ctx.instanceId);
-                    entry.routes.close();
-                    await new Promise((resolve, reject) => {
-                        entry.server.close((error) => error ? reject(error) : resolve());
-                        entry.server.closeAllConnections();
-                    });
-                    if (!servers.size && runtime) { runtime.close(); runtime = null; }
-                }
-            }),
+            }), () => closePanel(ctx)),
+            onClose: async (ctx) => {
+                await startup.close(ctx.instanceId);
+                await closePanel(ctx);
+            },
         }),
     ],
 });
+startup.ready();
+} catch (error) {
+    startup.fail(error);
+    throw error;
+}

@@ -65,6 +65,7 @@ async function generate(page, journey, dispatched, id, {
         await writeFile(join(feature, "spec.md"), "# Preset feature\n");
         await writeFile(join(feature, "plan.md"), "# Preset plan\n");
     }
+    await journey.publish();
     const served = await journey.serveGenerated(id);
     const { createRuntime } = await import(pathToFileURL(join(journey.project,
         ".github", "extensions", id, "runtime.mjs")).href);
