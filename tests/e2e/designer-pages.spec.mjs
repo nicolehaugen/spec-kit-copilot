@@ -427,7 +427,8 @@ test("a superseded Canvas ID status failure cannot overwrite the current page", 
                 oldCompleted = true;
             } else {
                 await route.fulfill({ json: {
-                    status: "absent", target: `.github/extensions/${id}/`,
+                    status: "absent", target: `generated-canvases/${id}/`,
+                    publicationTarget: `.github/extensions/${id}/`, publication: { status: "absent" },
                 } });
             }
         });
@@ -435,7 +436,7 @@ test("a superseded Canvas ID status failure cannot overwrite the current page", 
         await expect.poll(() => typeof releaseOld).toBe("function");
         await page.getByRole("textbox", { name: /Canvas ID/ }).fill("new-canvas");
         await page.getByRole("tab", { name: "Generate" }).click();
-        await expect(page.locator("#output-target")).toHaveText(".github/extensions/new-canvas/");
+        await expect(page.locator("#output-target")).toHaveText("generated-canvases/new-canvas/");
         releaseOld();
         await expect.poll(() => oldCompleted).toBe(true);
         await expect(page.locator("#page-error")).toBeHidden();
@@ -732,7 +733,7 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         expect(prompts[0]).toContain("speckit-extension-canvas-design-generate");
         expect(prompts[0]).toContain(requestId);
         await journey.generate(requestId);
-        const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+        const config = JSON.parse(await readFile(join(project, "generated-canvases",
             "billing-canvas", "canvas-config.json"), "utf8"));
         expect(config.readOnlyFields).toEqual([{ id: "billing.costCode",
             label: "Cost code", value: "CC-481",
@@ -767,11 +768,12 @@ test("Wizard-selected Billing preset persists through Designer and renders in th
         await page.getByRole("textbox", { name: "Title (required)" }).fill("Billing Second");
         await page.getByRole("button", { name: "Save", exact: true }).click();
         await page.getByRole("tab", { name: "Generate" }).click();
-        await expect(page.locator("#output-target")).toContainText(".github/extensions/billing-second/");
+        await expect(page.locator("#output-target")).toContainText("generated-canvases/billing-second/");
         await page.locator("#generate-canvas").click();
         await expect(page.locator("#generation-status")).toContainText("Creating canvas files");
         await expect.poll(() => prompts.length).toBe(2);
         expect((await readdir(join(folder, "generations"))).length).toBe(2);
+        await journey.publish();
         await journey.serveGenerated("billing-canvas", { token: "billing-token" });
         await expect(page.getByRole("heading", { name: "Billing" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "Configured fields" })).toHaveCount(0);
@@ -892,7 +894,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         const requestBytes = await readFile(requestPath);
         const request = JSON.parse(requestBytes.toString("utf8"));
         const { integrity, ...payload } = request;
-        expect(request.schemaVersion).toBe(1);
+        expect(request.schemaVersion).toBe(2);
         expect(request.handoffId).toBe(handoff.handoffId);
         expect(request.requestId).toBe(requestId);
         expect(request.settingsRevision).toBe(2);
@@ -908,7 +910,7 @@ test("risk preset selects a cell by keyboard and packages its read-only adapter"
         await writeFile(requestPath, requestBytes);
         await materialize(project, workspace, handoff.handoffId, requestId);
         const portable = join(workspace, "portable-risk");
-        await cp(join(project, ".github", "extensions", "risk-canvas"), portable, { recursive: true });
+        await cp(join(project, "generated-canvases", "risk-canvas"), portable, { recursive: true });
         const { readConfig, createWorkflowRoutes } = await import(
             pathToFileURL(join(portable, "server.mjs")).href);
         const config = readConfig();

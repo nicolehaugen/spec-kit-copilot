@@ -88,7 +88,7 @@ export async function startPresetJourney(page, {
         workspace, project, checkout,
         runSpecify: (...args) => run("specify", args, project),
         runInstalled: (script, ...args) => {
-            if (!["verify-launch.mjs", "generate.mjs"].includes(script)) {
+            if (!["verify-launch.mjs", "generate.mjs", "publish-generated.mjs"].includes(script)) {
                 throw new Error(`Unexpected installed Canvas Design script: ${script}`);
             }
             return run(process.execPath, [join(project, ".specify", "extensions",
@@ -115,6 +115,12 @@ export async function startPresetJourney(page, {
             expect(requests).toContain(requestId);
             journey.runInstalled("generate.mjs", project, workspace,
                 journey.handoff.handoffId, requestId);
+            journey.generatedRequestId = requestId;
+        },
+        async publish(requestId = journey.generatedRequestId) {
+            if (!requestId) throw new Error("Generate before explicitly publishing the app");
+            return JSON.parse(journey.runInstalled("publish-generated.mjs", project, workspace,
+                journey.handoff.handoffId, requestId));
         },
         async serveGenerated(canvasId, { token = "preset-journey-token" } = {}) {
             const { createWorkflowRoutes } = await import(pathToFileURL(join(project,

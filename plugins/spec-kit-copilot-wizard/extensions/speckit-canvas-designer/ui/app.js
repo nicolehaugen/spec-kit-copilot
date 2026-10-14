@@ -33,6 +33,7 @@ let openingRequested = false;
 let outputStatus = "absent";
 let outputIdentity = "";
 let outputRequestId = null;
+let publication = { status: "absent" };
 let outputCheck = 0;
 const generationGuidance = "Opening requested. Check the child-session chat. If you want to keep using Designer in this session, reopen it after the canvas opens.";
 function updateOpenStatus() {
@@ -41,7 +42,7 @@ function updateOpenStatus() {
         : pendingReplacement
             ? "Regeneration requested. Wait for the new canvas files before opening. If regeneration fails, reopen Designer to use the existing canvas."
         : outputIdentity === draft?.["canvas.id"] && outputStatus === "ready"
-            ? "Ready to open. Opening will disconnect Designer. If you want to keep using Designer in this session, reopen it after the canvas opens."
+            ? "Ready to open. Open publishes the canvas and may disconnect Designer. Check the child-session chat for the result."
             : "Generate the canvas first.";
 }
 const activeUploads = new Set();
@@ -87,29 +88,35 @@ function outputPathsReady() {
 }
 
 function outputPath(id) {
-    return `.github/extensions/${id || "<canvas-id>"}/`;
+    return `generated-canvases/${id || "<canvas-id>"}/`;
 }
+const publishedPath = (id) => `.github/extensions/${id || "<canvas-id>"}/`;
 
 function updateOutputDisplay() {
     const id = draft?.["canvas.id"] ?? "";
     const ready = outputIdentity === id && outputStatus === "ready";
+    const published = ready && publication.status === "ready" && publication.requestId === outputRequestId;
     const target = document.getElementById("output-target");
     if (target) target.textContent = outputPath(id);
     const projectCopy = document.getElementById("share-project-copy");
-    if (projectCopy) projectCopy.hidden = !ready || !!pendingReplacement;
+    if (projectCopy) projectCopy.hidden = !published || !!pendingReplacement;
     const team = document.getElementById("share-project-path");
-    if (team) team.textContent = ready && !pendingReplacement ? outputPath(id) : "";
+    if (team) team.textContent = published && !pendingReplacement ? publishedPath(id) : "";
+    const destination = document.getElementById("publication-target");
+    if (destination) destination.textContent = publishedPath(id);
     const shareNote = document.getElementById("share-target-note");
     if (shareNote) {
-        shareNote.hidden = ready && !pendingReplacement;
+        shareNote.hidden = published && !pendingReplacement;
         shareNote.textContent = shareNote.hidden ? "" : pendingReplacement
             ? "Wait for regeneration to finish before sharing this canvas."
-            : "Generate and verify the current Canvas ID before sharing it.";
+            : "Open to publish and verify this canvas before sharing the project extension.";
     }
     const status = document.getElementById("generation-status");
     if (status) status.textContent = pendingReplacement?.canvasId === id
         ? "Regenerating canvas files. Check the child-session chat for progress or errors."
         : ready ? "Canvas files created."
+        : outputIdentity === id && outputStatus === "modified"
+            ? "Generated source has changed. Regenerate before Open."
         : requestedCanvasId === id && requestedRequestId
         ? Date.now() - requestedAt < 120000 ? "Creating canvas files."
             : "Canvas creation is taking longer than expected. Check the child-session chat for progress or errors."
@@ -138,6 +145,7 @@ async function refreshOutputStatus(id = requestedCanvasId ?? draft?.["canvas.id"
     outputIdentity = id;
     outputStatus = validated.status;
     outputRequestId = validated.requestId ?? null;
+    publication = validated.publication;
     if (pendingReplacement?.canvasId === id && validated.status === "ready"
         && pendingReplacement.requestId === validated.requestId) pendingReplacement = null;
     updateOutputDisplay();
@@ -163,7 +171,7 @@ function updateGenerate() {
         setMessage(generationNote, expectedState ? reason : "");
     setMessage(generationError, expectedState ? "" : reason);
     generate.textContent = generating ? "Submitting..." : outputIdentity === (draft?.["canvas.id"] ?? "")
-        && outputStatus === "ready"
+        && ["ready", "modified"].includes(outputStatus)
         ? "Regenerate canvas" : "Generate canvas";
     generate.disabled = model?.preview || saving || activeUploads.size > 0 || generating
         || opening || openingRequested
@@ -172,16 +180,17 @@ function updateGenerate() {
         || !model.generationAvailable || !setup || !!failed || setup.enabled === false
         || missingIdentity || !!model?.generationBlockers?.length;
     openGenerated.disabled = model?.preview || !model?.handoffId || opening || openingRequested
+        || !!model?.generationError
         || !!pendingReplacement
         || generating || outputIdentity !== draft?.["canvas.id"] || outputStatus !== "ready";
     updateOpenStatus();
     updateOutputDisplay();
 }
 
-function confirmReplacement(id) {
+function confirmReplacement(id, runtime = false) {
     const dialog = document.getElementById("replace-canvas");
     document.getElementById("replace-canvas-description").textContent =
-        `Replace all files in ${outputPath(id)}? This removes any manual edits in the generated folder.`;
+        `Replace all files in ${runtime ? publishedPath(id) : outputPath(id)}? This removes any manual edits in the ${runtime ? "published runtime" : "generated source"} folder.${runtime ? "" : " The published runtime will not change until a separately confirmed Open."}`;
     dialog.returnValue = "";
     dialog.showModal();
     return new Promise((resolve) => dialog.addEventListener("close",
@@ -216,7 +225,7 @@ generate.addEventListener("click", async () => {
         if (checked.status === "foreign" || checked.status === "incomplete") {
             throw new Error("Cannot replace this canvas folder. Inspect the target folder first.");
         }
-        const replaceExisting = checked.status === "ready";
+        const replaceExisting = ["ready", "modified"].includes(checked.status);
         const priorRequestId = replaceExisting ? checked.requestId : null;
         if (replaceExisting && !await confirmReplacement(submittedId)) return;
         if (providers.length && !await confirmProviders(providers)) return;
@@ -265,10 +274,19 @@ openGenerated.addEventListener("click", async () => {
     updateGenerate();
     showError("");
     try {
+        const checked = await refreshOutputStatus(id);
+        if (checked.status !== "ready") throw new Error("Generate and validate the source before Open.");
+        const published = checked.publication;
+        if (published.status === "blocked") throw new Error(published.error);
+        const replaceExisting = published.status !== "absent"
+            && !(published.status === "ready" && published.requestId === checked.requestId);
+        if (replaceExisting && !await confirmReplacement(id, true)) return;
         await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
         const response = await fetch(`/api/open-generated?token=${encodeURIComponent(token)}`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ canvasId: id }),
+            body: JSON.stringify({ canvasId: id, requestId: checked.requestId,
+                ...(replaceExisting ? { replaceExisting: true, replaceRequestId: published.requestId,
+                    expectedTargetDigest: published.digest } : {}) }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(validateOutputError(result).error);
@@ -445,7 +463,11 @@ function renderPage(pageId, invalidFieldId) {
         openStatus.id = "open-status";
         openStatus.setAttribute("role", "status");
         openStep.append(openTitle,
-            element("p", "Open your generated canvas in this session."),
+            element("p", "Publish and open your generated canvas in this session."),
+            element("p", "Project extension destination", "setting-label"));
+        const destination = element("code");
+        destination.id = "publication-target";
+        openStep.append(destination,
             element("p", "Status", "setting-label"), openStatus,
             openGenerated);
         const share = element("section", undefined, "generate-step generate-share");
@@ -461,7 +483,7 @@ function renderPage(pageId, invalidFieldId) {
         projectCopy.id = "share-project-copy";
         const sharePath = element("code");
         sharePath.id = "share-project-path";
-        projectCopy.append("Once generated, commit ", sharePath, " to your repository.");
+        projectCopy.append("Once published and verified, commit ", sharePath, " to your repository.");
         const shareNote = element("p");
         shareNote.id = "share-target-note";
         share.append(projectCopy,
@@ -676,6 +698,8 @@ function applyState(next) {
     const changed = !model || next.revision !== model.revision;
     if (changed) {
         model = next;
+        requestedCanvasId = next.generationCanvasId ?? null;
+        requestedRequestId = next.generationRequestId ?? null;
         pageViews.clear();
         mounted.clear();
         badgeView = undefined;
@@ -735,6 +759,11 @@ function connectionStatus(state) {
     status.textContent = state === "live" ? "Live" : state === "connecting" ? "Connecting" : "Disconnected";
 }
 async function checkOutputStatus(id) {
+    if (model?.generationError) {
+        if (outputStatusError && errorBox.textContent === outputStatusError) setMessage(errorBox, "");
+        outputStatusError = "";
+        return;
+    }
     const check = outputCheck + 1;
     try {
         await refreshOutputStatus(id);

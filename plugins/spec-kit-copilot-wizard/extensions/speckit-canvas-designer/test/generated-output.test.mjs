@@ -1,189 +1,94 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, open, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { generatedOutput, readGeneratedJson, validateOutputAction } from "../contracts/generated-output.mjs";
-import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse, validateGenerateResponse,
-    validateOutputError } from "../ui/generated-output-state.js";
+import { checkGenerationProtocol, generatedOutput, readGeneratedJson,
+    validateOutputAction } from "../contracts/generated-output.mjs";
+import { validateOutputStatusResponse, validateRevealResponse, validateOpenResponse,
+    validateGenerateResponse, validateOutputError } from "../ui/generated-output-state.js";
 
-test("generated output response contract accepts matching status, folder and Open exchanges", () => {
-    const id = "team-dashboard";
-    const target = ".github/extensions/team-dashboard/";
-    for (const status of ["absent", "foreign", "incomplete"]) {
-        assert.deepEqual(validateOutputStatusResponse({ status, target }, id), { status, target });
+const id = "team-dashboard";
+const paths = { target: "generated-canvases/team-dashboard/",
+    publicationTarget: ".github/extensions/team-dashboard/" };
+const status = (state) => ({ ...paths, status: state, publication: { status: "absent" },
+    ...(["ready", "modified"].includes(state) ? { requestId: "request-1" } : {}) });
+
+test("output contracts distinguish generated source from publication and dispatch from completion", () => {
+    for (const state of ["absent", "foreign", "incomplete", "ready", "modified"]) {
+        assert.deepEqual(validateOutputStatusResponse(status(state), id), status(state));
     }
-    assert.deepEqual(validateOutputStatusResponse({ status: "ready", target, requestId: "request-1" }, id),
-        { status: "ready", target, requestId: "request-1" });
-    assert.deepEqual(validateRevealResponse({ target: ".github/extensions/" }, id),
-        { target: ".github/extensions/" });
-    assert.deepEqual(validateRevealResponse({ target }, id), { target });
-    assert.deepEqual(validateOpenResponse({ status: "opening", target }, id),
-        { status: "opening", target });
-    assert.deepEqual(validateGenerateResponse({ target, requestId: "request-1" }, id),
-        { target, requestId: "request-1" });
-    assert.deepEqual(validateGenerateResponse({ target, requestId: "request_2", warnings: ["Version drift"] }, id),
-        { target, requestId: "request_2", warnings: ["Version drift"] });
-    assert.deepEqual(validateOutputError({ error: "Cannot open canvas" }),
-        { error: "Cannot open canvas" });
+    assert.deepEqual(validateRevealResponse({ target: paths.target }, id), { target: paths.target });
+    assert.deepEqual(validateRevealResponse({ target: "generated-canvases/" }, id), { target: "generated-canvases/" });
+    assert.deepEqual(validateOpenResponse({ ...paths, status: "opening" }, id), { ...paths, status: "opening" });
+    assert.deepEqual(validateGenerateResponse({ ...paths, requestId: "request-1" }, id),
+        { ...paths, requestId: "request-1" });
+    assert.deepEqual(validateGenerateResponse({ ...paths, requestId: "request-1", warnings: ["drift"] }, id),
+        { ...paths, requestId: "request-1", warnings: ["drift"] });
+    assert.deepEqual(validateOutputError({ error: "Cannot open" }), { error: "Cannot open" });
 });
 
-test("generated output response contract rejects incompatible host responses", () => {
-    const id = "team-dashboard";
-    const target = ".github/extensions/team-dashboard/";
+test("output contracts reject old, mismatched, unbound and success-shaped exchanges", () => {
     for (const response of [
-        { status: "queued", target },
-        { status: "ready", target },
-        { status: "ready", target, requestId: "../escape" },
-        { status: "ready", target, requestId: "request-1", extra: true },
-        { status: "absent", target, requestId: "request-1" },
-        { status: "ready", target: ".github/extensions/other/", requestId: "request-1" },
-    ]) {
-        assert.throws(() => validateOutputStatusResponse(response, id),
-            /Invalid generated output status/);
+        { status: "ready", target: paths.publicationTarget, requestId: "request-1" },
+        { ...status("ready"), requestId: "../escape" },
+        { ...status("ready"), publicationTarget: ".github/extensions/other/" },
+        { ...status("ready"), extra: true },
+        { ...status("absent"), requestId: "request-1" },
+        { ...status("ready"), publication: { status: "opened" } },
+        { ...status("ready"), publication: { status: "ready", requestId: "request-1", digest: "bad" } },
+    ]) assert.throws(() => validateOutputStatusResponse(response, id), /Invalid/);
+    for (const response of [{ ...paths, status: "opened" }, { status: "opening", target: paths.target }]) {
+        assert.throws(() => validateOpenResponse(response, id), /Invalid/);
     }
-    for (const response of [{ target: ".github/extensions/other/" }, { target, extra: true }]) {
-        assert.throws(() => validateRevealResponse(response, id),
-            /Invalid generated canvas folder response/);
+    for (const response of [{ ...paths, requestId: "../escape" },
+        { ...paths, requestId: "request-1", warnings: [null] }]) {
+        assert.throws(() => validateGenerateResponse(response, id), /Invalid/);
     }
-    for (const response of [{ status: "ready", target }, { status: "opening" },
-        { status: "opening", target: ".github/extensions/other/" }]) {
-        assert.throws(() => validateOpenResponse(response, id),
-            /Invalid generated canvas opening response/);
-    }
-    for (const response of [{ target }, { target, requestId: "../escape" },
-        { target: ".github/extensions/other/", requestId: "request-1" },
-        { target, requestId: "request-1", warnings: "Wrong type" },
-        { target, requestId: "request-1", warnings: [null] },
-        { target, requestId: "request-1", extra: true }]) {
-        assert.throws(() => validateGenerateResponse(response, id),
-            /Invalid generated canvas submission response/);
-    }
+    assert.throws(() => validateRevealResponse({ target: paths.publicationTarget }, id), /Invalid/);
     for (const response of [{}, { error: "" }, { error: "failure", status: 500 }]) {
-        assert.throws(() => validateOutputError(response),
-            /Invalid generated canvas error response/);
+        assert.throws(() => validateOutputError(response), /Invalid/);
     }
 });
 
-test("generated output contract validates IDs and action shapes", () => {
-    assert.deepEqual(validateOutputAction({ canvasId: "team-dashboard" }), { canvasId: "team-dashboard" });
-    assert.deepEqual(validateOutputAction({ canvasId: "team-dashboard", replaceExisting: true },
-        { replace: true }), { canvasId: "team-dashboard", replaceExisting: true });
-    for (const input of [{ canvasId: "../escape" }, { canvasId: "con" },
-        { canvasId: "team-dashboard", extra: true },
-        { canvasId: "team-dashboard", replaceExisting: false }]) {
-        assert.throws(() => validateOutputAction(input, { replace: true }), /Invalid generated/);
-    }
+test("Open separately binds its request and runtime replacement snapshot", () => {
+    const input = { canvasId: id, requestId: "new-request", replaceExisting: true,
+        replaceRequestId: "prior-request", expectedTargetDigest: "a".repeat(64) };
+    assert.deepEqual(validateOutputAction({ canvasId: id }), { canvasId: id });
+    assert.deepEqual(validateOutputAction(input, { open: true }), input);
+    for (const wrong of [
+        { canvasId: id }, { ...input, expectedTargetDigest: undefined },
+        { ...input, requestId: "../escape" }, { ...input, replaceExisting: false },
+        { ...input, extra: true }, { ...input, canvasId: "con" },
+    ]) assert.throws(() => validateOutputAction(wrong, { open: true }), /Invalid/);
+    assert.throws(() => validateOutputAction(input), /Invalid/);
 });
 
-test("generated output distinguishes absent, foreign, incomplete and ready targets", async (t) => {
-    const project = await mkdtemp(join(tmpdir(), "designer-output-"));
-    t.after(() => rm(project, { recursive: true, force: true }));
-    const parent = join(project, ".github", "extensions");
-    const target = join(parent, "team-dashboard");
-    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "absent");
-    await mkdir(target, { recursive: true });
-    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
-    await writeFile(join(target, "canvas-config.json"), JSON.stringify({ canvas: { id: "team-dashboard" } }));
-    await writeFile(join(target, "settings-provenance.json"),
-        JSON.stringify({ handoffId: "handoff-1", requestId: "request-1" }));
-    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
-    await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
-        handoffId: "handoff-1", requestId: "request-1", sourceFingerprint: "a".repeat(64),
-    }));
-    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "incomplete");
-    await writeFile(join(target, "extension.mjs"), "export {};");
-    assert.deepEqual(await generatedOutput(project, "team-dashboard", "handoff-1"), {
-        status: "ready", target: ".github/extensions/team-dashboard/", requestId: "request-1",
-    });
-    for (const sourceFingerprint of [undefined, "", "A".repeat(64), "a".repeat(63)]) {
-        await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
-            handoffId: "handoff-1", requestId: "request-1", sourceFingerprint,
-        }));
-        assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
-    }
-    await writeFile(join(target, "settings-provenance.json"), JSON.stringify({
-        handoffId: "handoff-1", requestId: "request-1", sourceFingerprint: "a".repeat(64),
-        extra: true,
-    }));
-    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
-
-    assert.equal((await generatedOutput(project, "team-dashboard", "other")).status, "foreign");
-    await rm(target, { recursive: true });
-    try {
-        await symlink(project, target, process.platform === "win32" ? "junction" : "dir");
-    } catch (error) {
-        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
-        t.diagnostic("Windows symlink creation is not permitted; link assertion skipped");
-        return;
-    }
-    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
+test("installed protocol preflight and output exchange fail explicitly on incompatible packages", async () => {
+    await checkGenerationProtocol(process.cwd(), async () => ({
+        stdout: '{"schemaVersion":2,"publication":"open"}' }));
+    await assert.rejects(checkGenerationProtocol(process.cwd(), async () => ({
+        stdout: '{"schemaVersion":1}' })), /does not support deferred publication/);
+    await assert.rejects(generatedOutput(process.cwd(), id, "handoff-1", process.cwd(),
+        async () => ({ stdout: JSON.stringify({ status: "ready", target: paths.publicationTarget }) })),
+    /Invalid generated output status/);
+    await assert.rejects(generatedOutput(process.cwd(), id, "handoff-1", process.cwd(),
+        async () => { throw new Error("Permission denied"); }), /Permission denied/);
 });
 
-test("generated metadata reads reject replaced entries and oversized files", async (t) => {
-    const project = await mkdtemp(join(tmpdir(), "designer-output-race-"));
-    t.after(() => rm(project, { recursive: true, force: true }));
-    const target = join(project, ".github", "extensions", "team-dashboard");
-    await mkdir(target, { recursive: true });
+test("bounded metadata reader rejects entry and parent replacement and oversized data", async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "designer-metadata-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const target = join(root, "source");
+    await mkdir(target);
     const path = join(target, "canvas-config.json");
-    await writeFile(path, JSON.stringify({ canvas: { id: "team-dashboard" } }));
+    await writeFile(path, '{"canvas":{"id":"team-dashboard"}}');
     await assert.rejects(readGeneratedJson(target, "canvas-config.json", async (file, flags) => {
         const descriptor = await open(file, flags);
         await rename(path, `${path}.prior`);
-        await writeFile(path, JSON.stringify({ canvas: { id: "team-dashboard" } }));
+        await writeFile(path, "{}");
         return descriptor;
     }), /metadata changed during read/);
     await writeFile(path, "x".repeat(1024 * 1024 + 1));
     assert.equal(await readGeneratedJson(target, "canvas-config.json"), null);
-    assert.equal((await generatedOutput(project, "team-dashboard", "handoff-1")).status, "foreign");
-});
-
-test("unsafe generated metadata is foreign without hiding unrelated read errors", async (t) => {
-    const project = await mkdtemp(join(tmpdir(), "designer-output-unsafe-"));
-    t.after(() => rm(project, { recursive: true, force: true }));
-    const target = join(project, ".github", "extensions", "team-dashboard");
-    await mkdir(target, { recursive: true });
-    const result = { status: "foreign", target: ".github/extensions/team-dashboard/" };
-    for (const error of [
-        Object.assign(new Error("Symlinked metadata"), { code: "ELOOP" }),
-        new Error("Generated canvas metadata changed during read"),
-        new Error("Generated canvas metadata parent changed during read"),
-    ]) {
-        assert.deepEqual(await generatedOutput(project, "team-dashboard", "handoff-1",
-            async () => { throw error; }), result);
-    }
-    await assert.rejects(generatedOutput(project, "team-dashboard", "handoff-1",
-        async () => { throw Object.assign(new Error("Permission denied"), { code: "EACCES" }); }),
-    /Permission denied/);
-    try {
-        await symlink(project, join(target, "canvas-config.json"), "file");
-    } catch (error) {
-        if (process.platform !== "win32" || !["EPERM", "EACCES"].includes(error.code)) throw error;
-        t.diagnostic("Windows symlink creation is not permitted; metadata assertion skipped");
-        return;
-    }
-    assert.deepEqual(await generatedOutput(project, "team-dashboard", "handoff-1"), result);
-});
-
-test("generated output rejects a target replaced between provenance and entry lookup", async (t) => {
-    const project = await mkdtemp(join(tmpdir(), "designer-output-replace-"));
-    t.after(() => rm(project, { recursive: true, force: true }));
-    const target = join(project, ".github", "extensions", "team-dashboard");
-    await mkdir(target, { recursive: true });
-    await writeFile(join(target, "canvas-config.json"), JSON.stringify({ canvas: { id: "team-dashboard" } }));
-    await writeFile(join(target, "settings-provenance.json"),
-        JSON.stringify({ handoffId: "handoff-1", requestId: "request-1",
-            sourceFingerprint: "a".repeat(64) }));
-    await writeFile(join(target, "extension.mjs"), "export {};");
-    const status = await generatedOutput(project, "team-dashboard", "handoff-1",
-        async (...args) => {
-            const data = await readGeneratedJson(...args);
-            if (args[1] === "settings-provenance.json") {
-                await rename(target, `${target}.prior`);
-                await mkdir(target);
-                await writeFile(join(target, "extension.mjs"), "export {};");
-            }
-            return data;
-        });
-    assert.deepEqual(status, { status: "foreign", target: ".github/extensions/team-dashboard/" });
 });

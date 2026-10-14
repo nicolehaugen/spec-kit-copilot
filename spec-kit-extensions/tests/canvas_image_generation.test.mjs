@@ -86,7 +86,7 @@ async function setup(t, selected = [logo, logo, logo]) {
     await addWorkflowFixture(project, model);
     const prepared = await freezeGeneration({ model, values, handoff, project, workspace });
     const requestPath = join(handoffFolder, "generations", prepared.requestId, "request.json");
-    const sdk = join(project, ".github", "extensions", "image-canvas");
+    const sdk = join(project, "generated-canvases", "image-canvas");
     return { project, workspace, prepared, sdk, requestPath, templates: model.templates, model, values };
 }
 

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, open, readFile, rename, rm, symlink, writeFile } from "
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { loadLastOpen, replaceLastOpen, saveLastOpen } from "../open-state.mjs";
+import { loadActiveGeneration, saveActiveGeneration, loadLastOpen, replaceLastOpen, saveLastOpen } from "../open-state.mjs";
 
 async function fixture(t) {
     const workspace = await mkdtemp(join(tmpdir(), "designer-open-"));
@@ -128,4 +128,26 @@ test("saved open inventory rejects a parent replaced during open, including a mi
             }
         }
     }
+});
+
+test("active generation is bounded, handoff-bound, and never falls back when its request is missing", async (t) => {
+    const workspace = await fixture(t);
+    const folder = join(workspace, "speckit-canvas-designer", "handoffs", "handoff-1");
+    await mkdir(folder, { recursive: true });
+    assert.equal(await loadActiveGeneration(workspace, "handoff-1"), null);
+    await saveActiveGeneration(workspace, "handoff-1", "request-1");
+    const generation = join(folder, "generations", "request-1");
+    await mkdir(generation, { recursive: true });
+    await assert.rejects(loadActiveGeneration(workspace, "handoff-1"), /Tracked generation request is missing/);
+    const requestPath = join(generation, "request.json");
+    const request = { schemaVersion: 2, handoffId: "handoff-1", requestId: "request-1" };
+    await writeFile(requestPath, JSON.stringify(request));
+    assert.deepEqual(await loadActiveGeneration(workspace, "handoff-1"), request);
+    await writeFile(requestPath, JSON.stringify({ ...request, schemaVersion: 1 }));
+    await assert.rejects(loadActiveGeneration(workspace, "handoff-1"), /Invalid active generation request/);
+    await writeFile(requestPath, " ".repeat(4 * 1024 * 1024 + 1));
+    await assert.rejects(loadActiveGeneration(workspace, "handoff-1"), /Invalid saved Designer open inventory file/);
+    await writeFile(join(folder, "active-generation.json"), JSON.stringify({
+        schemaVersion: 2, handoffId: "another-handoff", requestId: "request-1" }));
+    await assert.rejects(loadActiveGeneration(workspace, "handoff-1"), /belongs to another handoff/);
 });

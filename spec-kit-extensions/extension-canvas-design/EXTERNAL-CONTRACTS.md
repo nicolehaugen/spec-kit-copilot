@@ -11,6 +11,19 @@ remain self-contained and do not import these host-owned contracts.
 
 ## Locations and ownership
 
+The approved internal Designer/generator exchange is one schema-2 protocol.
+Generate returns the non-discoverable source `target` and distinct
+`publicationTarget`; Open alone publishes and activates. The source-owned
+request, bounded emitted-file receipt, output-status, and Open-consent contracts
+are covered by `DT/contracts.test.mjs`, `generated-output.test.mjs`,
+`RT/deferred_activation.test.mjs`, and browser confirmation tests. Unsupported
+packages/requests fail explicitly; there are no legacy compatibility paths.
+
+The early-resume loading bridge in Designer and `R/startup.mjs` is a fixed-shell,
+noncustomizable lifecycle surface, not a contributed control. It needs no
+definition/renderer template pair. Parity and lifecycle tests keep both maintained
+copies aligned and cover early awaited callbacks, redirect, close, and failure.
+
 The following abbreviations keep the index readable:
 
 - **D**: `plugins/spec-kit-copilot-wizard/extensions/speckit-canvas-designer/`.

@@ -5,9 +5,12 @@ import { readHandoff } from "./handoff.mjs";
 import { startShell } from "./server.mjs";
 import { assertPageCommand, loadResolvedDesignerPages } from "./pages.mjs";
 import { previewModel } from "./preview.mjs";
-import { freshDesignerSettings } from "./settings.mjs";
+import { freshDesignerSettings, loadDesignerSettings } from "./settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from "./contracts/host-open.mjs";
-import { loadLastOpen, replaceLastOpen } from "./open-state.mjs";
+import { loadActiveGeneration, loadLastOpen, replaceLastOpen } from "./open-state.mjs";
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { createSessionStartup } from "./startup.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
 import { createDesignerBootstrap } from "./bootstrap.mjs";
 import { assertBootstrapCapabilities, BOOTSTRAP_TOOL, bootstrapInputSchema,
@@ -17,6 +20,8 @@ const servers = new Map();
 const opening = new Map();
 let inventoryQueue = Promise.resolve();
 let checkout;
+let session;
+const startup = createSessionStartup();
 
 async function withInventoryLock(action) {
     const previous = inventoryQueue;
@@ -76,7 +81,8 @@ const bootstrap = createDesignerBootstrap({
     log: (message, level) => session.log(message, { level }),
 });
 
-const session = await joinSession({
+try {
+session = await joinSession({
     tools: [{
         name: BOOTSTRAP_TOOL,
         description: "Run this child session's LLM-invoked Designer install or finalize-open stage from a frozen launch reference. Transfers and opens complete payloads internally; does not create sessions or run stages automatically.",
@@ -97,7 +103,7 @@ const session = await joinSession({
         displayName: "Spec Kit Canvas Designer",
         description: "Open Designer with the complete preset-resolved page set or a nonpersistent UX preview.",
         inputSchema: designerOpenInputSchema,
-        open: async (ctx) => {
+        open: (ctx) => startup.open(ctx, async () => {
             if (opening.has(ctx.instanceId)) {
                 throw new CanvasError("designer_open_failed", "Designer is already opening this panel");
             }
@@ -121,7 +127,22 @@ const session = await joinSession({
                     const project = await getCheckout();
                     await assertPageCommand(project);
                     model = await loadResolvedDesignerPages(handoff, project, pages, templates);
-                    model = await freshDesignerSettings(session.workspacePath, handoff, model);
+                    const active = restored ? await loadActiveGeneration(session.workspacePath, handoffId) : null;
+                    if (active) {
+                        const { integrity, ...payload } = active;
+                        if (integrity !== createHash("sha256").update(JSON.stringify(payload)).digest("hex")
+                            || active.project !== project || active.sourceFingerprint !== handoff.sourceFingerprint
+                            || active.modelRevision !== model.revision) {
+                            throw new Error("Tracked generation no longer matches this Designer handoff or model");
+                        }
+                        model = await loadDesignerSettings(session.workspacePath, handoff, model);
+                        if (!model.persisted || active.settingsRevision !== model.settingsRevision
+                            || !isDeepStrictEqual(active.values, model.values)
+                            || !isDeepStrictEqual(active.workflow.phaseArtifacts, model.outputs)
+                            || !isDeepStrictEqual(active.badges?.instances ?? [], model.badges)) {
+                            throw new Error("Tracked generation settings changed; use an explicit new Designer launch");
+                        }
+                    } else model = await freshDesignerSettings(session.workspacePath, handoff, model);
                 }
                 const next = await startShell(handoff, model, handoff
                     ? { project: await getCheckout(), workspace: session.workspacePath, session }
@@ -176,9 +197,15 @@ const session = await joinSession({
             } finally {
                 if (opening.get(ctx.instanceId) === token) opening.delete(ctx.instanceId);
             }
-        },
+        }, async () => {
+            opening.delete(ctx.instanceId);
+            const entry = servers.get(ctx.instanceId);
+            servers.delete(ctx.instanceId);
+            if (entry) await entry.close();
+        }),
         onClose: async ({ instanceId }) => {
             opening.delete(instanceId);
+            await startup.close(instanceId);
             const entry = servers.get(instanceId);
             if (!entry) return;
             servers.delete(instanceId);
@@ -186,3 +213,8 @@ const session = await joinSession({
         },
     })],
 });
+startup.ready();
+} catch (error) {
+    startup.fail(error);
+    throw error;
+}

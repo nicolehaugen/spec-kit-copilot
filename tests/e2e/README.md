@@ -36,7 +36,9 @@ A test driver stands in only for the child agent's orchestration:
    Exercise real tabs, adapters, save/reopen, and validation in Playwright.
 5. For generated-canvas fixtures, click Generate in Designer, assert the
    dispatched Generate skill and resulting frozen request ID, use that ID with
-   the **installed** `scripts/generate.mjs`, then serve the generated provider
+   the **installed** `scripts/generate.mjs` to create non-discoverable source,
+   explicitly call the installed `scripts/publish-generated.mjs` as a separate
+   Open/publication step, then serve the published provider
    and assert the fixture's behavior in Playwright. For UI requiring a completed
    phase or artifact, provide deterministic source-owned runtime event/artifact
    evidence rather than calling an agent; do not mock the generated renderer.

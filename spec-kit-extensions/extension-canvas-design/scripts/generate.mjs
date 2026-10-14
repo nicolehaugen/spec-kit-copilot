@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { validControlContract, validControlValue } from "../generated-scaffold/external-control-contract.mjs";
@@ -11,11 +11,14 @@ import { isWindowsDeviceName } from "../generated-scaffold/files.mjs";
 import { phaseContract } from "../generated-scaffold/contract.mjs";
 import { validateDialogAdapterSource, validateButtonAdapterSource } from
     "../generated-scaffold/contracts/external-dialog-button.mjs";
-import { REQUEST_LIMIT, validateGenerationRequestIntegrity } from "./contracts/generation-request.mjs";
+import { GENERATION_PROTOCOL, RECEIPT_NAME, REQUEST_LIMIT, validateGenerationRequestIntegrity } from "./contracts/generation-request.mjs";
+import { renameDirectoryWithoutReplacement, snapshotGeneratedTree, validateReceipt,
+    readReceipt, RECEIPT_LIMIT } from "./generated-files.mjs";
+export { renameDirectoryWithoutReplacement } from "./generated-files.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const featureRoot = join(packageRoot, "generated-scaffold");
-const featureFiles = ["server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "external-control-contract.mjs", "files.mjs",
+const featureFiles = ["server.mjs", "runtime.mjs", "startup.mjs", "setup.mjs", "contract.mjs", "external-control-contract.mjs", "files.mjs",
     "phase-response.mjs", "contracts/agent-actions.mjs", "contracts/workflow-state.mjs",
     "contracts/external-host-adapter.mjs", "contracts/packaged-contributions.mjs",
     "contracts/external-generated-controls.mjs", "contracts/external-dialog-button.mjs",
@@ -29,55 +32,6 @@ const requestPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const fieldPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/;
 const essentialFields = new Set(["canvas.id", "canvas.displayName", "canvas.description",
     "canvas.workflowListName", "workflowSlug.userProvided", "setup.show"]);
-
-export async function renameDirectoryWithoutReplacement(source, destination) {
-    if (process.platform === "win32") {
-        const staged = await lstat(source);
-        for (let attempt = 0; ; attempt++) {
-            try { await rename(source, destination); break; }
-            catch (error) {
-                if (error.code !== "EPERM" || attempt >= 5) throw error;
-                // Windows can briefly deny a directory rename after generated files are read.
-                await new Promise((done) => setTimeout(done, 100 * (attempt + 1)));
-                const current = await lstat(source);
-                if (!current.isDirectory() || current.isSymbolicLink()
-                    || current.dev !== staged.dev || current.ino !== staged.ino) {
-                    throw new Error("Canvas staging directory changed before publication");
-                }
-                try {
-                    await lstat(destination);
-                    throw new Error("Canvas destination changed before publication");
-                } catch (lookupError) {
-                    if (lookupError.code !== "ENOENT") throw lookupError;
-                }
-            }
-        }
-        return;
-    }
-    // POSIX rename replaces an existing empty directory; reserve the destination first.
-    await mkdir(destination);
-    const claim = await lstat(destination);
-    try {
-        const current = await lstat(destination);
-        if (current.dev !== claim.dev || current.ino !== claim.ino
-            || !current.isDirectory() || current.isSymbolicLink()) {
-            throw new Error("Canvas destination changed before publication");
-        }
-        await rename(source, destination);
-    } catch (error) {
-        const current = await lstat(destination).catch((readError) => {
-            if (readError.code === "ENOENT") return null;
-            throw readError;
-        });
-        if (current?.dev === claim.dev && current.ino === claim.ino) {
-            try { await rmdir(destination); }
-            catch (cleanup) {
-                throw new AggregateError([error, cleanup], "Canvas destination could not be released");
-            }
-        }
-        throw error;
-    }
-}
 
 function withoutSchema(document) {
     if (!document || typeof document !== "object" || Array.isArray(document)) return document;
@@ -1407,7 +1361,7 @@ async function existingGeneratedCanvas(target, projectRoot, workspaceRoot, hando
         validateGenerationRequestIntegrity(previous, handoffId, provenance.requestId);
         priorConfig = configuration({ ...previous,
             installed: previous.actualInstalled ?? previous.installed });
-        if (previous.project !== projectRoot || previous.target !== `.github/extensions/${canvasId}/`
+        if (previous.project !== projectRoot || previous.target !== `generated-canvases/${canvasId}/`
             || previous.values?.["canvas.id"] !== canvasId
             || previous.sourceFingerprint !== provenance.sourceFingerprint
             || priorConfig.canvas.id !== canvasId
@@ -1416,11 +1370,12 @@ async function existingGeneratedCanvas(target, projectRoot, workspaceRoot, hando
             || !isDeepStrictEqual(previous.runtimeSetup, handoff.workflow.runtimeSetup)) {
             throw new Error("Existing canvas differs from its frozen generation request");
         }
+        await readReceipt(target, previous, false);
     } catch (error) {
         throw new Error(`Existing canvas cannot be safely replaced: ${error.message}`);
     }
     const required = new Set(files.map(([name]) => name.replaceAll("/", sep)));
-    for (const name of ["canvas-config.json", "canvas-setup.json", "settings-provenance.json"]) required.add(name);
+    for (const name of ["canvas-config.json", "canvas-setup.json", "settings-provenance.json", RECEIPT_NAME]) required.add(name);
     const add = (folder, filename) => required.add(`${folder}${sep}${filename}`);
     for (const page of previous.generatedPages ?? []) {
         add("pages", `${page.id}.json`);
@@ -1630,18 +1585,13 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         }
         distinctControlFiles.set(file.filename, file.bytes);
     }
-    const output = join(projectRoot, ".github", "extensions", config.canvas.id);
-    if (!within(projectRoot, output) || request.target !== `.github/extensions/${config.canvas.id}/`) {
+    const output = join(projectRoot, "generated-canvases", config.canvas.id);
+    if (!within(projectRoot, output) || request.target !== `generated-canvases/${config.canvas.id}/`) {
         throw new Error("Generation target is invalid");
     }
     const files = await Promise.all([...featureFiles, "extension.mjs"].map(async (file) =>
         [file, await readFile(join(featureRoot, file))]));
-    const github = join(projectRoot, ".github");
-    await mkdir(github, { recursive: true });
-    if (await realpath(github) !== github) {
-        throw new Error("Canvas extension directory escapes the checkout");
-    }
-    const parent = join(projectRoot, ".github", "extensions");
+    const parent = join(projectRoot, "generated-canvases");
     await mkdir(parent, { recursive: true });
     if (await realpath(parent) !== parent) {
         throw new Error("Canvas extension directory escapes the checkout");
@@ -1733,6 +1683,22 @@ export async function materialize(project, workspace, handoffId, requestId, repl
     if (renderer.error || renderer.status !== 0) throw new Error(`Workflow renderer failed: ${renderer.stderr || renderer.error}`);
     await verifyTarget();
     await writeFile(join(target, "extension.mjs"), files.at(-1)[1], { flag: "wx" });
+    const receipt = validateReceipt({ schemaVersion: 2, project: projectRoot,
+        canvasId: config.canvas.id, handoffId, requestId, requestIntegrity: request.integrity,
+        sourceFingerprint: request.sourceFingerprint, target: request.target,
+        publicationTarget: request.publicationTarget, files: await snapshotGeneratedTree(target) }, request);
+    const receiptBytes = JSON.stringify(receipt);
+    if (Buffer.byteLength(receiptBytes) > RECEIPT_LIMIT) throw new Error("Generation receipt exceeds 1 MiB");
+    await writeFile(join(target, RECEIPT_NAME), receiptBytes, { flag: "wx" });
+    await readReceipt(target, request);
+    try { await writeFile(join(generation, RECEIPT_NAME), receiptBytes, { flag: "wx" }); }
+    catch (error) {
+        if (error.code !== "EEXIST") throw error;
+        if (await readBoundedSessionFile(generation, RECEIPT_NAME, RECEIPT_LIMIT,
+            "Generation receipt") !== receiptBytes) {
+            throw new Error("Generation receipt changed; prepare a new request");
+        }
+    }
     let current;
     try { current = await lstat(output); }
     catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -1751,7 +1717,7 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         let moved = false;
         let published = false;
         try {
-            await rename(output, backup);
+            await renameDirectoryWithoutReplacement(output, backup);
             moved = true;
             const displaced = await lstat(backup);
             if (displaced.dev !== original.dev || displaced.ino !== original.ino) {
@@ -1785,7 +1751,8 @@ export async function materialize(project, workspace, handoffId, requestId, repl
         catch (error) { if (error.code !== "ENOENT") throw error; }
         await renameDirectoryWithoutReplacement(target, output);
     }
-    return { target: request.target, canvasId: config.canvas.id, warnings };
+    return { target: request.target, publicationTarget: request.publicationTarget,
+        canvasId: config.canvas.id, requestId, warnings };
     } catch (error) {
         try {
             const current = await lstat(target).catch((readError) => {
@@ -1805,6 +1772,8 @@ export async function materialize(project, workspace, handoffId, requestId, repl
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    materialize(...process.argv.slice(2)).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`))
+    if (process.argv.length === 3 && process.argv[2] === "--describe-contract") {
+        process.stdout.write(`${JSON.stringify(GENERATION_PROTOCOL)}\n`);
+    } else materialize(...process.argv.slice(2)).then((result) => process.stdout.write(`${JSON.stringify(result)}\n`))
         .catch((error) => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
 }

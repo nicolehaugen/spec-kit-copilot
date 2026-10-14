@@ -29,6 +29,8 @@ FILES = {
     "commands/generate.md",
     "commands/open-generated.md",
     "scripts/generate.mjs",
+    "scripts/generated-files.mjs",
+    "scripts/publish-generated.mjs",
     "scripts/contracts/generation-request.mjs",
     "scripts/verify-launch.mjs",
     "scripts/validate-generated-open.mjs",
@@ -91,6 +93,7 @@ FILES = {
     "generated-host/setup-button-control/control.json",
     "generated-host/setup-button-control/generated-setup-button-adapter.mjs",
     "generated-host/setup-button-control/setup.json",
+    "generated-scaffold/startup.mjs",
     *(f"generated-scaffold/{name}" for name in (
         "extension.mjs", "server.mjs", "runtime.mjs", "setup.mjs", "contract.mjs", "external-control-contract.mjs", "files.mjs",
         "phase-response.mjs",

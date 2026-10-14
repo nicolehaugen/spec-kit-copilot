@@ -24,7 +24,8 @@ test("overlapping output polls return their own validated snapshot without repla
             const id = new URL(url, "http://localhost").searchParams.get("canvasId");
             if (id === "first-canvas") return new Promise((resolve) => { releaseFirst = resolve; });
             return { ok: true, json: async () => ({
-                status: "ready", target: ".github/extensions/second-canvas/",
+                status: "ready", target: "generated-canvases/second-canvas/",
+                publicationTarget: ".github/extensions/second-canvas/", publication: { status: "absent" },
                 requestId: "second-request",
             }) };
         },
@@ -34,7 +35,8 @@ test("overlapping output polls return their own validated snapshot without repla
     const second = await refresh("second-canvas");
     assert.equal(second.requestId, "second-request");
     releaseFirst({ ok: true, json: async () => ({
-        status: "ready", target: ".github/extensions/first-canvas/",
+        status: "ready", target: "generated-canvases/first-canvas/",
+        publicationTarget: ".github/extensions/first-canvas/", publication: { status: "absent" },
         requestId: "first-request",
     }) });
     assert.equal((await first).requestId, "first-request");
@@ -51,7 +53,7 @@ test("superseded output-status failures and successes cannot change the current 
     const pending = [];
     const context = {
         outputCheck: 0, outputIdentity: "", outputStatus: "absent",
-        outputRequestId: null, pendingReplacement: null,
+        outputRequestId: null, pendingReplacement: null, model: { generationError: null },
         draft: { "canvas.id": "new-canvas" }, token: "test",
         validateCanvasId, validateOutputStatusResponse, validateOutputError,
         updateOutputDisplay: () => {}, updateGenerate: () => {},
@@ -66,7 +68,8 @@ test("superseded output-status failures and successes cannot change the current 
     const oldFailure = checkOutputStatus("old-canvas");
     const current = checkOutputStatus("new-canvas");
     pending[1].resolve({ ok: true, json: async () => ({
-        status: "absent", target: ".github/extensions/new-canvas/",
+        status: "absent", target: "generated-canvases/new-canvas/",
+        publicationTarget: ".github/extensions/new-canvas/", publication: { status: "absent" },
     }) });
     await current;
     pending[0].resolve({ ok: false, json: async () => ({ error: "Old canvas failed" }) });
@@ -80,7 +83,8 @@ test("superseded output-status failures and successes cannot change the current 
     await currentFailure;
     assert.equal(errorBox.textContent, "New canvas failed");
     pending[2].resolve({ ok: true, json: async () => ({
-        status: "absent", target: ".github/extensions/old-canvas/",
+        status: "absent", target: "generated-canvases/old-canvas/",
+        publicationTarget: ".github/extensions/old-canvas/", publication: { status: "absent" },
     }) });
     await oldSuccess;
     assert.equal(errorBox.textContent, "New canvas failed");
@@ -96,17 +100,19 @@ test("Share offers the current folder only after its output is verified", () => 
         document: { getElementById: (id) => elements.get(id) },
         draft: { "canvas.id": "new-id" }, requestedCanvasId: "old-id",
         requestedRequestId: null, outputRequestId: null, outputIdentity: "",
-        outputStatus: "absent", pendingReplacement: null,
+        outputStatus: "absent", pendingReplacement: null, publication: { status: "absent" },
     };
     const update = runInNewContext(`${source.slice(start, end)}
 updateOutputDisplay`, context);
     update();
-    assert.equal(elements.get("output-target").textContent, ".github/extensions/new-id/");
+    assert.equal(elements.get("output-target").textContent, "generated-canvases/new-id/");
     assert.equal(elements.get("share-project-copy").hidden, true);
     assert.equal(elements.get("share-project-path").textContent, "");
-    assert.match(elements.get("share-target-note").textContent, /verify the current Canvas ID/);
+    assert.match(elements.get("share-target-note").textContent, /Open to publish/);
     context.outputIdentity = "new-id";
     context.outputStatus = "ready";
+    context.outputRequestId = "current-request";
+    context.publication = { status: "ready", requestId: "current-request" };
     update();
     assert.equal(elements.get("share-project-copy").hidden, false);
     assert.equal(elements.get("share-project-path").textContent, ".github/extensions/new-id/");
@@ -145,7 +151,8 @@ test("a successful earlier Generate retry stays openable, but replacement waits 
         updateOpenStatus: () => {}, setMessage: (slot, message) => { slot.textContent = message; },
         validateCanvasId, validateOutputStatusResponse, validateOutputError,
         fetch: async () => ({ ok: true, json: async () => ({
-            status: "ready", target: ".github/extensions/first-canvas/",
+            status: "ready", target: "generated-canvases/first-canvas/",
+            publicationTarget: ".github/extensions/first-canvas/", publication: { status: "absent" },
             requestId: publishedRequestId,
         }) }), AbortSignal, encodeURIComponent,
     };
@@ -155,7 +162,7 @@ test("a successful earlier Generate retry stays openable, but replacement waits 
     assert.equal(openGenerated.disabled, false);
     assert.equal(generate.textContent, "Regenerate canvas");
     assert.equal(elements.get("generation-status").textContent, "Canvas files created.");
-    assert.equal(elements.get("share-project-path").textContent, ".github/extensions/first-canvas/");
+    assert.equal(elements.get("share-project-path").textContent, "");
 
     context.pendingReplacement = { canvasId: "first-canvas", requestId: "request-c" };
     updateGenerate();
@@ -170,7 +177,7 @@ test("a successful earlier Generate retry stays openable, but replacement waits 
     await refreshOutputStatus("first-canvas");
     assert.equal(context.pendingReplacement, null);
     assert.equal(openGenerated.disabled, false);
-    assert.equal(elements.get("share-project-copy").hidden, false);
+    assert.equal(elements.get("share-project-copy").hidden, true);
 
     context.pendingReplacement = { canvasId: "first-canvas", requestId: "failed-request" };
     publishedRequestId = "request-c";
@@ -342,7 +349,8 @@ test("Generate saves a snapshot and dispatches with the returned revision", asyn
     assert.equal(submitted, "first-canvas");
     draft["canvas.id"] = "second-canvas";
     release({ ok: true, json: async () => ({
-        target: ".github/extensions/first-canvas/", requestId: "request-1",
+        target: "generated-canvases/first-canvas/",
+        publicationTarget: ".github/extensions/first-canvas/", requestId: "request-1",
     }) });
     await request;
     assert.deepEqual(calls, [["save", "first-canvas"], ["generate", "first-canvas"],

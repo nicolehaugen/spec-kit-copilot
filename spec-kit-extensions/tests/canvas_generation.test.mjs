@@ -32,7 +32,7 @@ test("Generate command only materializes and reports its target", async () => {
     assert.match(command, /scripts\/generate\.mjs/);
     assert.match(command, /same frozen\s+handoff ID and request ID/);
     assert.match(command, /Report the exact generated target, canvas ID, request ID, and any warnings/);
-    assert.match(command, /app was created but\s+\*\*not opened\*\*/);
+    assert.match(command, /app was created but\s+\*\*not published or opened\*\*/);
     assert.match(command, /speckit\.extension-canvas-design\.open-generated/);
     assert.match(command, /Do not call `extensions_reload`,\s+`extensions_manage`, `list_canvas_capabilities`, or `open_canvas` here/);
     assert.match(command, /--replace-existing/);
@@ -182,7 +182,7 @@ test("frozen Designer outputs become the generated viewer and link configuration
     };
     const prepared = await freezeGeneration({ project, workspace, model, values, handoff, outputs });
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases",
         "my-workflow", "canvas-config.json"), "utf8"));
     assert.deepEqual(config.phaseArtifacts, outputs);
     const steps = phaseContract(config);
@@ -294,7 +294,7 @@ async function fixture(t, selectedHandoff = handoff, selectedValues = values, ru
     await writeFile(join(folder, "handoff.json"), JSON.stringify(selectedHandoff));
     const prepared = await freezeGeneration({ project, workspace, model, values: selectedValues,
         handoff: selectedHandoff, runtimeInventory });
-    const sdk = join(project, ".github", "extensions", selectedValues["canvas.id"]);
+    const sdk = join(project, "generated-canvases", selectedValues["canvas.id"]);
     return { project, workspace, prepared, sdk };
 }
 
@@ -569,7 +569,7 @@ test("selected badge definitions and evaluator are packaged without preset files
     await assert.rejects(materialize(project, workspace, handoff.handoffId,
         projectRequest.requestId), /project placement with workflow rule inputs/);
     await assert.rejects(readdir(join(project, projectRequest.target)), { code: "ENOENT" });
-    const browserOnly = `${originalPage}\nthrow new Error("Workflow page adapter ran in Node");\n`;
+    const browserOnly = `${originalPage.replaceAll("\r\n", "\n")}\nthrow 0;\n`;
     await writeFile(pageAdapter.path, browserOnly);
     pageAdapter.hash = createHash("sha256").update(browserOnly).digest("hex");
     const browserRequest = await freezeGeneration({ project, workspace, model: selected,
@@ -577,7 +577,7 @@ test("selected badge definitions and evaluator are packaged without preset files
         handoff, outputs, badges: [projectBadge] });
     await materialize(project, workspace, handoff.handoffId, browserRequest.requestId);
     assert.match(await readFile(join(project, browserRequest.target, "pages",
-        "generated-workflow-page-adapter.mjs"), "utf8"), /Workflow page adapter ran in Node/);
+        "generated-workflow-page-adapter.mjs"), "utf8"), /throw 0;/);
 });
 
 test("Phase artifact replacement group freezes with its badge type and rejects mismatches", async (t) => {
@@ -949,11 +949,11 @@ test("all enabled Designer values are validated and frozen, with only bound fiel
     assert.equal(frozen.values["designer.note"], "Designer only");
     assert.deepEqual(frozen.generatedFields.map(({ id }) => id), ["billing.costCode"]);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const setup = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const setup = JSON.parse(await readFile(join(project, "generated-canvases",
         "my-workflow", "canvas-setup.json"), "utf8"));
     assert.equal(setup.values["billing.costCode"], "CC-481");
     assert.equal(setup.values["designer.note"], "Designer only");
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases",
         "my-workflow", "canvas-config.json"), "utf8"));
     assert.equal(config.readOnlyFields.some((field) => field.id === "designer.note"), false);
 });
@@ -1011,7 +1011,7 @@ test("100 bounded generated fields materialize when the frozen request exceeds 1
     assert.ok(raw.length > 128 * 1024);
     assert.ok(raw.length <= 4 * 1024 * 1024);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases",
         "my-workflow", "canvas-config.json"), "utf8"));
     assert.equal(config.readOnlyFields.length, 100);
     assert.equal(config.readOnlyFields[99].value, "x".repeat(1000));
@@ -1057,7 +1057,7 @@ test("six maximum-size generated pages fit the frozen request and materialize", 
     assert.ok(request.length <= 4 * 1024 * 1024);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     for (const page of generatedPages) {
-        const bytes = await readFile(join(project, ".github", "extensions", values["canvas.id"],
+        const bytes = await readFile(join(project, "generated-canvases", values["canvas.id"],
             "pages", `${page.renderer}.mjs`));
         assert.equal(bytes.length, 32 * 1024);
     }
@@ -1092,7 +1092,7 @@ test("generated navigation preserves frozen order with explicit and implicit pag
     assert.deepEqual(frozen.generatedPages.map(({ id }) => id), expected);
 
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases",
         values["canvas.id"], "canvas-config.json"), "utf8"));
     assert.deepEqual(config.generatedPages.map(({ id }) => id), expected);
     const navigation = renderHtml(config).match(/<nav class="phase-navigation" aria-label="Canvas pages">([\s\S]*?)<\/nav>/)?.[1];
@@ -1104,7 +1104,7 @@ test("generated navigation preserves frozen order with explicit and implicit pag
 test("generated stock scalar is escaped, read-only and absent from unchanged defaults", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const target = join(project, ".github", "extensions", "my-workflow");
+    const target = join(project, "generated-canvases", "my-workflow");
     const { readConfig } = await import(pathToFileURL(join(target, "server.mjs")).href);
     const defaultConfig = JSON.parse(await readFile(join(target, "canvas-config.json"), "utf8"));
     assert.equal(defaultConfig.readOnlyFields, undefined);
@@ -1180,13 +1180,13 @@ test("materialization rejects a re-signed request with a Windows device Canvas I
     const request = JSON.parse(await readFile(path, "utf8"));
     request.canvas.id = "con";
     request.values["canvas.id"] = "con";
-    request.target = ".github/extensions/con/";
+    request.target = "generated-canvases/con/";
     const { integrity, ...payload } = request;
     request.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     await writeFile(path, JSON.stringify(request));
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId),
-        /Invalid frozen (?:Designer field: canvas\.id|canvas identity)/);
-    await assert.rejects(readdir(join(project, ".github", "extensions")), { code: "ENOENT" });
+        /Invalid generated Canvas ID/);
+    await assert.rejects(readdir(join(project, "generated-canvases")), { code: "ENOENT" });
 });
 
 test("materialization rejects re-signed requests that diverge from frozen Essentials", async (t) => {
@@ -1225,8 +1225,8 @@ test("materialization accepts frozen default description and workflow header", a
 test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     const result = await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    assert.equal(result.target, ".github/extensions/my-workflow/");
-    const target = join(project, ".github", "extensions", "my-workflow");
+    assert.equal(result.target, "generated-canvases/my-workflow/");
+    const target = join(project, "generated-canvases", "my-workflow");
     await assert.rejects(readdir(join(workspace, "extensions")), { code: "ENOENT" });
     const entry = await readFile(join(target, "extension.mjs"), "utf8");
     assert.equal(entry, entryTemplate);
@@ -1234,7 +1234,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.match(entry, /createCanvas\(\{/);
     assert.match(entry, /createServer\(\(req, res\)/);
     assert.match(entry, /server\.listen\(0, "127\.0\.0\.1"/);
-    assert.match(entry, /onClose: \(ctx\) => withLifecycle\(async \(\) =>/);
+    assert.match(entry, /onClose: async \(ctx\) =>/);
     assert.match(entry, /entry\.server\.close/);
     assert.doesNotMatch(entry, /Example agent-callable action/);
     assert.equal((await readFile(join(target, "ui", "workflow-theme.css"), "utf8"))
@@ -1257,6 +1257,7 @@ test("source-owned SDK entry registers, serves and closes the generated project 
         export const createCanvas = (options) => options;
         export async function joinSession({ canvases }) {
             globalThis.__generatedCanvas = canvases[0];
+            globalThis.__generatedEarlyOpen = await canvases[0].open({ instanceId: "early-resume" });
             return { sessionId: "test-session", workspacePath: ${JSON.stringify(workspace)},
                 rpc: { metadata: { snapshot: async () => ({
                     workingDirectory: ${JSON.stringify(project)} }) } },
@@ -1266,6 +1267,10 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     await import(pathToFileURL(join(target, "extension.mjs")).href);
     const canvas = globalThis.__generatedCanvas;
     delete globalThis.__generatedCanvas;
+    const early = globalThis.__generatedEarlyOpen;
+    delete globalThis.__generatedEarlyOpen;
+    assert.match(await (await fetch(early.url)).text(), /My Workflow/);
+    await canvas.onClose({ instanceId: "early-resume" });
     assert.equal(canvas.id, "my-workflow");
     assert.deepEqual(canvas.actions.map((action) => action.name),
         ["run_phase", "report_workflow_slug", "report_phase_artifact", "report_autopilot_step"]);
@@ -1347,7 +1352,7 @@ test("generation rejects malformed or mismatched frozen page assets before creat
     boundary.integrity = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     await writeFile(path, JSON.stringify(boundary));
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    assert.equal((await readFile(join(project, ".github", "extensions", "my-workflow",
+    assert.equal((await readFile(join(project, "generated-canvases", "my-workflow",
         "pages", "canvas-generated-overview-renderer.mjs"))).length, 32 * 1024);
 });
 
@@ -1817,7 +1822,7 @@ test("Essentials contributes a default-off custom slug option", async () => {
 test("legacy result state stays on disk but is not evaluated or shown", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases",
         "my-workflow", "canvas-config.json"), "utf8"));
     config.resultTags = [{ id: "legacy" }];
     config.phaseResults = { specify: { source: { kind: "phase-report" }, values: [{ id: "done" }] } };
@@ -1872,7 +1877,7 @@ test("optional artifact folder slug previews only when enabled and binds the act
         const { project, workspace, prepared } = await fixture(child, handoff,
             { ...values, "workflowSlug.userProvided": enabled });
         await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-        const config = JSON.parse(await readFile(join(project, ".github", "extensions", "my-workflow",
+        const config = JSON.parse(await readFile(join(project, "generated-canvases", "my-workflow",
             "canvas-config.json"), "utf8"));
         const html = renderHtml(config);
         assert.equal(config.userProvidesSlug, enabled);
@@ -2001,7 +2006,7 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
     const { project, workspace, prepared } = await fixture(t, handoff,
         { ...values, "workflowSlug.userProvided": true });
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions", "my-workflow",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases", "my-workflow",
         "canvas-config.json"), "utf8"));
     const skill = join(project, ".github", "skills", "speckit-specify");
     await mkdir(skill, { recursive: true });
@@ -2064,7 +2069,7 @@ test("unstarted workflow rows persist, retain drafts and only create a folder on
 test("a missing project constitution can be created before workflow runs", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     await materialize(project, workspace, handoff.handoffId, prepared.requestId);
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases",
         "my-workflow", "canvas-config.json"), "utf8"));
     const skill = join(project, ".github", "skills", "speckit-constitution");
     await mkdir(skill, { recursive: true });
@@ -2097,7 +2102,7 @@ test("local development selections remain bound to the frozen handoff at publica
     })).digest("hex");
     const { project, workspace, prepared } = await fixture(t, local);
     await materialize(project, workspace, local.handoffId, prepared.requestId);
-    const config = JSON.parse(await readFile(join(project, ".github", "extensions",
+    const config = JSON.parse(await readFile(join(project, "generated-canvases",
         "my-workflow", "canvas-config.json"), "utf8"));
     assert.deepEqual(config.installed.presets, [{ id: "copilot-sub-agents", version: "1.0.0", priority: 1 }]);
 

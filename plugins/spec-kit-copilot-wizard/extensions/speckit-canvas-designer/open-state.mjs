@@ -16,8 +16,7 @@ async function statePath(workspace) {
     return join(folder, "last-open.json");
 }
 
-export async function loadLastOpen(workspace, openFile = open) {
-    const path = await statePath(workspace);
+async function loadStateFile(path, validate, openFile = open, limit = LIMIT) {
     let file;
     try {
         file = await openFile(path, constants.O_RDONLY
@@ -37,17 +36,25 @@ export async function loadLastOpen(workspace, openFile = open) {
         ]);
         if (folder !== dirname(path) || !opened.isFile() || !current.isFile()
             || current.isSymbolicLink() || opened.dev !== current.dev
-            || opened.ino !== current.ino || opened.size > LIMIT) {
+            || opened.ino !== current.ino || opened.size > limit) {
             throw new Error("Invalid saved Designer open inventory file");
         }
-        const bytes = Buffer.alloc(LIMIT + 1);
+        const bytes = Buffer.alloc(limit + 1);
         let length = 0;
         while (length < bytes.length) {
             const { bytesRead } = await file.read(bytes, length, bytes.length - length, length);
             if (!bytesRead) break;
             length += bytesRead;
         }
-        if (length > LIMIT) throw new Error("Saved Designer open inventory exceeds the size limit");
+        if (length > limit) throw new Error("Saved Designer open inventory exceeds the size limit");
+        const [after, currentAfter, parentAfter] = await Promise.all([
+            file.stat(), lstat(path), realpath(dirname(path)),
+        ]);
+        if (parentAfter !== dirname(path) || currentAfter.isSymbolicLink()
+            || currentAfter.dev !== opened.dev || currentAfter.ino !== opened.ino
+            || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
+            throw new Error("Saved Designer open inventory changed during read");
+        }
         let record;
         try {
             record = JSON.parse(new TextDecoder("utf-8", { fatal: true })
@@ -55,21 +62,21 @@ export async function loadLastOpen(workspace, openFile = open) {
         } catch (error) {
             throw new Error("Invalid saved Designer open inventory JSON", { cause: error });
         }
-        return validateLastOpen(record);
+        return validate(record);
     } finally {
         await file.close();
     }
 }
 
-export async function saveLastOpen(workspace, input, openFile = open) {
-    const record = { schemaVersion: 1, handoffId: input.handoffId,
-        pages: input.pages, templates: input.templates };
-    validateLastOpen(record);
+export async function loadLastOpen(workspace, openFile = open) {
+    return loadStateFile(await statePath(workspace), validateLastOpen, openFile);
+}
+
+async function saveStateFile(path, record, openFile = open) {
     const bytes = JSON.stringify(record);
     if (Buffer.byteLength(bytes) > LIMIT) {
         throw new Error("Designer open inventory exceeds the size limit");
     }
-    const path = await statePath(workspace);
     const folder = dirname(path);
     const temporary = join(folder, `last-open-${randomUUID()}.tmp`);
     try {
@@ -102,6 +109,51 @@ export async function saveLastOpen(workspace, input, openFile = open) {
     } finally {
         await rm(temporary, { force: true });
     }
+}
+
+export async function saveLastOpen(workspace, input, openFile = open) {
+    const record = { schemaVersion: 1, handoffId: input.handoffId,
+        pages: input.pages, templates: input.templates };
+    validateLastOpen(record);
+    return saveStateFile(await statePath(workspace), record, openFile);
+}
+
+function validateActiveGeneration(record) {
+    if (!record || Object.keys(record).sort().join() !== "handoffId,requestId,schemaVersion"
+        || record.schemaVersion !== 2
+        || ![record.handoffId, record.requestId].every((id) =>
+            typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id))) {
+        throw new Error("Invalid active Designer generation");
+    }
+    return record;
+}
+
+async function activePath(workspace, handoffId) {
+    validateActiveGeneration({ schemaVersion: 2, handoffId, requestId: "validate" });
+    const root = await realpath(workspace);
+    const folder = join(root, "speckit-canvas-designer", "handoffs", handoffId);
+    if (await realpath(folder) !== folder) throw new Error("Active generation escapes session artifacts");
+    return join(folder, "active-generation.json");
+}
+
+export async function saveActiveGeneration(workspace, handoffId, requestId) {
+    const record = validateActiveGeneration({ schemaVersion: 2, handoffId, requestId });
+    return saveStateFile(await activePath(workspace, handoffId), record);
+}
+
+export async function loadActiveGeneration(workspace, handoffId) {
+    const record = await loadStateFile(await activePath(workspace, handoffId), validateActiveGeneration);
+    if (!record) return null;
+    if (record.handoffId !== handoffId) throw new Error("Active generation belongs to another handoff");
+    const folder = join(dirname(await activePath(workspace, handoffId)), "generations", record.requestId);
+    if (await realpath(folder) !== folder) throw new Error("Active request escapes session artifacts");
+    const request = await loadStateFile(join(folder, "request.json"), (request) => {
+        if (!request || request.schemaVersion !== 2 || request.requestId !== record.requestId
+            || request.handoffId !== handoffId) throw new Error("Invalid active generation request");
+        return request;
+    }, open, 4 * 1024 * 1024);
+    if (!request) throw new Error("Tracked generation request is missing");
+    return request;
 }
 
 export async function replaceLastOpen(workspace, input, prepare, install) {

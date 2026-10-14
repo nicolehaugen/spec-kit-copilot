@@ -8,10 +8,11 @@ import { initialOutputs, validateValues } from "./settings.mjs";
 import { decodeImage } from "./image.mjs";
 import { validateConfirmedOutputs } from "./handoff.mjs";
 import { specifySpawnOptions } from "../speckit-wizard-canvas/env/specify-invocation.mjs";
-import { serializeGenerationRequest } from "./contracts/generation-request.mjs";
+import { GENERATION_PROTOCOL, serializeGenerationRequest } from "./contracts/generation-request.mjs";
 import { normalizeObservedVersions } from "./contracts/specify-inventory.mjs";
 import { validateDesignerAdapterExports } from "./contracts/external-control-adapter.mjs";
 import { findDuplicateBadge } from "./ui/badge-duplicates.js";
+import { saveActiveGeneration } from "./open-state.mjs";
 
 const required = ["canvas.id", "canvas.displayName"];
 const reserved = new Set(["speckit-canvas-designer", "speckit-wizard", "speckit-canvas-generator"]);
@@ -22,7 +23,7 @@ export async function canvasOutputExists(project, id, entryPoint = false) {
     if (!project || typeof id !== "string" || !canvasIdPattern.test(id)
         || reserved.has(id) || isWindowsDeviceName(id)) return false;
     try {
-        const output = await stat(join(project, ".github", "extensions", id,
+        const output = await stat(join(project, "generated-canvases", id,
             ...(entryPoint ? ["extension.mjs"] : [])));
         return entryPoint ? output.isFile() : true;
     } catch (error) {
@@ -658,7 +659,7 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
             assets: await Promise.all([paired.definition, paired.adapter].map(asset)) });
     }
     if (!handoff?.workflow?.installed) throw new Error("Workflow runtime inventory is not available in this handoff");
-    const target = join(checkout, ".github", "extensions", essentials["canvas.id"]);
+    const target = join(checkout, "generated-canvases", essentials["canvas.id"]);
     if (!replaceExisting && await canvasOutputExists(checkout, essentials["canvas.id"])) {
         throw new Error(`Canvas already exists: ${target}`);
     }
@@ -666,9 +667,11 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         : reconcileInstalledVersions(handoff.workflow.installed, runtimeInventory);
     const requestId = randomUUID();
     const request = {
-        schemaVersion: 1, requestId, handoffId: handoff.handoffId,
-        project: checkout, target: `.github/extensions/${essentials["canvas.id"]}/`,
-        sourceFingerprint: handoff.sourceFingerprint, settingsRevision: model.settingsRevision,
+        schemaVersion: GENERATION_PROTOCOL.schemaVersion, requestId, handoffId: handoff.handoffId,
+        project: checkout, target: `generated-canvases/${essentials["canvas.id"]}/`,
+        publicationTarget: `.github/extensions/${essentials["canvas.id"]}/`,
+        sourceFingerprint: handoff.sourceFingerprint, modelRevision: model.revision,
+        settingsRevision: model.settingsRevision,
         canvas: { id: essentials["canvas.id"], displayName: essentials["canvas.displayName"],
             description: essentials["canvas.description"] || "Spec Kit workflow canvas.",
             workflowListName: essentials["canvas.workflowListName"] || "Workflows" },
@@ -703,7 +706,8 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
         "generations", requestId);
     await mkdir(folder, { recursive: true });
     await writeFile(join(folder, "request.json"), serialized, { flag: "wx" });
-    return { requestId, target: request.target,
+    await saveActiveGeneration(workspace, handoff.handoffId, requestId);
+    return { requestId, target: request.target, publicationTarget: request.publicationTarget,
         ...((inventoryWarning || actual?.warnings.length)
             ? { warnings: [inventoryWarning, ...(actual?.warnings ?? [])].filter(Boolean) } : {}) };
 }

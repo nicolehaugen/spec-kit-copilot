@@ -3,6 +3,17 @@ import { createHash } from "node:crypto";
 export { GENERATION_PENDING, GENERATION_EXISTS, generationAvailability } from "../ui/generation-state.js";
 
 export const REQUEST_LIMIT = 4 * 1024 * 1024;
+export const GENERATION_PROTOCOL = Object.freeze({ schemaVersion: 2, publication: "open" });
+
+export function validateGenerationProtocol(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)
+        || Object.keys(value).sort().join() !== "publication,schemaVersion"
+        || value.schemaVersion !== GENERATION_PROTOCOL.schemaVersion
+        || value.publication !== GENERATION_PROTOCOL.publication) {
+        throw new Error("Canvas Design does not support deferred publication. Launch with the current local Canvas Design source.");
+    }
+    return value;
+}
 
 export function validateGenerateSubmission(input, model) {
     const expectedKeys = ["modelRevision", "settingsRevision", "values",
