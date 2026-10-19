@@ -9,6 +9,7 @@ const servers = new Map();
 const config = readConfig();
 let runtime;
 let initializing;
+let session;
 let lifecycle = Promise.resolve();
 function withLifecycle(action) {
     const result = lifecycle.then(action);
@@ -17,6 +18,7 @@ function withLifecycle(action) {
 }
 
 async function getRuntime() {
+    await sessionReady;
     if (runtime) return runtime;
     if (!initializing) initializing = (async () => {
         const metadata = await session.rpc.metadata.snapshot();
@@ -50,7 +52,8 @@ function opened(ctx, action) {
     return action(runtime);
 }
 
-const session = await joinSession({
+// Defer registration until the readiness promise exists, even for synchronous restores.
+const sessionReady = Promise.resolve().then(() => joinSession({
     canvases: [
         createCanvas({
             id: config.canvas.id,
@@ -92,4 +95,6 @@ const session = await joinSession({
             }),
         }),
     ],
-});
+})).then((joined) => { session = joined; });
+
+await sessionReady;

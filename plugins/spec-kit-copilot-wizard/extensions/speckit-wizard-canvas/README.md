@@ -509,6 +509,12 @@ flow recognize it.
 
 ### First-open boot
 
+Startup and restored opens wait for the SDK session join before resolving the
+workspace or starting the local server and boot work. A failed join rejects the
+open rather than starting with a partial session. This protects canvas restoration;
+it does not prevent Copilot's deliberate session restart after repository-configuration
+approval.
+
 On first open of a fresh worktree, the wizard shows a live boot overlay
 while the backend runs its startup checklist: **workspace → deps-check
 → deps-install → env-probe → catalog → ready**. The HTTP server is

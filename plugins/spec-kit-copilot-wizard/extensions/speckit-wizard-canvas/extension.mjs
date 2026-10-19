@@ -72,10 +72,12 @@ const instances = allInstances();
 // --------------------------- canvas open / close ---------------------------
 async function onOpen(ctx) {
     const inst = getInstance(ctx.instanceId);
+    await sessionReady;
+    if (instances.get(ctx.instanceId) !== inst) throw new Error("Wizard panel closed while opening");
     inst.generateCanvas = resolveGenerateCanvas(inst, ctx, runtimeSettings.generateCanvasEnabled);
     inst._session = getSession();
-    // If the session repo path wasn't captured at startup (race), try once more.
-    if (!sessionState.repoPath && getSession()) {
+    // Retry metadata lookup if it was unavailable at startup.
+    if (!sessionState.repoPath) {
         sessionState.repoPath = await fetchSessionRepoPath(getSession());
     }
     inst.workspacePath = resolveWorkspace(inst, ctx, sessionState.repoPath);
@@ -352,7 +354,8 @@ async function onClose(ctx) {
 }
 
 // --------------------------- joinSession + register ------------------------
-setSession(await joinSession({
+// Defer registration until the readiness promise exists, even for synchronous restores.
+const sessionReady = Promise.resolve().then(() => joinSession({
     canvases: [
         createCanvas({
             id: "speckit-wizard",
@@ -371,9 +374,9 @@ setSession(await joinSession({
             onClose,
         }),
     ],
-}));
-// Late-bind session on any instance opened during startup races.
-for (const inst of instances.values()) inst._session = getSession();
+})).then(setSession);
+
+await sessionReady;
 
 // Fetch the user's repo cwd via RPC metadata. This is the CLI-launched
 // working directory (e.g. C:\...\copilot-worktrees\<project>\<branch>) — the

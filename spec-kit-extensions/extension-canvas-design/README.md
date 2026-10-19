@@ -731,6 +731,11 @@ The entry point uses `joinSession` and `createCanvas` to register actions and a
 loopback HTTP server with open/close lifecycle handling. Generation does not call
 `create-canvas` or rewrite an SDK scaffold. It writes directly into the final
 directory without staging-directory renames.
+Newly generated entries wait for the SDK session join before initializing the
+runtime or starting the local server, including when an open panel is restored.
+A failed join rejects startup and the pending open. This fixes restoration ordering,
+not Copilot's deliberate restart after repository-configuration approval; existing
+generated apps are not automatically updated.
 An existing target stops generation unless the Designer confirms a recognizable
 same-handoff target and passes its prior request ID; confirmed regeneration
 clears and rebuilds that directory in place, including manual edits, without

@@ -6,6 +6,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { test } from "node:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import { materialize, readBoundedSessionFile, renameDirectoryWithoutReplacement } from "../extension-canvas-design/scripts/generate.mjs";
@@ -1222,7 +1223,35 @@ test("materialization accepts frozen default description and workflow header", a
     assert.equal(config.canvas.workflowListName, "Workflows");
 });
 
-test("source-owned SDK entry registers, serves and closes the generated project canvas", async (t) => {
+async function delayedSessionSdk(target, workspace, project) {
+    const sdk = join(target, "node_modules", "@github", "copilot-sdk");
+    await mkdir(sdk, { recursive: true });
+    await writeFile(join(sdk, "package.json"), JSON.stringify({ name: "@github/copilot-sdk",
+        type: "module", exports: { "./extension": "./extension.mjs" } }));
+    await writeFile(join(sdk, "extension.mjs"), `
+        export const registered = Promise.withResolvers();
+        export const joined = Promise.withResolvers();
+        export let snapshots = 0;
+        export const createCanvas = (options) => options;
+        export const session = {
+            sessionId: "test-session", workspacePath: ${JSON.stringify(workspace)},
+            rpc: { metadata: { snapshot: async () => {
+                snapshots++;
+                return { workingDirectory: ${JSON.stringify(project)} };
+            } } },
+            on: () => () => {}, getEvents: async () => [], log: async () => {}
+        };
+        export function joinSession({ canvases }) {
+            const canvas = canvases[0];
+            registered.resolve({ canvas,
+                opening: canvas.open({ instanceId: "generated-test" }) });
+            return joined.promise;
+        }
+    `);
+    return import(pathToFileURL(join(sdk, "extension.mjs")).href);
+}
+
+test("source-owned SDK entry waits for session readiness, serves and closes the generated canvas", async (t) => {
     const { project, workspace, prepared } = await fixture(t);
     const result = await materialize(project, workspace, handoff.handoffId, prepared.requestId);
     assert.equal(result.target, ".github/extensions/my-workflow/");
@@ -1249,27 +1278,29 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     for (const removed of ["result-tags.mjs", "tag-evaluator.mjs", "staleness.mjs"]) {
         await assert.rejects(readFile(join(target, removed)), { code: "ENOENT" });
     }
-    const sdk = join(target, "node_modules", "@github", "copilot-sdk");
-    await mkdir(sdk, { recursive: true });
-    await writeFile(join(sdk, "package.json"), JSON.stringify({ name: "@github/copilot-sdk",
-        type: "module", exports: { "./extension": "./extension.mjs" } }));
-    await writeFile(join(sdk, "extension.mjs"), `
-        export const createCanvas = (options) => options;
-        export async function joinSession({ canvases }) {
-            globalThis.__generatedCanvas = canvases[0];
-            return { sessionId: "test-session", workspacePath: ${JSON.stringify(workspace)},
-                rpc: { metadata: { snapshot: async () => ({
-                    workingDirectory: ${JSON.stringify(project)} }) } },
-                on: () => () => {}, getEvents: async () => [], log: async () => {} };
-        }
-    `);
-    await import(pathToFileURL(join(target, "extension.mjs")).href);
-    const canvas = globalThis.__generatedCanvas;
-    delete globalThis.__generatedCanvas;
+    const sdk = await delayedSessionSdk(target, workspace, project);
+    const importing = import(pathToFileURL(join(target, "extension.mjs")).href);
+    const imported = importing.then(() => null, (error) => error);
+    const { canvas, opening } = await sdk.registered.promise;
+    let settled = false;
+    const observed = opening.then(() => { settled = true; }, () => { settled = true; });
+    t.after(async () => {
+        sdk.joined.resolve(sdk.session);
+        await imported;
+        await observed;
+        await canvas.onClose({ instanceId: "generated-test" });
+    });
+    await nextTurn();
+    assert.equal(settled, false);
+    assert.equal(sdk.snapshots, 0);
+    sdk.joined.resolve(sdk.session);
+    assert.equal(await imported, null);
     assert.equal(canvas.id, "my-workflow");
     assert.deepEqual(canvas.actions.map((action) => action.name),
         ["run_phase", "report_workflow_slug", "report_phase_artifact", "report_autopilot_step"]);
-    const opened = await canvas.open({ instanceId: "generated-test" });
+    const opened = await opening;
+    assert.equal(sdk.snapshots, 1);
+    assert.deepEqual(await canvas.open({ instanceId: "generated-test" }), opened);
     assert.match(await (await fetch(opened.url)).text(), /My Workflow/);
     const state = await (await fetch(new URL(`/api/state?token=${new URL(opened.url).searchParams.get("token")}`,
         opened.url))).json();
@@ -1289,6 +1320,38 @@ test("source-owned SDK entry registers, serves and closes the generated project 
     assert.equal(removed.status, 200);
     await canvas.onClose({ instanceId: "generated-test" });
     await assert.rejects(materialize(project, workspace, handoff.handoffId, prepared.requestId));
+});
+
+test("generated canvas startup and restored open reject a failed session join", async (t) => {
+    const { project, workspace, prepared } = await fixture(t);
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const target = join(project, ".github", "extensions", "my-workflow");
+    const sdk = await delayedSessionSdk(target, workspace, project);
+    const importing = import(pathToFileURL(join(target, "extension.mjs")).href);
+    const imported = importing.then(() => null, (error) => error);
+    const { canvas, opening } = await sdk.registered.promise;
+    let settled = false;
+    const opened = opening.then((value) => {
+        settled = true;
+        return value;
+    }, (error) => {
+        settled = true;
+        return error;
+    });
+    t.after(async () => {
+        sdk.joined.resolve(sdk.session);
+        await imported;
+        await opened;
+        await canvas.onClose({ instanceId: "generated-test" });
+    });
+    await nextTurn();
+    assert.equal(settled, false);
+    assert.equal(sdk.snapshots, 0);
+    const failure = new Error("Session join failed");
+    sdk.joined.reject(failure);
+    assert.equal(await imported, failure);
+    assert.equal(await opened, failure);
+    assert.equal(sdk.snapshots, 0);
 });
 
 test("generation rejects malformed or mismatched frozen page assets before creating a target", async (t) => {
