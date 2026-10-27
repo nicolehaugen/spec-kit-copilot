@@ -364,6 +364,10 @@ inventory in the Designer session's `speckit-canvas-designer/last-open.json`.
 Restarting Designer in that same session with no input restores the most recent
 successful handoff and revalidates its pages and templates, but starts a fresh
 editable form rather than rehydrating saved values.
+Startup and restored opens wait for the SDK session join before reading that
+session's inventory or starting the local server. A failed join rejects the open.
+This protects restoration during a session rebuild; it does not prevent Copilot's
+deliberate restart after repository-configuration approval.
 An invalid saved inventory or missing handoff fails explicitly rather than
 opening a blank shell; an explicit launch can repair the saved inventory.
 Replacement saves the new inventory only when the open succeeds; if closing

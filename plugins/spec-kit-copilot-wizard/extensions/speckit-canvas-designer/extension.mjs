@@ -17,6 +17,7 @@ const servers = new Map();
 const opening = new Map();
 let inventoryQueue = Promise.resolve();
 let checkout;
+let session;
 
 async function withInventoryLock(action) {
     const previous = inventoryQueue;
@@ -52,6 +53,7 @@ async function getCheckout() {
 }
 
 async function reloadSessionSkills() {
+    await sessionReady;
     if (!session.rpc?.skills?.reload) throw new Error("Session skill reload is unavailable");
     const diagnostics = await session.rpc.skills.reload();
     if (!Array.isArray(diagnostics?.errors) || !Array.isArray(diagnostics?.warnings)
@@ -76,12 +78,14 @@ const bootstrap = createDesignerBootstrap({
     log: (message, level) => session.log(message, { level }),
 });
 
-const session = await joinSession({
+// Defer registration until the readiness promise exists, even for synchronous restores.
+const sessionReady = Promise.resolve().then(() => joinSession({
     tools: [{
         name: BOOTSTRAP_TOOL,
         description: "Run this child session's LLM-invoked Designer install or finalize-open stage from a frozen launch reference. Transfers and opens complete payloads internally; does not create sessions or run stages automatically.",
         parameters: bootstrapInputSchema,
         handler: async (args, invocation) => {
+            await sessionReady;
             const result = await bootstrap(args, invocation);
             return { textResultForLlm: JSON.stringify(result),
                 resultType: result.status === "failure" ? "failure" : "success" };
@@ -104,6 +108,7 @@ const session = await joinSession({
             const token = Symbol();
             opening.set(ctx.instanceId, token);
             try {
+                await sessionReady;
                 const previous = servers.get(ctx.instanceId);
                 const requested = validateDesignerOpenInput(ctx.input);
                 const restored = !requested.preview && requested.handoffId === undefined
@@ -185,4 +190,6 @@ const session = await joinSession({
             await entry.close();
         },
     })],
-});
+})).then((joined) => { session = joined; });
+
+await sessionReady;
