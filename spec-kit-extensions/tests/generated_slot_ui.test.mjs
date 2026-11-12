@@ -297,6 +297,77 @@ test("overlapping stale actions share one applied refresh instead of superseding
     assert.equal(context.model.revision, 1);
 });
 
+test("SSE bursts share a state read and an older read cannot overwrite selection", async () => {
+    const requests = [];
+    const saves = [];
+    const context = {
+        refreshSequence: 0, model: { selected: "specs/beta", revision: 0, items: [] },
+        workflowPage: {}, mountedPage: "workflow", timer: null, constitutionTimer: null,
+        saveFailure: null, saving: Promise.resolve(), viewer: null,
+        constitution: () => null, renderPhase() {}, syncFieldMounts: async () => {},
+        $: () => null, document: {},
+        flush: async () => {}, persist: async (patch) => {
+            saves.push(patch);
+            context.model.revision++;
+        },
+        api: () => new Promise((resolve) => requests.push(resolve)),
+        message: (text) => { throw new Error(text); },
+    };
+    const actions = runInNewContext(`
+        ${section("async function refresh(reconcile = false) {", "async function selectPhase(")}
+        ${section("async function selectFeature(", "async function createWorkflow(")}
+        const events = {};
+        ${section("events.onmessage = () => {", "events.onerror =")}
+        ({ events, selectFeature })`, context);
+    for (let count = 0; count < 3; count++) actions.events.onmessage();
+    await new Promise(setImmediate);
+    assert.equal(requests.length, 1);
+    const selecting = actions.selectFeature("specs/alpha");
+    await new Promise(setImmediate);
+    assert.equal(requests.length, 2);
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0].selected, "specs/alpha");
+    requests[1]({ selected: "specs/alpha", revision: 1, items: [], statuses: {} });
+    await selecting;
+    requests[0]({ selected: "specs/beta", revision: 0, items: [], statuses: {} });
+    await new Promise(setImmediate);
+    assert.equal(context.model.selected, "specs/alpha");
+    assert.equal(requests.length, 3);
+    requests[2]({ selected: "specs/alpha", revision: 1, items: [], statuses: {} });
+    await new Promise(setImmediate);
+    assert.equal(context.model.selected, "specs/alpha");
+});
+
+test("terminal run changes invalidate badges after commit and before notification", async () => {
+    const notifications = [];
+    const context = {
+        state: { revision: 0, runs: [{ runId: "run-1", status: "Running" }] },
+        writes: Promise.resolve(), badgeRevision: 0, workspace: "workspace", statePath: "state.json",
+        Buffer, structuredClone, UserError,
+        atomicJson: async () => {},
+        invalidateBadges() { context.badgeRevision++; },
+        notify() { notifications.push(context.badgeRevision); },
+    };
+    const start = runtimeSource.indexOf("const update = (");
+    const update = runInNewContext(`${runtimeSource.slice(start,
+        runtimeSource.indexOf("if (state.autopilot &&", start))} update`, context);
+    await update((next) => { next.runs[0].status = "Completed"; });
+    assert.equal(context.badgeRevision, 1);
+    assert.deepEqual(notifications, [1]);
+    await update((next) => { next.runs[0].completedAt = "2026-11-12T00:00:00Z"; });
+    assert.equal(context.badgeRevision, 2);
+    assert.deepEqual(notifications, [1, 2]);
+    await update((next) => { next.revision++; });
+    assert.equal(context.badgeRevision, 2);
+    await update((next) => { next.runs[0].status = "Failed"; });
+    assert.equal(context.badgeRevision, 3);
+    await update((next) => { next.runs[0].status = "Run output unconfirmed"; });
+    assert.equal(context.badgeRevision, 4);
+    context.atomicJson = async () => { throw new Error("Write failed"); };
+    await assert.rejects(update((next) => { next.runs[0].status = "Completed"; }), /Write failed/);
+    assert.equal(context.badgeRevision, 4);
+});
+
 test("a persistent revision conflict asks for another attempt, not a manual refresh", async () => {
     const model = { revision: 3 };
     let attempts = 0, refreshes = 0;

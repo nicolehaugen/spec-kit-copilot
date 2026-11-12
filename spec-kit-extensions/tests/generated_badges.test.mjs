@@ -729,15 +729,23 @@ test("directory badge reads a template output folder before any named file exist
     const runtime = await createRuntime({ config, cwd, workspace: cwd,
         session: { sessionId: "directory-badge", log: async () => {} } });
     try {
-        const snapshot = await runtime.snapshot();
+        const [snapshot, concurrent] = await Promise.all([runtime.snapshot(), runtime.snapshot()]);
+        assert.notStrictEqual(snapshot.badges, concurrent.badges);
+        assert.notStrictEqual(snapshot.badges.items, concurrent.badges.items);
         assert.deepEqual(snapshot.badges.summary, [{ id: "files", color: "blue",
             count: 0, text: "Markdown files (0)" }]);
         assert.deepEqual(snapshot.badges.items["work/alpha"], []);
         assert.deepEqual(snapshot.badges.diagnostics, []);
         await writeFile(join(cwd, "work", "alpha", "review", "first.md"), "first");
-        const updated = await runtime.snapshot();
+        assert.deepEqual((await runtime.snapshot()).badges.items["work/alpha"], []);
+        const updated = await runtime.refresh();
         assert.equal(updated.badges.items["work/alpha"][0].text, "Files (1)");
         assert.equal(updated.badges.summary[0].count, 1);
+        updated.badges.items["work/alpha"][0].text = "Changed in another snapshot";
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (1)");
+        await runtime.deleteWorkflow({ itemId: "work/alpha", confirmation: "alpha",
+            revision: updated.revision });
+        assert.deepEqual((await runtime.snapshot()).badges.items, {});
     } finally { runtime.close(); }
 });
 
@@ -751,6 +759,30 @@ test("directory count errors surface diagnostics rather than claiming zero", asy
         outputPath: async () => "work/alpha/review", runFor: () => null });
     assert.deepEqual(result.items["work/alpha"], []);
     assert.match(result.diagnostics.join(" "), /could not be counted safely/);
+});
+
+test("overlapping snapshots evaluate badges once per revision", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-coalescing-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    await mkdir(join(cwd, "work", "alpha"), { recursive: true });
+    await writeFile(join(cwd, "work", "alpha", "review"), "not a directory");
+    const logs = [];
+    const config = { canvas: { id: "badge-coalescing" }, phases: ["review"],
+        phaseOutputs: { review: { expectsArtifact: true,
+            outputPath: "work/<slug>/review/<name>.md" } },
+        userProvidesSlug: false, badges: fileBadges };
+    const runtime = await createRuntime({ config, cwd, workspace: cwd,
+        session: { sessionId: "badge-coalescing", log: async (message) => { logs.push(message); } } });
+    const evaluations = () => logs.filter((message) => message.startsWith("Badge directory")).length;
+    try {
+        const [first, second] = await Promise.all([runtime.snapshot(), runtime.snapshot()]);
+        assert.deepEqual(first.badges.items, second.badges.items);
+        assert.equal(evaluations(), 1);
+        await runtime.snapshot();
+        assert.equal(evaluations(), 1);
+        await runtime.refresh();
+        assert.equal(evaluations(), 2);
+    } finally { runtime.close(); }
 });
 
 test("Markdown directory count refuses unbounded enumeration", async (t) => {
@@ -800,8 +832,10 @@ test("generated runtime snapshots include badges for each workflow and the selec
             tasks: { expectsArtifact: true, outputPath: "specs/<slug>/tasks.md" },
         },
         userProvidesSlug: false, badges };
+    let notifications = 0;
     const runtime = await createRuntime({ config, cwd, workspace: cwd,
-        session: { sessionId: "badge-snapshot", log: async () => {} } });
+        session: { sessionId: "badge-snapshot", log: async () => {} },
+        notify: () => { notifications++; } });
     try {
         let snapshot = await runtime.snapshot();
         assert.equal(snapshot.badges.items["specs/alpha"][0].text, "1/1 complete");
@@ -810,6 +844,69 @@ test("generated runtime snapshots include badges for each workflow and the selec
         await runtime.save({ revision: snapshot.revision, selected: "specs/alpha" });
         snapshot = await runtime.snapshot();
         assert.deepEqual(snapshot.badges.selected, snapshot.badges.items["specs/alpha"]);
+        assert.equal(notifications, 0);
+        await runtime.save({ revision: snapshot.revision, selected: "specs/beta" });
+        snapshot = await runtime.snapshot();
+        assert.deepEqual(snapshot.badges.selected, []);
+        assert.equal(notifications, 0);
+        await runtime.save({ revision: snapshot.revision, draft: {
+            item: "specs/beta", phase: "tasks", value: "draft",
+        } });
+        assert.equal(notifications, 1);
+        assert.equal((await runtime.snapshot()).revision, snapshot.revision + 1);
+        const statePath = join(cwd, "generated-canvases",
+            createHash("sha256").update(JSON.stringify([cwd, config.canvas.id])).digest("hex"),
+            "state.json");
+        const saved = JSON.parse(await readFile(statePath, "utf8"));
+        assert.equal(saved.selected, "specs/beta");
+        assert.equal(saved.drafts[JSON.stringify(["specs/beta", "tasks"])], "draft");
+        assert.equal(await readFile(join(cwd, "specs", "alpha", "tasks.md"), "utf8"),
+            "- [x] done\n");
+    } finally { runtime.close(); }
+});
+
+test("accepted artifact and slug reports invalidate badges even when repeated", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-reports-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    await mkdir(join(cwd, "work", "alpha", "review"), { recursive: true });
+    await writeFile(join(cwd, "work", "alpha", "review", "first.md"), "first");
+    const skill = join(cwd, ".github", "skills", "speckit-review");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-review\n---\n");
+    const config = { canvas: { id: "badge-reports" }, phases: ["review"],
+        phaseOutputs: { review: { expectsArtifact: true,
+            outputPath: "work/<slug>/review/<name>.md" } },
+        userProvidesSlug: false, badges: fileBadges };
+    const runtime = await createRuntime({ config, cwd, workspace: cwd,
+        session: { sessionId: "badge-reports", send: async () => "message-1",
+            rpc: { skills: { reload: async () => ({ errors: [] }) } },
+            log: async () => {} } });
+    try {
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (1)");
+        const run = await runtime.run({ phase: "review", itemId: "work/alpha", args: "" }, "panel");
+        await writeFile(join(cwd, "work", "alpha", "review", "second.md"), "second");
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (1)");
+        await assert.rejects(runtime.report({ phaseRunId: run.runId,
+            path: "work/alpha/review/invalid.txt" }, "panel"), /Markdown/);
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (1)");
+        const report = { phaseRunId: run.runId, path: "work/alpha/review/first.md" };
+        assert.equal((await runtime.report(report, "panel")).accepted, true);
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (2)");
+        await writeFile(join(cwd, "work", "alpha", "review", "third.md"), "third");
+        assert.equal((await runtime.report(report, "panel")).accepted, true);
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (3)");
+        const newRun = await runtime.run({ phase: "review", itemId: "__new__", args: "" }, "panel");
+        await mkdir(join(cwd, "work", "beta", "review"), { recursive: true });
+        await writeFile(join(cwd, "work", "beta", "review", "first.md"), "first");
+        const slug = { phaseRunId: newRun.runId, slug: "beta" };
+        assert.equal((await runtime.reportSlug(slug, "panel")).accepted, true);
+        assert.equal((await runtime.snapshot()).badges.items["work/beta"][0].text, "Files (1)");
+        await writeFile(join(cwd, "work", "beta", "review", "second.md"), "second");
+        await assert.rejects(runtime.reportSlug({ ...slug, slug: "gamma" }, "panel"),
+            /already reported a different/);
+        assert.equal((await runtime.snapshot()).badges.items["work/beta"][0].text, "Files (1)");
+        assert.equal((await runtime.reportSlug(slug, "panel")).accepted, true);
+        assert.equal((await runtime.snapshot()).badges.items["work/beta"][0].text, "Files (2)");
     } finally { runtime.close(); }
 });
 

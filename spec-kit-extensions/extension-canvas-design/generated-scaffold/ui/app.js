@@ -1493,7 +1493,7 @@ await mountGeneratedButtons().catch((error) => {
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {
-    if (!timer && !constitutionTimer) saving.catch(() => {}).then(() => refresh())
+    if (!timer && !constitutionTimer) saving.catch(() => {}).then(() => refreshCurrent())
         .catch((error) => message(error.message, "canvas-message", true));
     if (viewer) refreshArtifact();
 };
