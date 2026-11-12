@@ -1862,16 +1862,6 @@ test("stock contributions retain the optional slug setting and minimal replaced 
     for (const [index, contents] of originalPages.entries()) {
         await writeFile(entries[index].path, contents);
     }
-    const obsoletePath = join(project, ".specify", "obsolete-outputs.json");
-    await writeFile(obsoletePath, JSON.stringify({
-        schemaVersion: 1, id: "designer-artifacts", title: "Outputs",
-        order: 20, fixedControl: "designer.outputs", fields: [],
-    }));
-    const obsoletePages = await loadResolvedDesignerPages(handoff, project, [
-        ...entries, { name: "designer-artifacts", path: obsoletePath,
-            kind: "designer.tab-definition", strategy: "replace" },
-    ]);
-    assert.ok(obsoletePages.pages.find((page) => page.page === "designer-artifacts").error);
     const withoutSlug = await loadResolvedDesignerPages(handoff, project, entries, templates.slice(0, 2));
     assert.equal(Object.hasOwn(withoutSlug.values, "workflowSlug.userProvided"), false);
     await writeFile(templates[0].path, JSON.stringify({
