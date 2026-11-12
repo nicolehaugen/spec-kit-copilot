@@ -47,6 +47,21 @@ contribution, and persisted workflow state rules; no design-time preset is
 needed when reopening it. These files define custom workflow behavior, not
 the generic `create-canvas` browser/server protocol.
 
+### Workflow discovery
+
+Discovery retains the default `specs` root and applicable legacy output roots.
+For a phase with confirmed outputs, a legacy root is applicable only if those
+outputs still include it. Otherwise, discovery extracts the directory prefix
+before the literal `/<slug>/` in each confirmed output. One distinct fallback
+root across those phases is scanned; multiple distinct fallback roots produce
+an ambiguity error in the canvas instead of selecting the first output or
+first populated folder. No slug-scoped outputs means no inferred root.
+
+Rows represent child directories, so an assessment or other Markdown file is
+not required for discovery. A usable legacy root still keeps secondary report
+roots artifact-only. This fallback does not establish artifact ownership or add
+configuration metadata. Existing generated apps are not automatically updated.
+
 | Template | Page | Default contents |
 | --- | --- | --- |
 | `designer-essentials` | Essentials | Required Canvas ID and Title |

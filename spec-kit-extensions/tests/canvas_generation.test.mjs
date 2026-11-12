@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { mkdtemp, mkdir, open, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
@@ -238,6 +239,72 @@ test("viewer-only roots do not create workflows and links resolve within the sel
         output: "reports/<slug>/notes.md" })).content, "# Notes");
     await assert.rejects(runtime.reveal({ phase: "specify", itemId: "specs/demo",
         output: ".github/private.md" }), /not declared/);
+});
+
+test("generated discovery uses confirmed outputs when legacy roots are missing or stale", async (t) => {
+    for (const phase of ["assess", "specify"]) {
+        await t.test(phase, async (t) => {
+            const selectedHandoff = structuredClone(handoff);
+            selectedHandoff.workflow.selectedPhases = [phase];
+            selectedHandoff.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+                workflow: selectedHandoff.workflow, selections: selectedHandoff.selections,
+            })).digest("hex");
+            const { project, workspace, sdk } = await fixture(t, selectedHandoff);
+            const outputs = { [phase]: {
+                outputs: [".specify/bugs/<slug>/documents/assessment.md",
+                    ".specify/bugs/<slug>/notes.md"], view: null,
+            } };
+            const prepared = await freezeGeneration({ project, workspace, model, values,
+                handoff: selectedHandoff, outputs });
+            await materialize(project, workspace, selectedHandoff.handoffId, prepared.requestId);
+            const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+            const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
+            await mkdir(join(project, ".specify", "bugs", "login-crash"), { recursive: true });
+            const runtime = await createRuntime({ config, cwd: project, workspace,
+                session: { sessionId: `discovery-${phase}`, on: () => () => {},
+                    getEvents: async () => [], log: async () => {} } });
+            t.after(() => runtime.close());
+            assert.deepEqual((await runtime.snapshot()).items.map(({ id }) => id),
+                [".specify/bugs/login-crash"]);
+        });
+    }
+});
+
+test("ambiguous confirmed roots reach the canvas error response regardless of output order", async (t) => {
+    const { project, workspace, sdk } = await fixture(t);
+    const bug = ".specify/bugs/<slug>/assessment.md", report = "reports/<slug>/notes.md";
+    const outputs = {
+        constitution: { outputs: [".specify/memory/constitution.md"],
+            view: ".specify/memory/constitution.md" },
+        specify: { outputs: [bug, report], view: bug },
+        plan: { outputs: [], view: null },
+    };
+    const prepared = await freezeGeneration({ project, workspace, model, values, handoff, outputs });
+    await materialize(project, workspace, handoff.handoffId, prepared.requestId);
+    const { readConfig, createWorkflowRoutes } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
+    await mkdir(join(project, "reports", "report-only"), { recursive: true });
+    await writeFile(join(project, "reports", "report-only", "notes.md"), "# Notes");
+    for (const order of [[bug, report], [report, bug]]) {
+        const config = readConfig();
+        config.phaseArtifacts.specify.outputs = order;
+        const runtime = await createRuntime({ config, cwd: project, workspace,
+            session: { sessionId: "ambiguous-discovery", on: () => () => {},
+                getEvents: async () => [], log: async () => {} } });
+        const routes = createWorkflowRoutes(config, { token: "discovery-test", runtime });
+        const server = createServer(routes.handle);
+        t.after(async () => {
+            routes.close();
+            await new Promise((resolve) => server.close(resolve));
+            runtime.close();
+        });
+        await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const response = await fetch(`http://127.0.0.1:${server.address().port}/api/state?token=discovery-test`);
+        assert.equal(response.status, 409);
+        assert.deepEqual(await response.json(), {
+            error: "Cannot determine workflow discovery root: confirmed outputs reference multiple roots (.specify/bugs, reports).",
+        });
+    }
 });
 
 test("missing output links browse the nearest existing confined directory", async (t) => {

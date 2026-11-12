@@ -217,9 +217,28 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             throw new UserError("Create a constitution before starting a workflow.");
         }
     }
-    const roots = [...new Set(["specs", ...phases.flatMap((step) => step.configuredArtifacts
-        ? [config.phaseOutputs?.[step.id]?.outputPath].filter(Boolean) : step.outputs)
-        .filter((path) => path.includes("<slug>")).map((path) => path.split("/<slug>")[0])])];
+    function outputRoot(path) {
+        const normalized = typeof path === "string" ? path.replaceAll("\\", "/") : "";
+        return normalized.includes("/<slug>/") ? normalized.split("/<slug>/")[0] : null;
+    }
+    const legacyRoots = ["specs"], inferredRoots = new Set();
+    for (const step of phases) {
+        if (step.project) continue;
+        const phaseRoots = step.outputs.map(outputRoot).filter(Boolean);
+        if (!step.configuredArtifacts) {
+            legacyRoots.push(...phaseRoots);
+            continue;
+        }
+        const legacyRoot = outputRoot(config.phaseOutputs?.[step.id]?.outputPath);
+        if (phaseRoots.includes(legacyRoot)) legacyRoots.push(legacyRoot);
+        else for (const root of phaseRoots) inferredRoots.add(root);
+    }
+    const roots = [...new Set([...legacyRoots, ...(inferredRoots.size === 1 ? inferredRoots : [])])];
+    function requireDiscoveryRoots() {
+        if (inferredRoots.size > 1) {
+            throw new UserError(`Cannot determine workflow discovery root: confirmed outputs reference multiple roots (${[...inferredRoots].sort().join(", ")}).`, 409);
+        }
+    }
     async function compareDirectories(before, inventory) {
         if (!Array.isArray(before) || new Set(before).size !== before.length
             || before.some((id) => typeof id !== "string"
@@ -240,6 +259,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         return current.ids.filter((id) => !prior.has(id));
     }
     async function inspectDirectories() {
+        requireDiscoveryRoots();
         const ids = [], missingRoots = [];
         for (const root of roots) {
             const path = safePath(root);
@@ -277,6 +297,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         return { ids, missingRoots };
     }
     async function items(view = state) {
+        requireDiscoveryRoots();
         const found = [];
         for (const root of roots) {
             if (root.includes("<") || root.startsWith(".git")) continue;
