@@ -1280,6 +1280,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     && !(run.item === "__new__" && run.slug === item.slug && run.confirmedSlug));
                 for (const phase of phases) delete next.drafts[JSON.stringify([item.id, phase.id])];
                 if (next.names) delete next.names[item.id];
+                if (next.autopilot?.item === item.id) delete next.autopilot;
                 if (next.selected === item.id) { next.selected = "__new__"; next.name = ""; next.slug = ""; }
             }, true);
             return { deleted: item.id };

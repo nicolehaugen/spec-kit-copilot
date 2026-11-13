@@ -552,6 +552,32 @@ test("an active workflow cannot be deleted before a report or while finishing", 
     await assert.rejects(deletion(), /Stop Autopilot/);
 });
 
+for (const sameWorkflow of [true, false]) {
+test(`deletion ${sameWorkflow ? "clears matching" : "preserves another workflow's"} Autopilot state across reopen`, async (t) => {
+    const fixture = await setup(t);
+    const { runtime, project } = fixture;
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await mkdir(join(project, "specs", "other"), { recursive: true });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/demo" });
+    await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    await runtime.stopAutopilot({});
+    const before = JSON.parse(await readFile(fixture.stateFile, "utf8")).autopilot;
+    assert.equal(before.status, "Paused");
+    const slug = sameWorkflow ? "demo" : "other";
+    await runtime.deleteWorkflow({ itemId: `specs/${slug}`, confirmation: slug,
+        revision: (await runtime.snapshot()).revision });
+    await assert.rejects(stat(join(project, "specs", slug)), { code: "ENOENT" });
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    if (sameWorkflow) assert.equal(Object.hasOwn(saved, "autopilot"), false);
+    else assert.deepEqual(saved.autopilot, before);
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.autopilot === null, sameWorkflow);
+    const reopened = await (await fixture.restart()).snapshot();
+    assert.deepEqual(reopened.autopilot, snapshot.autopilot);
+    assert.equal(reopened.items.some((row) => row.id === `specs/${slug}`), false);
+});
+}
+
 test("deletion waits for Autopilot preflight before touching its workflow", async (t) => {
     const { runtime, project, session } = await setup(t);
     await mkdir(join(project, "specs", "demo"), { recursive: true });
