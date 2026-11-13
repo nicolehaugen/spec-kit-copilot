@@ -1693,6 +1693,63 @@ test("phase view label preset and differently named adapter survive generation",
         /Missing validated Workflow page, phase control, or adapter/);
 });
 
+test("materialized managed-run canvas starts a selected pending workflow without Specify", async (t) => {
+    const selectedHandoff = structuredClone(handoff);
+    const phase = "speckit.bug.assess";
+    selectedHandoff.workflow.selectedPhases = [phase];
+    selectedHandoff.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: selectedHandoff.workflow, selections: selectedHandoff.selections,
+    })).digest("hex");
+    const { project, workspace, sdk } = await fixture(t, selectedHandoff);
+    const templates = [];
+    for (const template of model.templates) {
+        const filename = template.name === "generated-phase-control" ? "phase-control.json"
+            : template.name === "generated-phase-adapter" ? "phase-adapter.mjs" : null;
+        if (!filename) {
+            templates.push(template);
+            continue;
+        }
+        const bytes = await readFile(new URL(
+            `../../spec-kit-presets/copilot-vertical-phase-control/generated/${filename}`, import.meta.url));
+        await writeFile(template.path, bytes);
+        templates.push({ ...template, sourceId: "copilot-vertical-phase-control",
+            hash: createHash("sha256").update(bytes).digest("hex") });
+    }
+    const prepared = await freezeGeneration({ project, workspace, model: { ...model, templates,
+        workflowPage: { ...model.workflowPage, managedRun: true } },
+        values, handoff: selectedHandoff, outputs: { [phase]: {
+            outputs: [".specify/bugs/<slug>/assessment.md"],
+            view: ".specify/bugs/<slug>/assessment.md",
+        } } });
+    await materialize(project, workspace, selectedHandoff.handoffId, prepared.requestId);
+    const { readConfig } = await import(pathToFileURL(join(sdk, "server.mjs")).href);
+    const { createRuntime } = await import(pathToFileURL(join(sdk, "runtime.mjs")).href);
+    const skill = join(project, ".github", "skills", "speckit-bug-assess");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-bug-assess\n---\n");
+    const sent = [];
+    let mode = "interactive";
+    const runtime = await createRuntime({ config: readConfig(), cwd: project, workspace,
+        session: { sessionId: "generated-autopilot", on: () => () => {},
+            getEvents: async () => [], log: async () => {},
+            rpc: { skills: { reload: async () => ({ errors: [] }) },
+                mode: { get: async () => mode,
+                    set: async (input) => { mode = input.mode; return { modeApplied: true }; } } },
+            send: async (input) => { sent.push(input); return "generated-message"; } } });
+    t.after(() => runtime.close());
+    await runtime.createPending({ revision: (await runtime.snapshot()).revision });
+    const snapshot = await runtime.snapshot();
+    const itemId = snapshot.selected;
+    assert.equal(snapshot.items.find((item) => item.id === itemId).status, "Not started");
+    const { autopilotId } = await runtime.startAutopilot({ itemId }, "generated-panel");
+    assert.equal(sent[0].agentMode, "autopilot");
+    assert.ok(sent[0].prompt.includes(`Selected workflow: ${JSON.stringify(itemId)}.`));
+    assert.match(sent[0].prompt, /"skill":"speckit-bug-assess"/);
+    const started = await runtime.reportAutopilotStep(
+        { autopilotId, phase, action: "start" }, "generated-panel");
+    assert.equal(started.itemId, itemId);
+});
+
 test("generation authorizes managed runs from the frozen definition, never adapter source text", async (t) => {
     const { project, workspace, prepared, sdk } = await fixture(t);
     const requestPath = join(workspace, "speckit-canvas-designer", "handoffs",

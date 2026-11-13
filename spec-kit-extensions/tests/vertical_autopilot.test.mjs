@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = true) {
+async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = true,
+    phases = ["specify", "plan"]) {
     const root = await mkdtemp(join(tmpdir(), "vertical-autopilot-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const target = join(root, "generated");
@@ -18,7 +19,8 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
         ? "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs"
         : "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs", import.meta.url));
     await writeFile(join(target, "pages", "generated-phase-adapter.mjs"), adapter);
-    for (const skill of ["specify", "plan"]) {
+    for (const phase of phases) {
+        const skill = phase.replace(/^speckit\./, "").replaceAll(".", "-");
         const folder = join(project, ".github", "skills", `speckit-${skill}`);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "SKILL.md"), `---\nname: speckit-${skill}\n---\n`);
@@ -38,9 +40,11 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
     const stateFile = join(root, "generated-canvases",
         createHash("sha256").update(JSON.stringify([project, "test-autopilot"])).digest("hex"), "state.json");
     const options = { config: {
-        canvas: { id: "test-autopilot" }, userProvidesSlug, phases: ["specify", "plan"],
-        phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
-            plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
+        canvas: { id: "test-autopilot" }, userProvidesSlug, phases,
+        phaseOutputs: Object.fromEntries(phases.map((phase) => [phase, {
+            expectsArtifact: true,
+            outputPath: `specs/<slug>/${phase === "specify" ? "spec" : phase.split(".").at(-1)}.md`,
+        }])),
         ...(phaseDialogs.length ? { phaseDialogs } : {}),
         workflowPage: { adapter: "generated-phase-adapter",
             hash: createHash("sha256").update(adapter).digest("hex"), managedRun: vertical },
@@ -488,6 +492,64 @@ test("vertical Autopilot starts first, verifies each artifact and refuses skippe
     assert.equal(session.mode, "interactive");
     await assert.rejects(runtime.reportAutopilotStep(
         { autopilotId, phase: "plan", action: "start" }, "panel"), /inactive/);
+});
+
+test("Autopilot starts an unstarted Bug workflow without Specify and preserves phase order", async (t) => {
+    const phases = ["speckit.bug.assess", "speckit.bug.fix", "speckit.bug.test"];
+    const { runtime, project } = await setup(t, true, [], true, phases);
+    const { autopilotId, itemId } = await startNewAutopilot(runtime);
+    await assert.rejects(runtime.reportAutopilotStep(
+        { autopilotId, phase: phases[1], action: "start" }, "panel"), /configured order/);
+    for (const [index, phase] of phases.entries()) {
+        const { phaseRunId, itemId: startedItem } = await runtime.reportAutopilotStep(
+            { autopilotId, phase, action: "start" }, "panel");
+        assert.equal(startedItem, index === 0 ? itemId : "specs/demo");
+        if (index === 0) {
+            await mkdir(join(project, "specs", "demo"), { recursive: true });
+            await runtime.reportSlug({ phaseRunId, slug: "demo" }, "panel");
+        }
+        const filename = `${phase.split(".").at(-1)}.md`;
+        await writeFile(join(project, "specs", "demo", filename), `# ${phase}`);
+        await runtime.report({ phaseRunId, path: `specs/demo/${filename}` }, "panel");
+        assert.equal((await runtime.reportAutopilotStep(
+            { autopilotId, phase, action: "complete" }, "panel")).nextPhase,
+        phases[index + 1] ?? null);
+    }
+    assert.equal((await runtime.snapshot()).autopilot.status, "Finishing");
+});
+
+test("Autopilot without Specify still requires directory and artifact reports", async (t) => {
+    for (const reportDirectory of [false, true]) {
+        await t.test(reportDirectory ? "missing artifact" : "missing directory", async (child) => {
+            const phase = "speckit.bug.assess";
+            const nextPhase = "speckit.bug.fix";
+            const { runtime, project } = await setup(child, true, [], true, [phase, nextPhase]);
+            const { autopilotId } = await startNewAutopilot(runtime);
+            const { phaseRunId } = await runtime.reportAutopilotStep(
+                { autopilotId, phase, action: "start" }, "panel");
+            await mkdir(join(project, "specs", "demo"), { recursive: true });
+            await writeFile(join(project, "specs", "demo", "assess.md"), "# Assessment");
+            if (reportDirectory) {
+                await runtime.reportSlug({ phaseRunId, slug: "demo" }, "panel");
+            }
+            await assert.rejects(runtime.reportAutopilotStep(
+                { autopilotId, phase, action: "complete" }, "panel"),
+            reportDirectory ? /required artifact/ : /new workflow directory/);
+            assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+            await assert.rejects(runtime.reportAutopilotStep(
+                { autopilotId, phase: nextPhase, action: "start" }, "panel"), /inactive/);
+        });
+    }
+});
+
+test("Autopilot rejects an unstarted workflow when Specify is configured after another phase", async (t) => {
+    const { runtime, sent, session } = await setup(t, true, [], true, ["plan", "specify"]);
+    const itemId = await prepareNewWorkflow(runtime);
+    await assert.rejects(runtime.startAutopilot({ itemId }, "panel"),
+        /Select an existing workflow before starting Autopilot/);
+    assert.equal(sent.length, 0);
+    assert.equal(session.mode, undefined);
+    assert.equal((await runtime.snapshot()).autopilot, null);
 });
 
 test("Autopilot omits an empty slug request in both custom and automatic modes", async (t) => {
