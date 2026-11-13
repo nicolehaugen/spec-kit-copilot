@@ -236,10 +236,42 @@ shown for inspection in the workflow list. The app cannot prevent externally
 initiated extension reloads; its existing skill reload behavior is unchanged.
 Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
-Deletion also removes that workflow's saved Autopilot record by omitting the
-property, not saving `null`; other workflows' Autopilot state is preserved.
-If Copilot has not left Autopilot after a run that began in another mode,
-deletion is blocked until the user switches back, preserving the recovery record.
+Deletion checks the owning checkpoint and phase attempts using the same evidence
+rules, including Paused checkpoints and phases displaying Run output unconfirmed
+after recovery. Matching active turns block deletion regardless of display status
+or saved Stop evidence. Otherwise, an Unconfirmed attempt can be deleted when its
+owning session has current end evidence or its associated Autopilot stopped;
+unknown activity without Stop evidence remains blocked. Only the latest matching
+work counts: a response from an earlier turn cannot authorize deletion after newer
+tool work, and a tool-using turn ending alone is not task completion. Unrelated
+session activity does not override conclusive evidence for this workflow.
+Task completion during an open matching turn does not authorize deletion until
+that turn ends. Conclusive end evidence takes precedence over stale in-memory
+live markers, and queued messages do not erase known turn ownership. Unscoped
+task completion still belongs to the current interaction, not a queued workflow.
+Confirmation, state-revision, confinement, and symlink checks still apply.
+Successful deletion also removes the workflow's explicitly associated Autopilot
+checkpoint, including when an artifact report bound its phase run before a slug
+report. The saved property is omitted, not set to `null`; other workflows'
+Autopilot state is preserved. If Copilot has not left Autopilot after a run that
+began in another mode, deletion is blocked until the user switches back,
+preserving the recovery record.
+A request that never reported its directory can remain as a pending row:
+directory discovery alone does not establish ownership for automatic cleanup.
+If tracking failed and the session became idle after mode restoration, explicit
+Stop remains available before deletion; new session activity blocks this recovery
+while the mode is not Autopilot.
+After a successful explicit Stop, all phase runs in that Autopilot attempt retain
+an optional `stoppedAt` ISO timestamp in saved state, including completed phases
+whose statuses and outputs remain unchanged. This preserves stop evidence across
+retries, checkpoint replacement, and reloads without treating unknown activity as stopped.
+The saved-state validator accepts existing runs without this field and rejects
+malformed timestamps or stop evidence on non-Autopilot runs.
+Known limitation: Stop evidence is not a temporal fence. If tool work continues
+in the same canceled interaction after Stop, a later turn-end without task
+completion can still fall back to the older Stop evidence. Distinguishing this
+from delayed historical events is deferred; if work visibly continues after Stop,
+stop it in chat and wait for completion before deleting its workflow.
 Deletion verifies the directory and its parent, moves it to a temporary
 location, and checks the moved directory's identity before removing it. If
 the parent changes during deletion, the moved directory is retained for manual

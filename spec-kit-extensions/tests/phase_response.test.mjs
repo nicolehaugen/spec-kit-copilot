@@ -16,6 +16,26 @@ test("saved recovery status accepts existing state and rejects incompatible valu
     assert.throws(() => validateWorkflowState(state, phases, []), /Saved canvas state is invalid/);
 });
 
+test("saved stop evidence is optional and accepts only an Autopilot run's ISO timestamp", () => {
+    const phases = [{ id: "specify" }];
+    const state = freshState();
+    const run = { runId: "run", autopilotId: "automation", phase: "specify", item: "specs/demo",
+        sessionId: "session", instanceId: "canvas", args: "", before: [],
+        status: "Unconfirmed", artifact: null, messageId: "msg" };
+    state.runs.push(run);
+    assert.equal(validateWorkflowState(state, phases, []), state);
+    run.stoppedAt = "2026-11-13T01:00:00.000Z";
+    assert.equal(validateWorkflowState(JSON.parse(JSON.stringify(state)), phases, []).runs[0].stoppedAt,
+        run.stoppedAt);
+    for (const invalid of [null, true, 123, "", "not-a-date", "2026-02-30T01:00:00.000Z"]) {
+        run.stoppedAt = invalid;
+        assert.throws(() => validateWorkflowState(state, phases, []), /Saved canvas state is invalid/);
+    }
+    run.stoppedAt = "2026-11-13T01:00:00.000Z";
+    delete run.autopilotId;
+    assert.throws(() => validateWorkflowState(state, phases, []), /Saved canvas state is invalid/);
+});
+
 test("pending removal contract permits explicit discard but rejects incompatible confirmations", () => {
     assert.deepEqual(validatePendingRemoval({ itemId: "__new__:1", revision: 3 }),
         { itemId: "__new__:1", revision: 3 });

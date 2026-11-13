@@ -49,6 +49,9 @@ export function validateWorkflowState(state, phases, valueFields) {
             || (run.response !== undefined && run.response !== null
                 && (typeof run.response !== "string" || Buffer.byteLength(run.response) > RESPONSE_LIMIT))
             || (run.responseError !== undefined && run.responseError !== null && typeof run.responseError !== "string")
+            || (run.stoppedAt !== undefined && (typeof run.autopilotId !== "string" || !run.autopilotId
+                || typeof run.stoppedAt !== "string" || !Number.isFinite(Date.parse(run.stoppedAt))
+                || new Date(run.stoppedAt).toISOString() !== run.stoppedAt))
             || (run.messageId !== null && typeof run.messageId !== "string"))
         || Object.values(state.drafts).some((draft) => typeof draft !== "string" || draft.length > 32000)
         || (state.values !== undefined && (!state.values || typeof state.values !== "object"

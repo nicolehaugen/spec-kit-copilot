@@ -155,6 +155,68 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (turn.ended || phaseResponse(events, run.messageId)?.success !== undefined) return "ended";
         return busy.value ? "active" : "unknown";
     }
+    // Deletion follows current correlated evidence, not display/recovery status.
+    function canDeleteAttempt(run, events) {
+        const terminal = ["Completed", "Failed"].includes(run.status);
+        if (run.sessionId !== session.sessionId) return terminal;
+        let interaction, currentInteraction, turn, activity;
+        let toolsSeen = false, hasTools = false, completed = false;
+        for (const event of events) {
+            const data = event.data ?? {};
+            if (event.agentId || data.parentToolCallId) continue;
+            if (event.type === "user.message") {
+                currentInteraction = undefined;
+                if (run.messageId && data.messageId === run.messageId) {
+                    interaction = typeof data.interactionId === "string" ? data.interactionId : undefined;
+                    turn = undefined;
+                    activity = interaction ? undefined : "unknown";
+                    toolsSeen = false;
+                }
+            }
+            if (event.type === "assistant.turn_start") {
+                currentInteraction = data.interactionId;
+                if (interaction && currentInteraction === interaction) {
+                    turn = typeof data.turnId === "string" ? data.turnId : undefined;
+                    activity = turn ? "active" : "unknown";
+                    hasTools = false;
+                    completed = false;
+                }
+            }
+            if (!interaction || !turn) continue;
+            if (data.turnId === turn && (event.type === "tool.execution_start"
+                || event.type === "assistant.message" && data.interactionId === interaction
+                    && data.toolRequests?.length)) {
+                toolsSeen = true;
+                hasTools = true;
+                completed = false;
+                activity = "active";
+            }
+            if (event.type === "assistant.message" && data.interactionId === interaction
+                && data.turnId === turn && !hasTools
+                && !["analysis", "commentary", "thinking"].includes(data.phase)
+                && typeof data.content === "string" && data.content.trim()) completed = true;
+            if (event.type === "session.task_complete" && typeof data.success === "boolean"
+                && (!data.interactionId || data.interactionId === interaction)
+                && (!data.turnId || data.turnId === turn)
+                && (data.interactionId === interaction || data.turnId === turn
+                    || currentInteraction === interaction)) {
+                completed = true;
+                if (activity !== "active") activity = "ended";
+            }
+            if (event.type === "assistant.turn_end" && data.turnId === turn) {
+                activity = completed || !toolsSeen ? "ended" : "unknown";
+            }
+        }
+        if (activity === "active") return false;
+        if (activity === "ended") return true;
+        if (liveRuns.has(run.runId ?? run.id)
+            && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) return false;
+        const automation = state.autopilot;
+        const stopped = run.status === "Paused" || run.autopilotId && (run.stoppedAt
+            || automation?.id === run.autopilotId && ["Paused", "Completed"].includes(automation.status)
+                && !liveRuns.has(automation.id));
+        return Boolean(stopped) || activity === undefined && terminal;
+    }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
     const diagnostic = async (message) => {
@@ -851,7 +913,8 @@ Steps:\n${instructions}` });
             || !["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)) {
             throw new UserError("No active Autopilot run is available to stop.");
         }
-        if (automation.status === "Blocked" && await session.rpc.mode.get() !== "autopilot") {
+        if (automation.status === "Blocked" && await session.rpc.mode.get() !== "autopilot"
+            && (!idleAfterRestart || busy.value)) {
             throw new UserError("Autopilot is no longer running. Check chat before resuming.");
         }
         if (typeof session.abort !== "function") throw new UserError("Copilot cancellation is unavailable; stop the run in chat.");
@@ -860,14 +923,17 @@ Steps:\n${instructions}` });
         if (automation.previousMode !== "autopilot" && await session.rpc.mode.get() === "autopilot") {
             throw new UserError(`Copilot could not restore the previous mode. Switch Copilot to ${automation.previousMode} mode manually before starting another workflow.`, 500);
         }
+        const stoppedAt = new Date().toISOString();
         await update((next) => {
             if (next.autopilot?.id === automation.id) {
                 next.autopilot.status = "Paused";
                 next.autopilot.error = "Stopped. Check chat and outputs before resuming.";
-                for (const run of next.runs.filter((run) => run.autopilotId === automation.id
-                    && run.status === "Running")) {
-                    run.status = "Unconfirmed";
-                    run.error = "Autopilot stopped before this step was verified. Check chat before retrying.";
+                for (const run of next.runs.filter((run) => run.autopilotId === automation.id)) {
+                    run.stoppedAt = stoppedAt;
+                    if (["Running", "Unconfirmed"].includes(run.status)) {
+                        run.status = "Unconfirmed";
+                        run.error = "Autopilot stopped before this step was verified. Check chat before retrying.";
+                    }
                 }
             }
         });
@@ -1263,19 +1329,22 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             if (input.revision !== state.revision) throw staleRevision("Canvas state changed. Refresh before deleting.");
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
-            if (state.autopilot?.item === item.id
-                && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
-                && liveRuns.has(state.autopilot.id)) {
+            const relatedRuns = state.runs.filter((run) => run.item === item.id
+                || (newItem(run.item) && !run.before.includes(item.id)));
+            const automation = state.autopilot;
+            const ownsAutomation = automation && (automation.item === item.id
+                || relatedRuns.some((run) => run.item === item.id && run.autopilotId === automation.id));
+            const events = ownsAutomation || relatedRuns.some((run) => run.sessionId === session.sessionId)
+                ? await session.getEvents() : [];
+            if (ownsAutomation && !canDeleteAttempt(automation, events)) {
                 throw new UserError("Stop Autopilot before deleting this workflow.", 409);
             }
-            if (state.runs.some((run) => (run.item === item.id
-                || (newItem(run.item) && !run.before.includes(item.id)))
-                && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status))) {
+            if (relatedRuns.some((run) => !canDeleteAttempt(run, events))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
-            if (state.autopilot?.item === item.id && state.autopilot.previousMode !== "autopilot"
+            if (ownsAutomation && automation.previousMode !== "autopilot"
                 && await session.rpc.mode.get() === "autopilot") {
-                throw new UserError(`Copilot is still in Autopilot mode after the previous run. Switch Copilot to ${state.autopilot.previousMode} mode before deleting this workflow.`, 409);
+                throw new UserError(`Copilot is still in Autopilot mode after the previous run. Switch Copilot to ${automation.previousMode} mode before deleting this workflow.`, 409);
             }
             await deleteConfinedDirectory(cwd, item.id);
             removed = true;
@@ -1285,7 +1354,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     && !(run.item === "__new__" && run.slug === item.slug && run.confirmedSlug));
                 for (const phase of phases) delete next.drafts[JSON.stringify([item.id, phase.id])];
                 if (next.names) delete next.names[item.id];
-                if (next.autopilot?.item === item.id) delete next.autopilot;
+                if (ownsAutomation && next.autopilot?.id === automation.id) delete next.autopilot;
                 if (next.selected === item.id) { next.selected = "__new__"; next.name = ""; next.slug = ""; }
             }, true);
             return { deleted: item.id };
