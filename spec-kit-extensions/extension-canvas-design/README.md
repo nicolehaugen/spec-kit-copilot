@@ -465,10 +465,11 @@ Counts and freshness are best-effort; unreadable evidence
 produces a diagnostic rather than an invented exact result. A replacement
 phase adapter must declare badge support before phase-card placement is used.
 The generated app shares badge evaluation across state reads and workflow
-selections within one runtime. Accepted artifact or workflow-slug reports,
-terminal run changes, explicit Refresh, and workflow deletion clear this
-in-memory result. Editing an artifact outside the app does not update its badge
-until Refresh or another invalidating event; reopening starts with an empty cache.
+selections within one runtime. New phase attempts, accepted artifact or
+workflow-slug reports, terminal run changes, explicit Refresh, and workflow
+deletion clear this in-memory result. Editing an artifact outside the app does
+not update its badge until Refresh or another invalidating event; reopening
+starts with an empty cache.
 
 Designer input controls are separate from generated evaluators. Each registered
 `designer.badge-input-binding` maps one rule ID to a reusable

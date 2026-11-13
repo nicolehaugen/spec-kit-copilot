@@ -885,16 +885,17 @@ test("accepted artifact and slug reports invalidate badges even when repeated", 
         assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (1)");
         const run = await runtime.run({ phase: "review", itemId: "work/alpha", args: "" }, "panel");
         await writeFile(join(cwd, "work", "alpha", "review", "second.md"), "second");
-        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (1)");
-        await assert.rejects(runtime.report({ phaseRunId: run.runId,
-            path: "work/alpha/review/invalid.txt" }, "panel"), /Markdown/);
-        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (1)");
-        const report = { phaseRunId: run.runId, path: "work/alpha/review/first.md" };
-        assert.equal((await runtime.report(report, "panel")).accepted, true);
         assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (2)");
         await writeFile(join(cwd, "work", "alpha", "review", "third.md"), "third");
+        await assert.rejects(runtime.report({ phaseRunId: run.runId,
+            path: "work/alpha/review/invalid.txt" }, "panel"), /Markdown/);
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (2)");
+        const report = { phaseRunId: run.runId, path: "work/alpha/review/first.md" };
         assert.equal((await runtime.report(report, "panel")).accepted, true);
         assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (3)");
+        await writeFile(join(cwd, "work", "alpha", "review", "fourth.md"), "fourth");
+        assert.equal((await runtime.report(report, "panel")).accepted, true);
+        assert.equal((await runtime.snapshot()).badges.items["work/alpha"][0].text, "Files (4)");
         const newRun = await runtime.run({ phase: "review", itemId: "__new__", args: "" }, "panel");
         await mkdir(join(cwd, "work", "beta", "review"), { recursive: true });
         await writeFile(join(cwd, "work", "beta", "review", "first.md"), "first");

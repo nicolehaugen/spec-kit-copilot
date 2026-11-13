@@ -900,7 +900,7 @@ Steps:\n${instructions}` });
                     sessionId: session.sessionId, messageId: current.messageId,
                     startedAt: new Date().toISOString(),
                     status: "Running", artifact: null, artifacts: [], error: null });
-            });
+            }, false, true, true);
             liveRuns.add(runId);
             return { phaseRunId: runId, itemId: state.autopilot.item };
         }
@@ -1002,7 +1002,7 @@ Steps:\n${instructions}` });
                     else next.slug = slug;
                     next.revision++;
                 }
-            });
+            }, false, true, true);
             liveRuns.add(runId);
             const context = step.project ? "Project-scoped Constitution." : newItem(item)
                 ? `Create a new feature using the installed skill's normal scripts.${slug ? ` Requested short name: ${JSON.stringify(slug)}.` : ""}

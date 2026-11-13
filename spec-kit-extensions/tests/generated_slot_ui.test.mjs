@@ -338,6 +338,36 @@ test("SSE bursts share a state read and an older read cannot overwrite selection
     assert.equal(context.model.selected, "specs/alpha");
 });
 
+test("SSE notifications during a state read get one trailing read", async () => {
+    const requests = [];
+    const context = {
+        refreshSequence: 0, model: { revision: 0, items: [] },
+        workflowPage: {}, mountedPage: "workflow", timer: null, constitutionTimer: null,
+        saveFailure: null, saving: Promise.resolve(), viewer: null,
+        constitution: () => null, renderPhase() {}, syncFieldMounts: async () => {},
+        $: () => null, document: {},
+        api: () => new Promise((resolve) => requests.push(resolve)),
+        message: (text) => { throw new Error(text); },
+    };
+    const events = runInNewContext(`
+        ${section("async function refresh(reconcile = false) {", "async function selectPhase(")}
+        const events = {};
+        ${section("events.onmessage = () => {", "events.onerror =")}
+        events`, context);
+    events.onmessage();
+    await new Promise(setImmediate);
+    assert.equal(requests.length, 1);
+    events.onmessage();
+    events.onmessage();
+    requests[0]({ revision: 0, items: [], statuses: {} });
+    await new Promise(setImmediate);
+    assert.equal(requests.length, 2);
+    requests[1]({ revision: 1, items: [], statuses: {} });
+    await new Promise(setImmediate);
+    assert.equal(context.model.revision, 1);
+    assert.equal(requests.length, 2);
+});
+
 test("terminal run changes invalidate badges after commit and before notification", async () => {
     const notifications = [];
     const context = {
