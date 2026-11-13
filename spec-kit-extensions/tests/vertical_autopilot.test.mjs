@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = true) {
+async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = true,
+    phases = ["specify", "plan"]) {
     const root = await mkdtemp(join(tmpdir(), "vertical-autopilot-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const target = join(root, "generated");
@@ -18,7 +19,8 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
         ? "../../spec-kit-presets/copilot-vertical-phase-control/generated/phase-adapter.mjs"
         : "../extension-canvas-design/generated-host/phase-control/generated-phase-adapter.mjs", import.meta.url));
     await writeFile(join(target, "pages", "generated-phase-adapter.mjs"), adapter);
-    for (const skill of ["specify", "plan"]) {
+    for (const phase of phases) {
+        const skill = phase.replace(/^speckit\./, "").replaceAll(".", "-");
         const folder = join(project, ".github", "skills", `speckit-${skill}`);
         await mkdir(folder, { recursive: true });
         await writeFile(join(folder, "SKILL.md"), `---\nname: speckit-${skill}\n---\n`);
@@ -38,9 +40,11 @@ async function setup(t, vertical = true, phaseDialogs = [], userProvidesSlug = t
     const stateFile = join(root, "generated-canvases",
         createHash("sha256").update(JSON.stringify([project, "test-autopilot"])).digest("hex"), "state.json");
     const options = { config: {
-        canvas: { id: "test-autopilot" }, userProvidesSlug, phases: ["specify", "plan"],
-        phaseOutputs: { specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
-            plan: { expectsArtifact: true, outputPath: "specs/<slug>/plan.md" } },
+        canvas: { id: "test-autopilot" }, userProvidesSlug, phases,
+        phaseOutputs: Object.fromEntries(phases.map((phase) => [phase, {
+            expectsArtifact: true,
+            outputPath: `specs/<slug>/${phase === "specify" ? "spec" : phase.split(".").at(-1)}.md`,
+        }])),
         ...(phaseDialogs.length ? { phaseDialogs } : {}),
         workflowPage: { adapter: "generated-phase-adapter",
             hash: createHash("sha256").update(adapter).digest("hex"), managedRun: vertical },
@@ -490,6 +494,64 @@ test("vertical Autopilot starts first, verifies each artifact and refuses skippe
         { autopilotId, phase: "plan", action: "start" }, "panel"), /inactive/);
 });
 
+test("Autopilot starts an unstarted Bug workflow without Specify and preserves phase order", async (t) => {
+    const phases = ["speckit.bug.assess", "speckit.bug.fix", "speckit.bug.test"];
+    const { runtime, project } = await setup(t, true, [], true, phases);
+    const { autopilotId, itemId } = await startNewAutopilot(runtime);
+    await assert.rejects(runtime.reportAutopilotStep(
+        { autopilotId, phase: phases[1], action: "start" }, "panel"), /configured order/);
+    for (const [index, phase] of phases.entries()) {
+        const { phaseRunId, itemId: startedItem } = await runtime.reportAutopilotStep(
+            { autopilotId, phase, action: "start" }, "panel");
+        assert.equal(startedItem, index === 0 ? itemId : "specs/demo");
+        if (index === 0) {
+            await mkdir(join(project, "specs", "demo"), { recursive: true });
+            await runtime.reportSlug({ phaseRunId, slug: "demo" }, "panel");
+        }
+        const filename = `${phase.split(".").at(-1)}.md`;
+        await writeFile(join(project, "specs", "demo", filename), `# ${phase}`);
+        await runtime.report({ phaseRunId, path: `specs/demo/${filename}` }, "panel");
+        assert.equal((await runtime.reportAutopilotStep(
+            { autopilotId, phase, action: "complete" }, "panel")).nextPhase,
+        phases[index + 1] ?? null);
+    }
+    assert.equal((await runtime.snapshot()).autopilot.status, "Finishing");
+});
+
+test("Autopilot without Specify still requires directory and artifact reports", async (t) => {
+    for (const reportDirectory of [false, true]) {
+        await t.test(reportDirectory ? "missing artifact" : "missing directory", async (child) => {
+            const phase = "speckit.bug.assess";
+            const nextPhase = "speckit.bug.fix";
+            const { runtime, project } = await setup(child, true, [], true, [phase, nextPhase]);
+            const { autopilotId } = await startNewAutopilot(runtime);
+            const { phaseRunId } = await runtime.reportAutopilotStep(
+                { autopilotId, phase, action: "start" }, "panel");
+            await mkdir(join(project, "specs", "demo"), { recursive: true });
+            await writeFile(join(project, "specs", "demo", "assess.md"), "# Assessment");
+            if (reportDirectory) {
+                await runtime.reportSlug({ phaseRunId, slug: "demo" }, "panel");
+            }
+            await assert.rejects(runtime.reportAutopilotStep(
+                { autopilotId, phase, action: "complete" }, "panel"),
+            reportDirectory ? /required artifact/ : /new workflow directory/);
+            assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
+            await assert.rejects(runtime.reportAutopilotStep(
+                { autopilotId, phase: nextPhase, action: "start" }, "panel"), /inactive/);
+        });
+    }
+});
+
+test("Autopilot rejects an unstarted workflow when Specify is configured after another phase", async (t) => {
+    const { runtime, sent, session } = await setup(t, true, [], true, ["plan", "specify"]);
+    const itemId = await prepareNewWorkflow(runtime);
+    await assert.rejects(runtime.startAutopilot({ itemId }, "panel"),
+        /Select an existing workflow before starting Autopilot/);
+    assert.equal(sent.length, 0);
+    assert.equal(session.mode, undefined);
+    assert.equal((await runtime.snapshot()).autopilot, null);
+});
+
 test("Autopilot omits an empty slug request in both custom and automatic modes", async (t) => {
     for (const enabled of [true, false]) {
         await t.test(enabled ? "custom slug left blank" : "automatic slug", async (child) => {
@@ -631,6 +693,9 @@ test("reopened checkpoints require end evidence even without an unfinished phase
                 { type: "assistant.turn_end", data: { turnId: "turn" } },
                 { type: "session.task_complete", data: { success: false } },
             ]);
+            await assert.rejects(runtime.deleteWorkflow(input),
+                /Switch Copilot to interactive mode before deleting this workflow/);
+            fixture.session.mode = "interactive";
             assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
             assert.equal((await runtime.snapshot()).autopilot, null);
         });
@@ -676,6 +741,11 @@ test("a tool-using turn end alone does not permit deletion after reopening", asy
                     { type: "assistant.message", data: { interactionId: "run", turnId: "final", content: "Finished" } },
                     { type: "assistant.turn_end", data: { turnId: "final" } },
                 ])]);
+            if (autopilot) {
+                await assert.rejects(runtime.deleteWorkflow(input),
+                    /Switch Copilot to interactive mode before deleting this workflow/);
+                fixture.session.mode = "interactive";
+            }
             assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
         });
     }
@@ -747,6 +817,11 @@ test("an earlier response cannot authorize deletion after newer tool work", asyn
             assert.equal(await readFile(fixture.stateFile, "utf8"), before);
             assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
             fixture.setEvents([...events, { type: "session.task_complete", data: { success: true } }]);
+            if (autopilot) {
+                await assert.rejects(runtime.deleteWorkflow(input),
+                    /Switch Copilot to interactive mode before deleting this workflow/);
+                fixture.session.mode = "interactive";
+            }
             assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
             assert.equal((await runtime.snapshot()).autopilot, null);
         });
@@ -867,9 +942,19 @@ test("artifact-first reporting still removes the bound checkpoint when its workf
     await writeFile(join(project, "specs", "demo", "spec.md"), "Specification");
     await runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.item, id);
+    const setMode = fixture.session.rpc.mode.set;
+    fixture.session.rpc.mode.set = async () => ({ modeApplied: false });
+    await fixture.finish(false);
+    const before = await readFile(fixture.stateFile, "utf8");
+    const input = { itemId: "specs/demo", confirmation: "demo",
+        revision: (await runtime.snapshot()).revision };
+    await assert.rejects(runtime.deleteWorkflow(input),
+        /Switch Copilot to interactive mode before deleting this workflow/);
+    assert.ok((await stat(join(project, "specs", "demo"))).isDirectory());
+    assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+    fixture.session.rpc.mode.set = setMode;
     await runtime.stopAutopilot({});
-    assert.deepEqual(await runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
-        revision: (await runtime.snapshot()).revision }), { deleted: "specs/demo" });
+    assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
     assert.equal((await (await fixture.restart()).snapshot()).autopilot, null);
     const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
     assert.deepEqual(saved.runs, []);
@@ -930,6 +1015,31 @@ test("persisted Stop evidence does not override active work after checkpoint rep
     assert.ok((await stat(join(project, "specs", "demo"))).isDirectory());
     assert.equal((await runtime.snapshot()).autopilot.id, otherId);
 });
+for (const sameWorkflow of [true, false]) {
+test(`deletion ${sameWorkflow ? "clears matching" : "preserves another workflow's"} Autopilot state across reopen`, async (t) => {
+    const fixture = await setup(t);
+    const { runtime, project } = fixture;
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await mkdir(join(project, "specs", "other"), { recursive: true });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/demo" });
+    await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    await runtime.stopAutopilot({});
+    const before = JSON.parse(await readFile(fixture.stateFile, "utf8")).autopilot;
+    assert.equal(before.status, "Paused");
+    const slug = sameWorkflow ? "demo" : "other";
+    await runtime.deleteWorkflow({ itemId: `specs/${slug}`, confirmation: slug,
+        revision: (await runtime.snapshot()).revision });
+    await assert.rejects(stat(join(project, "specs", slug)), { code: "ENOENT" });
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    if (sameWorkflow) assert.equal(Object.hasOwn(saved, "autopilot"), false);
+    else assert.deepEqual(saved.autopilot, before);
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.autopilot === null, sameWorkflow);
+    const reopened = await (await fixture.restart()).snapshot();
+    assert.deepEqual(reopened.autopilot, snapshot.autopilot);
+    assert.equal(reopened.items.some((row) => row.id === `specs/${slug}`), false);
+});
+}
 
 test("deletion waits for Autopilot preflight before touching its workflow", async (t) => {
     const { runtime, project, session } = await setup(t);
@@ -1062,7 +1172,7 @@ test("switching a blocked run cannot capture transient Autopilot as the previous
 });
 
 test("completed Autopilot cannot seed another run with an unrestored session mode", async (t) => {
-    const { runtime, project, session, sent, finish } = await setup(t);
+    const { runtime, project, session, sent, finish, stateFile } = await setup(t);
     for (const name of ["alpha", "beta"]) {
         await mkdir(join(project, "specs", name), { recursive: true });
     }
@@ -1100,13 +1210,23 @@ test("completed Autopilot cannot seed another run with an unrestored session mod
     }
     assert.equal(sent.length, 1);
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    const beforeDeletion = await readFile(stateFile, "utf8");
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision }),
+    /Switch Copilot to interactive mode before deleting this workflow/);
+    assert.ok((await stat(join(project, "specs", "alpha"))).isDirectory());
+    assert.equal(await readFile(stateFile, "utf8"), beforeDeletion);
     session.rpc.mode.set = setMode;
     session.mode = "interactive";
     await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
     await runtime.stopAutopilot({}, "panel");
+    await runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision });
     await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    await runtime.stopAutopilot({});
+    assert.equal(session.mode, "interactive");
 });
 
 test("a stale Paused run requires mode recovery before a new start", async (t) => {
@@ -1137,12 +1257,14 @@ test("an intentionally preexisting Autopilot mode remains the original mode", as
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
     await runtime.stopAutopilot({}, "panel");
     assert.equal(session.mode, "autopilot");
+    await runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision });
     await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
 });
 
 test("Stop cannot pause a run while Copilot remains in Autopilot mode", async (t) => {
-    const { runtime, project, session, finish } = await setup(t);
+    const { runtime, project, session, finish, stateFile } = await setup(t);
     await mkdir(join(project, "specs", "alpha"), { recursive: true });
     await mkdir(join(project, "specs", "beta"), { recursive: true });
     await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
@@ -1158,12 +1280,22 @@ test("Stop cannot pause a run while Copilot remains in Autopilot mode", async (t
     assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
     await assert.rejects(runtime.startAutopilot({ itemId: "specs/beta" }, "panel"),
         /Stop the blocked Autopilot/);
+    const beforeDeletion = await readFile(stateFile, "utf8");
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision }),
+    /Switch Copilot to interactive mode before deleting this workflow/);
+    assert.ok((await stat(join(project, "specs", "alpha"))).isDirectory());
+    assert.equal(await readFile(stateFile, "utf8"), beforeDeletion);
     session.rpc.mode.set = setMode;
     assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
     assert.equal(session.mode, "interactive");
     assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    await runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision });
     await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    await runtime.stopAutopilot({});
+    assert.equal(session.mode, "interactive");
 });
 
 test("Stop accepts a concurrent mode change when restoration is unapplied", async (t) => {

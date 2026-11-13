@@ -248,7 +248,11 @@ session activity does not override conclusive evidence for this workflow.
 Confirmation, state-revision, confinement, and symlink checks still apply.
 Successful deletion also removes the workflow's explicitly associated Autopilot
 checkpoint, including when an artifact report bound its phase run before a slug
-report. A request that never reported its directory can remain as a pending row:
+report. The saved property is omitted, not set to `null`; other workflows'
+Autopilot state is preserved. If Copilot has not left Autopilot after a run that
+began in another mode, deletion is blocked until the user switches back,
+preserving the recovery record.
+A request that never reported its directory can remain as a pending row:
 directory discovery alone does not establish ownership for automatic cleanup.
 If tracking failed and the session became idle after mode restoration, explicit
 Stop remains available before deletion; new session activity blocks this recovery
@@ -934,6 +938,11 @@ supported optional capabilities are:
 | --- | --- |
 | `workflow.rows.v1` | `state.statuses` maps phase IDs to host-verified status, output, artifact availability and error. `actions.runAt(index)` submits the configured phase with its saved draft; `actions.viewAt(index)` opens its authorized artifact. Invalid indexes and unavailable artifacts fail visibly. |
 | `workflow.managed-run.v1` | `state.autopilot` contains the session's persisted run status, target workflow ID, current step and progress message (or `null`). `actions.startManagedRun()` preflights and starts the attached Copilot session's ordered workflow; `actions.stopManagedRun()` cancels it from any open panel. Failures are reported through `actions.error` or the host's canvas message. The runtime verifies the packaged adapter's hash and the capability frozen from its phase-control definition before starting a run. |
+
+When no Specify creation phase is configured, Autopilot can start the selected
+unstarted workflow at its first configured phase. Configured phase order and
+required directory/artifact reporting remain enforced. If a Specify creation
+phase is configured but is not first, a new workflow is still rejected.
 
 These actions are stable host operations, not preset-specific buttons. The
 vertical adapter owns its entire layout, row selection and confirmation flow;

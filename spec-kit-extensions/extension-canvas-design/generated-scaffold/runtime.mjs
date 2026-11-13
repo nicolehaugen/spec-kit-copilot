@@ -781,7 +781,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 || pendingId(input.itemId) && !pendingFor(input.itemId)) {
                 throw new UserError("The selected workflow no longer exists. Refresh before starting.");
             }
-            if (newItem(input.itemId) && !workflowSteps[0].first) {
+            if (newItem(input.itemId) && !workflowSteps[0].first
+                && workflowSteps.some((step) => step.first)) {
                 throw new UserError("Select an existing workflow before starting Autopilot.");
             }
             await requireConstitution();
@@ -1335,6 +1336,10 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }
             if (relatedRuns.some((run) => !canDeleteAttempt(run, events))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
+            }
+            if (ownsAutomation && automation.previousMode !== "autopilot"
+                && await session.rpc.mode.get() === "autopilot") {
+                throw new UserError(`Copilot is still in Autopilot mode after the previous run. Switch Copilot to ${automation.previousMode} mode before deleting this workflow.`, 409);
             }
             await deleteConfinedDirectory(cwd, item.id);
             removed = true;
