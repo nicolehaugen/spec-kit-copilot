@@ -709,7 +709,7 @@ test("switching a blocked run cannot capture transient Autopilot as the previous
 });
 
 test("completed Autopilot cannot seed another run with an unrestored session mode", async (t) => {
-    const { runtime, project, session, sent, finish } = await setup(t);
+    const { runtime, project, session, sent, finish, stateFile } = await setup(t);
     for (const name of ["alpha", "beta"]) {
         await mkdir(join(project, "specs", name), { recursive: true });
     }
@@ -747,13 +747,23 @@ test("completed Autopilot cannot seed another run with an unrestored session mod
     }
     assert.equal(sent.length, 1);
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    const beforeDeletion = await readFile(stateFile, "utf8");
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision }),
+    /Switch Copilot to interactive mode before deleting this workflow/);
+    assert.ok((await stat(join(project, "specs", "alpha"))).isDirectory());
+    assert.equal(await readFile(stateFile, "utf8"), beforeDeletion);
     session.rpc.mode.set = setMode;
     session.mode = "interactive";
     await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
     await runtime.stopAutopilot({}, "panel");
+    await runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision });
     await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    await runtime.stopAutopilot({});
+    assert.equal(session.mode, "interactive");
 });
 
 test("a stale Paused run requires mode recovery before a new start", async (t) => {
@@ -784,12 +794,14 @@ test("an intentionally preexisting Autopilot mode remains the original mode", as
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
     await runtime.stopAutopilot({}, "panel");
     assert.equal(session.mode, "autopilot");
+    await runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision });
     await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "autopilot");
 });
 
 test("Stop cannot pause a run while Copilot remains in Autopilot mode", async (t) => {
-    const { runtime, project, session, finish } = await setup(t);
+    const { runtime, project, session, finish, stateFile } = await setup(t);
     await mkdir(join(project, "specs", "alpha"), { recursive: true });
     await mkdir(join(project, "specs", "beta"), { recursive: true });
     await runtime.startAutopilot({ itemId: "specs/alpha" }, "panel");
@@ -805,12 +817,22 @@ test("Stop cannot pause a run while Copilot remains in Autopilot mode", async (t
     assert.equal((await runtime.snapshot()).autopilot.status, "Blocked");
     await assert.rejects(runtime.startAutopilot({ itemId: "specs/beta" }, "panel"),
         /Stop the blocked Autopilot/);
+    const beforeDeletion = await readFile(stateFile, "utf8");
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision }),
+    /Switch Copilot to interactive mode before deleting this workflow/);
+    assert.ok((await stat(join(project, "specs", "alpha"))).isDirectory());
+    assert.equal(await readFile(stateFile, "utf8"), beforeDeletion);
     session.rpc.mode.set = setMode;
     assert.equal((await runtime.stopAutopilot({}, "panel")).stopped, true);
     assert.equal(session.mode, "interactive");
     assert.equal((await runtime.snapshot()).autopilot.status, "Paused");
+    await runtime.deleteWorkflow({ itemId: "specs/alpha", confirmation: "alpha",
+        revision: (await runtime.snapshot()).revision });
     await runtime.startAutopilot({ itemId: "specs/beta" }, "panel");
     assert.equal((await runtime.snapshot()).autopilot.previousMode, "interactive");
+    await runtime.stopAutopilot({});
+    assert.equal(session.mode, "interactive");
 });
 
 test("Stop accepts a concurrent mode change when restoration is unapplied", async (t) => {
