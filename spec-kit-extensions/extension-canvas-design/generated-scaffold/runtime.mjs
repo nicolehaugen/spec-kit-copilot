@@ -155,6 +155,19 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (turn.ended || phaseResponse(events, run.messageId)?.success !== undefined) return "ended";
         return busy.value ? "active" : "unknown";
     }
+    function hasDeletionEndEvidence(run, events) {
+        if (runActivity(run, events) !== "ended") return false;
+        if (phaseResponse(events, run.messageId)?.success !== undefined) return true;
+        // A tool-using model turn can end before the task finishes.
+        const rootEvents = events.filter((event) => !event.agentId && !event.data?.parentToolCallId);
+        const interactionId = rootEvents.find((event) => event.type === "user.message"
+            && event.data?.messageId === run.messageId)?.data?.interactionId;
+        const turns = new Set(rootEvents.filter((event) => event.type === "assistant.turn_start"
+            && event.data?.interactionId === interactionId).map((event) => event.data?.turnId));
+        return !rootEvents.some((event) => turns.has(event.data?.turnId)
+            && (event.type === "tool.execution_start"
+                || event.type === "assistant.message" && event.data?.toolRequests?.length));
+    }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
     const diagnostic = async (message) => {
@@ -850,7 +863,8 @@ Steps:\n${instructions}` });
             || !["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)) {
             throw new UserError("No active Autopilot run is available to stop.");
         }
-        if (automation.status === "Blocked" && await session.rpc.mode.get() !== "autopilot") {
+        if (automation.status === "Blocked" && await session.rpc.mode.get() !== "autopilot"
+            && (!idleAfterRestart || busy.value)) {
             throw new UserError("Autopilot is no longer running. Check chat before resuming.");
         }
         if (typeof session.abort !== "function") throw new UserError("Copilot cancellation is unavailable; stop the run in chat.");
@@ -1269,12 +1283,13 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             const automation = state.autopilot;
             const ownsAutomation = automation && (automation.item === item.id
                 || relatedRuns.some((run) => run.item === item.id && run.autopilotId === automation.id));
+            const events = ownsAutomation || relatedRuns.some((run) => run.status === "Unconfirmed")
+                ? await session.getEvents() : [];
             if (ownsAutomation && ["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)
-                && liveRuns.has(automation.id)) {
+                && (liveRuns.has(automation.id) || automation.sessionId !== session.sessionId
+                    || !hasDeletionEndEvidence(automation, events))) {
                 throw new UserError("Stop Autopilot before deleting this workflow.", 409);
             }
-            const events = relatedRuns.some((run) => run.status === "Unconfirmed")
-                ? await session.getEvents() : [];
             if (relatedRuns.some((run) => {
                 if (["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) return false;
                 if (run.status !== "Unconfirmed" || run.sessionId !== session.sessionId
@@ -1284,7 +1299,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     || automation?.id === run.autopilotId
                         && ["Paused", "Completed"].includes(automation.status)
                         && !liveRuns.has(run.autopilotId));
-                return runActivity(run, events) !== "ended" && !stoppedAutopilot;
+                return !hasDeletionEndEvidence(run, events) && !stoppedAutopilot;
             })) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }

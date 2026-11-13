@@ -244,6 +244,12 @@ also removes the deleted workflow's Autopilot checkpoint from saved state, inclu
 when an artifact report bound its phase run to the directory before a slug report.
 Blocked alone is not evidence that the agent stopped; live Blocked checkpoints
 must be stopped before deletion, even when no phase run was recorded.
+After reopening, an interrupted checkpoint still requires explicit Stop or
+end evidence, including before the first step report and between steps.
+For tool-using interactions, an individual model turn ending is not sufficient
+completion evidence. If tracking failed and the session became idle after mode
+restoration, explicit Stop remains available before deletion;
+new session activity blocks this recovery while the mode is not Autopilot.
 After a successful explicit Stop, unfinished Autopilot phase runs retain an optional
 `stoppedAt` ISO timestamp in saved state. This preserves stop evidence across retries,
 checkpoint replacement, and reloads without treating unknown activity as stopped.
