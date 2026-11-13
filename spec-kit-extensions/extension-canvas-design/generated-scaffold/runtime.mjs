@@ -155,18 +155,63 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (turn.ended || phaseResponse(events, run.messageId)?.success !== undefined) return "ended";
         return busy.value ? "active" : "unknown";
     }
-    function hasDeletionEndEvidence(run, events) {
-        if (runActivity(run, events) !== "ended") return false;
-        if (phaseResponse(events, run.messageId)?.success !== undefined) return true;
-        // A tool-using model turn can end before the task finishes.
-        const rootEvents = events.filter((event) => !event.agentId && !event.data?.parentToolCallId);
-        const interactionId = rootEvents.find((event) => event.type === "user.message"
-            && event.data?.messageId === run.messageId)?.data?.interactionId;
-        const turns = new Set(rootEvents.filter((event) => event.type === "assistant.turn_start"
-            && event.data?.interactionId === interactionId).map((event) => event.data?.turnId));
-        return !rootEvents.some((event) => turns.has(event.data?.turnId)
-            && (event.type === "tool.execution_start"
-                || event.type === "assistant.message" && event.data?.toolRequests?.length));
+    // Deletion follows current correlated evidence, not display/recovery status.
+    function canDeleteAttempt(run, events) {
+        const terminal = ["Completed", "Failed"].includes(run.status);
+        if (run.sessionId !== session.sessionId) return terminal;
+        let interaction, currentInteraction, turn, activity;
+        let toolsSeen = false, hasTools = false, completed = false;
+        for (const event of events) {
+            const data = event.data ?? {};
+            if (event.agentId || data.parentToolCallId) continue;
+            if (event.type === "user.message") {
+                currentInteraction = undefined;
+                if (run.messageId && data.messageId === run.messageId) {
+                    interaction = typeof data.interactionId === "string" ? data.interactionId : undefined;
+                    turn = undefined;
+                    activity = interaction ? undefined : "unknown";
+                    toolsSeen = false;
+                }
+            }
+            if (event.type === "assistant.turn_start") {
+                currentInteraction = data.interactionId;
+                if (interaction && currentInteraction === interaction) {
+                    turn = typeof data.turnId === "string" ? data.turnId : undefined;
+                    activity = turn ? "active" : "unknown";
+                    hasTools = false;
+                    completed = false;
+                }
+            }
+            if (!interaction || currentInteraction !== interaction || !turn) continue;
+            if (data.turnId === turn && (event.type === "tool.execution_start"
+                || event.type === "assistant.message" && data.interactionId === interaction
+                    && data.toolRequests?.length)) {
+                toolsSeen = true;
+                hasTools = true;
+                completed = false;
+                activity = "active";
+            }
+            if (event.type === "assistant.message" && data.interactionId === interaction
+                && data.turnId === turn && !hasTools
+                && !["analysis", "commentary", "thinking"].includes(data.phase)
+                && typeof data.content === "string" && data.content.trim()) completed = true;
+            if (event.type === "session.task_complete" && typeof data.success === "boolean"
+                && (!data.interactionId || data.interactionId === interaction)
+                && (!data.turnId || data.turnId === turn)) {
+                completed = true;
+                activity = "ended";
+            }
+            if (event.type === "assistant.turn_end" && data.turnId === turn) {
+                activity = completed || !toolsSeen ? "ended" : "unknown";
+            }
+        }
+        if (activity === "active" || liveRuns.has(run.runId ?? run.id)
+            && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) return false;
+        const automation = state.autopilot;
+        const stopped = run.status === "Paused" || run.autopilotId && (run.stoppedAt
+            || automation?.id === run.autopilotId && ["Paused", "Completed"].includes(automation.status)
+                && !liveRuns.has(automation.id));
+        return activity === "ended" || Boolean(stopped) || activity === undefined && terminal;
     }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
@@ -1283,24 +1328,12 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             const automation = state.autopilot;
             const ownsAutomation = automation && (automation.item === item.id
                 || relatedRuns.some((run) => run.item === item.id && run.autopilotId === automation.id));
-            const events = ownsAutomation || relatedRuns.some((run) => run.status === "Unconfirmed")
+            const events = ownsAutomation || relatedRuns.some((run) => run.sessionId === session.sessionId)
                 ? await session.getEvents() : [];
-            if (ownsAutomation && ["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)
-                && (liveRuns.has(automation.id) || automation.sessionId !== session.sessionId
-                    || !hasDeletionEndEvidence(automation, events))) {
+            if (ownsAutomation && !canDeleteAttempt(automation, events)) {
                 throw new UserError("Stop Autopilot before deleting this workflow.", 409);
             }
-            if (relatedRuns.some((run) => {
-                if (["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) return false;
-                if (run.status !== "Unconfirmed" || run.sessionId !== session.sessionId
-                    || liveRuns.has(run.runId) || recoveredActiveRuns.has(run.runId)) return true;
-                if (phaseTurnState(events, run.messageId).active) return true;
-                const stoppedAutopilot = run.autopilotId && (run.stoppedAt
-                    || automation?.id === run.autopilotId
-                        && ["Paused", "Completed"].includes(automation.status)
-                        && !liveRuns.has(run.autopilotId));
-                return !hasDeletionEndEvidence(run, events) && !stoppedAutopilot;
-            })) {
+            if (relatedRuns.some((run) => !canDeleteAttempt(run, events))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
             await deleteConfinedDirectory(cwd, item.id);

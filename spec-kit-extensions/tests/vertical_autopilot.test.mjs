@@ -647,9 +647,6 @@ test("a tool-using turn end alone does not permit deletion after reopening", asy
                 await fixture.runtime.reportAutopilotStep(
                     { autopilotId, phase: "specify", action: "start" }, "panel");
             } else await fixture.runtime.run({ itemId: "specs/demo", phase: "specify", args: "" }, "panel");
-            const runtime = await fixture.restart();
-            const input = { itemId: "specs/demo", confirmation: "demo",
-                revision: (await runtime.snapshot()).revision };
             const events = [
                 { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
                 { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
@@ -657,11 +654,134 @@ test("a tool-using turn end alone does not permit deletion after reopening", asy
                 { type: "assistant.turn_end", data: { turnId: "turn" } },
             ];
             fixture.setEvents(events);
+            const runtime = await fixture.restart();
+            const snapshot = await runtime.snapshot();
+            const input = { itemId: "specs/demo", confirmation: "demo", revision: snapshot.revision };
+            const before = await readFile(fixture.stateFile, "utf8");
+            if (!autopilot) assert.equal(JSON.parse(before).runs[0].status, "Run output unconfirmed");
             await assert.rejects(runtime.deleteWorkflow(input), /Stop Autopilot|unfinished phase/);
+            assert.equal(await readFile(fixture.stateFile, "utf8"), before);
             assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
-            fixture.setEvents([...events, { type: "session.task_complete",
-                data: { success: true, summary: "Finished" } }]);
+            events.push(
+                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "continuation" } },
+                { type: "assistant.message", data: { interactionId: "run", turnId: "continuation",
+                    phase: "analysis", content: "Still working" } },
+                { type: "assistant.turn_end", data: { turnId: "continuation" } });
+            fixture.setEvents(events);
+            await assert.rejects(runtime.deleteWorkflow(input), /Stop Autopilot|unfinished phase/);
+            fixture.setEvents([...events, ...(autopilot
+                ? [{ type: "session.task_complete", data: { success: true, summary: "Finished" } }]
+                : [
+                    { type: "assistant.turn_start", data: { interactionId: "run", turnId: "final" } },
+                    { type: "assistant.message", data: { interactionId: "run", turnId: "final", content: "Finished" } },
+                    { type: "assistant.turn_end", data: { turnId: "final" } },
+                ])]);
             assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+        });
+    }
+});
+
+test("ended workflow evidence survives idle followed by unrelated session activity", async (t) => {
+    const fixture = await setup(t);
+    await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+    const { autopilotId } = await fixture.runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    await fixture.runtime.reportAutopilotStep(
+        { autopilotId, phase: "specify", action: "start" }, "panel");
+    const runtime = await fixture.restart();
+    const events = [
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+        { type: "assistant.turn_end", data: { turnId: "turn" } },
+        { type: "session.task_complete", data: { success: false } },
+    ];
+    fixture.setEvents(events);
+    fixture.idle();
+    for (let count = 0; count < 100 && fixture.session.mode === "autopilot"; count++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(fixture.session.mode, "interactive");
+    fixture.setEvents([...events,
+        { type: "user.message", data: { messageId: "other-message", interactionId: "other" } },
+        { type: "assistant.turn_start", data: { interactionId: "other", turnId: "other-turn" } },
+        { type: "tool.execution_start", data: { turnId: "other-turn" } },
+    ]);
+    fixture.active();
+    assert.deepEqual(await runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+        revision: (await runtime.snapshot()).revision }), { deleted: "specs/demo" });
+    await assert.rejects(stat(join(fixture.project, "specs", "demo")), { code: "ENOENT" });
+    assert.equal((await runtime.snapshot()).autopilot, null);
+});
+
+test("an earlier response cannot authorize deletion after newer tool work", async (t) => {
+    for (const autopilot of [false, true]) {
+        await t.test(autopilot ? "Autopilot" : "manual phase recovered as Completed", async (child) => {
+            const fixture = await setup(child);
+            await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+            if (autopilot) {
+                const { autopilotId } = await fixture.runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+                await fixture.runtime.reportAutopilotStep(
+                    { autopilotId, phase: "specify", action: "start" }, "panel");
+            } else await fixture.runtime.run({ itemId: "specs/demo", phase: "specify", args: "" }, "panel");
+            const events = [
+                { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "first" } },
+                { type: "assistant.message", data: { interactionId: "run", turnId: "first", content: "First reply" } },
+                { type: "assistant.turn_end", data: { turnId: "first" } },
+                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "second" } },
+                { type: "tool.execution_start", data: { turnId: "second" } },
+                { type: "assistant.turn_end", data: { turnId: "second" } },
+            ];
+            fixture.setEvents(events);
+            const runtime = await fixture.restart();
+            const input = { itemId: "specs/demo", confirmation: "demo",
+                revision: (await runtime.snapshot()).revision };
+            const before = await readFile(fixture.stateFile, "utf8");
+            if (!autopilot) assert.equal(JSON.parse(before).runs[0].status, "Completed");
+            await assert.rejects(runtime.deleteWorkflow(input), /Stop Autopilot|unfinished phase/);
+            fixture.setEvents([...events,
+                { type: "assistant.turn_start", data: { interactionId: "other", turnId: "other-turn" } },
+                { type: "assistant.turn_end", data: { turnId: "other-turn" } },
+                { type: "session.task_complete", data: { success: true } },
+            ]);
+            await assert.rejects(runtime.deleteWorkflow(input), /Stop Autopilot|unfinished phase/);
+            assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+            assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
+            fixture.setEvents([...events, { type: "session.task_complete", data: { success: true } }]);
+            assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+            assert.equal((await runtime.snapshot()).autopilot, null);
+        });
+    }
+});
+
+test("Paused checkpoints still check matching activity before and between phases", async (t) => {
+    for (const betweenSteps of [false, true]) {
+        await t.test(betweenSteps ? "between steps" : "before first step", async (child) => {
+            const fixture = await setup(child);
+            await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+            const { autopilotId } = await fixture.runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+            if (betweenSteps) {
+                const { phaseRunId } = await fixture.runtime.reportAutopilotStep(
+                    { autopilotId, phase: "specify", action: "start" }, "panel");
+                await writeFile(join(fixture.project, "specs", "demo", "spec.md"), "Specification");
+                await fixture.runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel");
+                await fixture.runtime.reportAutopilotStep(
+                    { autopilotId, phase: "specify", action: "complete" }, "panel");
+            }
+            await fixture.runtime.stopAutopilot({});
+            const events = [
+                { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+            ];
+            fixture.setEvents(events);
+            const input = { itemId: "specs/demo", confirmation: "demo",
+                revision: (await fixture.runtime.snapshot()).revision };
+            const before = await readFile(fixture.stateFile, "utf8");
+            await assert.rejects(fixture.runtime.deleteWorkflow(input), /Stop Autopilot|unfinished phase/);
+            assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+            assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
+            fixture.setEvents([...events, { type: "assistant.turn_end", data: { turnId: "turn" } }]);
+            assert.deepEqual(await fixture.runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+            assert.equal((await fixture.runtime.snapshot()).autopilot, null);
         });
     }
 });
@@ -792,12 +912,15 @@ test("Unconfirmed deletion requires ended-turn evidence from the owning session"
     }
 });
 
-test("a stopped Autopilot does not override an active turn when deleting an Unconfirmed workflow", async (t) => {
-    const { runtime, project, setEvents } = await setup(t);
+test("persisted Stop evidence does not override active work after checkpoint replacement", async (t) => {
+    const { runtime, project, session, setEvents } = await setup(t);
     await mkdir(join(project, "specs", "demo"), { recursive: true });
     const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
     await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
     await runtime.stopAutopilot({});
+    await mkdir(join(project, "specs", "other"), { recursive: true });
+    session.send = async () => "other-message";
+    const { autopilotId: otherId } = await runtime.startAutopilot({ itemId: "specs/other" }, "panel");
     setEvents([
         { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
         { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
@@ -805,6 +928,7 @@ test("a stopped Autopilot does not override an active turn when deleting an Unco
     await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
         revision: (await runtime.snapshot()).revision }), /unfinished phase/);
     assert.ok((await stat(join(project, "specs", "demo"))).isDirectory());
+    assert.equal((await runtime.snapshot()).autopilot.id, otherId);
 });
 
 test("deletion waits for Autopilot preflight before touching its workflow", async (t) => {

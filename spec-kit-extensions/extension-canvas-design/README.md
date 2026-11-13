@@ -236,26 +236,28 @@ shown for inspection in the workflow list. The app cannot prevent externally
 initiated extension reloads; its existing skill reload behavior is unchanged.
 Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
-An Unconfirmed phase does not block deletion when the owning session has evidence
-that its turn ended or its associated Autopilot stopped. Active turns and runs
-whose activity is unknown without that stop evidence remain blocked. Confirmation,
-state-revision, confinement, and symlink checks still apply. Successful deletion
-also removes the deleted workflow's Autopilot checkpoint from saved state, including
-when an artifact report bound its phase run to the directory before a slug report.
-Blocked alone is not evidence that the agent stopped; live Blocked checkpoints
-must be stopped before deletion, even when no phase run was recorded.
-After reopening, an interrupted checkpoint still requires explicit Stop or
-end evidence, including before the first step report and between steps.
-For tool-using interactions, an individual model turn ending is not sufficient
-completion evidence. If tracking failed and the session became idle after mode
-restoration, explicit Stop remains available before deletion;
-new session activity blocks this recovery while the mode is not Autopilot.
+Deletion checks the owning checkpoint and phase attempts using the same evidence
+rules, including Paused checkpoints and phases displaying Run output unconfirmed
+after recovery. Matching active turns block deletion regardless of display status
+or saved Stop evidence. Otherwise, an Unconfirmed attempt can be deleted when its
+owning session has current end evidence or its associated Autopilot stopped;
+unknown activity without Stop evidence remains blocked. Only the latest matching
+work counts: a response from an earlier turn cannot authorize deletion after newer
+tool work, and a tool-using turn ending alone is not task completion. Unrelated
+session activity does not override conclusive evidence for this workflow.
+Confirmation, state-revision, confinement, and symlink checks still apply.
+Successful deletion also removes the workflow's explicitly associated Autopilot
+checkpoint, including when an artifact report bound its phase run before a slug
+report. A request that never reported its directory can remain as a pending row:
+directory discovery alone does not establish ownership for automatic cleanup.
+If tracking failed and the session became idle after mode restoration, explicit
+Stop remains available before deletion; new session activity blocks this recovery
+while the mode is not Autopilot.
 After a successful explicit Stop, unfinished Autopilot phase runs retain an optional
 `stoppedAt` ISO timestamp in saved state. This preserves stop evidence across retries,
 checkpoint replacement, and reloads without treating unknown activity as stopped.
 The saved-state validator accepts existing runs without this field and rejects
-malformed timestamps or stop evidence on non-Autopilot runs. Active-turn evidence
-still blocks deletion regardless of a saved stop timestamp.
+malformed timestamps or stop evidence on non-Autopilot runs.
 Deletion verifies the directory and its parent, moves it to a temporary
 location, and checks the moved directory's identity before removing it. If
 the parent changes during deletion, the moved directory is retained for manual
