@@ -1273,6 +1273,10 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status))) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
+            if (state.autopilot?.item === item.id && state.autopilot.previousMode !== "autopilot"
+                && await session.rpc.mode.get() === "autopilot") {
+                throw new UserError(`Copilot is still in Autopilot mode after the previous run. Switch Copilot to ${state.autopilot.previousMode} mode before deleting this workflow.`, 409);
+            }
             await deleteConfinedDirectory(cwd, item.id);
             removed = true;
             invalidateBadges();
@@ -1281,6 +1285,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     && !(run.item === "__new__" && run.slug === item.slug && run.confirmedSlug));
                 for (const phase of phases) delete next.drafts[JSON.stringify([item.id, phase.id])];
                 if (next.names) delete next.names[item.id];
+                if (next.autopilot?.item === item.id) delete next.autopilot;
                 if (next.selected === item.id) { next.selected = "__new__"; next.name = ""; next.slug = ""; }
             }, true);
             return { deleted: item.id };

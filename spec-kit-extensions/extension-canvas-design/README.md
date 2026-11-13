@@ -236,6 +236,10 @@ shown for inspection in the workflow list. The app cannot prevent externally
 initiated extension reloads; its existing skill reload behavior is unchanged.
 Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
+Deletion also removes that workflow's saved Autopilot record by omitting the
+property, not saving `null`; other workflows' Autopilot state is preserved.
+If Copilot has not left Autopilot after a run that began in another mode,
+deletion is blocked until the user switches back, preserving the recovery record.
 Deletion verifies the directory and its parent, moves it to a temporary
 location, and checks the moved directory's identity before removing it. If
 the parent changes during deletion, the moved directory is retained for manual
