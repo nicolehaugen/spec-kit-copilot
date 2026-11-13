@@ -32,6 +32,9 @@ and adapter. `shared-controls/` contains definitions and adapters used by both
 hosts. `generated-scaffold/` is the static app scaffold; Generate
 copies the resolved generated-host assets into its `pages/` directory, so the
 finished app does not depend on this extension at runtime.
+Generated runtime diagnostics use the SDK-supported `warning` log level. If
+logging throws or rejects, the runtime reports the diagnostic and logging failure
+to the console without aborting badge evaluation.
 The stock Workflow page preserves its list and controls. Below the list, one
 shared theme-aware secondary-background block with a thin neutral outline holds
 both the Project foundation section and the phase workspace. The foundation
