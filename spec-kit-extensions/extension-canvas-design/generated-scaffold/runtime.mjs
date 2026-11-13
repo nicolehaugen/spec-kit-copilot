@@ -859,13 +859,15 @@ Steps:\n${instructions}` });
         if (automation.previousMode !== "autopilot" && await session.rpc.mode.get() === "autopilot") {
             throw new UserError(`Copilot could not restore the previous mode. Switch Copilot to ${automation.previousMode} mode manually before starting another workflow.`, 500);
         }
+        const stoppedAt = new Date().toISOString();
         await update((next) => {
             if (next.autopilot?.id === automation.id) {
                 next.autopilot.status = "Paused";
                 next.autopilot.error = "Stopped. Check chat and outputs before resuming.";
                 for (const run of next.runs.filter((run) => run.autopilotId === automation.id
-                    && run.status === "Running")) {
+                    && ["Running", "Unconfirmed"].includes(run.status))) {
                     run.status = "Unconfirmed";
+                    run.stoppedAt = stoppedAt;
                     run.error = "Autopilot stopped before this step was verified. Check chat before retrying.";
                 }
             }
@@ -1262,13 +1264,15 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             if (input.revision !== state.revision) throw staleRevision("Canvas state changed. Refresh before deleting.");
             const item = (await items()).find((entry) => entry.id === input.itemId);
             if (!item || input.confirmation !== item.slug) throw new UserError("Workflow or confirmation does not match the current directory.", 409);
-            if (state.autopilot?.item === item.id
-                && ["Request sent", "Running", "Finishing"].includes(state.autopilot.status)
-                && liveRuns.has(state.autopilot.id)) {
-                throw new UserError("Stop Autopilot before deleting this workflow.", 409);
-            }
             const relatedRuns = state.runs.filter((run) => run.item === item.id
                 || (newItem(run.item) && !run.before.includes(item.id)));
+            const automation = state.autopilot;
+            const ownsAutomation = automation && (automation.item === item.id
+                || relatedRuns.some((run) => run.item === item.id && run.autopilotId === automation.id));
+            if (ownsAutomation && ["Request sent", "Running", "Finishing", "Blocked"].includes(automation.status)
+                && liveRuns.has(automation.id)) {
+                throw new UserError("Stop Autopilot before deleting this workflow.", 409);
+            }
             const events = relatedRuns.some((run) => run.status === "Unconfirmed")
                 ? await session.getEvents() : [];
             if (relatedRuns.some((run) => {
@@ -1276,10 +1280,10 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 if (run.status !== "Unconfirmed" || run.sessionId !== session.sessionId
                     || liveRuns.has(run.runId) || recoveredActiveRuns.has(run.runId)) return true;
                 if (phaseTurnState(events, run.messageId).active) return true;
-                const stoppedAutopilot = run.autopilotId
-                    && state.autopilot?.id === run.autopilotId
-                    && ["Paused", "Blocked", "Completed"].includes(state.autopilot.status)
-                    && !liveRuns.has(run.autopilotId);
+                const stoppedAutopilot = run.autopilotId && (run.stoppedAt
+                    || automation?.id === run.autopilotId
+                        && ["Paused", "Completed"].includes(automation.status)
+                        && !liveRuns.has(run.autopilotId));
                 return runActivity(run, events) !== "ended" && !stoppedAutopilot;
             })) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
@@ -1292,7 +1296,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     && !(run.item === "__new__" && run.slug === item.slug && run.confirmedSlug));
                 for (const phase of phases) delete next.drafts[JSON.stringify([item.id, phase.id])];
                 if (next.names) delete next.names[item.id];
-                if (next.autopilot?.item === item.id) delete next.autopilot;
+                if (ownsAutomation && next.autopilot?.id === automation.id) delete next.autopilot;
                 if (next.selected === item.id) { next.selected = "__new__"; next.name = ""; next.slug = ""; }
             }, true);
             return { deleted: item.id };

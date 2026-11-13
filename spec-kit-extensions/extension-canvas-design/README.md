@@ -240,7 +240,16 @@ An Unconfirmed phase does not block deletion when the owning session has evidenc
 that its turn ended or its associated Autopilot stopped. Active turns and runs
 whose activity is unknown without that stop evidence remain blocked. Confirmation,
 state-revision, confinement, and symlink checks still apply. Successful deletion
-also removes the deleted workflow's Autopilot checkpoint from saved state.
+also removes the deleted workflow's Autopilot checkpoint from saved state, including
+when an artifact report bound its phase run to the directory before a slug report.
+Blocked alone is not evidence that the agent stopped; live Blocked checkpoints
+must be stopped before deletion, even when no phase run was recorded.
+After a successful explicit Stop, unfinished Autopilot phase runs retain an optional
+`stoppedAt` ISO timestamp in saved state. This preserves stop evidence across retries,
+checkpoint replacement, and reloads without treating unknown activity as stopped.
+The saved-state validator accepts existing runs without this field and rejects
+malformed timestamps or stop evidence on non-Autopilot runs. Active-turn evidence
+still blocks deletion regardless of a saved stop timestamp.
 Deletion verifies the directory and its parent, moves it to a temporary
 location, and checks the moved directory's identity before removing it. If
 the parent changes during deletion, the moved directory is retained for manual
