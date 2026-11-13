@@ -723,7 +723,8 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 || pendingId(input.itemId) && !pendingFor(input.itemId)) {
                 throw new UserError("The selected workflow no longer exists. Refresh before starting.");
             }
-            if (newItem(input.itemId) && !workflowSteps[0].first) {
+            if (newItem(input.itemId) && !workflowSteps[0].first
+                && workflowSteps.some((step) => step.first)) {
                 throw new UserError("Select an existing workflow before starting Autopilot.");
             }
             await requireConstitution();
