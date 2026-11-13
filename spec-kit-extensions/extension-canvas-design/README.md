@@ -323,7 +323,16 @@ prerequisites are met; no automatic install runs.
 Specify may report an approved direct-URL package as a local source. The
 generated canvas accepts that inventory only after the confirmed URL install
 completes with the frozen identity and settings, and retains an approval receipt
-across restarts. A preexisting unconfirmed local installation remains pending.
+across restarts. An unconfirmed direct-URL package reported as local remains pending.
+
+For a frozen default-catalog locator with no URL and identical catalog and
+installed IDs, the canvas also accepts Specify's exact `{"kind":"local"}`
+inventory. It still checks package identity, version, enabled state, and
+priority, and requires the phase skills for readiness. Specify cannot distinguish
+an identically reported local override, so this is not proof of package origin.
+Frozen local-path locators still require their approved path and manifest; they
+are not converted to portable catalog locators. Newly generated apps receive
+this behavior; existing apps retain their packaged setup logic until regenerated.
 
 Only the frozen **workflow runtime** package inventory is considered for
 installation. The Canvas Design extension, `canvas-design`-tagged presets,

@@ -19,7 +19,8 @@ const extension = { id: "extension-one", version: "3.0.0", enabled: true, priori
 const recipe = { presets: [preset], bundles: [], extensions: [extension] };
 
 function harness(t, { init = false, installed = false, skill = false, configured = true,
-    empty = false, urlLocal = false, clock = () => Date.now() } = {}) {
+    empty = false, urlLocal = false, clock = () => Date.now(), runtimeRecipe = recipe,
+    inventory = {}, phases = [phase] } = {}) {
     const root = mkdtemp(join(process.cwd(), ".generated-setup-test-"));
     t.after(async () => rm(await root, { recursive: true, force: true }));
     const calls = [], sent = [], events = [], approved = [];
@@ -35,9 +36,9 @@ function harness(t, { init = false, installed = false, skill = false, configured
             return { stdout: "specify 1.0.7\n" };
         }
         const entries = {
-            extension: [{ id: "extension-one", version: "3.0.0", priority: 0,
+            extension: inventory.extension ?? [{ id: "extension-one", version: "3.0.0", priority: 0,
                 enabled: true, source: { kind: "catalog", catalog: "default" } }],
-            preset: [{ id: "real-preset", version: "1.0.0", priority: 12,
+            preset: inventory.preset ?? [{ id: "real-preset", version: "1.0.0", priority: 12,
                 enabled: true, source: urlLocal ? { kind: "local" }
                     : { kind: "catalog", catalog: "copilot" } }],
         };
@@ -63,14 +64,19 @@ function harness(t, { init = false, installed = false, skill = false, configured
         if (init) await ready();
         if (skill && !init) await ready();
         return createSetup({ config: { runtimeSetup: configured
-            ? empty ? { bundles: [], extensions: [], presets: [] } : recipe
+            ? empty ? { bundles: [], extensions: [], presets: [] } : runtimeRecipe
             : undefined }, cwd,
-            session, phases: [phase], command, now: clock, approvedSources: () => approved,
+            session, phases, command, now: clock, approvedSources: () => approved,
             saveApprovedSources: async (receipts) => { approved.push(...receipts); } });
     };
     return { setup, ready, complete, calls, sent, events, session, approved,
         setInstalled: (value) => { installedNow = value; }, reloads: () => reloads,
         beforeCommand: (callback) => { beforeCommand = callback; } };
+}
+
+function locallyReported(item, overrides = {}) {
+    return { id: item.id, version: item.version, enabled: item.enabled, priority: item.priority,
+        source: { kind: "local" }, ...overrides };
 }
 
 test("init precedes full pending dialog; cancel cannot dispatch installation", async (t) => {
@@ -221,6 +227,108 @@ test("approved URL install reported as local needs a confirmed install receipt",
     assert.equal((await (await h.setup()).status()).ready, true);
     const unrelated = harness(t, { init: true, installed: true, urlLocal: true });
     assert.equal((await (await unrelated.setup()).status()).ready, false);
+});
+
+test("exact local inventory satisfies default catalog extensions and presets", async (t) => {
+    const defaultPreset = { ...preset, locator: { installedId: preset.id, catalogId: preset.id,
+        source: "default", downloadUrl: null } };
+    const runtimeRecipe = { bundles: [], extensions: [extension], presets: [defaultPreset] };
+    const inventory = { extension: [locallyReported(extension)], preset: [locallyReported(defaultPreset)] };
+    const h = harness(t, { init: true, installed: true, runtimeRecipe, inventory });
+    const setup = await h.setup();
+    const state = await setup.status();
+    assert.equal(state.ready, true);
+    assert.equal(state.checks.packages, "Ready");
+    assert.deepEqual(state.pending, []);
+    assert.equal(h.reloads(), 1);
+    assert.equal(h.sent.length, 0);
+});
+
+test("confirmed default catalog installs reported as local complete setup", async (t) => {
+    const defaultPreset = { ...preset, locator: { installedId: preset.id, catalogId: preset.id,
+        source: "default", downloadUrl: null } };
+    const runtimeRecipe = { bundles: [], extensions: [extension], presets: [defaultPreset] };
+    const inventory = { extension: [locallyReported(extension)], preset: [locallyReported(defaultPreset)] };
+    const h = harness(t, { init: true, runtimeRecipe, inventory });
+    const setup = await h.setup();
+    const review = await setup.start({});
+    assert.deepEqual(review.pending.map((item) => item.id), [extension.id, defaultPreset.id]);
+    await setup.confirm({ planId: review.planId, confirmed: true });
+    h.setInstalled(true);
+    h.complete(1);
+    const state = await setup.status();
+    assert.equal(state.ready, true);
+    assert.equal(state.stage, "ready");
+    assert.equal(h.reloads(), 1);
+    assert.equal(h.sent.length, 1);
+});
+
+test("default local compatibility preserves source and package checks", async (t) => {
+    const cases = [
+        { name: "local path", found: { source: { kind: "local", path: "another-source" } } },
+        { name: "extra source field", found: { source: { kind: "local", other: true } } },
+        { name: "missing source", found: { source: null } },
+        { name: "different catalog", found: { source: { kind: "catalog", catalog: "other" } } },
+        { name: "catalog alias", locator: { catalogId: "another-id" } },
+        { name: "non-default URL without receipt",
+            locator: { source: "copilot", downloadUrl: "https://example.org/extension.zip" } },
+        { name: "default URL without receipt",
+            locator: { downloadUrl: "https://example.org/extension.zip" } },
+        { name: "different installed ID", found: { id: "another-id" } },
+        { name: "different version", found: { version: "4.0.0" } },
+        { name: "different enabled state", found: { enabled: false } },
+        { name: "different priority", found: { priority: 1 } },
+    ];
+    for (const { name, found, locator } of cases) {
+        await t.test(name, async (t) => {
+            const item = { ...extension, locator: { ...extension.locator, ...locator } };
+            const h = harness(t, { init: true, installed: true,
+                runtimeRecipe: { bundles: [], extensions: [item], presets: [] },
+                inventory: { extension: [locallyReported(extension, found)] } });
+            const setup = await h.setup();
+            assert.equal((await setup.status()).ready, false);
+            const review = await setup.start({});
+            assert.equal(review.stage, "awaiting-confirmation");
+            assert.deepEqual(review.pending.map((entry) => entry.id), [extension.id]);
+            assert.equal(h.sent.length, 0);
+        });
+    }
+});
+
+test("default local compatibility still requires phase skills", async (t) => {
+    const h = harness(t, { init: true, installed: true,
+        runtimeRecipe: { bundles: [], extensions: [extension], presets: [] },
+        inventory: { extension: [locallyReported(extension)] },
+        phases: [phase, { skill: "speckit-plan" }] });
+    const setup = await h.setup();
+    const state = await setup.status();
+    assert.equal(state.ready, false);
+    assert.equal(state.checks.packages, "Ready");
+    const failed = await setup.start({});
+    assert.equal(failed.stage, "failed");
+    assert.match(failed.error, /Required phase skills are missing/);
+    assert.equal(h.sent.length, 0);
+});
+
+test("frozen local locators still verify their source path", async (t) => {
+    const root = await mkdtemp(join(process.cwd(), ".generated-local-source-test-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const local = join(root, "approved-extension");
+    await mkdir(local);
+    await writeFile(join(local, "extension.yml"),
+        `extension:\n    id: ${extension.id}\n    version: ${extension.version}\n`);
+    const item = { ...extension, locator: { installedId: extension.id, source: "local", path: local } };
+    const found = locallyReported(extension, { source: { kind: "local", path: local } });
+    const h = harness(t, { init: true, installed: true,
+        runtimeRecipe: { bundles: [], extensions: [item], presets: [] },
+        inventory: { extension: [found] } });
+    const setup = await h.setup();
+    assert.equal((await setup.status()).ready, true);
+    found.source.path = join(root, "another-extension");
+    assert.equal((await setup.status({ fresh: true })).ready, false);
+    const review = await setup.start({});
+    assert.equal(review.stage, "awaiting-confirmation");
+    assert.deepEqual(review.pending.map((entry) => entry.id), [extension.id]);
 });
 
 test("failed init cannot expose a confirmation plan", async (t) => {

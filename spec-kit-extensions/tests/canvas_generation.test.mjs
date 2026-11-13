@@ -384,6 +384,36 @@ test("generation cannot omit the handoff runtime setup when Show setup is off", 
         prepared.requestId), /Runtime setup recipe differs/);
 });
 
+test("newly generated setup recognizes exact default local inventory", async (t) => {
+    const selectedHandoff = structuredClone(handoff);
+    const extension = { id: "bug", version: "1.0.0", enabled: true, priority: 0,
+        locator: { installedId: "bug", catalogId: "bug", source: "default", downloadUrl: null } };
+    selectedHandoff.workflow.installed = { presets: [], bundles: [],
+        extensions: [{ id: extension.id, version: extension.version, source: "default", priority: 0 }] };
+    selectedHandoff.workflow.runtimeSetup = { presets: [], extensions: [extension], bundles: [] };
+    selectedHandoff.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: selectedHandoff.workflow, selections: selectedHandoff.selections,
+    })).digest("hex");
+    const { project, workspace, prepared, sdk } = await fixture(t, selectedHandoff);
+    await materialize(project, workspace, selectedHandoff.handoffId, prepared.requestId);
+    const config = JSON.parse(await readFile(join(sdk, "canvas-config.json"), "utf8"));
+    assert.deepEqual(config.runtimeSetup, selectedHandoff.workflow.runtimeSetup);
+    await mkdir(join(project, ".github", "skills", "speckit-specify"), { recursive: true });
+    await writeFile(join(project, ".github", "skills", "speckit-specify", "SKILL.md"),
+        "---\nname: speckit-specify\n---\n");
+    const { createSetup } = await import(pathToFileURL(join(sdk, "setup.mjs")).href);
+    let source = { kind: "local" };
+    const setup = createSetup({ config, cwd: project, phases: [{ skill: "speckit-specify" }],
+        session: { rpc: { skills: { reload: async () => ({ errors: [] }) } } },
+        command: async (_exe, args) => ({ stdout: args[0] === "--version" ? "specify 1.0.7"
+            : JSON.stringify([{ id: extension.id, version: extension.version, enabled: true,
+                priority: 0, source }]) }) });
+    assert.equal((await setup.status()).ready, true);
+    source = { kind: "local", path: "another-source" };
+    assert.equal((await setup.status({ fresh: true })).ready, false);
+    assert.deepEqual((await setup.start({})).pending.map((entry) => entry.id), ["bug"]);
+});
+
 test("selected badge definitions and evaluator are packaged without preset files", async (t) => {
     const { project, workspace, sdk } = await fixture(t);
     const selected = structuredClone(model);
