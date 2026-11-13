@@ -168,6 +168,9 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
                     ? found?.source?.kind === "local"
                         && (!found.source.path || found.source.path === item.path)
                     : (found?.source?.kind === "catalog" && found.source.catalog === item.source)
+                        || (item.source === "default" && item.downloadUrl === null
+                            && item.catalogId === item.installedId && found?.source?.kind === "local"
+                            && Object.keys(found.source).join() === "kind")
                         || (Boolean(item.downloadUrl) && found?.source?.kind === "local"
                             && approvedSources().includes(urlReceipt(kind, item, found)));
                 if (!found || found.version !== item.version
