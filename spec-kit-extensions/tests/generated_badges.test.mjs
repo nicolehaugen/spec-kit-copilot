@@ -813,6 +813,45 @@ test("generated runtime snapshots include badges for each workflow and the selec
     } finally { runtime.close(); }
 });
 
+test("diagnostic logging uses warning and survives synchronous and rejected failures", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-diagnostics-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    await writeSpec(cwd);
+    await mkdir(join(cwd, "specs", "alpha", "tasks.md"));
+    const diagnostics = [], fallback = [];
+    const session = { sessionId: "badge-diagnostics",
+        log: async (message, options) => diagnostics.push({ message, ...options }) };
+    const config = { canvas: { id: "badge-diagnostics" }, phases: ["specify", "tasks"],
+        phaseOutputs: {
+            specify: { expectsArtifact: true, outputPath: "specs/<slug>/spec.md" },
+            tasks: { expectsArtifact: true, outputPath: "specs/<slug>/tasks.md" },
+        },
+        userProvidesSlug: false, badges };
+    const runtime = await createRuntime({ config, cwd, workspace: cwd, session });
+    t.after(() => runtime.close());
+    t.mock.method(console, "warn", (message) => fallback.push(message));
+    const snapshot = await runtime.snapshot();
+    await new Promise(setImmediate);
+    assert.ok(snapshot.badges.diagnostics.length > 0);
+    assert.ok(diagnostics.length > 0);
+    assert.ok(diagnostics.every(({ level }) => level === "warning"));
+    assert.deepEqual(fallback, []);
+    for (const [message, log] of [
+        ["synchronous logging failure", () => { throw new Error("synchronous logging failure"); }],
+        ["rejected logging failure", async () => { throw new Error("rejected logging failure"); }],
+    ]) {
+        session.log = log;
+        const updated = await runtime.snapshot();
+        await new Promise(setImmediate);
+        assert.ok(updated.badges.diagnostics.length > 0);
+        for (const diagnostic of updated.badges.diagnostics) {
+            assert.ok(fallback.some((entry) => entry.includes(message) && entry.includes(diagnostic)));
+        }
+        assert.deepEqual((await runtime.snapshot()).badges, updated.badges);
+        await new Promise(setImmediate);
+    }
+});
+
 test("artifact staleness uses ordered upstream metadata without phase-run status", async (t) => {
     const cwd = await mkdtemp(join(process.cwd(), ".generated-badge-stale-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));

@@ -151,7 +151,12 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
-    const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
+    const diagnostic = async (message) => {
+        try { await session.log(message, { level: "warning" }); }
+        catch (error) {
+            console.warn(`Generated canvas diagnostic logging failed: ${error?.message ?? error}. ${message}`);
+        }
+    };
     const cleanupDiagnostic = async (message) => {
         try { await diagnostic(message); } catch { /* Cleanup reporting must not mask the original failure. */ }
     };
