@@ -140,6 +140,8 @@ The agent opens the wizard in a side panel. See
 - **Guided setup** — the **Setup** tab walks you step-by-step through
   getting your environment ready to run Spec Kit. The wizard checks
   each step and tells you what to do next.
+  A successful skills reload or its saved completion flag unlocks Catalogs,
+  Composition, and Phases once the other Environment prerequisites are met.
 - **Catalogs** — browse built-in, Copilot, and community catalogs for
   presets, extensions, and bundles. Install them to customize your SDD
   lifecycle.
