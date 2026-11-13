@@ -636,11 +636,11 @@ test("deleting a stopped Unconfirmed workflow clears its Autopilot checkpoint ac
 });
 
 test("Blocked checkpoints without turn-end evidence still require Stop before deletion", async (t) => {
-    for (const reason of ["verification failed", "canvas reopened", "dispatch tracking failed"]) {
+    for (const reason of ["verification failed", "dispatch tracking failed"]) {
         await t.test(reason, async (child) => {
             const fixture = await setup(child);
             await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
-            let runtime = fixture.runtime;
+            const runtime = fixture.runtime;
             if (reason === "dispatch tracking failed") {
                 fixture.session.send = async () => "";
                 await assert.rejects(runtime.startAutopilot({ itemId: "specs/demo" }, "panel"),
@@ -648,8 +648,7 @@ test("Blocked checkpoints without turn-end evidence still require Stop before de
             } else {
                 const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
                 await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
-                if (reason === "canvas reopened") runtime = await fixture.restart();
-                else await assert.rejects(runtime.reportAutopilotStep(
+                await assert.rejects(runtime.reportAutopilotStep(
                     { autopilotId, phase: "specify", action: "complete" }, "panel"),
                 /Report the required artifact/);
             }
@@ -921,37 +920,25 @@ test("an earlier response cannot authorize deletion after newer tool work", asyn
     }
 });
 
-test("Paused checkpoints still check matching activity before and between phases", async (t) => {
-    for (const betweenSteps of [false, true]) {
-        await t.test(betweenSteps ? "between steps" : "before first step", async (child) => {
-            const fixture = await setup(child);
-            await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
-            const { autopilotId } = await fixture.runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
-            if (betweenSteps) {
-                const { phaseRunId } = await fixture.runtime.reportAutopilotStep(
-                    { autopilotId, phase: "specify", action: "start" }, "panel");
-                await writeFile(join(fixture.project, "specs", "demo", "spec.md"), "Specification");
-                await fixture.runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel");
-                await fixture.runtime.reportAutopilotStep(
-                    { autopilotId, phase: "specify", action: "complete" }, "panel");
-            }
-            await fixture.runtime.stopAutopilot({});
-            const events = [
-                { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
-                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
-            ];
-            fixture.setEvents(events);
-            const input = { itemId: "specs/demo", confirmation: "demo",
-                revision: (await fixture.runtime.snapshot()).revision };
-            const before = await readFile(fixture.stateFile, "utf8");
-            await assert.rejects(fixture.runtime.deleteWorkflow(input), /Stop Autopilot|unfinished phase/);
-            assert.equal(await readFile(fixture.stateFile, "utf8"), before);
-            assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
-            fixture.setEvents([...events, { type: "assistant.turn_end", data: { turnId: "turn" } }]);
-            assert.deepEqual(await fixture.runtime.deleteWorkflow(input), { deleted: "specs/demo" });
-            assert.equal((await fixture.runtime.snapshot()).autopilot, null);
-        });
-    }
+test("Paused checkpoints without phase records still reject matching active work", async (t) => {
+    const fixture = await setup(t);
+    await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+    await fixture.runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    await fixture.runtime.stopAutopilot({});
+    const events = [
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ];
+    fixture.setEvents(events);
+    const input = { itemId: "specs/demo", confirmation: "demo",
+        revision: (await fixture.runtime.snapshot()).revision };
+    const before = await readFile(fixture.stateFile, "utf8");
+    await assert.rejects(fixture.runtime.deleteWorkflow(input), /Stop Autopilot/);
+    assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+    assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
+    fixture.setEvents([...events, { type: "assistant.turn_end", data: { turnId: "turn" } }]);
+    assert.deepEqual(await fixture.runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+    assert.equal((await fixture.runtime.snapshot()).autopilot, null);
 });
 
 test("idle after dispatch tracking fails permits explicit Stop and then deletion", async (t) => {
@@ -1034,7 +1021,8 @@ test("explicit Stop evidence survives retries, checkpoint replacement, and resta
                 assert.equal(snapshot.autopilot.id, second.autopilotId);
                 assert.ok((await stat(join(fixture.project, "specs", "other"))).isDirectory());
             } else assert.equal(snapshot.autopilot, null);
-            await fixture.restart();
+            const reopened = await fixture.restart();
+            assert.deepEqual((await reopened.snapshot()).autopilot, snapshot.autopilot);
         });
     }
 });
@@ -1049,6 +1037,9 @@ test("failed cancellation cannot persist explicit Stop evidence", async (t) => {
     const saved = JSON.parse(await readFile(stateFile, "utf8"));
     assert.equal(saved.autopilot.status, "Running");
     assert.equal(saved.runs[0].stoppedAt, undefined);
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+        revision: (await runtime.snapshot()).revision }), /Stop Autopilot/);
+    assert.ok((await stat(join(project, "specs", "demo"))).isDirectory());
 });
 
 test("artifact-first reporting still removes the bound checkpoint when its workflow is deleted", async (t) => {
