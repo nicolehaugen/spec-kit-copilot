@@ -840,7 +840,8 @@ test("directory-scoped rule freezes with its output anchor and evaluator", async
         assert.deepEqual(snapshot.badges.summary, [{ id: "markdown-files", color: "blue",
             count: 0, text: "Markdown files (0)" }]);
         await writeFile(join(project, "specs", "demo", "review", "security.md"), "# Review");
-        const updated = await runtime.snapshot();
+        assert.deepEqual((await runtime.snapshot()).badges.items["specs/demo"], []);
+        const updated = await runtime.refresh();
         assert.equal(updated.badges.items["specs/demo"][0].text, "Files (1)");
         assert.equal(updated.badges.summary[0].count, 1);
     } finally { runtime.close(); }

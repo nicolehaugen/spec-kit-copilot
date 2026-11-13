@@ -1070,10 +1070,14 @@ async function refresh(reconcile = false) {
     return sequence === refreshSequence;
 }
 let currentRefresh;
+let stateNotificationVersion = 0;
 function refreshCurrent() {
     if (!currentRefresh) {
         currentRefresh = (async () => {
-            while (!(await refresh())) {}
+            while (true) {
+                const version = stateNotificationVersion;
+                if (await refresh() && version === stateNotificationVersion) break;
+            }
         })().finally(() => { currentRefresh = null; });
     }
     return currentRefresh;
@@ -1493,8 +1497,11 @@ await mountGeneratedButtons().catch((error) => {
 const events = new EventSource(`/api/events?token=${encodeURIComponent(token)}`);
 events.onopen = () => setConnectionStatus("live");
 events.onmessage = () => {
-    if (!timer && !constitutionTimer) saving.catch(() => {}).then(() => refresh())
-        .catch((error) => message(error.message, "canvas-message", true));
+    if (!timer && !constitutionTimer) {
+        stateNotificationVersion++;
+        saving.catch(() => {}).then(() => refreshCurrent())
+            .catch((error) => message(error.message, "canvas-message", true));
+    }
     if (viewer) refreshArtifact();
 };
 events.onerror = () => { setConnectionStatus("lost"); message("Connection interrupted. Drafts are retained; use Refresh if reconnection fails."); };
