@@ -118,6 +118,12 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         state = freshState();
     }
     let writes = Promise.resolve();
+    let badgeRevision = 0;
+    let badgeCache;
+    function invalidateBadges() {
+        badgeRevision++;
+        badgeCache = undefined;
+    }
     let dispatching = false;
     const requiresRecovery = (run) => run.sessionId === session.sessionId && !run.autopilotId
         && run.status !== "Failed" && (run.status !== "Completed"
@@ -151,7 +157,12 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
     }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
-    const diagnostic = async (message) => { await session.log(message, { level: "warn" }); };
+    const diagnostic = async (message) => {
+        try { await session.log(message, { level: "warning" }); }
+        catch (error) {
+            console.warn(`Generated canvas diagnostic logging failed: ${error?.message ?? error}. ${message}`);
+        }
+    };
     const cleanupDiagnostic = async (message) => {
         try { await diagnostic(message); } catch { /* Cleanup reporting must not mask the original failure. */ }
     };
@@ -161,14 +172,20 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         const result = await session.rpc.mode.set({ mode: automation.previousMode, expectedMode: "autopilot" });
         if (result.modeApplied === false) await log("Copilot session mode changed; Autopilot did not restore the previous mode.");
     }
-    const update = (fn, uiChange = false, announce = true) => {
+    const update = (fn, uiChange = false, announce = true, badgesChanged = false) => {
         const pending = writes.then(async () => {
             const next = structuredClone(state);
             if (await fn(next) === false) return;
             if (uiChange) next.revision++;
             if (Buffer.byteLength(JSON.stringify(next)) > 2 * 1024 * 1024) throw new UserError("Canvas state is full. Preserve its state file before clearing old runs.", 413);
             await atomicJson(workspace, statePath, next);
+            const previousRuns = new Map(state.runs.map((run) => [run.runId, run]));
+            const terminalChanged = next.runs.some((run) =>
+                ["Completed", "Failed", "Run output unconfirmed"].includes(run.status)
+                && (previousRuns.get(run.runId)?.status !== run.status
+                    || previousRuns.get(run.runId)?.completedAt !== run.completedAt));
             state = next;
+            if (badgesChanged || terminalChanged) invalidateBadges();
             if (announce) notify();
         });
         writes = pending.catch(() => {});
@@ -398,6 +415,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             catch (error) { recoverOnOpen = true; throw error; }
         }
         const view = structuredClone(state);
+        const revision = badgeRevision;
         const entries = await items(view);
         const item = view.selected;
         const selectedWorkflow = newItem(item) ? null : entries.find((entry) => entry.id === item);
@@ -470,17 +488,25 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
             automation.status = "Blocked";
             automation.message = "Autopilot outcome is unconfirmed. Check chat before resuming.";
         }
-        const badges = config.badges?.instances?.length ? await evaluateBadges(config.badges, {
-            cwd, workflows: entries.map(({ id }) => id), phases,
-            outputPath: async ({ phase, output }, workflow, options = {}) => {
-                const step = phaseFor(phase);
-                return outputPath(output === undefined ? step : {
-                    ...step, output, configuredArtifacts: true,
-                }, step.project ? "project" : workflow, view, entries, options.directory === true);
-            },
-            runFor: (step, workflow) => runFor(step, workflow, view),
-            log: (message) => { void diagnostic(message); },
-        }) : undefined;
+        let badges;
+        if (config.badges?.instances?.length) {
+            let evaluation = badgeCache?.revision === revision ? badgeCache.result : undefined;
+            if (!evaluation) {
+                evaluation = evaluateBadges(config.badges, {
+                    cwd, workflows: entries.map(({ id }) => id), phases,
+                    outputPath: async ({ phase, output }, workflow, options = {}) => {
+                        const step = phaseFor(phase);
+                        return outputPath(output === undefined ? step : {
+                            ...step, output, configuredArtifacts: true,
+                        }, step.project ? "project" : workflow, view, entries, options.directory === true);
+                    },
+                    runFor: (step, workflow) => runFor(step, workflow, view),
+                    log: (message) => { void diagnostic(message); },
+                });
+                if (badgeRevision === revision) badgeCache = { revision, result: evaluation };
+            }
+            badges = structuredClone(await evaluation);
+        }
         if (badges) badges.selected = badges.items[item] ?? [];
         const project = phases.find((phase) => phase.project);
         let recoveryInventory;
@@ -578,7 +604,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 else next[key] = input[key];
             }
             if (input.draft) next.drafts[JSON.stringify([input.draft.item, input.draft.phase])] = input.draft.value;
-        }, true);
+        }, true, Object.keys(input).some((key) => !["revision", "selected"].includes(key)));
         return { revision: state.revision };
     }
     async function createPending(input) {
@@ -880,7 +906,7 @@ Steps:\n${instructions}` });
                     sessionId: session.sessionId, messageId: current.messageId,
                     startedAt: new Date().toISOString(),
                     status: "Running", artifact: null, artifacts: [], error: null });
-            });
+            }, false, true, true);
             liveRuns.add(runId);
             return { phaseRunId: runId, itemId: state.autopilot.item };
         }
@@ -982,7 +1008,7 @@ Steps:\n${instructions}` });
                     else next.slug = slug;
                     next.revision++;
                 }
-            });
+            }, false, true, true);
             liveRuns.add(runId);
             const context = step.project ? "Project-scoped Constitution." : newItem(item)
                 ? `Create a new feature using the installed skill's normal scripts.${slug ? ` Requested short name: ${JSON.stringify(slug)}.` : ""}
@@ -1067,7 +1093,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 next.selected = created.id;
                 next.revision++;
             }
-        });
+        }, false, true, true);
         return { accepted: true, slug: input.slug, phases: phases.map((step) => ({ phase: step.id,
             outputs: [step.output, ...step.outputs.filter((path) => path !== step.output)]
                 .filter(Boolean).map((path) => path.replace("<slug>", input.slug)) })) };
@@ -1117,7 +1143,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     next.selected = item; next.revision++;
                 }
             }
-        });
+        }, false, true, true);
         return { accepted: true };
     }
     let reconcile = Promise.resolve();
@@ -1217,6 +1243,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
         }));
     }
     async function refresh() {
+        invalidateBadges();
         if (state.runs.some((entry) => requiresRecovery(entry)
             && (entry.messageId || recoveryRuns.has(entry.runId)))) {
             reconcile = reconcile.then(capture);
@@ -1248,6 +1275,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
             }
             await deleteConfinedDirectory(cwd, item.id);
             removed = true;
+            invalidateBadges();
             await update((next) => {
                 next.runs = next.runs.filter((run) => run.item !== item.id
                     && !(run.item === "__new__" && run.slug === item.slug && run.confirmedSlug));

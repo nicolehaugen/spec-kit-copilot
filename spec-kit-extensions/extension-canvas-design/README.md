@@ -32,6 +32,9 @@ and adapter. `shared-controls/` contains definitions and adapters used by both
 hosts. `generated-scaffold/` is the static app scaffold; Generate
 copies the resolved generated-host assets into its `pages/` directory, so the
 finished app does not depend on this extension at runtime.
+Generated runtime diagnostics use the SDK-supported `warning` log level. If
+logging throws or rejects, the runtime reports the diagnostic and logging failure
+to the console without aborting badge evaluation.
 The stock Workflow page preserves its list and controls. Below the list, one
 shared theme-aware secondary-background block with a thin neutral outline holds
 both the Project foundation section and the phase workspace. The foundation
@@ -464,6 +467,12 @@ time to the latest run's start (or completion for older records without a start)
 Counts and freshness are best-effort; unreadable evidence
 produces a diagnostic rather than an invented exact result. A replacement
 phase adapter must declare badge support before phase-card placement is used.
+The generated app shares badge evaluation across state reads and workflow
+selections within one runtime. New phase attempts, accepted artifact or
+workflow-slug reports, terminal run changes, explicit Refresh, and workflow
+deletion clear this in-memory result. Editing an artifact outside the app does
+not update its badge until Refresh or another invalidating event; reopening
+starts with an empty cache.
 
 Designer input controls are separate from generated evaluators. Each registered
 `designer.badge-input-binding` maps one rule ID to a reusable
