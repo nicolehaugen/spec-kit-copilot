@@ -939,7 +939,7 @@ test("diagnostic logging uses warning and survives synchronous and rejected fail
         ["rejected logging failure", async () => { throw new Error("rejected logging failure"); }],
     ]) {
         session.log = log;
-        const updated = await runtime.snapshot();
+        const updated = await runtime.refresh();
         await new Promise(setImmediate);
         assert.ok(updated.badges.diagnostics.length > 0);
         for (const diagnostic of updated.badges.diagnostics) {
