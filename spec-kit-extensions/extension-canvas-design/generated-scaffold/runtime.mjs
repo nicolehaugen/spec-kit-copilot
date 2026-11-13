@@ -1267,9 +1267,21 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                 && liveRuns.has(state.autopilot.id)) {
                 throw new UserError("Stop Autopilot before deleting this workflow.", 409);
             }
-            if (state.runs.some((run) => (run.item === item.id
-                || (newItem(run.item) && !run.before.includes(item.id)))
-                && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status))) {
+            const relatedRuns = state.runs.filter((run) => run.item === item.id
+                || (newItem(run.item) && !run.before.includes(item.id)));
+            const events = relatedRuns.some((run) => run.status === "Unconfirmed")
+                ? await session.getEvents() : [];
+            if (relatedRuns.some((run) => {
+                if (["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) return false;
+                if (run.status !== "Unconfirmed" || run.sessionId !== session.sessionId
+                    || liveRuns.has(run.runId) || recoveredActiveRuns.has(run.runId)) return true;
+                if (phaseTurnState(events, run.messageId).active) return true;
+                const stoppedAutopilot = run.autopilotId
+                    && state.autopilot?.id === run.autopilotId
+                    && ["Paused", "Blocked", "Completed"].includes(state.autopilot.status)
+                    && !liveRuns.has(run.autopilotId);
+                return runActivity(run, events) !== "ended" && !stoppedAutopilot;
+            })) {
                 throw new UserError("This workflow has an unfinished phase. Wait for it to finish before deleting.", 409);
             }
             await deleteConfinedDirectory(cwd, item.id);
@@ -1280,6 +1292,7 @@ User input follows as JSON data for the skill:\n${JSON.stringify(input.args)}`;
                     && !(run.item === "__new__" && run.slug === item.slug && run.confirmedSlug));
                 for (const phase of phases) delete next.drafts[JSON.stringify([item.id, phase.id])];
                 if (next.names) delete next.names[item.id];
+                if (next.autopilot?.item === item.id) delete next.autopilot;
                 if (next.selected === item.id) { next.selected = "__new__"; next.name = ""; next.slug = ""; }
             }, true);
             return { deleted: item.id };

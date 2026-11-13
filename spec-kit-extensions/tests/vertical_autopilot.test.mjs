@@ -552,6 +552,77 @@ test("an active workflow cannot be deleted before a report or while finishing", 
     await assert.rejects(deletion(), /Stop Autopilot/);
 });
 
+test("deleting a stopped Unconfirmed workflow clears its Autopilot checkpoint across restart", async (t) => {
+    const fixture = await setup(t);
+    const { runtime, project } = fixture;
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await runtime.save({ revision: (await runtime.snapshot()).revision, selected: "specs/demo" });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
+    await runtime.stopAutopilot({});
+    const snapshot = await runtime.snapshot();
+    assert.equal(snapshot.statuses.specify.status, "Unconfirmed");
+    const input = { itemId: "specs/demo", confirmation: "demo", revision: snapshot.revision };
+    await assert.rejects(runtime.deleteWorkflow({ ...input, confirmation: "wrong" }), /confirmation does not match/);
+    await assert.rejects(runtime.deleteWorkflow({ ...input, revision: input.revision - 1 }), /state changed/);
+    assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+    await assert.rejects(stat(join(project, "specs", "demo")), { code: "ENOENT" });
+    const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+    assert.equal(Object.hasOwn(saved, "autopilot"), false);
+    assert.deepEqual(saved.runs, []);
+    assert.equal((await (await fixture.restart()).snapshot()).autopilot, null);
+});
+
+test("Unconfirmed deletion requires ended-turn evidence from the owning session", async (t) => {
+    for (const activity of ["unknown", "ended", "foreign session"]) {
+        await t.test(activity, async (child) => {
+            const fixture = await setup(child);
+            await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+            await fixture.runtime.save({ revision: (await fixture.runtime.snapshot()).revision, selected: "specs/demo" });
+            await fixture.runtime.run({ itemId: "specs/demo", phase: "specify", args: "" }, "panel");
+            if (activity === "foreign session") {
+                const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
+                saved.runs[0].sessionId = "other-session";
+                saved.runs[0].status = "Unconfirmed";
+                await writeFile(fixture.stateFile, JSON.stringify(saved));
+            }
+            const runtime = await fixture.restart();
+            const snapshot = await runtime.snapshot();
+            assert.equal(snapshot.statuses.specify.status, "Unconfirmed");
+            const events = [
+                { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+                { type: "assistant.turn_end", data: { turnId: "turn" } },
+            ];
+            fixture.setEvents(activity === "unknown" ? [] : events);
+            const deletion = () => runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+                revision: snapshot.revision });
+            if (activity === "ended") {
+                assert.deepEqual(await deletion(), { deleted: "specs/demo" });
+                await assert.rejects(stat(join(fixture.project, "specs", "demo")), { code: "ENOENT" });
+            } else {
+                await assert.rejects(deletion(), /unfinished phase/);
+                assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
+            }
+        });
+    }
+});
+
+test("a stopped Autopilot does not override an active turn when deleting an Unconfirmed workflow", async (t) => {
+    const { runtime, project, setEvents } = await setup(t);
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    const { autopilotId } = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+    await runtime.reportAutopilotStep({ autopilotId, phase: "specify", action: "start" }, "panel");
+    await runtime.stopAutopilot({});
+    setEvents([
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ]);
+    await assert.rejects(runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
+        revision: (await runtime.snapshot()).revision }), /unfinished phase/);
+    assert.ok((await stat(join(project, "specs", "demo"))).isDirectory());
+});
+
 test("deletion waits for Autopilot preflight before touching its workflow", async (t) => {
     const { runtime, project, session } = await setup(t);
     await mkdir(join(project, "specs", "demo"), { recursive: true });

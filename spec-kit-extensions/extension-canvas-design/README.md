@@ -236,6 +236,11 @@ shown for inspection in the workflow list. The app cannot prevent externally
 initiated extension reloads; its existing skill reload behavior is unchanged.
 Existing rows offer a confirmed Delete action that permanently removes that
 workflow directory and its contents from the checkout, not other workflows.
+An Unconfirmed phase does not block deletion when the owning session has evidence
+that its turn ended or its associated Autopilot stopped. Active turns and runs
+whose activity is unknown without that stop evidence remain blocked. Confirmation,
+state-revision, confinement, and symlink checks still apply. Successful deletion
+also removes the deleted workflow's Autopilot checkpoint from saved state.
 Deletion verifies the directory and its parent, moves it to a temporary
 location, and checks the moved directory's identity before removing it. If
 the parent changes during deletion, the moved directory is retained for manual
