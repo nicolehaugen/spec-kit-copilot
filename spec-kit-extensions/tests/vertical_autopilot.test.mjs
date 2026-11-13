@@ -751,6 +751,99 @@ test("a tool-using turn end alone does not permit deletion after reopening", asy
     }
 });
 
+test("task completion cannot override an open matching turn", async (t) => {
+    for (const autopilot of [false, true]) {
+        await t.test(autopilot ? "after Stop" : "after reopening a manual phase", async (child) => {
+            const fixture = await setup(child);
+            await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+            if (autopilot) {
+                const { autopilotId } = await fixture.runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
+                await fixture.runtime.reportAutopilotStep(
+                    { autopilotId, phase: "specify", action: "start" }, "panel");
+                await fixture.runtime.stopAutopilot({});
+            } else {
+                await fixture.runtime.run({ itemId: "specs/demo", phase: "specify", args: "" }, "panel");
+            }
+            const events = [
+                { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+                { type: "tool.execution_start", data: { turnId: "turn" } },
+                { type: "session.task_complete", data: { success: true } },
+            ];
+            fixture.setEvents(events);
+            const runtime = autopilot ? fixture.runtime : await fixture.restart();
+            const input = { itemId: "specs/demo", confirmation: "demo",
+                revision: (await runtime.snapshot()).revision };
+            const before = await readFile(fixture.stateFile, "utf8");
+            await assert.rejects(runtime.deleteWorkflow(input), /Stop Autopilot|unfinished phase/);
+            assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+            assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
+            fixture.setEvents([...events, { type: "assistant.turn_end", data: { turnId: "turn" } }]);
+            assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+        });
+    }
+});
+
+test("queued messages do not hide owning turn ends or lend them unrelated completion", async (t) => {
+    for (const tools of [false, true]) {
+        await t.test(tools ? "tool completion needs owning evidence" : "owning turn ends", async (child) => {
+            const fixture = await setup(child);
+            await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
+            await fixture.runtime.run({ itemId: "specs/demo", phase: "specify", args: "" }, "panel");
+            const events = [
+                { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+                { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+                ...(tools ? [{ type: "tool.execution_start", data: { turnId: "turn" } }] : []),
+                { type: "user.message", data: { messageId: "queued", interactionId: "other" } },
+                { type: "assistant.turn_end", data: { turnId: "turn" } },
+            ];
+            fixture.setEvents(events);
+            const runtime = await fixture.restart();
+            const input = { itemId: "specs/demo", confirmation: "demo",
+                revision: (await runtime.snapshot()).revision };
+            if (tools) {
+                fixture.setEvents([...events,
+                    { type: "assistant.turn_start", data: { interactionId: "other", turnId: "other-turn" } },
+                    { type: "assistant.turn_end", data: { turnId: "other-turn" } },
+                    { type: "session.task_complete", data: { success: true } },
+                ]);
+                const before = await readFile(fixture.stateFile, "utf8");
+                await assert.rejects(runtime.deleteWorkflow(input), /unfinished phase/);
+                assert.equal(await readFile(fixture.stateFile, "utf8"), before);
+                assert.ok((await stat(join(fixture.project, "specs", "demo"))).isDirectory());
+                fixture.setEvents([...events, { type: "session.task_complete",
+                    data: { interactionId: "run", turnId: "turn", success: true } }]);
+            }
+            assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+        });
+    }
+});
+
+test("manual turn completion outranks its live marker before idle reconciliation", async (t) => {
+    const fixture = await setup(t);
+    const { runtime, project } = fixture;
+    await mkdir(join(project, "specs", "demo"), { recursive: true });
+    await runtime.run({ itemId: "specs/demo", phase: "specify", args: "" }, "panel");
+    const events = [
+        { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+        { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+    ];
+    fixture.setEvents(events);
+    const input = { itemId: "specs/demo", confirmation: "demo",
+        revision: (await runtime.snapshot()).revision };
+    await assert.rejects(runtime.deleteWorkflow(input), /unfinished phase/);
+    fixture.setEvents([...events,
+        { type: "assistant.message", data: { interactionId: "run", turnId: "turn", content: "Finished" } },
+        { type: "assistant.turn_end", data: { turnId: "turn" } },
+        { type: "user.message", data: { messageId: "other-message", interactionId: "other" } },
+        { type: "assistant.turn_start", data: { interactionId: "other", turnId: "other-turn" } },
+        { type: "tool.execution_start", data: { turnId: "other-turn" } },
+    ]);
+    fixture.active();
+    assert.deepEqual(await runtime.deleteWorkflow(input), { deleted: "specs/demo" });
+    await assert.rejects(stat(join(project, "specs", "demo")), { code: "ENOENT" });
+});
+
 test("ended workflow evidence survives idle followed by unrelated session activity", async (t) => {
     const fixture = await setup(t);
     await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
@@ -886,26 +979,53 @@ test("idle after dispatch tracking fails permits explicit Stop and then deletion
 });
 
 test("explicit Stop evidence survives retries, checkpoint replacement, and restart", async (t) => {
-    for (const nextItem of ["specs/demo", "specs/other"]) {
-        await t.test(nextItem === "specs/demo" ? "retry same workflow" : "start another workflow", async (child) => {
+    for (const [nextItem, completedFirst] of [
+        ["specs/demo", false], ["specs/other", false],
+        ["specs/demo", true], ["specs/other", true],
+    ]) {
+        const label = nextItem === "specs/demo" ? "retry same workflow" : "start another workflow";
+        await t.test(`${label}${completedFirst ? " after completing Specify" : ""}`, async (child) => {
             const fixture = await setup(child);
             await mkdir(join(fixture.project, "specs", "demo"), { recursive: true });
             await mkdir(join(fixture.project, "specs", "other"), { recursive: true });
             let runtime = fixture.runtime;
             const first = await runtime.startAutopilot({ itemId: "specs/demo" }, "panel");
-            await runtime.reportAutopilotStep(
+            const { phaseRunId } = await runtime.reportAutopilotStep(
                 { autopilotId: first.autopilotId, phase: "specify", action: "start" }, "panel");
+            let completed;
+            if (completedFirst) {
+                await writeFile(join(fixture.project, "specs", "demo", "spec.md"), "Specification");
+                await runtime.report({ phaseRunId, path: "specs/demo/spec.md" }, "panel");
+                await runtime.reportAutopilotStep(
+                    { autopilotId: first.autopilotId, phase: "specify", action: "complete" }, "panel");
+                await runtime.reportAutopilotStep(
+                    { autopilotId: first.autopilotId, phase: "plan", action: "start" }, "panel");
+                completed = JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0];
+                fixture.setEvents([
+                    { type: "user.message", data: { messageId: "message-1", interactionId: "run" } },
+                    { type: "assistant.turn_start", data: { interactionId: "run", turnId: "turn" } },
+                    { type: "tool.execution_start", data: { turnId: "turn" } },
+                    { type: "assistant.turn_end", data: { turnId: "turn" } },
+                ]);
+            }
             await runtime.stopAutopilot({});
             const stopped = JSON.parse(await readFile(fixture.stateFile, "utf8")).runs[0];
             assert.equal(typeof stopped.stoppedAt, "string");
+            if (completed) assert.deepEqual(stopped, { ...completed, stoppedAt: stopped.stoppedAt });
+            fixture.session.send = async () => "second-message";
             const second = await runtime.startAutopilot({ itemId: nextItem }, "panel");
             await runtime.reportAutopilotStep(
-                { autopilotId: second.autopilotId, phase: "specify", action: "start" }, "panel");
+                { autopilotId: second.autopilotId,
+                    phase: completedFirst && nextItem === "specs/demo" ? "plan" : "specify",
+                    action: "start" }, "panel");
             if (nextItem === "specs/demo") await runtime.stopAutopilot({});
             runtime = await fixture.restart();
             let snapshot = await runtime.snapshot();
             const saved = JSON.parse(await readFile(fixture.stateFile, "utf8"));
             assert.equal(saved.runs[0].stoppedAt, stopped.stoppedAt);
+            for (const run of saved.runs.filter((run) => run.autopilotId === first.autopilotId)) {
+                assert.equal(run.stoppedAt, stopped.stoppedAt);
+            }
             assert.deepEqual(await runtime.deleteWorkflow({ itemId: "specs/demo", confirmation: "demo",
                 revision: snapshot.revision }), { deleted: "specs/demo" });
             await assert.rejects(stat(join(fixture.project, "specs", "demo")), { code: "ENOENT" });

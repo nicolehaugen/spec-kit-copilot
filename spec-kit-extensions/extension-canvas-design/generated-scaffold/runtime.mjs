@@ -182,7 +182,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                     completed = false;
                 }
             }
-            if (!interaction || currentInteraction !== interaction || !turn) continue;
+            if (!interaction || !turn) continue;
             if (data.turnId === turn && (event.type === "tool.execution_start"
                 || event.type === "assistant.message" && data.interactionId === interaction
                     && data.toolRequests?.length)) {
@@ -197,21 +197,25 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
                 && typeof data.content === "string" && data.content.trim()) completed = true;
             if (event.type === "session.task_complete" && typeof data.success === "boolean"
                 && (!data.interactionId || data.interactionId === interaction)
-                && (!data.turnId || data.turnId === turn)) {
+                && (!data.turnId || data.turnId === turn)
+                && (data.interactionId === interaction || data.turnId === turn
+                    || currentInteraction === interaction)) {
                 completed = true;
-                activity = "ended";
+                if (activity !== "active") activity = "ended";
             }
             if (event.type === "assistant.turn_end" && data.turnId === turn) {
                 activity = completed || !toolsSeen ? "ended" : "unknown";
             }
         }
-        if (activity === "active" || liveRuns.has(run.runId ?? run.id)
+        if (activity === "active") return false;
+        if (activity === "ended") return true;
+        if (liveRuns.has(run.runId ?? run.id)
             && !["Completed", "Failed", "Run output unconfirmed"].includes(run.status)) return false;
         const automation = state.autopilot;
         const stopped = run.status === "Paused" || run.autopilotId && (run.stoppedAt
             || automation?.id === run.autopilotId && ["Paused", "Completed"].includes(automation.status)
                 && !liveRuns.has(automation.id));
-        return activity === "ended" || Boolean(stopped) || activity === undefined && terminal;
+        return Boolean(stopped) || activity === undefined && terminal;
     }
     const workflowSteps = phases.filter((step) => !step.project);
     let autopilotDispatching = false;
@@ -924,11 +928,12 @@ Steps:\n${instructions}` });
             if (next.autopilot?.id === automation.id) {
                 next.autopilot.status = "Paused";
                 next.autopilot.error = "Stopped. Check chat and outputs before resuming.";
-                for (const run of next.runs.filter((run) => run.autopilotId === automation.id
-                    && ["Running", "Unconfirmed"].includes(run.status))) {
-                    run.status = "Unconfirmed";
+                for (const run of next.runs.filter((run) => run.autopilotId === automation.id)) {
                     run.stoppedAt = stoppedAt;
-                    run.error = "Autopilot stopped before this step was verified. Check chat before retrying.";
+                    if (["Running", "Unconfirmed"].includes(run.status)) {
+                        run.status = "Unconfirmed";
+                        run.error = "Autopilot stopped before this step was verified. Check chat before retrying.";
+                    }
                 }
             }
         });
