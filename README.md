@@ -69,6 +69,9 @@ Canonical repository skills live in `.github\skills`, not the shipping core
   leave phase selection, Designer launch/settings and Generate submission to the user.
 - `dev-tools-speckit-distribution`: prepare local metadata, orchestrate explicitly authorized
   releases, or verify published installations.
+- `dev-tools-import-generated-canvas`: copy a Designer-generated canvas into an existing
+  or new development plugin, replacing checkout-specific setup sources while preserving
+  relative workflow paths; no publication or source deletion.
 
 Use one active installed Wizard/Designer pair; sample/session previews are not
 installed-provider or functional journey evidence. For local Generate testing,
@@ -243,9 +246,9 @@ the [Canvas Design generation details](spec-kit-extensions/extension-canvas-desi
 | --- | --- |
 | [![sdd-canvas](docs/images/sdd-canvas.png)](docs/images/sdd-canvas.png) | [![assess-canvas](docs/images/assess-canvas.png)](docs/images/assess-canvas.png) |
 
-| Bug Fix | Spec Kit Wizard |
-| --- | --- |
-| [![bugfix-canvas](docs/images/bugfix-canvas.png)](docs/images/bugfix-canvas.png) | [![wizard-canvas](docs/images/wizard-phases.png)](docs/images/wizard-phases.png) |
+| Spec Kit Wizard |
+| --- |
+| [![wizard-canvas](docs/images/wizard-phases.png)](docs/images/wizard-phases.png) |
 
 
 ## Requirements
@@ -343,7 +346,7 @@ canvas**, and **Spec Kit Wizard** plugins are *canvas extensions*: they
 render in the **GitHub Copilot app** side panel, not the terminal CLI.
 Installing one only registers its canvas — nothing opens automatically.
 To open a dashboard, ask Copilot, e.g. **"Open the Idea Assessment
-pipeline"**, **"Open the Bug Fix Pipeline"**, **"Open Spec-Driven
+pipeline"**, **"Open the Bug Fix Triage Pipeline"**, **"Open Spec-Driven
 Development"**, or **"Open the Spec Kit Wizard"**. The agent opens the
 matching canvas in a side panel; from there you can click its buttons
 or ask the agent to drive the stages. There is no slash command or menu

@@ -1,0 +1,6 @@
+# Generated contributions are validated against hashes of their exact bytes.
+plugins/spec-kit-copilot-bugfix/extensions/bugfix-canvas/badges/** -text whitespace=cr-at-eol
+plugins/spec-kit-copilot-bugfix/extensions/bugfix-canvas/buttons/** -text whitespace=cr-at-eol
+plugins/spec-kit-copilot-bugfix/extensions/bugfix-canvas/controls/** -text whitespace=cr-at-eol
+plugins/spec-kit-copilot-bugfix/extensions/bugfix-canvas/dialogs/** -text whitespace=cr-at-eol
+plugins/spec-kit-copilot-bugfix/extensions/bugfix-canvas/pages/** -text whitespace=cr-at-eol

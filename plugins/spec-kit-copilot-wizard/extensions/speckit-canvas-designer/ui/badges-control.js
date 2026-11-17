@@ -274,7 +274,7 @@ export function mountBadges({ root, page, phases, outputs, badgeTypes, badgeRule
             importButton.type = "button";
             importButton.disabled = typeof onValidateImport !== "function";
             const importHelp = element("p",
-                "Select a complete generated canvas-config.json. Badges are appended to this draft; use Save to keep them.",
+                "Select a complete generated canvas-config.json. Imported badges are added to the list above; select Save to keep them.",
                 "settings-note");
             const status = element("p", importMessage, "settings-note badge-import-status");
             status.setAttribute("role", importError ? "alert" : "status");
