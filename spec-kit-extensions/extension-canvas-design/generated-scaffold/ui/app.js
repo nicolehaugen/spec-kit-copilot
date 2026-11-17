@@ -1158,7 +1158,7 @@ async function deleteFeature(itemId) {
     await refresh();
     message(`Deleted ${item.label} and its directory.`);
 }
-async function send(step, value, target = "phase-action-error") {
+async function send(step, value, target = "phase-action-error", artifactContext) {
     if (step.project && !model.constitutionReady && !value.trim()) {
         message("Enter project principles before creating the constitution.", target, true);
         $("constitution-args")?.focus();
@@ -1168,35 +1168,41 @@ async function send(step, value, target = "phase-action-error") {
         message("Create a constitution before starting a workflow.", target, true);
         return;
     }
-    if (!step.project && selectedPending() && model.userProvidesSlug && slugError()) {
+    if (!artifactContext && !step.project && selectedPending() && model.userProvidesSlug && slugError()) {
         message(slugError(), target, true);
         $("workflow-slug")?.focus();
         return;
     }
     if (sending) { message("This request is being sent. Check chat before trying again.", target); return; }
     const previous = model.statuses[step.id];
-    if ((previous?.artifactAvailability === "available"
+    if ((artifactContext || previous?.artifactAvailability === "available"
         || ["Completed", "Failed"].includes(previous?.status))
         && !window.confirm("Rerun will overwrite the artifact, with valid content preserved. Proceed?")) return;
-    sending = { phase: step.id, item: step.project ? "project" : model.selected };
+    const itemId = artifactContext?.itemId ?? model.selected;
+    sending = { phase: step.id, item: step.project ? "project" : itemId };
     renderStatus();
     let accepted = false;
-    let runSignal;
+    let runSignal, saveTimeout;
     try {
-        await flush();
+        await (artifactContext ? Promise.race([flush(), new Promise((_, reject) => {
+            saveTimeout = setTimeout(() => reject(new Error(
+                "Saving input timed out. Your answers are retained; refresh the canvas before retrying.")), 30_000);
+        })]) : flush());
+        if (saveTimeout) clearTimeout(saveTimeout);
         runSignal = AbortSignal.timeout(30_000);
         await api("/api/run", { phase: step.id, args: value,
-            ...(!step.project ? { itemId: model.selected,
-                ...(selectedPending() && model.name?.trim() ? { name: model.name.trim() } : {}),
-                ...(selectedPending() && model.userProvidesSlug && model.slug ? { slug: model.slug } : {}) } : {}) },
+            ...(!step.project ? { itemId,
+                ...(!artifactContext && selectedPending() && model.name?.trim() ? { name: model.name.trim() } : {}),
+                ...(!artifactContext && selectedPending() && model.userProvidesSlug && model.slug ? { slug: model.slug } : {}) } : {}) },
         { signal: runSignal });
         accepted = true;
-        if (step.project) {
+        if (step.project && !artifactContext) {
             $("constitution-dialog")?.close();
             $("run-constitution")?.focus({ preventScroll: true });
         }
         message("", target);
-        await refresh();
+        if (artifactContext) drafts.set(draftKey(step, itemId), value);
+        else await refresh();
     } catch (error) {
         message(accepted ? `Request sent, but status could not be refreshed. Check chat before rerunning. ${error.message}`
             : runSignal?.aborted ? "Run request timed out. It may have been sent; check chat before trying again."
@@ -1204,7 +1210,77 @@ async function send(step, value, target = "phase-action-error") {
             accepted && step.project ? "workflow-action-error" : target, true);
     }
     finally {
+        if (saveTimeout) clearTimeout(saveTimeout);
         sending = false; renderStatus();
+    }
+    return accepted;
+}
+function renderClarificationQueue(context) {
+    const questions = new Set(context.clarifications.map(({ question }) => question));
+    for (const question of context.answers.keys()) {
+        if (!questions.has(question)) context.answers.delete(question);
+    }
+    $("artifact-content").querySelectorAll("[data-clarify-idx]").forEach((button) => {
+        const question = context.clarifications[Number(button.dataset.clarifyIdx)].question;
+        const answered = context.answers.has(question);
+        button.textContent = answered ? "Answered" : "Clarify";
+        button.title = answered ? context.answers.get(question) : "";
+        button.disabled = context.submitting;
+    });
+    const pending = context.answers.size;
+    $("clarification-banner").hidden = !pending;
+    $("clarification-count").textContent = `${pending} clarification${pending === 1 ? "" : "s"} queued; ${questions.size - pending} remaining.`;
+    $("apply-clarifications").disabled = context.submitting;
+    $("apply-clarifications").textContent = context.submitting ? "Applying..." : "Apply and Rerun";
+}
+async function applyClarifications(context) {
+    if (!context || viewer !== context || context.submitting || !context.answers.size) return;
+    context.submitting = true;
+    renderClarificationQueue(context);
+    try {
+        const suffix = [...context.answers].map(([question, answer]) =>
+            `Clarification \u2014 ${question}\nAnswer: ${answer}`).join("\n\n");
+        const args = context.baseInput ? `${context.baseInput}\n\n${suffix}` : suffix;
+        const accepted = await send(context.step, args, "artifact-message", context);
+        if (accepted && viewer === context) {
+            context.answers.clear();
+            $("artifact-viewer").close();
+            await refresh();
+        }
+    } finally {
+        context.submitting = false;
+        if (viewer === context) renderClarificationQueue(context);
+    }
+}
+function openClarification(index) {
+    const context = viewer;
+    const marker = context?.clarifications[index];
+    if (!marker || context.submitting) return;
+    context.question = marker.question;
+    $("clarification-question").textContent = marker.question;
+    $("clarification-answer").value = context.answers.get(marker.question) ?? "";
+    $("clarification-message").textContent = "";
+    $("clarification-dialog").showModal();
+    $("clarification-answer").focus();
+}
+async function saveClarification() {
+    const context = viewer;
+    const answer = $("clarification-answer").value.trim();
+    if (!context || context.submitting) return;
+    if (!answer) {
+        message("Enter a clarification answer.", "clarification-message", true);
+        $("clarification-answer").focus();
+        return;
+    }
+    if (!context.clarifications.some(({ question }) => question === context.question)) {
+        message("This question changed. Cancel and reopen its clarification.", "clarification-message", true);
+        return;
+    }
+    context.answers.set(context.question, answer);
+    $("clarification-dialog").close();
+    renderClarificationQueue(context);
+    if (context.answers.size === new Set(context.clarifications.map(({ question }) => question)).size) {
+        await applyClarifications(context);
     }
 }
 async function refreshArtifact(initial) {
@@ -1219,7 +1295,9 @@ async function refreshArtifact(initial) {
         const result = initial ?? await api(`/api/artifact?${query}`);
         if (viewer !== context) return;
         $("artifact-path").textContent = result.path;
-        $("artifact-content").innerHTML = renderMarkdown(result.content);
+        context.clarifications = [];
+        $("artifact-content").innerHTML = renderMarkdown(result.content, { clarifications: context.clarifications });
+        renderClarificationQueue(context);
         context.loaded = true;
         message(result.message ?? "", "artifact-message");
     } catch (error) {
@@ -1243,7 +1321,9 @@ async function openArtifact(step, output) {
             ...(output !== undefined ? { output } : {}) });
         return;
     }
-    viewer = { phase: step.id, itemId, ...(output !== undefined ? { output } : {}), loaded: false };
+    viewer = { phase: step.id, itemId, step, ...(output !== undefined ? { output } : {}), loaded: false,
+        clarifications: [], answers: new Map(), submitting: false,
+        baseInput: drafts.get(draftKey(step, itemId)) ?? model.drafts[draftKey(step, itemId)] ?? "" };
     $("artifact-title").textContent = step.project ? "Constitution" : step.label;
     $("artifact-path").textContent = "";
     $("artifact-content").replaceChildren();
@@ -1320,7 +1400,14 @@ document.addEventListener("click", (event) => {
         if (button.id === "theme-toggle") {
             return;
         }
-        if (button.id === "close-artifact") { $("artifact-viewer").close(); return; }
+        if (button.id === "close-artifact") {
+            if (!viewer?.submitting) $("artifact-viewer").close();
+            return;
+        }
+        if (button.dataset.clarifyIdx !== undefined) { openClarification(Number(button.dataset.clarifyIdx)); return; }
+        if (button.id === "cancel-clarification") { $("clarification-dialog").close(); return; }
+        if (button.id === "save-clarification") { await saveClarification(); return; }
+        if (button.id === "apply-clarifications") { await applyClarifications(viewer); return; }
         if (button.id === "cancel-constitution") { $("constitution-dialog").close(); return; }
         if (button.id === "refresh-state") {
             // Fetch the current revision first; retry locally retained drafts explicitly.
@@ -1362,7 +1449,13 @@ document.addEventListener("click", (event) => {
         } else if (button.id === "send-constitution") await send(constitution(), $("constitution-args").value, "constitution-message");
     })().catch((error) => message(error.message, "workflow-action-error", true));
 });
-$("artifact-viewer").addEventListener("close", () => { viewer = null; });
+$("artifact-viewer").addEventListener("cancel", (event) => {
+    if (viewer?.submitting) event.preventDefault();
+});
+$("artifact-viewer").addEventListener("close", () => {
+    viewer = null;
+    $("clarification-dialog").close();
+});
 const pipelineRoot = $("workflow-pipeline");
 const workflowRoot = $("workflow-content") ?? $("workflow-surface");
 try {

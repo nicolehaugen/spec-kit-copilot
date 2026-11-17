@@ -1592,6 +1592,191 @@ test("artifact viewer matches the Wizard full-page layout and returns to the can
     }
 });
 
+async function openClarificationArtifact(page, canvas, content = "[NEEDS CLARIFICATION: Which scope?]\n\n[NEEDS CLARIFICATION: Which tests?]") {
+    await mkdir(join(canvas.root, "specs", "sample-feature"), { recursive: true });
+    await writeFile(join(canvas.root, "specs", "sample-feature", "spec.md"), content);
+    const skill = join(canvas.root, ".github", "skills", "speckit-specify");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: speckit-specify\n---\n");
+    await page.goto(canvas.url);
+    await page.getByRole("button", { name: "sample-feature", exact: true }).click();
+    await page.locator("#phase-args").fill("Keep existing direction");
+    await page.locator("#view-artifact").click();
+    await expect(page.locator(".clarify-pill")).toHaveCount(2);
+}
+
+async function answerClarification(page, index, answer) {
+    await page.locator(".clarify-pill").nth(index).click();
+    await page.locator("#clarification-answer").fill(answer);
+    await page.locator("#save-clarification").click();
+}
+
+test("artifact clarification queues and edits partial answers, then reruns its captured workflow and phase", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await mkdir(join(canvas.root, "specs", "other-feature"), { recursive: true });
+        await writeFile(join(canvas.root, "specs", "other-feature", "spec.md"), "# Other");
+        await openClarificationArtifact(page, canvas);
+        await answerClarification(page, 0, "Original answer");
+        await expect(page.locator("#clarification-count")).toHaveText("1 clarification queued; 1 remaining.");
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        await page.locator(".clarify-pill").first().click();
+        await expect(page.locator("#clarification-answer")).toHaveValue("Original answer");
+        await page.locator("#clarification-answer").fill("Edited answer");
+        await page.locator("#save-clarification").click();
+        expect(canvas.sent).toHaveLength(0);
+        // A background selection update must not retarget the open artifact's rerun.
+        await page.getByRole("button", { name: "other-feature", exact: true }).evaluate((button) => button.click());
+        await expect.poll(async () => (await canvas.runtime.snapshot()).selected).toBe("specs/other-feature");
+        await page.locator('[data-phase-index="1"]').evaluate((button) => button.click());
+        await expect(page.locator("#phase-card h2")).toHaveText("Plan");
+        page.once("dialog", (dialog) => dialog.accept());
+        await page.locator("#apply-clarifications").click();
+        await expect(page.locator("#artifact-viewer")).not.toBeVisible();
+        expect(canvas.sent).toHaveLength(1);
+        assert.match(canvas.sent[0].prompt, /\/speckit-specify/);
+        assert.match(canvas.sent[0].prompt, /existing feature directory "specs\/sample-feature"/);
+        const state = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        assert.equal(state.runs.at(-1).args, "Keep existing direction\n\nClarification \u2014 Which scope?\nAnswer: Edited answer");
+        await expect(page.locator("#run-phase")).toBeEnabled();
+    } finally { await canvas.close(); }
+});
+
+test("artifact clarification applies the final answer automatically and retains answers after a rejected dispatch", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await openClarificationArtifact(page, canvas);
+        await answerClarification(page, 0, "Core scope");
+        await page.route("**/api/run", (route) => route.fulfill({
+            status: 503, contentType: "application/json", body: JSON.stringify({ error: "Try dispatch again" }),
+        }), { times: 1 });
+        page.once("dialog", (dialog) => dialog.accept());
+        await answerClarification(page, 1, "Focused tests");
+        await expect(page.locator("#artifact-message")).toHaveText("Try dispatch again");
+        await expect(page.locator("#clarification-count")).toHaveText("2 clarifications queued; 0 remaining.");
+        await expect(page.locator("#apply-clarifications")).toBeEnabled();
+        expect(canvas.sent).toHaveLength(0);
+        page.once("dialog", (dialog) => dialog.accept());
+        await page.locator("#apply-clarifications").click();
+        await expect(page.locator("#artifact-viewer")).not.toBeVisible();
+        expect(canvas.sent).toHaveLength(1);
+        const state = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        assert.equal(state.runs.at(-1).args, "Keep existing direction\n\n"
+            + "Clarification \u2014 Which scope?\nAnswer: Core scope\n\n"
+            + "Clarification \u2014 Which tests?\nAnswer: Focused tests");
+        await expect(page.locator("#run-phase")).toBeEnabled();
+    } finally { await canvas.close(); }
+});
+
+test("artifact clarification validates combined input through the existing run boundary", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await openClarificationArtifact(page, canvas);
+        await answerClarification(page, 0, "a".repeat(32000));
+        page.once("dialog", (dialog) => dialog.accept());
+        await page.locator("#apply-clarifications").click();
+        await expect(page.locator("#artifact-message")).toHaveText("Phase input must be text of at most 32000 characters.");
+        await expect(page.locator("#apply-clarifications")).toBeEnabled();
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        expect(canvas.sent).toHaveLength(0);
+        await page.locator(".clarify-pill").first().click();
+        await page.locator("#clarification-answer").fill("Valid answer");
+        await page.locator("#save-clarification").click();
+        page.once("dialog", (dialog) => dialog.accept());
+        await page.locator("#apply-clarifications").click();
+        await expect(page.locator("#artifact-viewer")).not.toBeVisible();
+        expect(canvas.sent).toHaveLength(1);
+    } finally { await canvas.close(); }
+});
+
+test("artifact clarification automatically dispatches all answers and guards closure only during submission", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    let release;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    try {
+        await openClarificationArtifact(page, canvas);
+        await answerClarification(page, 0, "Core scope");
+        let requested = false;
+        await page.route("**/api/run", async (route) => {
+            requested = true;
+            await waiting;
+            await route.continue();
+        });
+        page.once("dialog", (dialog) => dialog.accept());
+        await answerClarification(page, 1, "Focused tests");
+        await expect.poll(() => requested).toBe(true);
+        await expect(page.locator("#apply-clarifications")).toBeDisabled();
+        await page.keyboard.press("Escape");
+        await expect(page.locator("#artifact-viewer")).toBeVisible();
+        await page.locator("#close-artifact").click();
+        await expect(page.locator("#artifact-viewer")).toBeVisible();
+        release();
+        await expect(page.locator("#artifact-viewer")).not.toBeVisible();
+        expect(canvas.sent).toHaveLength(1);
+        const state = JSON.parse(await readFile(canvas.statePath, "utf8"));
+        assert.match(state.runs.at(-1).args, /Answer: Core scope\n\nClarification \u2014 Which tests\?\nAnswer: Focused tests$/);
+        await expect(page.locator("#run-phase")).toBeEnabled();
+        await page.locator("#view-artifact").click();
+        await expect(page.locator("#clarification-banner")).toBeHidden();
+        await page.keyboard.press("Escape");
+        await expect(page.locator("#artifact-viewer")).not.toBeVisible();
+    } finally { release(); await canvas.close(); }
+});
+
+test("artifact clarification request timeout restores retry and close controls without losing answers", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await openClarificationArtifact(page, canvas);
+        await answerClarification(page, 0, "Retained answer");
+        await page.evaluate(() => {
+            const timeout = AbortSignal.timeout.bind(AbortSignal);
+            AbortSignal.timeout = (milliseconds) => timeout(milliseconds === 30_000 ? 200 : milliseconds);
+            window.restoreRunTimeout = () => { AbortSignal.timeout = timeout; };
+        });
+        await page.route("**/api/run", () => {});
+        page.once("dialog", (dialog) => dialog.accept());
+        await page.locator("#apply-clarifications").click();
+        await expect(page.locator("#artifact-message")).toContainText("Run request timed out.");
+        await expect(page.locator("#apply-clarifications")).toBeEnabled();
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        expect(canvas.sent).toHaveLength(0);
+        await page.evaluate(() => window.restoreRunTimeout());
+        await page.unroute("**/api/run");
+        page.once("dialog", (dialog) => dialog.dismiss());
+        await page.locator("#apply-clarifications").click();
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        expect(canvas.sent).toHaveLength(0);
+        await page.locator("#close-artifact").click();
+        await expect(page.locator("#artifact-viewer")).not.toBeVisible();
+        await expect(page.locator("#run-phase")).toBeEnabled();
+    } finally { await canvas.close(); }
+});
+
+for (const closeWithEscape of [false, true]) {
+    test(`artifact clarification cancels entry and discards queued answers on ${closeWithEscape ? "Escape" : "Back"}`, async ({ page }) => {
+        const canvas = await openGeneratedCanvas(false);
+        try {
+            await openClarificationArtifact(page, canvas);
+            await page.locator(".clarify-pill").first().click();
+            await page.locator("#save-clarification").click();
+            await expect(page.locator("#clarification-message")).toHaveText("Enter a clarification answer.");
+            await page.locator("#clarification-answer").fill("Cancelled answer");
+            await page.locator("#cancel-clarification").click();
+            await expect(page.locator("#clarification-banner")).toBeHidden();
+            await answerClarification(page, 0, "Unapplied answer");
+            if (closeWithEscape) await page.keyboard.press("Escape");
+            else await page.locator("#close-artifact").click();
+            await expect(page.locator("#artifact-viewer")).not.toBeVisible();
+            expect(canvas.sent).toHaveLength(0);
+            await page.locator("#view-artifact").click();
+            await expect(page.locator("#clarification-banner")).toBeHidden();
+            await expect(page.locator(".clarify-pill").first()).toHaveText("Clarify");
+            await page.locator(".clarify-pill").first().click();
+            await expect(page.locator("#clarification-answer")).toHaveValue("");
+        } finally { await canvas.close(); }
+    });
+}
+
 test("workflow list stays bounded and searchable across selection and refresh", async ({ page }) => {
     const canvas = await openGeneratedCanvas(true);
     try {

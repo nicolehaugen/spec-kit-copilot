@@ -68,6 +68,9 @@ dialog.artifact-viewer:not([open]) { display: none; }
 .artifact-viewer-md blockquote { margin: 12px 0; padding: 4px 14px; border-left: 3px solid var(--border-color-default); }
 .artifact-viewer-md a { text-decoration: none; }
 .artifact-viewer-md a:hover { text-decoration: underline; }
+.clarify-marker { color: inherit; background: var(--background-color-secondary); }
+.clarify-pill { margin-inline-start: 4px; cursor: pointer; }
+#clarification-banner { margin-block: 12px; }
 .artifact-viewer-md hr { border: 0; border-top: 1px solid var(--border-color-default); margin: 20px 0; }
 .artifact-viewer-md table { margin: 12px 0; font-size: 13px; }
 .artifact-viewer-md th, .artifact-viewer-md td { padding: 6px 10px; text-align: left; }
