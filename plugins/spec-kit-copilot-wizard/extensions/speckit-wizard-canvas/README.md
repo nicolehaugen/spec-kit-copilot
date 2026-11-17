@@ -166,6 +166,9 @@ check the requested command IDs before posting; a stale request still fails
 the server's fingerprint validation rather than saving outdated evidence.
 Opening an expected output in the viewer before it exists shows an
 "Output not ready or not found" message rather than a raw 404.
+Clarification reruns require the same overwrite confirmation as ordinary
+reruns. A failed manual or automatic submission retains queued answers and
+shows an error in the artifact viewer.
 The **Composition** button reads **Refresh** when idle, whether or not the latest
 data is up to date; progress and retry messages appear beside it. It rechecks
 installed skills and refreshes the phase output evidence; catalog install/remove actions refresh it as

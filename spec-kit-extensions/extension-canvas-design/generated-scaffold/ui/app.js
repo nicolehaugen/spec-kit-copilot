@@ -69,7 +69,7 @@ const buttonControls = JSON.parse(dialogContracts?.dataset.buttonControls ?? "[]
 const dialogCache = new Map();
 let buttonMounts = [], setupBusy = false, activeSetupPlan = null, dialogPending = false;
 
-async function showGeneratedDialog(name, context = {}) {
+async function showGeneratedDialog(name, context = {}, root = $("generated-dialog-root")) {
     if (dialogPending) throw new Error("A generated dialog is already open");
     dialogPending = true;
     try {
@@ -85,7 +85,6 @@ async function showGeneratedDialog(name, context = {}) {
             entry = { definition, mount: module.mount };
             dialogCache.set(name, entry);
         }
-        const root = $("generated-dialog-root");
         if (root.childElementCount) throw new Error("A generated dialog is already open");
         try {
             const instance = await entry.mount({ root, definition: entry.definition,
@@ -106,16 +105,17 @@ async function showGeneratedDialog(name, context = {}) {
     }
 }
 
-async function confirmGeneratedPhase(selected) {
+async function confirmGeneratedPhase(selected, artifactContext) {
     requireModel();
     const selectedWorkflow = model.selected;
     const binding = phaseDialogs.find((item) =>
         item.phase === `speckit.${selected?.id?.replace(/^speckit\./, "")}`);
     if (!binding) return true;
-    const confirmed = await showGeneratedDialog(binding.dialog, {
-        phase: { id: selected.id, label: selected.label },
-    });
-    if (confirmed && model.selected !== selectedWorkflow) {
+    const context = { phase: { id: selected.id, label: selected.label } };
+    const confirmed = artifactContext
+        ? await showGeneratedDialog(binding.dialog, context, $("artifact-generated-dialog-root"))
+        : await showGeneratedDialog(binding.dialog, context);
+    if (confirmed && (artifactContext ? viewer !== artifactContext : model.selected !== selectedWorkflow)) {
         throw new Error("Selected workflow or phase changed. Select the phase and retry.");
     }
     return confirmed;
@@ -1189,6 +1189,9 @@ async function send(step, value, target = "phase-action-error", artifactContext)
                 "Saving input timed out. Your answers are retained; refresh the canvas before retrying.")), 30_000);
         })]) : flush());
         if (saveTimeout) clearTimeout(saveTimeout);
+        if (artifactContext && clarificationAnswersUnavailable(artifactContext)) {
+            throw new Error("Answered questions changed during submission. Review them before applying.");
+        }
         runSignal = AbortSignal.timeout(30_000);
         await api("/api/run", { phase: step.id, args: value,
             ...(!step.project ? { itemId,
@@ -1215,11 +1218,14 @@ async function send(step, value, target = "phase-action-error", artifactContext)
     }
     return accepted;
 }
+function clarificationAnswersUnavailable(context) {
+    return [...context.answers.keys()].some((question) =>
+        !context.clarifications.some((marker) => marker.question === question));
+}
 function renderClarificationQueue(context) {
     const questions = new Set(context.clarifications.map(({ question }) => question));
-    for (const question of context.answers.keys()) {
-        if (!questions.has(question)) context.answers.delete(question);
-    }
+    const unavailable = [...context.answers.keys()].filter((question) => !questions.has(question));
+    const pending = context.answers.size - unavailable.length;
     $("artifact-content").querySelectorAll("[data-clarify-idx]").forEach((button) => {
         const question = context.clarifications[Number(button.dataset.clarifyIdx)].question;
         const answered = context.answers.has(question);
@@ -1227,26 +1233,54 @@ function renderClarificationQueue(context) {
         button.title = answered ? context.answers.get(question) : "";
         button.disabled = context.submitting;
     });
-    const pending = context.answers.size;
-    $("clarification-banner").hidden = !pending;
+    $("clarification-banner").hidden = !context.answers.size;
     $("clarification-count").textContent = `${pending} clarification${pending === 1 ? "" : "s"} queued; ${questions.size - pending} remaining.`;
-    $("apply-clarifications").disabled = context.submitting;
+    const missing = $("clarification-unavailable");
+    missing.replaceChildren();
+    if (unavailable.length) {
+        const notice = document.createElement("p");
+        notice.textContent = "Some answered questions are not in the current artifact. Wait for them to return or discard their answers before applying.";
+        missing.append(notice);
+        for (const question of unavailable) {
+            const row = document.createElement("p");
+            row.append(document.createTextNode(question + " "));
+            const discard = document.createElement("button");
+            discard.type = "button";
+            discard.className = "btn btn-secondary";
+            discard.dataset.discardClarification = question;
+            discard.textContent = "Discard answer";
+            discard.setAttribute("aria-label", `Discard answer: ${question}`);
+            discard.disabled = context.submitting;
+            row.append(discard);
+            missing.append(row);
+        }
+    }
+    $("apply-clarifications").disabled = context.submitting || unavailable.length > 0;
     $("apply-clarifications").textContent = context.submitting ? "Applying..." : "Apply and Rerun";
 }
 async function applyClarifications(context) {
     if (!context || viewer !== context || context.submitting || !context.answers.size) return;
+    if (clarificationAnswersUnavailable(context)) return;
     context.submitting = true;
     renderClarificationQueue(context);
+    message("", "clarification-submit-message");
     try {
+        if (!await confirmGeneratedPhase(context.step, context)) return;
+        if (clarificationAnswersUnavailable(context)) {
+            message("Answered questions changed during confirmation. Review them before applying.", "clarification-submit-message", true);
+            return;
+        }
         const suffix = [...context.answers].map(([question, answer]) =>
             `Clarification \u2014 ${question}\nAnswer: ${answer}`).join("\n\n");
         const args = context.baseInput ? `${context.baseInput}\n\n${suffix}` : suffix;
-        const accepted = await send(context.step, args, "artifact-message", context);
+        const accepted = await send(context.step, args, "clarification-submit-message", context);
         if (accepted && viewer === context) {
             context.answers.clear();
             $("artifact-viewer").close();
             await refresh();
         }
+    } catch (error) {
+        message(error.message, "clarification-submit-message", true);
     } finally {
         context.submitting = false;
         if (viewer === context) renderClarificationQueue(context);
@@ -1279,7 +1313,9 @@ async function saveClarification() {
     context.answers.set(context.question, answer);
     $("clarification-dialog").close();
     renderClarificationQueue(context);
-    if (context.answers.size === new Set(context.clarifications.map(({ question }) => question)).size) {
+    const questions = new Set(context.clarifications.map(({ question }) => question));
+    if (questions.size && context.answers.size === questions.size
+        && [...context.answers.keys()].every((question) => questions.has(question))) {
         await applyClarifications(context);
     }
 }
@@ -1327,6 +1363,7 @@ async function openArtifact(step, output) {
     $("artifact-title").textContent = step.project ? "Constitution" : step.label;
     $("artifact-path").textContent = "";
     $("artifact-content").replaceChildren();
+    message("", "clarification-submit-message");
     $("artifact-viewer").showModal();
     $("close-artifact").focus();
     await refreshArtifact(result);
@@ -1405,6 +1442,11 @@ document.addEventListener("click", (event) => {
             return;
         }
         if (button.dataset.clarifyIdx !== undefined) { openClarification(Number(button.dataset.clarifyIdx)); return; }
+        if (button.dataset.discardClarification !== undefined && viewer && !viewer.submitting) {
+            viewer.answers.delete(button.dataset.discardClarification);
+            renderClarificationQueue(viewer);
+            return;
+        }
         if (button.id === "cancel-clarification") { $("clarification-dialog").close(); return; }
         if (button.id === "save-clarification") { await saveClarification(); return; }
         if (button.id === "apply-clarifications") { await applyClarifications(viewer); return; }

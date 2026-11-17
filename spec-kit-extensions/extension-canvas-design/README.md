@@ -330,8 +330,12 @@ Answers can be saved and edited locally, then submitted together with
 **Apply and Rerun**; answering the final outstanding question applies automatically.
 The existing rerun confirmation still applies. Closing the artifact (including
 Escape) discards unapplied answers without rerunning. Failed submissions retain
-answers for retry. The rerun targets the artifact's workflow and phase and
-appends the answers to its existing input. These controls belong to the fixed
+answers for retry and remain visible across artifact refreshes. Answers to
+questions temporarily missing from the artifact remain queued; they must
+reappear or be explicitly discarded before applying. Configured phase
+confirmations also apply to clarification reruns. The rerun targets the
+artifact's workflow and phase and appends the answers to its existing input.
+These controls belong to the fixed
 artifact-viewer shell, not a customizable contributed control.
 Wizard-inferred pipeline artifacts and viewer defaults are not editable.
 Badge input controls may declare extra Markdown files as expected phase outputs
