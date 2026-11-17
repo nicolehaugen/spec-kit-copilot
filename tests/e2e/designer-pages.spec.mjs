@@ -327,6 +327,8 @@ test("Designer imports a local generated config into the badge draft without sav
     try {
         await page.goto(shell.url);
         await page.getByRole("tab", { name: "Badges" }).click();
+        await expect(page.locator(".badge-import > .settings-note").first())
+            .toHaveText("Select a complete generated canvas-config.json. Imported badges are added to the list above; select Save to keep them.");
         const initialState = await current();
         await page.locator(".badge-import-file").setInputFiles(file("{broken"));
         await expect(page.locator(".badge-import-status")).toContainText("not valid JSON");

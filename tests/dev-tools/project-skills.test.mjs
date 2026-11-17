@@ -10,6 +10,7 @@ test('project development skill frontmatter matches its directory', async () => 
     'dev-tools-speckit-wizard-installed-open',
     'dev-tools-speckit-wizard-local-generate-launch',
     'dev-tools-speckit-distribution',
+    'dev-tools-import-generated-canvas',
   ];
   for (const name of names) {
     const text = await readFile(resolve(repositoryRoot, '.github', 'skills', name, 'SKILL.md'), 'utf8');
