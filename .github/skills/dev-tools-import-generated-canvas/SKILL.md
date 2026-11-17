@@ -25,7 +25,10 @@ because the user asks to create or edit this skill.
    `settings-provenance.json` when present. A Designer handoff or an installed
    `.specify\extensions\extension-canvas-design` package is not the generated app.
    Record the canvas ID, phases, artifact paths, package recipe, dependencies,
-   required files, and adapter/definition hashes. Do not assume every generation
+   required files, adapter/definition hashes, the canvas's minimum Specify CLI
+   requirement, and the **generating Specify version**: the CLI already
+   installed and used for that generation, from `specify --version` (read-only)
+   or recorded generation metadata. Do not assume every generation
    has the latest generator's file layout or supported setup package kinds.
 3. Inventory `plugins` and their `plugin.json` files. Resolve whether the user
    wants to replace a canvas in an existing plugin, add a canvas to an existing
@@ -63,7 +66,18 @@ workspace. The generated app's own source files are not disposable runtime state
 **Clean does not mean remove every `.specify` reference.** Preserve relative
 workflow paths, for example `.specify/bugs/<slug>/assessment.md`, package IDs,
 selected phases, badges, branding, enabled state, priority, and versions.
-Do not silently correct unrelated badge behavior or upgrade Specify.
+Do not silently correct unrelated badge behavior.
+
+**Keep the generating Specify version.** Import, clean up, and validate the canvas
+with the Specify CLI already installed for its generation. Never upgrade or
+reinstall Specify, run `speckit-self` or `speckit-cli-setup`, or update bundled,
+extension, or preset packages. Do not raise the canvas's minimum CLI
+requirement, frozen package versions, or setup prompts to target a newer
+release. Do not replace a package with a version from a newer catalog or a
+newer CLI release. Do not call a newer Specify release a blocker when the
+canvas works with the generating version. If the installed CLI no longer matches
+the generating version, or a check requires a newer version, stop and report
+the mismatch instead of upgrading.
 
 Inspect configuration, setup values, provenance, documentation, and executable
 code for absolute paths, `file:` URLs, source checkout/session bindings, and
@@ -151,6 +165,10 @@ patch checked adapter bytes or recompute hashes to bypass incompatibilities.
   than deleting all `.specify` strings. Verify relative artifact templates and
   package identity/version/settings survived. Compare final status with the
   original inventory and ensure files outside the agreed scope were preserved.
+- Confirm that the minimum CLI requirement and frozen package versions are
+  unchanged. Run any Specify-backed checks with the generating version, and
+  report the version used. Behavior under newer Specify releases is
+  informational only; do not test it by upgrading.
 - If local loading was requested, inspect supported `copilot --plugin-dir` usage
   or the actual extension provider tooling and load this exact plugin. Reload
   only an explicitly authorized test provider. Verify registration and opening;
