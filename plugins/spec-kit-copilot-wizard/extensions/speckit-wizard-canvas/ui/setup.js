@@ -77,7 +77,7 @@ export function isSetupComplete() {
     return pluginOk &&
         cliOk &&
         (!!state.snapshot?.projectInitialized || !!setup.projectInitialized) &&
-        !!setup.skillsReloaded &&
+        (state.snapshot?.skillsReload?.ok === true || !!setup.skillsReloaded) &&
         !state.setupRowRunning;
 }
 
