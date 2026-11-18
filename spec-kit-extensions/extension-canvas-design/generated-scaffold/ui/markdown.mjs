@@ -19,9 +19,12 @@ export function renderMarkdown(source, { clarifications } = {}) {
     const controls = [];
     if (clarifications) {
         text = text.replace(clarificationMarker, (match, question, startIdx) => {
-            const index = clarifications.push({ question: question.trim(), marker: match, startIdx,
+            const questionText = question.trim();
+            const index = clarifications.push({ question: questionText, marker: match, startIdx,
                 endIdx: startIdx + match.length }) - 1;
-            controls.push(`<button type="button" class="clarify-pill" data-clarify-idx="${index}" aria-label="Clarify: ${esc(question.trim())}">Clarify</button>`);
+            const escapedQuestion = esc(questionText);
+            controls.push(`<mark class="clarify-marker">${escapedQuestion}</mark> `
+                + `<button type="button" class="clarify-pill" data-clarify-idx="${index}" aria-label="Clarify: ${escapedQuestion}">Clarify</button>`);
             return `${placeholderPrefix}${controls.length - 1}\uE001`;
         });
     }

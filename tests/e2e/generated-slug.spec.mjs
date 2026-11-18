@@ -1628,14 +1628,19 @@ async function answerClarification(page, index, answer) {
     await page.locator("#save-clarification").click();
 }
 
-test("artifact clarification replaces wrapped markers with Wizard-style interactive pills", async ({ page }) => {
+test("artifact clarification shows wrapped questions next to Wizard-style interactive pills", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
         await openClarificationArtifact(page, canvas,
             "- [NEEDS CLARIFICATION: Which wording?\n  It wraps.]\n- [NEEDS CLARIFICATION: Which tests?]");
         await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
         const pill = page.locator(".clarify-pill").first();
+        const question = page.locator("#artifact-content li").first().locator(".clarify-marker");
         await expect(page.locator("#artifact-content")).not.toContainText("NEEDS CLARIFICATION");
+        await expect(question).toBeVisible();
+        await expect(question).toHaveText("Which wording? It wraps.");
+        await expect(page.locator("#artifact-content li").first().locator(".clarify-marker + .clarify-pill")).toHaveCount(1);
+        await expect(question).toHaveCSS("background-color", "rgba(240, 136, 62, 0.18)");
         await expect(pill).toHaveAccessibleName("Clarify: Which wording? It wraps.");
         await expect(pill).toHaveCSS("display", "inline-flex");
         await expect(pill).toHaveCSS("border-radius", "999px");
@@ -1650,6 +1655,7 @@ test("artifact clarification replaces wrapped markers with Wizard-style interact
         await expect(page.locator("#save-clarification")).toBeEnabled();
         await page.locator("#save-clarification").click();
         await expect(pill).toHaveText("Answered ✓");
+        await expect(question).toHaveText("Which wording? It wraps.");
         await expect(pill).toHaveAccessibleName("Answered: Which wording? It wraps.");
         await expect(pill).toHaveCSS("background-color", "rgb(23, 140, 78)");
         await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });

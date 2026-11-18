@@ -68,6 +68,13 @@ dialog.artifact-viewer:not([open]) { display: none; }
 .artifact-viewer-md blockquote { margin: 12px 0; padding: 4px 14px; border-left: 3px solid var(--border-color-default); }
 .artifact-viewer-md a { text-decoration: none; }
 .artifact-viewer-md a:hover { text-decoration: underline; }
+.clarify-marker {
+    background: rgba(240, 136, 62, 0.18);
+    color: var(--text-color-default);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-weight: 500;
+}
 .clarify-pill {
     display: inline-flex;
     align-items: center;

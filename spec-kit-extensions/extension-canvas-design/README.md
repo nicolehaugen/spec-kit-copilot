@@ -325,11 +325,11 @@ Rerunning a completed or failed phase, or a phase with an available artifact,
 asks for overwrite confirmation as in the Wizard; in-flight retries do not.
 View output opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
-`[NEEDS CLARIFICATION: ...]` markers in that viewer are replaced by a
-Wizard-style **Clarify** button. Markers are detected in the raw artifact text
-before Markdown rendering, matching the Wizard, so markers that wrap across
-lines or list items still offer **Clarify**. The question appears in the
-clarification dialog.
+`[NEEDS CLARIFICATION: ...]` markers in that viewer display the question beside
+a Wizard-style **Clarify** button, without the marker syntax. Markers are
+detected in the raw artifact text before Markdown rendering, matching the Wizard,
+so markers that wrap across lines or list items still offer **Clarify**. The
+question also appears in the clarification dialog.
 Answers can be saved and edited locally, then submitted together with
 **Apply and Rerun**; answering the final outstanding question applies automatically.
 The existing rerun confirmation still applies. Closing the artifact (including
