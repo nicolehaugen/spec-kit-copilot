@@ -472,6 +472,7 @@ export function setViewersDeps({ postJson, HEADERS } = {}) {
 }
 let activeArtifactPhase = null; // phase currently open in the viewer
 const clarificationFlushes = new Map(); // commandName -> in-flight flush promise
+const clarificationConfirmations = new Set();
 
 export function isClarificationFlushPending(commandName) {
     return !!commandName && clarificationFlushes.has(commandName);
@@ -568,9 +569,10 @@ export async function openArtifactViewer(p) {
     if (body) body.innerHTML = `<div class="artifact-viewer-md">${rendered}</div>`;
 
     const totalMarks = marks.length;
+    let confirming = false;
     const refreshPillState = (errorMessage = "") => {
         const answered = getPendingClarifications(p.commandName);
-        const submitting = isClarificationFlushPending(p.commandName);
+        const submitting = confirming || isClarificationFlushPending(p.commandName);
         body?.querySelectorAll(".clarify-pill").forEach((btn) => {
             const idx = Number(btn.getAttribute("data-clarify-idx"));
             const q = marks[idx]?.question ?? "";
@@ -597,24 +599,33 @@ export async function openArtifactViewer(p) {
                     ${errorMessage ? `<p class="wizard-modal-error">${escapeHtml(errorMessage)}</p>` : ""}
                     <button type="button" class="btn btn-primary btn-sm" data-clarify-action="apply-now" ${submitting ? "disabled" : ""}>${submitting ? "Applying…" : "Apply and Rerun"}</button>
                 `;
-                banner.querySelector('[data-clarify-action="apply-now"]')?.addEventListener("click", async () => {
-                    const btn = banner.querySelector('[data-clarify-action="apply-now"]');
-                    if (btn?.disabled) return;
-                    if (btn) {
-                        btn.disabled = true;
-                        btn.textContent = "Applying…";
-                    }
-                    const pendingFlush = flushClarifications(p);
-                    refreshPillState();
-                    const dispatched = await pendingFlush;
-                    if (dispatched && getPendingClarifications(p.commandName).length === 0) closeArtifactViewer();
-                    else refreshPillState(dispatched ? "" : "Could not submit the clarification rerun. Your queued answers were preserved.");
-                });
+                banner.querySelector('[data-clarify-action="apply-now"]')?.addEventListener("click", applyQueued);
             } else {
                 banner.hidden = true;
                 banner.innerHTML = "";
             }
         }
+    };
+
+    const applyQueued = async () => {
+        if (confirming || isClarificationFlushPending(p.commandName)) return;
+        confirming = true;
+        clarificationConfirmations.add(p.commandName);
+        refreshPillState();
+        let confirmed;
+        try {
+            confirmed = await confirmModal("Rerun will overwrite the artifact, with valid content preserved. Proceed?",
+                { confirmLabel: "Yes", cancelLabel: "No", danger: false });
+        } finally {
+            confirming = false;
+            clarificationConfirmations.delete(p.commandName);
+        }
+        if (!confirmed) { refreshPillState(); return; }
+        const pendingFlush = flushClarifications(p);
+        refreshPillState();
+        const dispatched = await pendingFlush;
+        if (dispatched && getPendingClarifications(p.commandName).length === 0) closeArtifactViewer();
+        else refreshPillState(dispatched ? "" : "Could not submit the clarification rerun. Your queued answers were preserved.");
     };
 
     body?.querySelectorAll(".clarify-pill").forEach((btn) => {
@@ -624,11 +635,7 @@ export async function openArtifactViewer(p) {
             refreshPillState();
             const pending = getPendingClarifications(p.commandName).length;
             if (pending >= totalMarks && totalMarks > 0) {
-                const pendingFlush = flushClarifications(p);
-                refreshPillState();
-                const dispatched = await pendingFlush;
-                if (dispatched && getPendingClarifications(p.commandName).length === 0) closeArtifactViewer();
-                else refreshPillState();
+                await applyQueued();
             }
         }));
     });
@@ -638,7 +645,8 @@ export async function openArtifactViewer(p) {
 export async function closeArtifactViewer() {
     const root = document.getElementById("phase-artifact-viewer");
     const p = activeArtifactPhase;
-    if (p?.commandName && isClarificationFlushPending(p.commandName)) {
+    if (p?.commandName && (clarificationConfirmations.has(p.commandName)
+        || isClarificationFlushPending(p.commandName))) {
         const banner = root?.querySelector(".artifact-viewer-clarify-banner");
         if (banner) {
             banner.hidden = false;
@@ -648,10 +656,7 @@ export async function closeArtifactViewer() {
     }
     activeArtifactPhase = null;
     if (p?.commandName) {
-        // Back-to-Wizard discards any queued clarifications — the
-        // "Apply and Rerun" banner button is the only way to commit
-        // them. This prevents accidental reruns when the user just
-        // wants to close the viewer.
+        // Closing discards queued answers instead of dispatching them.
         clearClarifications(p.commandName);
     }
     if (!root) return;
@@ -804,15 +809,13 @@ export function openRedoModal(p, draftOverride) {
 //
 // The modal is purely a Q&A capture: it does NOT dispatch a stage rerun.
 // The caller (openArtifactViewer) queues the answer via
-// queueClarification() and decides when to flush (either when all markers
-// in the artifact are answered, or when the viewer closes with pending
-// answers). Every artifact that shows Clarify pills uses this same path,
-// so batching behavior is consistent across phases.
+// queueClarification() and decides when to flush (after all markers are
+// answered or when Apply and Rerun is clicked).
 // -----------------------------------------------------------------------
 export function openClarifyModal(p, question, onAnswered) {
     openWizardModal({
         title: "Resolve clarification",
-        description: "Answer the question. Your answer is queued locally and applied to the stage when you either finish all clarifications or close this artifact.",
+        description: "Answers are queued locally and applied when you finish all clarifications or select Apply and Rerun. Closing the artifact discards unapplied answers.",
         questionBox: question,
         textareaLabel: "Your answer",
         required: true,

@@ -325,6 +325,22 @@ Rerunning a completed or failed phase, or a phase with an available artifact,
 asks for overwrite confirmation as in the Wizard; in-flight retries do not.
 View output opens a full-page viewer with a return-to-canvas action and no
 separate Refresh button.
+`[NEEDS CLARIFICATION: ...]` markers in that viewer display the question beside
+a Wizard-style **Clarify** button, without the marker syntax. Markers are
+detected in the raw artifact text before Markdown rendering, matching the Wizard,
+so markers that wrap across lines or list items still offer **Clarify**. The
+question also appears in the clarification dialog.
+Answers can be saved and edited locally, then submitted together with
+**Apply and Rerun**; answering the final outstanding question applies automatically.
+The existing rerun confirmation still applies. Closing the artifact (including
+Escape) discards unapplied answers without rerunning. Failed submissions retain
+answers for retry and remain visible across artifact refreshes. Answers to
+questions temporarily missing from the artifact remain queued; they must
+reappear or be explicitly discarded before applying. Configured phase
+confirmations also apply to clarification reruns. The rerun targets the
+artifact's workflow and phase and appends the answers to its existing input.
+These controls belong to the fixed
+artifact-viewer shell, not a customizable contributed control.
 Wizard-inferred pipeline artifacts and viewer defaults are not editable.
 Badge input controls may declare extra Markdown files as expected phase outputs
 when inference missed them; declaring one does not immediately create it or

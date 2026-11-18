@@ -7,15 +7,28 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
     "'": "&#39;",
 })[character]);
 
-const clarificationLabel = String.raw`NEEDS\s+CLARIFICATION`;
-const emphasizedLabels = [String.raw`\*\*`, "__", String.raw`\*`, "_"].map((delimiter) =>
-    String.raw`${delimiter}\s*${clarificationLabel}(?:\s*${delimiter}\s*:|\s*:\s*${delimiter})`);
-const clarificationPrefix = String.raw`\[\s*(?:${clarificationLabel}\s*:|${emphasizedLabels.join("|")})\s*`;
+// Matches the Wizard's parseClarifications: markers are found in the raw text before
+// Markdown rendering, so markers that wrap across lines or list items still get a control.
+const clarificationMarker = /\[NEEDS CLARIFICATION:\s*([\s\S]*?)\]/gi;
 
 export function renderMarkdown(source, { clarifications } = {}) {
-    const lines = String(source ?? "")
-        .replace(/\r\n?/g, "\n")
-        .split("\n");
+    let text = String(source ?? "").replace(/\r\n?/g, "\n");
+    let placeholderPrefix = "\uE000";
+    while (text.includes(placeholderPrefix)) placeholderPrefix += "\uE000";
+    const placeholder = new RegExp(`${placeholderPrefix}(\\d+)\uE001`, "g");
+    const controls = [];
+    if (clarifications) {
+        text = text.replace(clarificationMarker, (match, question, startIdx) => {
+            const questionText = question.trim();
+            const index = clarifications.push({ question: questionText, marker: match, startIdx,
+                endIdx: startIdx + match.length }) - 1;
+            const escapedQuestion = esc(questionText);
+            controls.push(`<mark class="clarify-marker">${escapedQuestion}</mark> `
+                + `<button type="button" class="clarify-pill" data-clarify-idx="${index}" aria-label="Clarify: ${escapedQuestion}">Clarify</button>`);
+            return `${placeholderPrefix}${controls.length - 1}\uE001`;
+        });
+    }
+    const lines = text.split("\n");
     const fenceStart = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
     const closingFor = (fence) => new RegExp(`^\\s{0,3}${fence[0]}{${fence.length},}\\s*$`);
     let commentOpen = false, fenceEnd = null;
@@ -56,33 +69,19 @@ export function renderMarkdown(source, { clarifications } = {}) {
         rendered = rendered.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, "$1<em>$2</em>");
         return rendered;
     };
-    const marked = (text) => {
-        if (!clarifications) return emphasis(text);
-        let result = "", cursor = 0;
-        for (const match of text.matchAll(new RegExp(`${clarificationPrefix}([\\s\\S]*?)\\]`, "gi"))) {
-            const marker = { question: match[1].trim(), marker: match[0], startIdx: match.index, endIdx: match.index + match[0].length };
-            result += emphasis(text.slice(cursor, marker.startIdx));
-            const index = clarifications.push(marker) - 1;
-            result += `<mark class="clarify-marker">${esc(text.slice(marker.startIdx, marker.endIdx))}</mark> <button type="button" class="clarify-pill" data-clarify-idx="${index}">Clarify</button>`;
-            cursor = marker.endIdx;
-        }
-        return result + emphasis(text.slice(cursor));
-    };
     const inline = (text) => {
         let result = "", cursor = 0;
-        // Tokenize before inserting HTML: markers inside code or links are never controls.
-        const tokens = new RegExp(/(`+)([\s\S]*?)\1|\[((?:[^\[\]\n]|\[[^\]\n]*\])+)\]\(([^)\s]+)\)/.source
-            + `|${clarificationPrefix}[\\s\\S]*?\\]`, "gi");
+        const tokens = /(`+)([\s\S]*?)\1|\[((?:[^\[\]\n]|\[[^\]\n]*\])+)\]\(([^)\s]+)\)/g;
         for (const token of text.matchAll(tokens)) {
-            result += marked(text.slice(cursor, token.index));
+            result += emphasis(text.slice(cursor, token.index));
             if (token[1]) result += `<code>${esc(token[2])}</code>`;
-            else if (token[3] !== undefined) {
+            else {
                 const href = /^(https?:|mailto:|#)/i.test(token[4]) ? esc(token[4]) : "#";
                 result += `<a href="${href}" target="_blank" rel="noopener noreferrer">${emphasis(token[3])}</a>`;
-            } else result += marked(token[0]);
+            }
             cursor = token.index + token[0].length;
         }
-        return result + marked(text.slice(cursor));
+        return result + emphasis(text.slice(cursor));
     };
 
     const renderList = (tag, items) => {
@@ -167,5 +166,5 @@ export function renderMarkdown(source, { clarifications } = {}) {
         }
         html.push(`<p>${inline(paragraph.join("\n"))}</p>`);
     }
-    return html.join("\n");
+    return html.join("\n").replace(placeholder, (_, index) => controls[Number(index)] ?? "");
 }

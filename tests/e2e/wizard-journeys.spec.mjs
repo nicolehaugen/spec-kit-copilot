@@ -535,6 +535,52 @@ test("Setup awaits verified default installation and does not reload twice", asy
         } });
 });
 
+test("Wizard clarification reruns confirm, preserve cancelled answers, and report automatic failures", async ({ page }) => {
+    await withWizardCheckout(page, async () => {
+        await page.route("**/api/artifact?*", (route) => route.fulfill({
+            status: 200, contentType: "text/plain", body: "[NEEDS CLARIFICATION: Which scope?]",
+        }));
+        await page.evaluate(async () => {
+            const modals = await import("/ui/modals.js");
+            window.clarificationRequests = [];
+            modals.setViewersDeps({ postJson: async (_url, body) => {
+                window.clarificationRequests.push(body);
+                if (window.clarificationRequests.length === 1) throw new Error("Dispatch failed");
+                return { queued: true };
+            } });
+            await modals.openArtifactViewer({ commandName: "speckit.plan", shortLabel: "Plan",
+                artifactPath: "specs/example/plan.md" });
+        });
+        const viewer = page.locator("#phase-artifact-viewer");
+        await viewer.locator(".clarify-pill").click();
+        await page.locator(".wizard-modal-textarea").fill("Core scope");
+        await page.locator(".wizard-modal-confirm").click();
+        const confirmation = page.locator(".modal-overlay");
+        await expect(confirmation).toContainText("Rerun will overwrite the artifact");
+        await confirmation.locator(".modal-cancel").click();
+        expect(await page.evaluate(() => window.clarificationRequests.length)).toBe(0);
+        await expect(viewer.locator(".clarify-pill")).toContainText("Answered");
+
+        await viewer.locator(".clarify-pill").click();
+        await page.locator(".wizard-modal-textarea").fill("Core scope");
+        await page.locator(".wizard-modal-confirm").click();
+        await confirmation.locator(".modal-confirm").click();
+        await expect(viewer.locator(".wizard-modal-error")).toContainText("queued answers were preserved");
+        expect(await page.evaluate(() => window.clarificationRequests.length)).toBe(1);
+        await expect(viewer.locator(".clarify-pill")).toContainText("Answered");
+
+        await viewer.getByRole("button", { name: "Apply and Rerun" }).click();
+        await confirmation.locator(".modal-cancel").click();
+        expect(await page.evaluate(() => window.clarificationRequests.length)).toBe(1);
+        await viewer.getByRole("button", { name: "Apply and Rerun" }).click();
+        await confirmation.locator(".modal-confirm").click();
+        await expect(viewer).toBeHidden();
+        const requests = await page.evaluate(() => window.clarificationRequests);
+        expect(requests).toHaveLength(2);
+        expect(requests[1].args).toContain("Clarification — Which scope?\nAnswer: Core scope");
+    });
+});
+
 test("phase status and execution report reach the stepper, then verified output opens in the viewer", async ({ page }) => {
     await withWizardCheckout(page, async ({ root, id, inst, prompts }) => {
         await page.getByRole("tab", { name: "Phases" }).click();
