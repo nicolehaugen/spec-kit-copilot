@@ -10,17 +10,19 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({
 // Matches the Wizard's parseClarifications: markers are found in the raw text before
 // Markdown rendering, so markers that wrap across lines or list items still get a control.
 const clarificationMarker = /\[NEEDS CLARIFICATION:\s*([\s\S]*?)\]/gi;
-const placeholder = /\uE000(\d+)\uE001/g;
 
 export function renderMarkdown(source, { clarifications } = {}) {
-    let text = String(source ?? "").replace(/\r\n?/g, "\n").replace(/[\uE000\uE001]/g, "");
+    let text = String(source ?? "").replace(/\r\n?/g, "\n");
+    let placeholderPrefix = "\uE000";
+    while (text.includes(placeholderPrefix)) placeholderPrefix += "\uE000";
+    const placeholder = new RegExp(`${placeholderPrefix}(\\d+)\uE001`, "g");
     const controls = [];
     if (clarifications) {
         text = text.replace(clarificationMarker, (match, question, startIdx) => {
             const index = clarifications.push({ question: question.trim(), marker: match, startIdx,
                 endIdx: startIdx + match.length }) - 1;
-            controls.push(`<mark class="clarify-marker">${esc(match)}</mark> <button type="button" class="clarify-pill" data-clarify-idx="${index}">Clarify</button>`);
-            return `\uE000${controls.length - 1}\uE001`;
+            controls.push(`<button type="button" class="clarify-pill" data-clarify-idx="${index}" aria-label="Clarify: ${esc(question.trim())}">Clarify</button>`);
+            return `${placeholderPrefix}${controls.length - 1}\uE001`;
         });
     }
     const lines = text.split("\n");

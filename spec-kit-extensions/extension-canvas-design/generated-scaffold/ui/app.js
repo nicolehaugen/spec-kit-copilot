@@ -1229,7 +1229,9 @@ function renderClarificationQueue(context) {
     $("artifact-content").querySelectorAll("[data-clarify-idx]").forEach((button) => {
         const question = context.clarifications[Number(button.dataset.clarifyIdx)].question;
         const answered = context.answers.has(question);
-        button.textContent = answered ? "Answered" : "Clarify";
+        button.textContent = answered ? "Answered ✓" : "Clarify";
+        button.classList.toggle("clarify-pill-answered", answered);
+        button.setAttribute("aria-label", `${answered ? "Answered" : "Clarify"}: ${question}`);
         button.title = answered ? context.answers.get(question) : "";
         button.disabled = context.submitting;
     });
@@ -1293,6 +1295,7 @@ function openClarification(index) {
     context.question = marker.question;
     $("clarification-question").textContent = marker.question;
     $("clarification-answer").value = context.answers.get(marker.question) ?? "";
+    $("save-clarification").disabled = !$("clarification-answer").value.trim();
     $("clarification-message").textContent = "";
     $("clarification-dialog").showModal();
     $("clarification-answer").focus();
@@ -1447,7 +1450,9 @@ document.addEventListener("click", (event) => {
             renderClarificationQueue(viewer);
             return;
         }
-        if (button.id === "cancel-clarification") { $("clarification-dialog").close(); return; }
+        if (button.id === "cancel-clarification" || button.id === "close-clarification") {
+            $("clarification-dialog").close(); return;
+        }
         if (button.id === "save-clarification") { await saveClarification(); return; }
         if (button.id === "apply-clarifications") { await applyClarifications(viewer); return; }
         if (button.id === "cancel-constitution") { $("constitution-dialog").close(); return; }
@@ -1493,6 +1498,15 @@ document.addEventListener("click", (event) => {
 });
 $("artifact-viewer").addEventListener("cancel", (event) => {
     if (viewer?.submitting) event.preventDefault();
+});
+$("clarification-answer").addEventListener("input", (event) => {
+    $("save-clarification").disabled = !event.target.value.trim();
+});
+$("clarification-dialog").addEventListener("click", (event) => {
+    if (event.target !== event.currentTarget) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right
+        || event.clientY < bounds.top || event.clientY > bounds.bottom) event.currentTarget.close();
 });
 $("artifact-viewer").addEventListener("close", () => {
     viewer = null;

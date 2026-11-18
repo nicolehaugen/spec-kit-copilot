@@ -8,6 +8,7 @@
     --border-color-default: #e4e1d5;
     --border-color-strong: #c9c4b0;
     --accent-color: #0b6e99;
+    --accent-color-hover: #095a80;
     --success-color: #178c4e;
     --warn-color: #c4881a;
     --danger-color: #c7362e;
@@ -30,6 +31,7 @@
     --border-color-default: #2e3358;
     --border-color-strong: #3e4478;
     --accent-color: #6eaaff;
+    --accent-color-hover: #8abbff;
     --success-color: #4cd08b;
     --warn-color: #f0c36d;
     --danger-color: #ff7a6b;
@@ -45,6 +47,7 @@
         --border-color-default: #2e3358;
         --border-color-strong: #3e4478;
         --accent-color: #6eaaff;
+        --accent-color-hover: #8abbff;
         --success-color: #4cd08b;
         --warn-color: #f0c36d;
         --danger-color: #ff7a6b;

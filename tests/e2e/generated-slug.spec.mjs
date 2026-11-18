@@ -1628,6 +1628,44 @@ async function answerClarification(page, index, answer) {
     await page.locator("#save-clarification").click();
 }
 
+test("artifact clarification replaces wrapped markers with Wizard-style interactive pills", async ({ page }) => {
+    const canvas = await openGeneratedCanvas(false);
+    try {
+        await openClarificationArtifact(page, canvas,
+            "- [NEEDS CLARIFICATION: Which wording?\n  It wraps.]\n- [NEEDS CLARIFICATION: Which tests?]");
+        await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+        const pill = page.locator(".clarify-pill").first();
+        await expect(page.locator("#artifact-content")).not.toContainText("NEEDS CLARIFICATION");
+        await expect(pill).toHaveAccessibleName("Clarify: Which wording? It wraps.");
+        await expect(pill).toHaveCSS("display", "inline-flex");
+        await expect(pill).toHaveCSS("border-radius", "999px");
+        await expect(pill).toHaveCSS("font-size", "11px");
+        await expect(pill).toHaveCSS("background-color", "rgb(11, 110, 153)");
+        await pill.hover();
+        await expect(pill).toHaveCSS("background-color", "rgb(9, 90, 128)");
+        await pill.click();
+        await expect(page.locator("#clarification-question")).toHaveText("Which wording?\n  It wraps.");
+        await expect(page.locator("#save-clarification")).toBeDisabled();
+        await page.locator("#clarification-answer").fill("Updated wording");
+        await expect(page.locator("#save-clarification")).toBeEnabled();
+        await page.locator("#save-clarification").click();
+        await expect(pill).toHaveText("Answered ✓");
+        await expect(pill).toHaveAccessibleName("Answered: Which wording? It wraps.");
+        await expect(pill).toHaveCSS("background-color", "rgb(23, 140, 78)");
+        await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+        const second = page.locator(".clarify-pill").nth(1);
+        await expect(second).toHaveCSS("background-color", "rgb(110, 170, 255)");
+        await expect(pill).toHaveCSS("background-color", "rgb(76, 208, 139)");
+        await expect(page.locator("#clarification-banner")).toHaveCSS("color", "rgb(23, 26, 44)");
+        await second.click();
+        await page.getByRole("button", { name: "Close", exact: true }).click();
+        await expect(page.locator("#clarification-dialog")).not.toBeVisible();
+        await second.click();
+        await page.mouse.click(2, 2);
+        await expect(page.locator("#clarification-dialog")).not.toBeVisible();
+    } finally { await canvas.close(); }
+});
+
 test("artifact clarification queues and edits partial answers, then reruns its captured workflow and phase", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     try {
@@ -1636,7 +1674,7 @@ test("artifact clarification queues and edits partial answers, then reruns its c
         await openClarificationArtifact(page, canvas);
         await answerClarification(page, 0, "Original answer");
         await expect(page.locator("#clarification-count")).toHaveText("1 clarification queued; 1 remaining.");
-        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered ✓");
         await page.locator(".clarify-pill").first().click();
         await expect(page.locator("#clarification-answer")).toHaveValue("Original answer");
         await page.locator("#clarification-answer").fill("Edited answer");
@@ -1698,7 +1736,7 @@ test("artifact clarification validates combined input through the existing run b
         await page.locator("#apply-clarifications").click();
         await expect(page.locator("#clarification-submit-message")).toHaveText("Phase input must be text of at most 32000 characters.");
         await expect(page.locator("#apply-clarifications")).toBeEnabled();
-        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered ✓");
         expect(canvas.sent).toHaveLength(0);
         await page.locator(".clarify-pill").first().click();
         await page.locator("#clarification-answer").fill("Valid answer");
@@ -1764,13 +1802,13 @@ test("artifact clarification request timeout restores retry and close controls w
         await refreshed;
         await expect(page.locator("#clarification-submit-message")).toContainText("check chat before trying again");
         await expect(page.locator("#apply-clarifications")).toBeEnabled();
-        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered ✓");
         expect(canvas.sent).toHaveLength(0);
         await page.evaluate(() => window.restoreRunTimeout());
         await page.unroute("**/api/run");
         page.once("dialog", (dialog) => dialog.dismiss());
         await page.locator("#apply-clarifications").click();
-        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered ✓");
         expect(canvas.sent).toHaveLength(0);
         await page.locator("#close-artifact").click();
         await expect(page.locator("#artifact-viewer")).not.toBeVisible();
@@ -1794,7 +1832,7 @@ test("artifact clarification retains answers across empty and changed artifact r
 
         await writeFile(artifact, content);
         canvas.broadcast();
-        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered");
+        await expect(page.locator(".clarify-pill").first()).toHaveText("Answered ✓");
         await expect(page.locator("#apply-clarifications")).toBeEnabled();
         await page.locator(".clarify-pill").first().click();
         await expect(page.locator("#clarification-answer")).toHaveValue("Retained answer");
@@ -1888,8 +1926,9 @@ for (const closeWithEscape of [false, true]) {
         try {
             await openClarificationArtifact(page, canvas);
             await page.locator(".clarify-pill").first().click();
-            await page.locator("#save-clarification").click();
-            await expect(page.locator("#clarification-message")).toHaveText("Enter a clarification answer.");
+            await expect(page.locator("#save-clarification")).toBeDisabled();
+            await page.locator("#clarification-answer").fill("   ");
+            await expect(page.locator("#save-clarification")).toBeDisabled();
             await page.locator("#clarification-answer").fill("Cancelled answer");
             await page.locator("#cancel-clarification").click();
             await expect(page.locator("#clarification-banner")).toBeHidden();
