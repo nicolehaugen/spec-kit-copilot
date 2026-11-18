@@ -717,4 +717,11 @@ test("finds multiple markers in source order", () => {
     assert.equal(out.length, 1);
     assert.equal(out[0].question, "pick a");
 });
+
+test("finds a marker wrapped across list continuation lines", () => {
+    // Keep in sync with spec-kit-extensions/tests/generated_markdown.test.mjs.
+    const src = "- [NEEDS CLARIFICATION: Which wording?\n  It wraps.\n  Done.]\n- Next item";
+    const out = parseClarifications(src);
+    assert.deepEqual(out.map(({ question }) => question), ["Which wording?\n  It wraps.\n  Done."]);
+});
 });
