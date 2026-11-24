@@ -22,7 +22,7 @@
     },
     {
       "name": "spec-kit-copilot-bugfix",
-      "description": "Adds a Bug Fix Pipeline canvas for the Spec Kit bug extension.",
+      "description": "Adds the Bug Fix - Autopilot canvas for the Spec Kit bug extension.",
       "version": "0.1.0",
       "source": "plugins/spec-kit-copilot-bugfix"
     },
