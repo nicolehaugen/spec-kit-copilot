@@ -13,6 +13,7 @@ plugins/spec-kit-copilot-wizard/extensions/speckit-wizard-canvas/test-results/
 .specify/
 .github/skills/*
 !.github/skills/refresh-generated-canvas/
+!.github/skills/dev-tools-import-generated-canvas/
 !.github/skills/speckit-designer-preview/
 !.github/skills/dev-tools-speckit-wizard-installed-refresh/
 !.github/skills/dev-tools-speckit-wizard-installed-open/
