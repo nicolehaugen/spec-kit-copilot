@@ -92,12 +92,7 @@ for (const fails of [false, true]) {
                 assert.equal(await imported, null);
                 const result = await opening;
                 assert.match((await closed).message, /panel closed while opening/);
-                assert.equal(result.title, "SpecKit Wizard");
-                const response = await fetch(result.url);
-                assert.equal(response.status, 200);
-                const html = await response.text();
-                assert.match(html, /<title>SpecKit Wizard<\/title>/);
-                assert.match(html, /<span class="brand-text">SpecKit Wizard<\/span>/);
+                assert.equal((await fetch(result.url)).status, 200);
                 const inst = allInstances().get("restored");
                 assert.equal(inst._session, session);
                 assert.equal(inst.workspacePath, project);

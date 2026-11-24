@@ -137,7 +137,7 @@ async function onOpen(ctx) {
     }).catch(() => { /* best-effort */ });
     startArtifactWatcher(inst, { snapshot }).catch(() => { /* best-effort */ });
     return {
-        title: "SpecKit Wizard",
+        title: "Spec Kit Wizard",
         url: inst.url,
     };
 }
