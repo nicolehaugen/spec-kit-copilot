@@ -105,7 +105,7 @@ test("raw Specify inventory survives a browser launch and the Wizard handoff ope
             .toEqual({ outputs: ["specs/<slug>/spec.md"], view: "specs/<slug>/spec.md" });
         expect(handoff.workflow.installed.extensions).toEqual([{
             id: runtime.id, version: runtime.version, priority: 30, enabled: false,
-            source: "copilot", downloadUrl: runtime.downloadUrl,
+            source: "copilot",
         }]);
         expect(handoff.workflow.installLocators.extensions).toEqual([{
             installedId: runtime.id, source: "copilot", catalogId: runtime.id,

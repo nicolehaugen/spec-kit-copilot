@@ -11,7 +11,11 @@ import { runCatalogOperation } from "../canvas-runtime/catalog-operations.mjs";
 import { dispatchKindPrompt } from "../canvas-runtime/dispatch.mjs";
 import { handlePrompt } from "../server/handlers-phase.mjs";
 import { createCatalogAddHandler } from "../canvas-runtime/actions/catalog.mjs";
-import { allInstances, getInstance, setSession } from "../canvas-runtime/instances.mjs";
+import { allInstances, fsDeps, getInstance, setSession } from "../canvas-runtime/instances.mjs";
+import { readState } from "../state/store.mjs";
+import { handlePipelineMutation } from "../server/handlers-ops.mjs";
+import { normalizeInstalledWorkflowInventory } from "../contracts/specify-inventory.mjs";
+import { resolveRuntimeInstallLocators, verifiedCatalogInstallEvidence } from "../server/runtime-provenance.mjs";
 
 const item = (id = "sample", source = "default") => ({
     id, name: id, version: "1.0.0", enabled: true, priority: 10,
@@ -219,6 +223,75 @@ test("already satisfied installs are verified, and conflicts never remove or for
     await assert.rejects(mutateCatalogPackage(f.inst, "preset.install", { name: "sample" },
         { command: f.command }), /source/);
     assert.ok(f.calls.every(({ args }) => args[1] === "list"));
+});
+
+test("changed Wizard installs persist source provenance and removal prunes it", async (t) => {
+    const url = "https://example.org/sample.zip";
+    const f = await fixture(t, { source: "community", downloadUrl: url, allowed: false });
+    const command = async (project, args, ...rest) => {
+        const result = await f.command(project, args, ...rest);
+        if (args[1] === "add") f.inv.extension[0].source = { kind: "local" };
+        return result;
+    };
+    await runCatalogOperation(f.inst, "extension.install", {
+        name: "sample", source: "community", downloadUrl: url, confirmed: true,
+    }, { command, reload: async () => ({ ok: true }), finish: async () => ({ ok: true }) });
+    let state = await readState(f.root, fsDeps);
+    assert.deepEqual(state.state.catalogInstallSources.map(({ kind, catalogId, installedId, source }) =>
+        ({ kind, catalogId, installedId, source })), [{
+        kind: "extension", catalogId: "sample", installedId: "sample", source: "community",
+    }]);
+    await runCatalogOperation(f.inst, "extension.remove", { name: "sample" }, {
+        command, reload: async () => ({ ok: true }), finish: async () => ({ ok: true }),
+    });
+    state = await readState(f.root, fsDeps);
+    assert.deepEqual(state.state.catalogInstallSources, []);
+});
+
+test("editing the pipeline preserves Wizard install provenance for Designer launch", async (t) => {
+    const url = "https://example.org/sample.zip";
+    const f = await fixture(t, { source: "community", downloadUrl: url, allowed: false });
+    const command = async (project, args, ...rest) => {
+        const result = await f.command(project, args, ...rest);
+        if (args[1] === "add") f.inv.extension[0].source = { kind: "local" };
+        return result;
+    };
+    await runCatalogOperation(f.inst, "extension.install", {
+        name: "sample", source: "community", downloadUrl: url, confirmed: true,
+    }, { command, reload: async () => ({ ok: true }), finish: async () => ({ ok: true }) });
+    const res = { writeHead(code) { this.statusCode = code; }, end(body) { this.body = body; } };
+    await handlePipelineMutation(res, { action: "clear" }, {
+        getState: async () => ({ pipeline: null }),
+        getInstance: () => f.inst, broadcast: () => {},
+    });
+    assert.equal(res.statusCode, 200);
+    const saved = (await readState(f.root, fsDeps)).state;
+    assert.deepEqual(saved.pipeline, []);
+    assert.equal(saved.catalogInstallSources.length, 1);
+    const installed = normalizeInstalledWorkflowInventory({
+        presets: [], extensions: f.inv.extension, bundles: [],
+    });
+    const catalog = { presets: [], extensions: f.inst.cachedExtensionItems, bundles: [] };
+    const locators = resolveRuntimeInstallLocators(installed, catalog, undefined, f.root, [],
+        saved.catalogInstallSources);
+    assert.equal(locators.extensions[0].source, "community");
+    assert.deepEqual(verifiedCatalogInstallEvidence(installed, locators, catalog, saved.catalogInstallSources),
+        saved.catalogInstallSources);
+});
+
+test("pipeline editing does not overwrite unreadable Wizard state", async (t) => {
+    const f = await fixture(t);
+    await mkdir(join(f.root, ".speckit-wizard"), { recursive: true });
+    const path = join(f.root, ".speckit-wizard", "state.json");
+    await writeFile(path, "{invalid");
+    const res = { writeHead(code) { this.statusCode = code; }, end(body) { this.body = body; } };
+    await handlePipelineMutation(res, { action: "clear" }, {
+        getState: async () => ({ pipeline: null }),
+        getInstance: () => f.inst, broadcast: () => {},
+    });
+    assert.equal(res.statusCode, 500);
+    assert.match(JSON.parse(res.body).error, /Could not read Wizard state/);
+    assert.equal(await readFile(path, "utf8"), "{invalid");
 });
 
 test("verification resolves a catalog alias to the actual newly installed manifest ID", async (t) => {

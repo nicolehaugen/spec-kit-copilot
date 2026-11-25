@@ -98,13 +98,13 @@ Fixture acceptance: manifests parse; every declared file exists; package IDs, co
 |---|---|---|---|
 | D4 | P1 browser | Add a fixture preset or local Canvas Design with same ID as hosted selection. | Manifest kind and checked selection shown; handoff uses approved local locator for collision, preserving unrelated hosted selections. |
 | D5 | P1 browser | Invalid path, pending add, failed launch. | Inline error, blocked conflicting controls while pending, retained choices on failed launch. |
-| D6 | Lower-level | Ambiguous manifest/ID, priority/source drift. | Pre-dispatch rejection without guessing provenance. |
+| D6 | Lower-level | Ambiguous manifest/ID or priority drift; separately, a runtime extension, preset, or bundle whose install source cannot be verified (pathless `local` marker without a current Wizard install record, stale record, or source drift). | Invalid identity or priority still rejects pre-dispatch. An unverifiable source shows a nonblocking warning naming the actual package kind and ID, recommends installing it through the Wizard and confirming it still shows **Installed**, and states that the generated canvas may not function properly; launch continues without guessing provenance. |
 
 ### D3. Wizard handoff and child readiness
 | Case | Level | Action | Assert |
 |---|---|---|---|
 | D7 | P0 browser integration | Queue with controlled raw Specify inventory; capture handoff and open Designer shell. | Selected phases, package identity/priority and output defaults survive intact. |
-| D8 | Lower-level; one P1 visible failure | Use controlled Pirate catalog ID vs installed manifest ID and missing/unreproducible packages. | Correct locator, explicit repair guidance, no false-ready empty shell. |
+| D8 | Lower-level; one P1 visible warning | Use controlled Pirate catalog ID vs installed manifest ID, a Wizard-recorded catalog install, and unverifiable or nonportable runtime extensions, presets, and bundles. | Correct catalog locator from the Wizard install record; unverifiable or nonportable packages produce a nonblocking warning identifying the actual kind and ID, with Wizard-install/**Installed** guidance and possible generated-canvas impact, are kept explicit rather than silently dropped or given an invented source, and do not by themselves block launch or generation. |
 | D9 | Release-only | Test archive selected by **published** catalog on default hosted path. | Hosted compatibility proven separately; do not version-bump or publish on each development edit. |
 
 ### D4. Resolve and navigate Designer pages

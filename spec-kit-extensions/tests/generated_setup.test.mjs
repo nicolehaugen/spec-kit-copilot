@@ -379,6 +379,10 @@ test("ready projects skip dialog and invalid runtime recipes are rejected", asyn
         locator: { installedId: preset.id, source: "local", path: "relative" } }] }), false);
     assert.equal(validateRuntimeSetup({ ...recipe, presets: [preset, preset] }), false);
     assert.equal(validateRuntimeSetup({ ...recipe, schemaVersion: 1 }), false);
+    const warning = { kind: "extension", id: "extension-unknown", reason: "unverified",
+        message: "Can't verify extension 'extension-unknown' source." };
+    assert.equal(validateRuntimeSetup({ ...recipe, warnings: [warning] }), true);
+    assert.equal(validateRuntimeSetup({ ...recipe, warnings: [{ ...warning, kind: "unknown" }] }), false);
     assert.equal(validateRuntimeSetup(undefined), true);
 });
 
@@ -451,11 +455,11 @@ test("frozen local extension reads its nested manifest identity", async (t) => {
 test("setup card keeps the workflow visible while gating phase runs until ready", async () => {
     const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
         import.meta.url), "utf8");
-    const setupCode = source.slice(source.indexOf("function renderSetup()"), source.indexOf("let phaseControl;"));
+    const setupCode = source.slice(source.indexOf("function renderRuntimeWarnings()"), source.indexOf("let phaseControl;"));
     const statusCode = source.slice(source.indexOf("function renderStatus()"), source.indexOf("function renderPhase()"));
-    const nodes = new Map(["setup-surface", "workflow-surface", "workflow-pipeline", "setup-status", "setup-actions", "run-phase", "phase-args",
+    const nodes = new Map(["setup-surface", "workflow-surface", "workflow-pipeline", "setup-status", "runtime-warnings", "setup-actions", "run-phase", "phase-args",
         "phase-message"].map((id) => [id, { hidden: false, disabled: false, readOnly: false,
-        textContent: "", title: "", classList: { toggle() {} }, querySelector: () => null,
+        textContent: "", title: "", dataset: { warnings: "[]" }, classList: { toggle() {} }, querySelector: () => null,
         querySelectorAll: () => [] }]));
     let phasePending;
     const context = { model: { showSetup: true, setup: { stage: "needs-setup", ready: false,
@@ -467,7 +471,7 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     validatePhaseState,
     constitution: () => null, hasSelectedWorkflow: () => false, renderName() {}, renderSlug() {},
     $: (id) => nodes.get(id), Map, Object, Boolean };
-    runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);
+    runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderRuntimeWarnings(); renderSetup(); renderStatus(); };`, context);
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, false);
     assert.equal(nodes.get("workflow-surface").hidden, false);
@@ -486,9 +490,14 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     assert.equal(nodes.get("workflow-surface").hidden, false);
     assert.equal(phasePending, false);
     context.model = { showSetup: false, setup: { stage: "needs-setup", ready: false } };
+    nodes.get("runtime-warnings").dataset.warnings = JSON.stringify([{
+        message: "Can't verify bundle 'kit' source.",
+    }]);
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, true);
     assert.equal(phasePending, false);
+    assert.equal(nodes.get("runtime-warnings").hidden, false);
+    assert.match(nodes.get("runtime-warnings").textContent, /Can't verify bundle 'kit' source/);
 });
 
 test("setup activation errors unhide the status even after an idle render", async () => {
@@ -536,6 +545,10 @@ test("setup routes require canvas token, origin and the current plan", async (t)
         workflowListName: "Workflows", description: "Setup route" }, phases: ["specify"],
     phaseOutputs: { specify: { outputPath: "specs/<slug>/spec.md", expectsArtifact: true } },
     installed: { presets: [], extensions: [], bundles: [] },
+    runtimeSetup: { presets: [], extensions: [], bundles: [], warnings: [{
+        kind: "bundle", id: "unknown-kit", reason: "unverified",
+        message: "Can't verify bundle 'unknown-kit' source. Install it via the Wizard.",
+    }] },
     userProvidesSlug: false, workflowPage: { adapter: "generated-phase-adapter",
         viewLabels: {}, slots: [{ id: "workflow.phases" }] } };
     const runtime = { setupStart: setup.start, setupConfirm: setup.confirm };
@@ -552,6 +565,7 @@ test("setup routes require canvas token, origin and the current plan", async (t)
     assert.equal((await fetch(`${base}/api/setup/start`)).status, 401);
     const html = await (await fetch(`${base}/?token=test-token`)).text();
     assert.match(html, /<main id="workflow-surface" class="app-body workflow-surface" data-workflow-item-name="Workflow">/);
+    assert.match(html, /id="runtime-warnings"[^>]*data-warnings=".*unknown-kit/);
     assert.match(html, /<main id="workflow-surface"[^>]*>[\s\S]*?<section id="setup-surface"[^>]*hidden>/);
     assert.match(html, /Set up this project[\s\S]*?Set up Spec Kit and install the selected presets, extensions, and bundles\.[\s\S]*?id="setup-actions"/);
     assert.doesNotMatch(html, /id="setup-(?:cli|project|packages)"/);

@@ -466,6 +466,21 @@ test("generation cannot omit the handoff runtime setup when Show setup is off", 
         prepared.requestId), /Runtime setup recipe differs/);
 });
 
+test("generation retains unresolved-source warnings without blocking pathless local dependencies", async (t) => {
+    const selectedHandoff = structuredClone(handoff);
+    selectedHandoff.workflow.installed.presets[0].source = "local";
+    selectedHandoff.workflow.runtimeSetup = { presets: [], extensions: [], bundles: [],
+        warnings: [{ kind: "preset", id: "copilot-sub-agents", reason: "unverified",
+            message: "Can't verify preset 'copilot-sub-agents' source. Install it via the Wizard and confirm it's Installed. Continuing may leave the generated canvas nonfunctional." }] };
+    selectedHandoff.sourceFingerprint = createHash("sha256").update(JSON.stringify({
+        workflow: selectedHandoff.workflow, selections: selectedHandoff.selections,
+    })).digest("hex");
+    const { workspace, prepared } = await fixture(t, selectedHandoff);
+    const request = JSON.parse(await readFile(join(workspace, "speckit-canvas-designer",
+        "handoffs", selectedHandoff.handoffId, "generations", prepared.requestId, "request.json"), "utf8"));
+    assert.deepEqual(request.runtimeSetup, selectedHandoff.workflow.runtimeSetup);
+});
+
 test("newly generated setup recognizes exact default local inventory", async (t) => {
     const selectedHandoff = structuredClone(handoff);
     const extension = { id: "bug", version: "1.0.0", enabled: true, priority: 0,

@@ -74,6 +74,13 @@ flags changed content.
 **Setup → Catalogs** — browse Built-in, Copilot, and Community catalogs of
 presets, extensions, and bundles, and add the ones you want to your project.
 
+Successful Wizard installs retain their verified catalog source alongside the
+installed package identity. Designer uses that record to create portable runtime
+locators; when provenance is unavailable, it warns and continues rather than
+guessing a source or blocking generation.
+An explicitly selected Designer package is still installed from its approved
+source when an existing package with the same ID has unverifiable provenance.
+
 ![Setup → Catalogs page](../../../../docs/images/wizard-catalogs.png)
 
 **Setup → Composition** — the layered view of what your project actually runs:

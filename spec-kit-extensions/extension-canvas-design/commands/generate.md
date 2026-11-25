@@ -30,11 +30,15 @@ packages or run workflow phases. Creation does not register or open the app.
    `request.json`: the replacement flag is not part of that frozen request.
    This copies the maintained SDK entry point and workflow modules into a
    new `.github/extensions/<canvas-id>/`, writes the frozen configuration
-   with runtime package IDs and the versions observed by Designer at Generate
-   (or `unverified` when unavailable), plus observed priorities but no install-source
-   paths or URLs, then validates the extension. The full install locators stay
-   in the session-scoped handoff and request. Without validated replacement it
-   never overwrites an existing target.
+   with the runtime package IDs, versions and priorities observed by Designer
+   at Generate (or `unverified` when unavailable), plus a separate setup recipe
+   containing only validated catalog locators or approved local paths. Catalog
+   packages never inherit a fabricated path from a pathless `local` marker.
+   Without validated replacement it never overwrites an existing target.
+   Verified Wizard catalog sources become portable setup locators. Unverified
+   or nonportable runtime dependencies remain explicit warnings in the new
+   canvas; do not infer a source from an installed ID/version or bundle
+   membership. The generated app shows these warnings even when setup is hidden.
    Source-fingerprint differences, installed-version drift, and any failure to
    remove a prior backup after publication are reported in the command's
    `warnings` output; report them to the user. The generator proceeds with the

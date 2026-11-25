@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import { PHASE_ORDER } from "../canvas-runtime/wizard-phases.mjs";
+import { makeCatalogInstallSource } from "../contracts/catalog-install-source.mjs";
 import { _internal as scannerInternal, readMarkdownArtifact, scanWorkspace } from "../project-scanner.mjs";
 import {
     buildPrompt,
@@ -34,6 +35,17 @@ test("normalizeState(null) returns default shape", () => {
     // nothing selected; the user must pick one before the flow advances.
     assert.equal(s.preset, null);
     for (const id of PHASE_ORDER) assert.ok(s.phases[id]);
+});
+
+test("Wizard catalog install provenance survives state normalization and patches", () => {
+    const installed = { id: "installed-preset", version: "1.0.0" };
+    const source = makeCatalogInstallSource("preset", {
+        id: "catalog-preset", installedId: installed.id, source: "community",
+        version: installed.version, downloadUrl: "https://example.org/preset.zip",
+    }, installed, true);
+    const state = applyPatch(normalizeState({}), { catalogInstallSources: [source] });
+    assert.deepEqual(normalizeState(JSON.parse(JSON.stringify(state))).catalogInstallSources, [source]);
+    assert.deepEqual(applyPatch(state, { catalogInstallSources: null }).catalogInstallSources, []);
 });
 
 test("normalizeState defensively coerces status aliases", () => {

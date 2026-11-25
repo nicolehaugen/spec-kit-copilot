@@ -202,15 +202,6 @@ export async function freezeGeneration({ model, values, outputs = model.outputs,
     const essentials = validateEssentials(model, values);
     if (outputs !== undefined) validateConfirmedOutputs(outputs, handoff.workflow.selectedPhases,
         initialOutputs(handoff));
-    for (const kind of ["presets", "extensions"]) {
-        for (const item of handoff?.workflow?.installed?.[kind] ?? []) {
-            if (item.source === "local" && item.id !== "extension-canvas-design"
-                && !item.path && !handoff.localSelections?.[kind]?.some((selection) =>
-                    selection.id === item.id && selection.path)) {
-                throw new Error(`Cannot generate portable runtime setup: local ${kind} ${item.id} has no verified path`);
-            }
-        }
-    }
     await validateAdapterValues(model, essentials, project);
     if (!canvasIdPattern.test(essentials["canvas.id"])
         || reserved.has(essentials["canvas.id"]) || isWindowsDeviceName(essentials["canvas.id"])) {

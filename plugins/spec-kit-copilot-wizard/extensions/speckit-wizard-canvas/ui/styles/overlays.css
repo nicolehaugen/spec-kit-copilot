@@ -152,7 +152,9 @@
 .designer-choice-text small { color: var(--text-color-muted); }
 .designer-choice input:disabled { cursor: not-allowed; }
 .designer-error { color: var(--text-color-danger, #cf222e); font-size: 13px; margin: 0; }
+.designer-warning { color: var(--text-color-warning, #6f4a00); font-size: 13px; margin: 0; }
 .designer-error[hidden], .designer-included-by[hidden] { display: none; }
+.designer-warning[hidden] { display: none; }
 .designer-source-tag { flex: none; }
 .designer-required-badge {
     flex: none;

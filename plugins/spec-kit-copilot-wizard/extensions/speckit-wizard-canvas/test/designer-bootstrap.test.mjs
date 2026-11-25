@@ -330,15 +330,18 @@ test("large inventories stay complete in native input, not model output", async 
 test("prompt size depends only on the launch reference, not a near-limit handoff", async (t) => {
     const f = await fixture(t);
     const installed = { ...empty, presets: Array.from({ length: 10 }, (_, i) => ({
-        id: `runtime-${i}`, version: "1.0.0", enabled: true, priority: 10, source: "copilot",
+        id: `runtime-${i}`, version: "1.0.0", enabled: true, priority: 10, source: "local",
+        path: `C:\\${"p".repeat(1900)}\\${i}`,
     })) };
-    const locators = { ...empty, presets: installed.presets.map((entry, i) => ({
-        installedId: entry.id, source: "local", path: `C:\\${"p".repeat(2800)}\\${i}`,
+    const locators = { ...empty, presets: installed.presets.map((entry) => ({
+        installedId: entry.id, source: "local", path: entry.path,
     })) };
     const large = buildDesignerHandoff({ pipeline: [{ id: "plan" }], catalog },
         empty, undefined, installed, randomUUID(), locators);
     const bytes = Buffer.byteLength(JSON.stringify(large));
     assert.ok(bytes > 56 * 1024 && bytes < HANDOFF_LIMIT);
+    assert.deepEqual(large.workflow.runtimeSetup.presets.map((item) => item.locator.path),
+        installed.presets.map((item) => item.path));
     const reference = await stageDesignerHandoff(f.session, large);
     const smallPrompt = buildScriptedDesignerLaunchPrompt(f.reference);
     const largePrompt = buildScriptedDesignerLaunchPrompt(reference);

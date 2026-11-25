@@ -164,6 +164,13 @@ async function mountGeneratedButtons() {
     }
 }
 
+function renderRuntimeWarnings() {
+    const warningStatus = $("runtime-warnings");
+    const warnings = JSON.parse(warningStatus.dataset.warnings ?? "[]");
+    warningStatus.textContent = warnings.map((warning) => warning.message).join(" ");
+    warningStatus.hidden = !warningStatus.textContent;
+}
+
 function renderSetup() {
     const setup = model?.setup;
     const visible = model?.showSetup && !setup?.ready;
@@ -1443,6 +1450,7 @@ document.addEventListener("click", (event) => {
 });
 const pipelineRoot = $("workflow-pipeline");
 const workflowRoot = $("workflow-content") ?? $("workflow-surface");
+renderRuntimeWarnings();
 try {
     const adapter = await import(`${pipelineRoot.dataset.module}?token=${encodeURIComponent(token)}`);
     const mount = validatePhaseAdapter(adapter);
