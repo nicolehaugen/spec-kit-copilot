@@ -241,8 +241,14 @@ propagate generator changes to an existing canvas in a Designer session, use
 the project-local `refresh-generated-canvas` skill in `.github/skills/`, which
 checks the target and merges user changes rather than blindly copying files. See
 the [Canvas Design generation details](spec-kit-extensions/extension-canvas-design/README.md#how-it-works).
+To promote a generated canvas into a local plugin, use the project-local
+[`dev-tools-import-generated-canvas`](.github/skills/dev-tools-import-generated-canvas/SKILL.md)
+skill; it verifies portable setup sources and does not publish the plugin.
 
 ### Previews
+
+The Bug Fix image shows the earlier canvas; the generated worktree version has
+a different layout.
 
 | Spec-Driven Development | Idea Assessment |
 | --- | --- |
