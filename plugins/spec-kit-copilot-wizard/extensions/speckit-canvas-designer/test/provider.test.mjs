@@ -5304,8 +5304,10 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         join(shared, "workspace.mjs"));
     const sharedContracts = join(workspace, "speckit-wizard-canvas", "contracts");
     await mkdir(sharedContracts, { recursive: true });
-    await copyFile(join(source, "..", "speckit-wizard-canvas", "contracts", "generate-feature.mjs"),
-        join(sharedContracts, "generate-feature.mjs"));
+    for (const file of ["generate-feature.mjs", "skill-reload.mjs"]) {
+        await copyFile(join(source, "..", "speckit-wizard-canvas", "contracts", file),
+            join(sharedContracts, file));
+    }
     for (const file of ["resolve-path.mjs", "specify-invocation.mjs"]) {
         await copyFile(join(source, "..", "speckit-wizard-canvas", "env", file),
             join(shared, file));
@@ -5440,7 +5442,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
         await saveHandoff(workspace);
         await t.test("registered bootstrap preserves failed host reload diagnostics", async () => {
             const { session } = await import(pathToFileURL(join(sdk, "extension.mjs")).href);
-            const diagnostics = { errors: ["Host skill reload failed"], warnings: ["Host reload warning"] };
+            const diagnostics = { errors: ["Failed to load skill '.github/skills/speckit-plan/SKILL.md': Host skill reload failed"], warnings: ["Host reload warning"] };
             const reload = session.rpc.skills.reload;
             session.rpc.skills.reload = async () => diagnostics;
             try {
@@ -5466,7 +5468,7 @@ test("canvas opens with a partial inventory and rebuilds on reopening", async (t
                 assert.equal(record.skillsReloaded, false);
                 assert.equal(record.finalize, undefined);
                 assert.equal(record.nativeResult, undefined);
-                await assert.rejects(tools[1].handler(), /Session skill reload failed: Host skill reload failed/);
+                await assert.rejects(tools[1].handler(), /Session skill reload failed: .*Host skill reload failed/);
             } finally {
                 session.rpc.skills.reload = reload;
             }

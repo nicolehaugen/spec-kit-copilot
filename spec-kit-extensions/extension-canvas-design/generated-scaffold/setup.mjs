@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, readdir } from "node:fs/promises";
 import { join, delimiter, isAbsolute } from "node:path";
 import { promisify } from "node:util";
-import { UserError, readBounded } from "./files.mjs";
+import { UserError, readBounded, specKitSkillReloadErrors } from "./files.mjs";
 import { phaseResponse } from "./phase-response.mjs";
 
 const exec = promisify(execFile);
@@ -236,7 +236,7 @@ export function createSetup({ config, cwd, session, phases, notify = () => {}, c
     async function reload() {
         if (!session.rpc?.skills?.reload) throw new UserError("Session skills reload is unavailable. Reload skills in Copilot and retry setup.");
         const result = await session.rpc.skills.reload();
-        if (result?.errors?.length) throw new UserError("Session skills could not reload. Check Copilot skill diagnostics and retry setup.");
+        if (specKitSkillReloadErrors(result?.errors).length) throw new UserError("Session skills could not reload. Check Copilot skill diagnostics and retry setup.");
     }
     async function verifyLocalSources(entries) {
         for (const item of entries.filter((entry) => entry.source === "local")) {

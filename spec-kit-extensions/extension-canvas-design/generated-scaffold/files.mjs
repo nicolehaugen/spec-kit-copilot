@@ -8,6 +8,11 @@ export class UserError extends Error {
     constructor(message, status = 400) { super(message); this.status = status; }
 }
 export const slugPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// Session skill reload errors block only when they name a Spec Kit (speckit-*)
+// skill; a malformed unrelated repository or user skill must not block setup.
+const SPECKIT_SKILL = /(?:^|[\\/'"`\s])speckit-[a-z0-9][a-z0-9.-]*(?=[\\/]SKILL\.md|['"`\s:,;)]|$)/i;
+export const specKitSkillReloadErrors = (errors) => Array.isArray(errors)
+    ? errors.filter((message) => typeof message === "string" && SPECKIT_SKILL.test(message.split(": ", 1)[0])) : [];
 export const isWindowsDeviceName = (name) =>
     /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name);
 export function safePath(value, template = false) {

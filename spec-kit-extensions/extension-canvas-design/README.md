@@ -348,7 +348,9 @@ skills mode if needed, then asks for confirmation before installing any pending 
 packages. The confirmation lists every pending package and source, including
 community packages. Cancelling does not start installation. After installation
 and skill reload are verified, the setup card disappears and the same workflow
-enables in place. Already-ready projects skip setup. With Show setup off, the
+enables in place. Reload errors attributed to Spec Kit skills block setup and
+phase runs; errors from unrelated skills do not. Already-ready projects skip
+setup. With Show setup off, the
 normal page remains visible but phase runs are blocked with a setup-required
 error until the project's
 prerequisites are met; no automatic install runs.

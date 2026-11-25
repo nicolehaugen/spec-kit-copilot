@@ -248,7 +248,7 @@ test("failed skills reload keeps Setup locked and retry unlocks Phases", async (
     }, {
         setup: { skillsReloaded: false },
         reload: async () => (++attempts === 1
-            ? { errors: ["fixture reload failure"], warnings: [] }
+            ? { errors: ["Failed to load skill '.github/skills/speckit-plan/SKILL.md': fixture reload failure"], warnings: [] }
             : { errors: [], warnings: [] }),
     });
 });

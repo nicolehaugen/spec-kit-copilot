@@ -413,7 +413,9 @@ test("failed reload retains installed truth, composes once, and can be retried w
     const deps = { command: f.command,
         session: { rpc: { skills: { reload: async () => {
             attempts++;
-            return { errors: attempts === 1 ? ["reload failure"] : [], warnings: [] };
+            return { errors: attempts === 1
+                ? ["Failed to load skill '.github/skills/speckit-sample/SKILL.md': reload failure"]
+                : [], warnings: [] };
         } } } },
         finish: async (_inst, options) => {
             compositions++;

@@ -122,7 +122,8 @@ templates through Specify, and passes the complete typed inventory of names,
 paths, asset kinds and replacement strategies directly to native `open_canvas`
 through `session.rpc.tools.execute({name,arguments})`. The model carries only a
 bounded launch reference; it does not write or reproduce the full handoff or
-open input. Native invocation, canvas snapshots, session metadata, and skill
+open input. Reload errors attributed to Spec Kit skills block launch; errors
+from unrelated skills do not. Native invocation, canvas snapshots, session metadata, and skill
 reload must be available. The package must include `scripts/verify-launch.mjs`,
 run with external `node` rather than the embedded Copilot host executable;
 missing capabilities or verifier are explicit failures, with no legacy manual

@@ -560,14 +560,24 @@ test("finalize requires install, successful reload, and a scripted verifier", as
 });
 
 test("failed reload remains explicit and retryable without running finalize", async (t) => {
-    const f = await fixture(t, { deps: { reloadSkills: async () => ({ errors: ["reload failed"], warnings: [] }) } });
+    const f = await fixture(t, { deps: { reloadSkills: async () => ({ errors: ["Failed to load skill '.github/skills/speckit-plan/SKILL.md': reload failed"], warnings: [] }) } });
     await f.run(f.request("install"));
     assert.equal((await f.run(f.request("finalize-open"))).error.code, "designer_skill_reload_failed");
     assert.deepEqual(f.calls, ["install"]);
     const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
     assert.equal(record.skillsReloaded, false);
-    assert.deepEqual(record.reload.errors, ["reload failed"]);
+    assert.deepEqual(record.reload.errors, ["Failed to load skill '.github/skills/speckit-plan/SKILL.md': reload failed"]);
     assert.ok(f.errors.length);
+});
+
+test("unrelated skill reload errors do not block Designer launch", async (t) => {
+    const errors = ["Failed to load skill '.claude/skills/custom-review/SKILL.md': invalid frontmatter"];
+    const f = await fixture(t, { deps: { reloadSkills: async () => ({ errors, warnings: [] }) } });
+    await f.run(f.request("install"));
+    assert.equal((await f.run(f.request("finalize-open"))).status, "shell-opened");
+    const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
+    assert.equal(record.skillsReloaded, true);
+    assert.deepEqual(record.reload.errors, errors);
 });
 
 test("reload timeout retries reuse the pending RPC and preserve its late result", async (t) => {
@@ -670,7 +680,7 @@ test("secondary logging failures cannot mask bootstrap failures or block retries
     const f = await fixture(t);
     const logError = new Error("Session closed while logging");
     const run = createDesignerBootstrap({ ...f.deps,
-        reloadSkills: async () => ({ errors: ["Host skill reload failed"], warnings: [] }),
+        reloadSkills: async () => ({ errors: ["Failed to load skill '.github/skills/speckit-plan/SKILL.md': Host skill reload failed"], warnings: [] }),
         log: async () => { throw logError; },
     });
     const invalid = await run({ schemaVersion: 2 });
@@ -684,7 +694,7 @@ test("secondary logging failures cannot mask bootstrap failures or block retries
     assert.match(failure.error.message, /Host skill reload failed/);
     assert.doesNotThrow(() => validateBootstrapOutput(failure));
     const record = await readBootstrapRecord(f.context.root, f.handoff.handoffId);
-    assert.deepEqual(record.reload.errors, ["Host skill reload failed"]);
+    assert.deepEqual(record.reload.errors, ["Failed to load skill '.github/skills/speckit-plan/SKILL.md': Host skill reload failed"]);
     assert.deepEqual(record.error, failure.error);
     assert.equal(logged.length, 2);
     assert.match(logged[1][0], /Host skill reload failed/);

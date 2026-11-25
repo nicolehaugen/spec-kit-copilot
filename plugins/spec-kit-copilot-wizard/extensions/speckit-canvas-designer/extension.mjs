@@ -9,7 +9,7 @@ import { freshDesignerSettings } from "./settings.mjs";
 import { designerOpenInputSchema, validateDesignerOpenInput } from "./contracts/host-open.mjs";
 import { loadLastOpen, replaceLastOpen } from "./open-state.mjs";
 import { fetchSessionRepoPath } from "../speckit-wizard-canvas/env/workspace.mjs";
-import { createDesignerBootstrap } from "./bootstrap.mjs";
+import { createDesignerBootstrap, specKitSkillReloadErrors } from "./bootstrap.mjs";
 import { assertBootstrapCapabilities, BOOTSTRAP_TOOL, bootstrapInputSchema,
     bootstrapSessionContext } from "./contracts/bootstrap.mjs";
 
@@ -63,8 +63,9 @@ async function reloadSessionSkills() {
     for (const warning of diagnostics.warnings) {
         await session.log(warning, { level: "warning" });
     }
-    if (diagnostics.errors.length) {
-        throw new Error(`Session skill reload failed: ${diagnostics.errors.join("; ")}`);
+    const blocking = await specKitSkillReloadErrors(diagnostics.errors);
+    if (blocking.length) {
+        throw new Error(`Session skill reload failed: ${blocking.join("; ")}`);
     }
     return diagnostics;
 }

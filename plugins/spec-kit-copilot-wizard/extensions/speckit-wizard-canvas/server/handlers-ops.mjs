@@ -5,6 +5,7 @@
 import { commandId, effectiveSource, readEvidenceCache, writeEvidenceCache } from "../artifact-evidence.mjs";
 import { normalizeAgentArtifactEntry, validateAgentArtifactEvidence } from "../contracts/agent-artifacts.mjs";
 import { assertReplyRunId, ReplyRunError } from "../contracts/agent-replies.mjs";
+import { specKitSkillReloadErrors } from "../contracts/skill-reload.mjs";
 import {
     failOutputInference,
     findOutputInferenceWorker,
@@ -272,6 +273,8 @@ export async function handleSkipDefaults(res, body, { broadcast, getInstance }) 
 // Contract (identical for every caller):
 //   • Always runs a fresh `session.rpc.skills.reload()` — no caching, no
 //     skipping.
+//   • Success means no reload error names a Spec Kit (`speckit-*`) skill;
+//     errors from unrelated skills are counted but never block setup.
 //   • On success, writes `setup.skillsReloaded: true` if not already true.
 //     Never writes false. So auto-triggered reloads (install-set watcher,
 //     agent canvas action) can only ever HELP by flipping the flag on;
@@ -324,7 +327,8 @@ export async function runSkillsReload({ session, broadcast, getInstance }) {
         const diag = await session.rpc.skills.reload();
         const errors = Array.isArray(diag?.errors) ? diag.errors.length : 0;
         const warnings = Array.isArray(diag?.warnings) ? diag.warnings.length : 0;
-        const ok = errors === 0;
+        // Errors from unrelated (non-speckit) skills never block setup.
+        const ok = specKitSkillReloadErrors(diag?.errors).length === 0;
         const at = new Date().toISOString();
         inst.skillsReload = { ok, errors, warnings, at };
         if (ok) await persistOnSuccess();
