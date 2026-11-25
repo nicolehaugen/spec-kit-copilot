@@ -10,8 +10,37 @@ import { snapshot } from "./snapshot.mjs";
 import { listInstalledPresets } from "../catalog/presets.mjs";
 import { listInstalledExtensions } from "../catalog/extensions.mjs";
 import { runSpecify } from "../server/specify-command.mjs";
+import { makeCatalogInstallSource, normalizeCatalogInstallSources } from "../contracts/catalog-install-source.mjs";
+import { applyPatch, readState, writeState } from "../state/store.mjs";
+import { fsDeps } from "./instances.mjs";
 
 const mutations = new Set();
+
+async function persistCatalogInstallSources(inst, inventories, operation, changed) {
+    const read = await readState(inst.workspacePath, fsDeps);
+    if (read.warnings.length) {
+        throw new Error(`Cannot persist Wizard install provenance: ${read.warnings.join("; ")}`);
+    }
+    const existing = normalizeCatalogInstallSources(read.state.catalogInstallSources);
+    const next = existing.filter((record) =>
+        inventories[record.kind].some((item) =>
+            item.id === record.installedId && item.version === record.version));
+    if (operation?.request.action === "install" && changed) {
+        const kind = operation.request.group;
+        const installed = inventories[kind].find((item) => item.id === operation.id);
+        if (installed) {
+            const record = makeCatalogInstallSource(kind,
+                operation.selected, installed, operation.request.confirmed === true
+                    || operation.selected.installAllowed !== false);
+            next.splice(0, next.length, ...next.filter((item) =>
+                item.kind !== kind || item.installedId !== installed.id), record);
+        }
+    }
+    if (JSON.stringify(existing) === JSON.stringify(next)) return;
+    const state = applyPatch(read.state, { catalogInstallSources: next });
+    await writeState(inst.workspacePath, state, fsDeps);
+    inst.state = state;
+}
 
 export function reconcileCatalogInventories(inst, inventories, installed, orders = {}) {
     for (const [group, field] of Object.entries(CATALOG_FIELDS)) {
@@ -126,6 +155,7 @@ export async function runCatalogOperation(inst, kind, payload, {
                     { status: 502, stage: "inventory", changed, cause: error });
             }
             reconcileCatalogInventories(inst, after, installed, orders);
+            await persistCatalogInstallSources(inst, after, operation, changed);
             // Seed from actual inventories, not a catalog's first-observation cache.
             for (const group of ["preset", "extension"]) {
                 inst[group === "preset" ? "_lastInstalledPresetIds" : "_lastInstalledExtensionIds"]

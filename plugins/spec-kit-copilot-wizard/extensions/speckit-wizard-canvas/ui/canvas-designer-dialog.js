@@ -22,7 +22,9 @@ let deselectedMembers = new Set();
 let restoreFocus = null;
 let inspecting = 0;
 let errorMessage = "";
+let warningMessage = "";
 let processing = false;
+let launchAccepted = false;
 let pendingInspections = new Set();
 // Hosted checkboxes for the required designer extension, forced checked and
 // disabled at render time; `updateLaunch` re-asserts `disabled` here so no
@@ -71,6 +73,10 @@ export async function submitDesignerLaunch(snapshot, checked, fetcher = fetch, l
     }
     const result = await response.json();
     if (result?.queued !== true) throw new Error("Wizard did not queue the Designer session.");
+    if (result.warnings !== undefined && (!Array.isArray(result.warnings)
+        || result.warnings.some((warning) => typeof warning !== "string" || warning.length > 1000))) {
+        throw new Error("Wizard returned invalid Designer warnings.");
+    }
     return result;
 }
 
@@ -80,12 +86,15 @@ function updateLaunch(root) {
     const ready = ["presets", "extensions", "bundles"].every((kind) =>
         Array.isArray(state.snapshot?.catalog?.[kind]))
         && typeof state.snapshot.catalog.designerFingerprint === "string";
-    submit.disabled = Boolean(processing || confirming || inspecting || !ready);
+    submit.disabled = Boolean(processing || confirming || inspecting || launchAccepted || !ready);
     submit.setAttribute("aria-busy", String(processing));
-    submit.textContent = processing ? "Queuing Designer session…" : "Launch designer";
+    submit.textContent = processing ? "Queuing Designer session…"
+        : launchAccepted ? "Designer queued" : "Launch designer";
     root.querySelectorAll("[data-designer-kind], [data-designer-tab], .wizard-modal-close, .wizard-modal-cancel")
         .forEach((element) => {
-            element.disabled = Boolean(processing || pendingInspections.has(element)) || requiredInputs.has(element);
+            const dismiss = element.matches(".wizard-modal-close, .wizard-modal-cancel");
+            element.disabled = Boolean(processing || (!dismiss && launchAccepted)
+                || pendingInspections.has(element)) || requiredInputs.has(element);
         });
     // Local development controls (add/path/checkbox/remove) are a separate
     // additive section that otherwise has no busy guard: without this, a
@@ -98,12 +107,15 @@ function updateLaunch(root) {
     // hosted behavior.
     root.querySelectorAll("[data-designer-local-kind], [data-designer-local-add], [data-designer-local-path]")
         .forEach((element) => {
-            element.disabled = Boolean(processing || inspecting);
+            element.disabled = Boolean(processing || inspecting || launchAccepted);
         });
     const error = root.querySelector(".designer-error");
     error.textContent = errorMessage || (!ready ? "Wait for the catalog to load before launching." : "");
     error.setAttribute("role", "alert");
     error.hidden = !error.textContent;
+    const warning = root.querySelector(".designer-warning");
+    warning.textContent = warningMessage;
+    warning.hidden = !warningMessage;
 }
 
 export function canvasDesignEntries(snapshot, kind) {
@@ -169,6 +181,8 @@ function closeDialog() {
     bundleMembers = new Map();
     deselectedMembers = new Set();
     errorMessage = "";
+    warningMessage = "";
+    launchAccepted = false;
     pendingInspections = new Set();
     inspecting = 0;
     localItems = { presets: [], extensions: [] };
@@ -378,6 +392,8 @@ export function openCanvasDesignerDialog() {
     bundleMembers = new Map();
     deselectedMembers = new Set();
     errorMessage = "";
+    warningMessage = "";
+    launchAccepted = false;
     pendingInspections = new Set();
     localItems = { presets: [], extensions: [] };
     requiredInputs = new Set();
@@ -395,6 +411,7 @@ export function openCanvasDesignerDialog() {
                 <p class="wizard-modal-desc" id="designer-description">Select presets, extensions, or bundles to customize the canvas designer's settings and generation behavior. Your selections will be installed in a separate designer session, leaving the wizard's environment unchanged. Missing output information is prepared in that session before Designer opens.</p>
                 <p class="wizard-modal-desc">Choose from the available catalogs.</p>
                 <p class="designer-error" role="alert" hidden></p>
+                <p class="designer-warning" role="status" aria-live="polite" hidden></p>
                 <nav class="subtabs designer-tabs" role="tablist" aria-label="Design customization type">
                     ${KINDS.map(([kind, label]) => `<button type="button" id="designer-tab-${kind}" class="subtab${kind === "presets" ? " is-active" : ""}" role="tab" aria-selected="${kind === "presets"}" aria-controls="designer-panel-${kind}" tabindex="${kind === "presets" ? "0" : "-1"}" data-designer-tab="${kind}">${label}</button>`).join("")}
                 </nav>
@@ -555,10 +572,11 @@ export function openCanvasDesignerDialog() {
         processing = true;
         errorMessage = "";
         updateLaunch(root);
-        let accepted = false;
+        let accepted = false, warnings = [];
         try {
-            await submitDesignerLaunch(snapshot, checked, fetch, checkedLocalSelections());
+            const result = await submitDesignerLaunch(snapshot, checked, fetch, checkedLocalSelections());
             if (selections !== dialogSelections) return;
+            warnings = result.warnings ?? [];
             accepted = true;
         } catch (error) {
             if (selections !== dialogSelections) return;
@@ -566,7 +584,12 @@ export function openCanvasDesignerDialog() {
         } finally {
             processing = false;
             if (selections === dialogSelections) {
-                if (accepted) closeDialog();
+                if (accepted && !warnings.length) closeDialog();
+                else if (accepted) {
+                    launchAccepted = true;
+                    warningMessage = warnings.join(" ");
+                    updateLaunch(root);
+                }
                 else updateLaunch(root);
             }
         }

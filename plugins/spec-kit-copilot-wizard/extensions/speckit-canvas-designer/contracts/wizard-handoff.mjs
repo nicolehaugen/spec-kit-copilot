@@ -101,6 +101,41 @@ function safeUrl(value) {
     } catch { return false; }
 }
 
+function validCatalogInstallWarning(warning) {
+    return !!warning && typeof warning === "object" && !Array.isArray(warning)
+        && Object.keys(warning).sort().join() === "id,kind,message,reason"
+        && ["preset", "extension", "bundle"].includes(warning.kind)
+        && PACKAGE.test(warning.id ?? "")
+        && ["local", "unverified"].includes(warning.reason)
+        && typeof warning.message === "string" && warning.message.length <= 500;
+}
+
+function validCatalogInstallSource(record) {
+    if (!record || typeof record !== "object" || Array.isArray(record)
+        || !["approved,bundleYml,catalogFingerprint,catalogId,downloadUrl,installedId,kind,source,version",
+            "approved,catalogFingerprint,catalogId,downloadUrl,installedId,kind,source,version"]
+            .includes(Object.keys(record).sort().join())
+        || !["preset", "extension", "bundle"].includes(record.kind)
+        || !PACKAGE.test(record.catalogId ?? "") || !PACKAGE.test(record.installedId ?? "")
+        || typeof record.version !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/.test(record.version)
+        || !PACKAGE.test(record.source ?? "") || record.source === "local"
+        || record.approved !== true || !safeUrl(record.downloadUrl)
+        || (record.kind !== "bundle" && record.bundleYml !== undefined)
+        || (record.bundleYml !== undefined
+            && (typeof record.bundleYml !== "string" || !record.bundleYml.length
+                || record.bundleYml.length > 16384))
+        || (record.source !== "default" && record.downloadUrl === null
+            && record.bundleYml === undefined)
+        || typeof record.catalogFingerprint !== "string"
+        || !/^[a-f0-9]{64}$/.test(record.catalogFingerprint)) return false;
+    const identity = {
+        kind: record.kind, catalogId: record.catalogId, installedId: record.installedId,
+        version: record.version, source: record.source, downloadUrl: record.downloadUrl,
+        ...(record.bundleYml !== undefined ? { bundleYml: record.bundleYml } : {}),
+    };
+    return record.catalogFingerprint === createHash("sha256").update(JSON.stringify(identity)).digest("hex");
+}
+
 function validInstallLocators(workflow) {
     if (workflow.installLocators === undefined) return true;
     if (!record(workflow.installLocators)
@@ -115,6 +150,9 @@ function validInstallLocators(workflow) {
                 return kind !== "bundles"
                     && Object.keys(item).sort().join() === "installedId,path,source"
                     && typeof item.path === "string" && LOCAL_PATH.test(item.path);
+            }
+            if (item.source === "unverified") {
+                return Object.keys(item).sort().join() === "installedId,source";
             }
             if (item.source === "bundle") {
                 return kind !== "bundles"
@@ -139,9 +177,12 @@ function validRuntimeSetup(workflow) {
     const setup = workflow.runtimeSetup;
     if (setup === undefined) return true;
     if (!workflow.installLocators || !record(setup)
-        || Object.keys(setup).sort().join() !== "bundles,extensions,presets"
+        || !["bundles,extensions,presets", "bundles,extensions,presets,warnings"]
+            .includes(Object.keys(setup).sort().join())
         || !Array.isArray(setup.bundles)
-        || setup.bundles.length !== 0) return false;
+        || setup.bundles.length !== 0
+        || (setup.warnings !== undefined && (!Array.isArray(setup.warnings)
+            || setup.warnings.length > 120 || !setup.warnings.every(validCatalogInstallWarning)))) return false;
     return LOCAL_KINDS.every((kind) => {
         if (!Array.isArray(setup[kind]) || setup[kind].length > workflow.installed[kind].length) {
             return false;
@@ -162,8 +203,30 @@ function validRuntimeSetup(workflow) {
                     && installed.path !== entry.locator.path)) {
                 return false;
             }
+            if (entry.locator.source === "unverified") return false;
             return JSON.stringify(entry.locator) === JSON.stringify(locator);
         });
+    });
+}
+
+function validInstallEvidence(workflow) {
+    if (workflow.installEvidence === undefined) return true;
+    if (!Array.isArray(workflow.installEvidence) || workflow.installEvidence.length > 120) return false;
+    const seen = new Set();
+    return workflow.installEvidence.every((record) => {
+        if (!validCatalogInstallSource(record)) return false;
+        const key = `${record.kind}:${record.installedId}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        const kind = `${record.kind}s`;
+        const installed = workflow.installed?.[kind]?.find((item) =>
+            item.id === record.installedId && item.version === record.version);
+        const locator = workflow.installLocators?.[kind]?.find((item) =>
+            item.installedId === record.installedId);
+        return !!installed && !!locator && locator.source === record.source
+            && locator.catalogId === record.catalogId
+            && locator.downloadUrl === record.downloadUrl
+            && locator.bundleYml === record.bundleYml;
     });
 }
 
@@ -214,7 +277,8 @@ export function validateHandoff(handoff, id) {
         || ![1, 2].includes(handoff.schemaVersion) || handoff.handoffId !== id
         || !record(handoff.workflow)
         || Object.keys(handoff.workflow).some((key) =>
-            !["selectedPhases", "phaseDescriptions", "outputEvidence", "installed", "installLocators", "runtimeSetup",
+            !["selectedPhases", "phaseDescriptions", "outputEvidence", "installed", "installLocators",
+                "installEvidence", "runtimeSetup",
                 ...(handoff.schemaVersion === 2 ? ["pendingOutputs"] : [])].includes(key))
         || !Array.isArray(handoff.workflow.selectedPhases)
         || handoff.workflow.selectedPhases.length > 30
@@ -258,6 +322,7 @@ export function validateHandoff(handoff, id) {
                         || typeof item.version !== "string" || !item.version || item.version.length > 64))))
         || (handoff.workflow.installLocators !== undefined
             && (!handoff.workflow.installed || !validInstallLocators(handoff.workflow)))
+        || !validInstallEvidence(handoff.workflow)
         || !record(handoff.selections)
         || Object.keys(handoff.selections).some((kind) => !KINDS.includes(kind))
         || KINDS.some((kind) => !Array.isArray(handoff.selections[kind])

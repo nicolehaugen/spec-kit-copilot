@@ -15,7 +15,16 @@ const STATUS_PROBE_TTL_MS = 3000;
 export function validateRuntimeSetup(recipe) {
     if (recipe === undefined) return true;
     if (!recipe || typeof recipe !== "object" || Array.isArray(recipe)
-        || Object.keys(recipe).sort().join() !== "bundles,extensions,presets"
+        || !["bundles,extensions,presets", "bundles,extensions,presets,warnings"]
+            .includes(Object.keys(recipe).sort().join())
+        || (recipe.warnings !== undefined && (!Array.isArray(recipe.warnings)
+            || recipe.warnings.length > 120 || recipe.warnings.some((warning) =>
+                !warning || typeof warning !== "object" || Array.isArray(warning)
+                || Object.keys(warning).sort().join() !== "id,kind,message,reason"
+                || !["preset", "extension", "bundle"].includes(warning.kind)
+                || !idPattern.test(warning.id ?? "")
+                || !["local", "unverified"].includes(warning.reason)
+                || typeof warning.message !== "string" || warning.message.length > 500)))
         || !Array.isArray(recipe.bundles) || recipe.bundles.length !== 0) return false;
     return ["presets", "extensions"].every((kind) => Array.isArray(recipe[kind])
         && recipe[kind].length <= 40

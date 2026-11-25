@@ -13,11 +13,13 @@ import { createHandler } from "../server.mjs";
 import { buildDesignerHandoff, buildDesignerLaunchPrompt,
     checkDesignerProvider, DESIGNER_EXTENSION_ID, designerPhaseOutputs, enableDesignerProvider,
     normalizeInstalledBundles, normalizeInstalledWorkflowInventory,
-    quoteInstallUrl, readInstalledWorkflowInventory, resolveInstalledBundleSources, validateDesignerSelections,
+    quoteInstallUrl, readInstalledWorkflowInventory, validateDesignerSelections,
     validateLocalDesignerSelections } from "../server/handlers-designer.mjs";
 import { fingerprint, HANDOFF_LIMIT, readHandoff, validateHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerCatalogFingerprint } from "../catalog/designer-fingerprint.mjs";
-import { buildPortableRuntimeSetup, resolveRuntimeInstallLocators } from "../server/runtime-provenance.mjs";
+import { buildPortableRuntimeSetup, resolveRuntimeInstallLocators,
+    verifiedCatalogInstallEvidence } from "../server/runtime-provenance.mjs";
+import { makeCatalogInstallSource } from "../contracts/catalog-install-source.mjs";
 import { prepareHandoff, preflight, verifyHostedCanvasDesign, verifyLocalInstall } from "../server/designer-launch-check.mjs";
 import { buildAugmentedPath } from "../env/resolve-path.mjs";
 import { attachOutputEvidence } from "../canvas-runtime/output-availability.mjs";
@@ -270,6 +272,20 @@ test("empty selections stage a complete handoff and queue only a compact referen
     assert.equal((await otherProject.post(request())).statusCode, 202);
 });
 
+test("unverifiable installed sources warn but still queue the Designer launch", async () => {
+    const installed = { presets: [{ id: "mystery-preset", version: "1.0.0",
+        priority: 1, enabled: true, source: "local" }], extensions: [], bundles: [] };
+    const { post, sent } = fixture({ getInstalledWorkflow: async () => installed });
+    const response = await post(request());
+    assert.equal(response.statusCode, 202);
+    assert.equal(response.body.queued, true);
+    assert.match(response.body.warnings[0],
+        /Can't verify preset 'mystery-preset' source.*Install it via the Wizard.*nonfunctional/);
+    assert.deepEqual(sent[0].handoff.workflow.runtimeSetup.warnings.map(({ kind, id }) => ({ kind, id })),
+        [{ kind: "preset", id: "mystery-preset" }]);
+    assert.match(sent[0].prompt, /Runtime package warnings: Can't verify preset 'mystery-preset' source/);
+});
+
 test("selected catalog entries are validated and normalized from the server's catalog", async () => {
     const selection = { presets: [{ id: "theme", source: "copilot", approved: true }],
         extensions: [], bundles: [] };
@@ -449,7 +465,7 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         const sources = { presets: [
             { id: "pirate", installedId: "pirate-full-preset", version: "1.0.0",
                 source: "community", downloadUrl: "https://example.org/pirate.zip",
-                installAllowed: false },
+                installAllowed: true },
             { id: "lean", installedId: "lean", version: "1.0.0",
                 source: "default", downloadUrl: null },
         ], extensions: [], bundles: [] };
@@ -468,44 +484,65 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         }, handoff.handoffId), /fingerprint mismatch/);
     });
 
-    test("runtime provenance rejects missing, ambiguous, and version-drifted sources", () => {
+    test("runtime provenance warns for missing, ambiguous, and version-drifted sources", () => {
         const installed = { presets: [{ id: "pirate-full-preset", version: "1.0.0",
             priority: 10, enabled: true, source: "community" }], extensions: [], bundles: [] };
         const pirate = { id: "pirate", installedId: "pirate-full-preset", version: "1.0.0",
             source: "community", downloadUrl: "https://example.org/pirate.zip" };
         const sources = { presets: [pirate], extensions: [], bundles: [] };
-        assert.throws(() => resolveRuntimeInstallLocators(installed, empty),
-            /Cannot identify a unique approved install source/);
-        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, empty).presets,
+            [{ installedId: "pirate-full-preset", source: "unverified" }]);
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, {
             ...sources, presets: [pirate, { ...pirate, id: "other" }],
-        }), /Cannot identify a unique approved install source/);
-        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+        }).presets, [{ installedId: "pirate-full-preset", source: "unverified" }]);
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, {
             ...sources, presets: [{ ...pirate, version: "1.0.1" }],
-        }), /Cannot identify a unique approved install source/);
-        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+        }).presets, [{ installedId: "pirate-full-preset", source: "unverified" }]);
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, {
             ...sources, presets: [{ ...pirate, downloadUrl: null }],
-        }), /no approved download URL/);
-        assert.throws(() => resolveRuntimeInstallLocators({
+        }).presets, [{ installedId: "pirate-full-preset", source: "unverified" }]);
+        assert.deepEqual(resolveRuntimeInstallLocators({
             ...installed, presets: [{ ...installed.presets[0], source: "copilot" }],
-        }, sources), /Cannot identify a unique approved install source/);
+        }, sources).presets, [{ installedId: "pirate-full-preset", source: "unverified" }]);
         assert.deepEqual(resolveRuntimeInstallLocators({
             ...installed, presets: [{ ...installed.presets[0], source: "local" }],
-        }, sources, undefined, process.cwd()).presets, [{
-            installedId: "pirate-full-preset", source: "local",
-            path: join(process.cwd(), ".specify", "presets", "pirate-full-preset"),
-        }]);
-        const localLocators = resolveRuntimeInstallLocators({
+        }, sources).presets, [{ installedId: "pirate-full-preset", source: "unverified" }]);
+        const explicitLocalLocators = resolveRuntimeInstallLocators({
             ...installed, presets: [{ ...installed.presets[0], source: "local" }],
-        }, sources, undefined, process.cwd());
+        }, sources, { presets: [{ id: "pirate-full-preset", path: LOCAL_PRESET_PATH }] });
+        assert.deepEqual(explicitLocalLocators.presets, [{
+            installedId: "pirate-full-preset", source: "local", path: LOCAL_PRESET_PATH,
+        }]);
         const prompt = buildDesignerLaunchPrompt(buildDesignerHandoff(snapshot, empty,
             undefined, { ...installed, presets: [{ ...installed.presets[0], source: "local",
-                path: join(process.cwd(), ".specify", "presets", "pirate-full-preset") }] },
-            randomUUID(), localLocators));
+                path: LOCAL_PRESET_PATH }] }, randomUUID(), explicitLocalLocators));
         assert.match(prompt, /specify preset add --dev <path>/);
         assert.match(prompt, /not a catalog match/);
-        assert.throws(() => resolveRuntimeInstallLocators({
-            ...installed, presets: [{ ...installed.presets[0], source: "local" }],
-        }, sources), /Cannot verify the installed source/);
+        const unresolved = buildDesignerHandoff(snapshot, empty, undefined, installed,
+            randomUUID(), resolveRuntimeInstallLocators(installed, empty));
+        assert.deepEqual(unresolved.workflow.runtimeSetup.warnings.map(({ kind, id }) => ({ kind, id })),
+            [{ kind: "preset", id: "pirate-full-preset" }]);
+    });
+
+    test("Wizard catalog install evidence resolves pathless local markers and is revalidated", () => {
+        const installedItem = { id: "theme-installed", version: "1.0.0",
+            priority: 2, enabled: true, source: "local" };
+        const catalogEntry = { id: "theme-alias", installedId: installedItem.id,
+            source: "community", version: installedItem.version,
+            downloadUrl: "https://example.org/theme.zip" };
+        const record = makeCatalogInstallSource("preset", catalogEntry, installedItem, true);
+        const inventory = { presets: [installedItem], extensions: [], bundles: [] };
+        const currentCatalog = { presets: [catalogEntry], extensions: [], bundles: [] };
+        const locators = resolveRuntimeInstallLocators(inventory, currentCatalog,
+            undefined, undefined, [], [record]);
+        assert.deepEqual(locators.presets, [{ installedId: installedItem.id,
+            source: "community", catalogId: "theme-alias", downloadUrl: catalogEntry.downloadUrl }]);
+        assert.deepEqual(verifiedCatalogInstallEvidence(inventory, locators, currentCatalog, [record]), [record]);
+        const changedCatalog = { ...currentCatalog, presets: [{ ...catalogEntry,
+            downloadUrl: "https://example.org/changed.zip" }] };
+        assert.deepEqual(resolveRuntimeInstallLocators(inventory, changedCatalog,
+            undefined, undefined, [], [record]).presets,
+        [{ installedId: installedItem.id, source: "unverified" }]);
     });
 
     test("bundle membership does not override a standalone component's installed source", () => {
@@ -530,9 +567,8 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         }, { presets: [], extensions: [], bundles: [{ id: "kit", installedId: "kit",
             source: "community", version: "2.0.0",
             downloadUrl: "https://example.org/kit.zip" }] }, undefined,
-        process.cwd()).presets, [{ installedId: "member", source: "local",
-            path: join(process.cwd(), ".specify", "presets", "member") }]);
-        assert.equal(locators.bundles[0].catalogId, "kit");
+        process.cwd()).presets, [{ installedId: "member", source: "unverified" }]);
+        assert.deepEqual(locators.bundles, [{ installedId: "kit", source: "unverified" }]);
         assert.deepEqual(resolveRuntimeInstallLocators({
             ...installed, bundles: [{ id: "kit", version: "2.0.0" }],
         }, {
@@ -540,11 +576,10 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
                 version: "1.0.0", downloadUrl: "https://example.org/member.zip" }],
             extensions: [], bundles: [{ id: "kit", installedId: "kit",
                 source: "community", version: "2.0.0", downloadUrl: "https://example.org/kit.zip" }],
-        }).bundles, [{ installedId: "kit", source: "community",
-            catalogId: "kit", downloadUrl: "https://example.org/kit.zip" }]);
+        }).bundles, [{ installedId: "kit", source: "unverified" }]);
     });
 
-    await test("installed bundles use unique catalog matches or an explicit selection", async () => {
+    await test("installed bundles require verified Wizard provenance", async () => {
         const installed = { presets: [], extensions: [], bundles: [{ id: "kit", version: "2.0.0" }] };
         const community = { id: "kit", installedId: "kit", source: "community",
             version: "2.0.0", tags: ["canvas-design"],
@@ -558,22 +593,24 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
         });
         assert.equal((await post(request())).statusCode, 202);
         const handoff = sent[0].handoff;
-        assert.deepEqual(handoff.workflow.installLocators.bundles, [
-            { installedId: "kit", source: "community", catalogId: "kit",
-                downloadUrl: "https://example.org/kit.zip" },
-        ]);
+        assert.deepEqual(handoff.workflow.installLocators.bundles,
+            [{ installedId: "kit", source: "unverified" }]);
+        assert.match(handoff.workflow.runtimeSetup.warnings[0].message,
+            /Can't verify bundle 'kit' source/);
         const ambiguous = { ...sources, bundles: [community, alternate] };
-        assert.throws(() => resolveRuntimeInstallLocators(installed, ambiguous),
-            /unique catalog source/);
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, ambiguous).bundles,
+            [{ installedId: "kit", source: "unverified" }]);
+        const record = makeCatalogInstallSource("bundle", community, installed.bundles[0], true);
         assert.deepEqual(resolveRuntimeInstallLocators(installed, ambiguous, undefined,
-            undefined, [{ id: "kit", source: "community" }]).bundles,
-        handoff.workflow.installLocators.bundles);
-        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+            undefined, [], [record]).bundles,
+        [{ installedId: "kit", source: "community", catalogId: "kit",
+            downloadUrl: "https://example.org/kit.zip" }]);
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, {
             ...sources, bundles: [{ ...community, version: "2.0.1" }],
-        }), /unique catalog source/);
-        assert.throws(() => resolveRuntimeInstallLocators(installed, {
+        }).bundles, [{ installedId: "kit", source: "unverified" }]);
+        assert.deepEqual(resolveRuntimeInstallLocators(installed, {
             ...sources, bundles: [{ ...community, downloadUrl: null }],
-        }), /no approved download URL/);
+        }).bundles, [{ installedId: "kit", source: "unverified" }]);
     });
 
     await test("runtime source drift during readiness prevents Designer dispatch", async () => {
@@ -641,17 +678,11 @@ test("Designer handoff keeps runtime packages separate from Designer-only select
     }, handoff.handoffId), /fingerprint mismatch/);
 });
 
-test("runtime bundles reuse Wizard catalog locators and reject missing or ambiguous sources before dispatch", async () => {
+test("runtime bundles without Wizard provenance warn and continue to dispatch", async () => {
     const bundles = [{ id: "community-kit", version: "1.0.0" }];
     const entry = { id: "community-kit", installedId: "community-kit",
         version: "1.0.0", source: "community",
         downloadUrl: "https://example.org/community-kit.zip" };
-    assert.deepEqual(resolveInstalledBundleSources(bundles, [entry]),
-        [{ ...bundles[0], source: "community", downloadUrl: entry.downloadUrl }]);
-    assert.deepEqual(resolveInstalledBundleSources([{ id: "built-in", version: "2.0.0" }],
-        [{ id: "catalog-alias", installedId: "built-in", version: "2.0.0", source: "default" }]),
-    [{ id: "built-in", version: "2.0.0", source: "default",
-        downloadUrl: null, catalogId: "catalog-alias" }]);
     const runtime = fixture({ getInstalledWorkflow: async () => ({
         ...empty, bundles,
     }) });
@@ -660,19 +691,23 @@ test("runtime bundles reuse Wizard catalog locators and reject missing or ambigu
     const handoff = runtime.sent[0].handoff;
     assert.deepEqual(handoff.workflow.installed.bundles, bundles);
     assert.deepEqual(handoff.workflow.installLocators.bundles,
-        [{ installedId: "community-kit", source: "community",
-            catalogId: "community-kit", downloadUrl: entry.downloadUrl }]);
+        [{ installedId: "community-kit", source: "unverified" }]);
+    assert.match(handoff.workflow.runtimeSetup.warnings[0].message,
+        /Can't verify bundle 'community-kit' source/);
+    assert.match(buildDesignerLaunchPrompt(handoff),
+        /bundle locators are available only when Wizard install provenance was verified/);
     assert.match(runtime.sent[0].prompt, /stage:"install"/);
     for (const entries of [
         [], [entry, { ...entry, source: "default" }],
         [{ ...entry, downloadUrl: null }],
         [{ ...entry, downloadUrl: "http://example.org/unsafe.zip" }],
     ]) {
-        const blocked = fixture({ getInstalledWorkflow: async () => ({ ...empty, bundles }) });
-        blocked.setSnapshot({ ...snapshot, catalog: { ...catalog, bundles: entries } });
-        const response = await blocked.post(request());
-        assert.equal(response.statusCode, 422);
-        assert.equal(blocked.sent.length, 0);
+        const unverified = fixture({ getInstalledWorkflow: async () => ({ ...empty, bundles }) });
+        unverified.setSnapshot({ ...snapshot, catalog: { ...catalog, bundles: entries } });
+        const response = await unverified.post(request());
+        assert.equal(response.statusCode, 202);
+        assert.match(response.body.warnings[0], /Can't verify bundle 'community-kit' source/);
+        assert.equal(unverified.sent.length, 1);
     }
 });
 
@@ -702,7 +737,7 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
         const augmentedPath = await buildAugmentedPath();
         assert.ok(calls.every(({ env }) => env?.PATH === augmentedPath));
         assert.deepEqual(installed.presets, [{ id: "preset", version: "1.0.0",
-            priority: 1, enabled: true, source: "local", path: presetPath }]);
+            priority: 1, enabled: true, source: "local" }]);
         assert.deepEqual(installed.bundles, [{ id: "kit", version: "2.0.0" }]);
         const catalogInstalled = await readInstalledWorkflowInventory({
             workspacePath: path, catalog: { presets: [{ id: "preset", version: "1.0.0",
@@ -711,8 +746,7 @@ test("live CLI inventory is read from the Wizard checkout, including priorities"
             ? [{ id: "preset", version: "1.0.0", priority: 1, enabled: true,
                 source: { kind: "catalog", catalog: "community" } }] : []) }));
         assert.deepEqual(catalogInstalled.presets, [{ id: "preset", version: "1.0.0",
-            priority: 1, enabled: true, source: "community",
-            downloadUrl: "https://example.org/preset.zip" }]);
+            priority: 1, enabled: true, source: "community" }]);
         assert.deepEqual(normalizeInstalledWorkflowInventory({ presets: [{
             id: "local-preset", version: "1.0.0", priority: 1, enabled: true,
             source: { kind: "local" },
@@ -1480,15 +1514,20 @@ test("portable runtime setup excludes tagged packages, local design choices, and
         { id: "runtime-extension", version: "3.0.0", enabled: true, priority: 8,
             locator: { installedId: "runtime-extension", catalogId: "runtime-extension",
                 source: "default", downloadUrl: null } },
-    ], bundles: [] });
+    ], bundles: [], warnings: [{
+        kind: "bundle", id: "mixed-bundle", reason: "unverified",
+        message: "Can't verify bundle 'mixed-bundle' source. Install it via the Wizard and confirm it's Installed. Continuing may leave the generated canvas nonfunctional.",
+    }] });
     const handoff = buildDesignerHandoff({ ...snapshot, catalog: { ...sources,
         designerFingerprint: "catalog-v1" } }, empty, local, installed, randomUUID(), locators);
     assert.deepEqual(handoff.workflow.runtimeSetup, recipe);
-    assert.throws(() => buildPortableRuntimeSetup({
+    assert.deepEqual(buildPortableRuntimeSetup({
         ...installed, presets: [{ ...installed.presets[0], source: "local" }],
     }, { ...locators, presets: [{ installedId: "runtime-manifest", source: "local",
-        path: LOCAL_PRESET_PATH }, ...locators.presets.slice(1)] }, sources, empty, local),
-    /verified installed path is unavailable/);
+        path: LOCAL_PRESET_PATH }, ...locators.presets.slice(1)] }, sources, empty, local)
+        .warnings.map(({ kind, id, reason }) => ({ kind, id, reason })),
+    [{ kind: "preset", id: "runtime-manifest", reason: "local" },
+        { kind: "bundle", id: "mixed-bundle", reason: "unverified" }]);
     assert.deepEqual(validateHandoff(handoff, handoff.handoffId), handoff);
     const altered = structuredClone(handoff);
     altered.workflow.runtimeSetup.presets[0].priority = 9;

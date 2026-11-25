@@ -11,7 +11,8 @@ import { runCatalogOperation } from "../canvas-runtime/catalog-operations.mjs";
 import { dispatchKindPrompt } from "../canvas-runtime/dispatch.mjs";
 import { handlePrompt } from "../server/handlers-phase.mjs";
 import { createCatalogAddHandler } from "../canvas-runtime/actions/catalog.mjs";
-import { allInstances, getInstance, setSession } from "../canvas-runtime/instances.mjs";
+import { allInstances, fsDeps, getInstance, setSession } from "../canvas-runtime/instances.mjs";
+import { readState } from "../state/store.mjs";
 
 const item = (id = "sample", source = "default") => ({
     id, name: id, version: "1.0.0", enabled: true, priority: 10,
@@ -219,6 +220,29 @@ test("already satisfied installs are verified, and conflicts never remove or for
     await assert.rejects(mutateCatalogPackage(f.inst, "preset.install", { name: "sample" },
         { command: f.command }), /source/);
     assert.ok(f.calls.every(({ args }) => args[1] === "list"));
+});
+
+test("changed Wizard installs persist source provenance and removal prunes it", async (t) => {
+    const url = "https://example.org/sample.zip";
+    const f = await fixture(t, { source: "community", downloadUrl: url, allowed: false });
+    const command = async (project, args, ...rest) => {
+        const result = await f.command(project, args, ...rest);
+        if (args[1] === "add") f.inv.extension[0].source = { kind: "local" };
+        return result;
+    };
+    await runCatalogOperation(f.inst, "extension.install", {
+        name: "sample", source: "community", downloadUrl: url, confirmed: true,
+    }, { command, reload: async () => ({ ok: true }), finish: async () => ({ ok: true }) });
+    let state = await readState(f.root, fsDeps);
+    assert.deepEqual(state.state.catalogInstallSources.map(({ kind, catalogId, installedId, source }) =>
+        ({ kind, catalogId, installedId, source })), [{
+        kind: "extension", catalogId: "sample", installedId: "sample", source: "community",
+    }]);
+    await runCatalogOperation(f.inst, "extension.remove", { name: "sample" }, {
+        command, reload: async () => ({ ok: true }), finish: async () => ({ ok: true }),
+    });
+    state = await readState(f.root, fsDeps);
+    assert.deepEqual(state.state.catalogInstallSources, []);
 });
 
 test("verification resolves a catalog alias to the actual newly installed manifest ID", async (t) => {

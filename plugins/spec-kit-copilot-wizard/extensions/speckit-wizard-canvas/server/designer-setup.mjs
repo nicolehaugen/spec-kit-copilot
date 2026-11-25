@@ -11,6 +11,7 @@ import { readHandoff } from "../../speckit-canvas-designer/handoff.mjs";
 import { designerOpenInputSchema } from "../../speckit-canvas-designer/contracts/host-open.mjs";
 import { checkSchema } from "../../speckit-canvas-designer/contracts/external-design-contributions.mjs";
 import { normalizeInstalledWorkflowInventory } from "../contracts/specify-inventory.mjs";
+import { catalogInstallWarning } from "../contracts/catalog-install-source.mjs";
 import { specifySpawnOptions } from "../env/specify-invocation.mjs";
 import { runtimeSettings } from "../env/runtime-settings.mjs";
 import { prepareHandoff, preflight, verifyHostedCanvasDesign, verifyLocalInstall } from "./designer-launch-check.mjs";
@@ -225,7 +226,7 @@ async function inspectPackage(project, kind, item, command, warnings) {
         && listed.source !== "default") {
         throw new Error(`Installed ${kind} ${id} differs from the frozen default source`);
     }
-    if (item.locator.source !== "local" && listed.source !== "local"
+    if (item.locator.source !== "local" && item.locator.source !== "unverified" && listed.source !== "local"
         && listed.source !== item.locator.source) {
         throw new Error(`Installed ${kind} ${id} differs from the frozen catalog source`);
     }
@@ -328,6 +329,10 @@ async function installBundles(project, handoff, command, warnings, download) {
                 catalogId: selected.id, downloadUrl: selected.downloadUrl } });
     }
     for (const { bundle, selected, locator } of entries.values()) {
+        if (bundle && locator.source === "unverified") {
+            warnings.push(catalogInstallWarning("bundles", bundle.id).message);
+            continue;
+        }
         const before = selected && !bundle
             ? new Set((await inventory(project, "bundles", command)).map((entry) => entry.id)) : null;
         const source = await bundleSource(locator, download);
@@ -355,9 +360,17 @@ async function verifyRuntime(project, handoff, command, warnings) {
             const locator = locatorFor(handoff, kind, item);
             const local = handoff.localSelections?.[kind]?.find((entry) => entry.id === item.id);
             const found = actual.find((entry) => entry.id === item.id);
+            if (locator.source === "unverified") {
+                warnings.push(catalogInstallWarning(kind, item.id).message);
+                if (!found) {
+                    warnings.push(`Runtime ${kind.slice(0, -1)} ${item.id} was not installed because its source could not be verified.`);
+                    continue;
+                }
+            }
             if (!found || found.priority !== item.priority || found.enabled !== item.enabled
                 || (local && found.source !== "local")
-                || (!(kind === "extensions" && item.id === BASE) && !local && locator.source !== "local"
+                || (!(kind === "extensions" && item.id === BASE) && !local
+                    && locator.source !== "local" && locator.source !== "unverified"
                     && found.source !== "local" && found.source !== locator.source)) {
                 throw new Error(`Runtime ${kind} ${item.id} does not match the frozen installation`);
             }
@@ -374,6 +387,14 @@ async function verifyRuntime(project, handoff, command, warnings) {
     const bundles = await inventory(project, "bundles", command);
     for (const bundle of handoff.workflow.installed.bundles) {
         const actual = bundles.find((entry) => entry.id === bundle.id);
+        const locator = locatorFor(handoff, "bundles", bundle);
+        if (locator.source === "unverified") {
+            warnings.push(catalogInstallWarning("bundles", bundle.id).message);
+            if (!actual) {
+                warnings.push(`Runtime bundle ${bundle.id} was not installed because its source could not be verified.`);
+                continue;
+            }
+        }
         if (!actual) throw new Error(`Runtime bundle ${bundle.id} is missing`);
         if (actual.version !== bundle.version) {
             warnings.push(`Bundle ${bundle.id} version drift: approved ${bundle.version}, installed ${actual.version}.`);
@@ -486,6 +507,7 @@ export async function installDesignerSetup(project, root, id, hash, {
     }
     timings.preflight = elapsed(start);
     const handoff = await readHandoff(root, id, undefined, hash);
+    warnings.push(...(handoff.workflow.runtimeSetup?.warnings ?? []).map((warning) => warning.message));
     await rm(setupRecordPath(root, id), { force: true });
     if (!state.initialized) {
         start = performance.now();
@@ -529,6 +551,7 @@ export async function installDesignerSetup(project, root, id, hash, {
         if (kind === "presets" && localBase) await materializeDevSkills(project, localBase.path);
         const reserved = new Set();
         for (const item of standalone(handoff, kind)) {
+            if (item.installed && item.locator.source === "unverified") continue;
             const actual = await installPackage(project, kind, item, command, warnings, verify, reserved);
             if (item.selected && !item.local) {
                 if (reserved.has(actual.id)) {

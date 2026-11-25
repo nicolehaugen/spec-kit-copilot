@@ -25,6 +25,7 @@
 import { PHASE_ORDER, PHASE_BY_ID, DEFAULT_STATE, emptyPhaseSlice } from "../canvas-runtime/wizard-phases.mjs";
 import { normalizePipeline } from "../pipeline/validate.mjs";
 import { normalizeExecutionReports } from "../state/execution-reports.mjs";
+import { normalizeCatalogInstallSources } from "./catalog-install-source.mjs";
 
 // -------- Section: primitive coercers --------
 // Defensive value-normalizers used across the state-store. Each is a pure
@@ -199,6 +200,9 @@ export function normalizeState(raw) {
 
     if (Object.prototype.hasOwnProperty.call(raw, "pipeline")) {
         base.pipeline = normalizePipeline(raw.pipeline);
+    }
+    if (Object.prototype.hasOwnProperty.call(raw, "catalogInstallSources")) {
+        base.catalogInstallSources = normalizeCatalogInstallSources(raw.catalogInstallSources);
     }
 
     // Derive phases.setup.status from setup.* sub-flags. This is the single

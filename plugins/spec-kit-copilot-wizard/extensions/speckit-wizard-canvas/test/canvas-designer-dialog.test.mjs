@@ -46,6 +46,8 @@ function fakeElement(dataset = {}) {
     return {
         dataset, checked: false, disabled: false, hidden: false, inert: false, textContent: "",
         isConnected: true, classList: { toggle() {} },
+        matches(selector) { return Boolean(this.dataset.dismiss)
+            && selector.includes(".wizard-modal-close, .wizard-modal-cancel"); },
         addEventListener(type, callback) { handlers[type] = callback; },
         click() { return handlers.click?.({ target: this, currentTarget: this }); },
         change() { return handlers.change?.({ target: this }); },
@@ -67,9 +69,11 @@ function fakeDialogDocument() {
         html: "", nodes: new Map(), inputs: [],
         set innerHTML(value) {
             this.html = value;
-            this.nodes = new Map([".designer-modal", ".wizard-modal-close", ".wizard-modal-cancel",
-                ".designer-backdrop", ".designer-error", ".designer-submit"]
+            this.nodes = new Map([".designer-modal", ".designer-backdrop", ".designer-error",
+                ".designer-warning", ".designer-submit"]
                 .map((selector) => [selector, fakeElement()]));
+            this.nodes.set(".wizard-modal-close", fakeElement({ dismiss: true }));
+            this.nodes.set(".wizard-modal-cancel", fakeElement({ dismiss: true }));
             this.nodes.get(".designer-submit").textContent = "Launch designer";
             this.inputs = [...value.matchAll(/data-designer-kind="([^"]+)" data-designer-index="(\d+)"/g)]
                 .map(([, kind, index]) => {
@@ -232,6 +236,33 @@ test("launch closes the dialog on acceptance without a queued status", async () 
         assert.equal(root.innerHTML, "");
         assert.equal(currentCanvasDesignerSelections(), null);
         assert.doesNotMatch(root.html, /designer-status|launches queued/);
+    } finally {
+        root.replaceChildren();
+        globalThis.document = previousDocument;
+        globalThis.fetch = previousFetch;
+        state.snapshot = previousSnapshot;
+    }
+});
+
+test("accepted launch keeps nonblocking source warnings visible and lets the user dismiss", async () => {
+    const previousDocument = globalThis.document;
+    const previousFetch = globalThis.fetch;
+    const previousSnapshot = state.snapshot;
+    const { root, document } = fakeDialogDocument();
+    globalThis.document = document;
+    state.snapshot = { pipeline: [{ id: "plan" }],
+        catalog: { presets: [], extensions: [], bundles: [], designerFingerprint: "catalog-1" } };
+    const message = "Can't verify preset 'mystery' source. Install it via the Wizard and confirm it's Installed. Continuing may leave the generated canvas nonfunctional.";
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ queued: true, warnings: [message] }) });
+    try {
+        openCanvasDesignerDialog();
+        await root.querySelector(".designer-submit").click();
+        assert.equal(root.querySelector(".designer-submit").disabled, true);
+        assert.equal(root.querySelector(".designer-warning").textContent, message);
+        assert.equal(root.querySelector(".designer-warning").hidden, false);
+        assert.equal(root.querySelector(".wizard-modal-close").disabled, false);
+        root.querySelector(".wizard-modal-close").click();
+        assert.equal(root.innerHTML, "");
     } finally {
         root.replaceChildren();
         globalThis.document = previousDocument;

@@ -35,6 +35,10 @@ finished app does not depend on this extension at runtime.
 Generated runtime diagnostics use the SDK-supported `warning` log level. If
 logging throws or rejects, the runtime reports the diagnostic and logging failure
 to the console without aborting badge evaluation.
+New canvases preserve Wizard runtime-source warnings and display them in the
+generated app, including when setup is hidden. Unverified extension, preset, or
+bundle sources do not block generation; setup does not invent a replacement
+catalog source for them.
 The stock Workflow page shows its configured logo, workflow name, count, and
 description with any summary badges directly beneath it, without a separate
 Summary heading. This combined intro is always visible and cannot be collapsed,

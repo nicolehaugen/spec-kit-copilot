@@ -100,6 +100,11 @@ export function applyPatch(current, patch) {
         merged.currentPhase = patch.currentPhase;
     }
     if (typeof patch.preset === "string" && patch.preset.length) merged.preset = patch.preset;
+    if (Object.prototype.hasOwnProperty.call(patch, "catalogInstallSources")) {
+        merged.catalogInstallSources = normalizeState({
+            catalogInstallSources: patch.catalogInstallSources,
+        }).catalogInstallSources;
+    }
     if (patch.setup && typeof patch.setup === "object") {
         // Only merge fields explicitly present in the patch. normalizeState()
         // would fill in defaults for missing fields and clobber real values,

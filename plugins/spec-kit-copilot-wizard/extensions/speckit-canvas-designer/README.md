@@ -432,6 +432,11 @@ checkout paths are supported. Unrelated installed packages do not affect version
 Version drift is reported as a warning rather than blocking generation. If
 Specify's inventory cannot be read or a package is missing, that package's
 generated version is marked `unverified` and the warning remains visible.
+Runtime package source uncertainty is also carried into the new canvas: the
+Wizard warns with the affected extension, preset, or bundle and recommends
+installing it through the Wizard. The warning does not block launch or
+generation, and the generated app displays it even when its setup button is
+hidden.
 Pages explicitly marked `enabled: false` are omitted even if their other fields
 are malformed; unreadable pages still show errors because their enabled state
 cannot be determined.

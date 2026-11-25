@@ -165,6 +165,10 @@ async function mountGeneratedButtons() {
 }
 
 function renderSetup() {
+    const warningStatus = $("runtime-warnings");
+    const warnings = JSON.parse(warningStatus.dataset.warnings ?? "[]");
+    warningStatus.textContent = warnings.map((warning) => warning.message).join(" ");
+    warningStatus.hidden = !warningStatus.textContent;
     const setup = model?.setup;
     const visible = model?.showSetup && !setup?.ready;
     $("setup-surface").hidden = !visible;

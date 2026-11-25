@@ -160,6 +160,27 @@ test("scripted setup keeps Specify installation order and uses frozen catalog ke
     assert.equal(f.calls.filter((args) => args[0]?.endsWith("verify-launch.mjs")).length, 1);
 });
 
+test("unverified runtime dependencies warn and remain uninstalled during child bootstrap", async (t) => {
+    const installed = {
+        presets: [{ id: "unknown-preset", version: "1.0.0", priority: 2, enabled: true }],
+        extensions: [],
+        bundles: [{ id: "unknown-bundle", version: "2.0.0" }],
+    };
+    const locators = {
+        presets: [{ installedId: "unknown-preset", source: "unverified" }],
+        extensions: [],
+        bundles: [{ installedId: "unknown-bundle", source: "unverified" }],
+    };
+    const f = await fixture(t, { installed, locators });
+    const result = await installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps);
+    assert.equal(result.stage, "installed");
+    assert.ok(result.warnings.some((warning) => /Can't verify preset 'unknown-preset' source/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /preset unknown-preset was not installed/.test(warning)));
+    assert.ok(result.warnings.some((warning) => /bundle unknown-bundle was not installed/.test(warning)));
+    assert.equal(f.calls.some((args) => args.includes("unknown-preset")
+        || args.includes("unknown-bundle")), false);
+});
+
 test("finalize rejects a verifier payload incompatible with the Designer open schema", async (t) => {
     const f = await fixture(t);
     await installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps);

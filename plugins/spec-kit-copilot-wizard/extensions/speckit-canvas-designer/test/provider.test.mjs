@@ -1893,11 +1893,11 @@ test("stock contributions retain the optional slug setting and minimal replaced 
         "canvas.displayName": "Stock Canvas", "canvas.description": "Stock description",
         "canvas.workflowListName": "Stock heading", "canvas.workflowItemName": "Issue",
         "workflowSlug.userProvided": true };
-    await assert.rejects(freezeGeneration({ model: full, values, project, workspace,
+    await assert.doesNotReject(freezeGeneration({ model: full, values, project, workspace,
         handoff: { ...handoff, workflow: { ...handoff.workflow, installed: {
             ...handoff.workflow.installed, presets: [{ id: "local-runtime", source: "local",
                 version: "1.0.0", priority: 1, enabled: true }],
-        } } } }), /local presets local-runtime has no verified path/);
+        } } } }));
     const saved = await saveDesignerSettings(workspace, handoff, full,
         { revision: 0, modelRevision: full.revision, values });
     assert.deepEqual((await loadDesignerSettings(workspace, handoff, saved)).values, values);

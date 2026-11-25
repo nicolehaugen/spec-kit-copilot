@@ -771,6 +771,8 @@ export function renderHtml(config, token = "") {
     <div class="header-status"><button class="btn-icon" id="theme-toggle" type="button" title="Toggle theme" aria-label="Toggle theme">&#9680;</button><button class="btn btn-secondary" id="refresh-state" type="button">Refresh</button><span id="connection-status" class="conn conn-connecting" role="status">Connecting</span></div>
 </header>
 <p id="canvas-fatal-error" class="workflow-error" role="alert" hidden></p>
+<p id="runtime-warnings" class="muted" role="status" aria-live="polite"
+    data-warnings="${escapeHtml(JSON.stringify(config.runtimeSetup?.warnings ?? []))}" hidden></p>
 <main id="workflow-surface" class="app-body workflow-surface" data-workflow-item-name="${itemLabel}">
     ${adapted ? "" : `<section id="setup-surface" class="phase-card" aria-labelledby="setup-heading" hidden>
         <div class="setup-copy"><h2 id="setup-heading">Set up this project</h2>
