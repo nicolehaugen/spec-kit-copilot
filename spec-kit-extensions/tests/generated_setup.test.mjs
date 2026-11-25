@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { createSetup, validateRuntimeSetup } from "../extension-canvas-design/generated-scaffold/setup.mjs";
+import { specKitSkillReloadErrors } from "../extension-canvas-design/generated-scaffold/files.mjs";
 import { createRuntime } from "../extension-canvas-design/generated-scaffold/runtime.mjs";
 import { createWorkflowRoutes } from "../extension-canvas-design/generated-scaffold/server.mjs";
 import { createServer } from "node:http";
@@ -20,14 +21,14 @@ const recipe = { presets: [preset], bundles: [], extensions: [extension] };
 
 function harness(t, { init = false, installed = false, skill = false, configured = true,
     empty = false, urlLocal = false, clock = () => Date.now(), runtimeRecipe = recipe,
-    inventory = {}, phases = [phase] } = {}) {
+    inventory = {}, phases = [phase], reloadErrors = [] } = {}) {
     const root = mkdtemp(join(process.cwd(), ".generated-setup-test-"));
     t.after(async () => rm(await root, { recursive: true, force: true }));
     const calls = [], sent = [], events = [], approved = [];
     let installedNow = installed, cliNow = init, reloads = 0;
     let beforeCommand = async () => {};
     const session = { send: async ({ prompt }) => { sent.push(prompt); return `message-${sent.length}`; },
-        getEvents: async () => events, rpc: { skills: { reload: async () => { reloads++; return { errors: [] }; } } } };
+        getEvents: async () => events, rpc: { skills: { reload: async () => { reloads++; return { errors: reloadErrors }; } } } };
     const command = async (exe, args, options) => {
         calls.push({ exe, args, options });
         await beforeCommand(args);
@@ -73,6 +74,19 @@ function harness(t, { init = false, installed = false, skill = false, configured
         setInstalled: (value) => { installedNow = value; }, reloads: () => reloads,
         beforeCommand: (callback) => { beforeCommand = callback; } };
 }
+
+test("reload failures match dynamically named Spec Kit skills", () => {
+    for (const command of ["plan", "future-command"]) {
+        const skill = `speckit-${command}`;
+        assert.deepEqual(specKitSkillReloadErrors([
+            `Failed to load skill '.github/skills/${skill}/SKILL.md': invalid frontmatter`,
+        ]), [`Failed to load skill '.github/skills/${skill}/SKILL.md': invalid frontmatter`]);
+    }
+    assert.deepEqual(specKitSkillReloadErrors([
+        "Failed to load skill '.claude/skills/custom-review/SKILL.md': invalid frontmatter",
+        "Failed to load skill '.claude/skills/custom/SKILL.md': references speckit-plan",
+    ]), []);
+});
 
 function locallyReported(item, overrides = {}) {
     return { id: item.id, version: item.version, enabled: item.enabled, priority: item.priority,
@@ -126,6 +140,26 @@ test("confirmed batch verifies inventory, supports partial retry and reloads onl
     assert.ok(h.calls.every(({ options }) => options.timeout === 10000 && options.maxBuffer === 128 * 1024));
     assert.ok(h.calls.every(({ exe, options }) =>
         exe === (process.platform === "win32" ? "specify.exe" : "specify") && options.shell !== true));
+});
+
+test("unrelated skill reload errors do not block generated-canvas setup", async (t) => {
+    const errors = ["Failed to load skill '.claude/skills/custom-review/SKILL.md': invalid frontmatter"];
+    const h = harness(t, { init: true, installed: true, reloadErrors: errors });
+    const setup = await h.setup();
+    const status = await setup.status();
+    assert.equal(status.ready, true);
+    assert.equal(status.stage, "ready");
+    assert.equal(h.reloads(), 1);
+});
+
+test("Spec Kit skill reload errors still block generated-canvas setup", async (t) => {
+    const errors = ["Failed to load skill '.github/skills/speckit-future-command/SKILL.md': invalid frontmatter"];
+    const h = harness(t, { init: true, installed: true, reloadErrors: errors });
+    const setup = await h.setup();
+    const status = await setup.status();
+    assert.equal(status.ready, false);
+    assert.equal(status.stage, "failed");
+    assert.match(status.error, /Session skills could not reload/);
 });
 
 test("concurrent completion checks share one stable confirmation plan", async (t) => {
@@ -527,6 +561,27 @@ test("phase dispatch is gated on readiness even when showSetup is false; legacy 
     try {
         await assert.rejects(oldRuntime.run({ phase: "specify", args: "" }, "panel"), /Installed skill/);
     } finally { oldRuntime.close(); }
+});
+
+test("phase dispatch blocks Spec Kit reload errors but ignores unrelated skill errors", async (t) => {
+    const cwd = await mkdtemp(join(process.cwd(), ".generated-reload-runtime-"));
+    t.after(() => rm(cwd, { recursive: true, force: true }));
+    const skill = "speckit-constitution";
+    await mkdir(join(cwd, ".github", "skills", skill), { recursive: true });
+    await writeFile(join(cwd, ".github", "skills", skill, "SKILL.md"), `---\nname: ${skill}\n---\n`);
+    const errors = [`Failed to load skill '.github/skills/${skill}/SKILL.md': invalid frontmatter`];
+    const h = harness(t, { reloadErrors: errors });
+    const runtime = await createRuntime({ config: { canvas: { id: "test" }, phases: ["constitution"],
+        phaseOutputs: {}, userProvidesSlug: false }, cwd, workspace: cwd,
+    session: { ...h.session, sessionId: "test", log: async () => {}, on: () => () => {} } });
+    try {
+        await assert.rejects(runtime.run({ phase: "constitution", args: "Principles" }, "panel"),
+            /Session skills could not reload/);
+        assert.equal(h.sent.length, 0);
+        errors.splice(0, 1, "Failed to load skill '.claude/skills/custom/SKILL.md': invalid frontmatter");
+        await runtime.run({ phase: "constitution", args: "Principles" }, "panel");
+        assert.equal(h.sent.length, 1);
+    } finally { runtime.close(); }
 });
 
 test("setup routes require canvas token, origin and the current plan", async (t) => {

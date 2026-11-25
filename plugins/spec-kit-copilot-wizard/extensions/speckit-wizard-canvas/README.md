@@ -429,7 +429,8 @@ accordingly. The extension registers **13 actions** across four groups:
   agent reads its workflow and supplies installed command IDs with optional
   `after` anchors; automatic hook commands are not addable.
 - `reloadSessionSkills` — reload Copilot's in-memory skill registry for
-  the session (equivalent to `/skills reload`).
+  the session (equivalent to `/skills reload`). Errors attributed to Spec Kit
+  skills block setup; unrelated skill errors do not.
 - `runNpmDiagnostics` — dispatch a scripted npm-diagnostic prompt to the
   parent session so the Copilot agent walks a checklist (inspect
   `~/.npmrc`, ask about the org's approved feed / CA / proxy, propose a

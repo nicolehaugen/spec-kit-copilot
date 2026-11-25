@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
 import { createContext, runInContext } from "node:vm";
 import { UserError, confined, readBounded, readBoundedBytes, directories, atomicJson, safePath, slugPattern,
-    deleteConfinedDirectory } from "./files.mjs";
+    deleteConfinedDirectory, specKitSkillReloadErrors } from "./files.mjs";
 import { phaseContract, valueContract, validateValue } from "./contract.mjs";
 import { phaseInteractions, phaseResponse, phaseTurnState } from "./phase-response.mjs";
 import { createSetup } from "./setup.mjs";
@@ -826,7 +826,7 @@ export async function createRuntime({ config, cwd, workspace, session, notify = 
         if (name !== step.skill) throw new UserError(`Installed skill name does not match ${step.skill}. Nothing was sent.`);
         if (!session.rpc?.skills?.reload) throw new UserError("Session skill reload is unavailable. Reload skills in Copilot before retrying.");
         const result = await session.rpc.skills.reload();
-        if (result?.errors?.length) throw new UserError("Session skills could not reload. Check Copilot's skill diagnostics and retry.");
+        if (specKitSkillReloadErrors(result?.errors).length) throw new UserError("Session skills could not reload. Check Copilot's skill diagnostics and retry.");
     }
     async function enabledAutopilot() {
         if (!config.workflowPage.managedRun) {

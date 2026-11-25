@@ -13,6 +13,8 @@ const installSetup = async (...args) =>
     (await import("../speckit-wizard-canvas/server/designer-setup.mjs")).installDesignerSetup(...args);
 const finalizeSetup = async (...args) =>
     (await import("../speckit-wizard-canvas/server/designer-setup.mjs")).finalizeDesignerSetup(...args);
+export const specKitSkillReloadErrors = async (errors) =>
+    (await import("../speckit-wizard-canvas/contracts/skill-reload.mjs")).specKitSkillReloadErrors(errors);
 
 async function bounded(work, milliseconds, code) {
     let timer;
@@ -171,12 +173,15 @@ export function createDesignerBootstrap({
                 delete record.reloadPending;
                 pendingReloads.delete(key);
                 if (!Array.isArray(record.reload?.errors) || !Array.isArray(record.reload?.warnings)
-                    || [...record.reload.errors, ...record.reload.warnings].some((message) => typeof message !== "string")
-                    || record.reload.errors.length) {
-                    const messages = Array.isArray(record.reload?.errors)
-                        ? record.reload.errors.filter((message) => typeof message === "string").join("; ") : "";
+                    || [...record.reload.errors, ...record.reload.warnings].some((message) => typeof message !== "string")) {
                     throw new BootstrapError("designer_skill_reload_failed",
-                        `Designer skill reload failed or returned invalid diagnostics${messages ? `: ${messages}` : "."}`);
+                        "Designer skill reload failed or returned invalid diagnostics.");
+                }
+                // Errors from unrelated (non-speckit) skills never block a launch.
+                const blocking = await specKitSkillReloadErrors(record.reload.errors);
+                if (blocking.length) {
+                    throw new BootstrapError("designer_skill_reload_failed",
+                        `Designer skill reload failed or returned invalid diagnostics: ${blocking.join("; ")}`);
                 }
                 record.skillsReloaded = true;
                 await save();
