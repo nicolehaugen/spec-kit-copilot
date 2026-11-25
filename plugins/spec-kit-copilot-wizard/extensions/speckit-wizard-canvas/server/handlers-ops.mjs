@@ -13,7 +13,9 @@ import {
 } from "../canvas-runtime/output-inference.mjs";
 import { commitOwnedFile } from "../canvas-runtime/owned-commit.mjs";
 
-import { applyPatch, writeState } from "../state/store.mjs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { pathExists } from "../env/workspace.mjs";
+import { applyPatch, readState, writeState } from "../state/store.mjs";
 import { effectivePipelinePhases, stripCommandsPrefix } from "../pipeline/effective-phases.mjs";
 import { jsonError, jsonRes } from "./http-utils.mjs";
 
@@ -91,15 +93,15 @@ export async function handlePipelineMutation(res, body, { getState, broadcast, g
         next = seed.filter((_, i) => i !== idx);
     }
 
-    inst.state = applyPatch(snapshot, { pipeline: next });
+    const saved = await readState(inst.workspacePath, { pathExists, readFile });
+    if (saved.warnings.length) return jsonError(res, 500, "Could not read Wizard state; retry the pipeline edit");
+    const state = applyPatch(snapshot, { pipeline: next, catalogInstallSources: saved.state.catalogInstallSources });
     try {
-        await writeState(inst.workspacePath, inst.state, {
-            mkdir: (await import("node:fs/promises")).mkdir,
-            writeFile: (await import("node:fs/promises")).writeFile,
-        });
-    } catch {
-        // best-effort persist; the in-memory state below still reflects the change
+        await writeState(inst.workspacePath, state, { mkdir, writeFile });
+    } catch (error) {
+        return jsonError(res, 500, `Could not save pipeline: ${error.message}`);
     }
+    inst.state = state;
     // Broadcast a fully-rendered snapshot (includes commands /
     // phaseGraph / composition), not the raw persisted state — otherwise the
     // client would briefly see every pipeline entry as MISSING while the graph

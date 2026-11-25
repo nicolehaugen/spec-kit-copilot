@@ -455,7 +455,7 @@ test("frozen local extension reads its nested manifest identity", async (t) => {
 test("setup card keeps the workflow visible while gating phase runs until ready", async () => {
     const source = await readFile(new URL("../extension-canvas-design/generated-scaffold/ui/app.js",
         import.meta.url), "utf8");
-    const setupCode = source.slice(source.indexOf("function renderSetup()"), source.indexOf("let phaseControl;"));
+    const setupCode = source.slice(source.indexOf("function renderRuntimeWarnings()"), source.indexOf("let phaseControl;"));
     const statusCode = source.slice(source.indexOf("function renderStatus()"), source.indexOf("function renderPhase()"));
     const nodes = new Map(["setup-surface", "workflow-surface", "workflow-pipeline", "setup-status", "runtime-warnings", "setup-actions", "run-phase", "phase-args",
         "phase-message"].map((id) => [id, { hidden: false, disabled: false, readOnly: false,
@@ -471,7 +471,7 @@ test("setup card keeps the workflow visible while gating phase runs until ready"
     validatePhaseState,
     constitution: () => null, hasSelectedWorkflow: () => false, renderName() {}, renderSlug() {},
     $: (id) => nodes.get(id), Map, Object, Boolean };
-    runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderSetup(); renderStatus(); };`, context);
+    runInNewContext(`${setupCode}\n${statusCode}\nthis.render = () => { renderRuntimeWarnings(); renderSetup(); renderStatus(); };`, context);
     context.render();
     assert.equal(nodes.get("setup-surface").hidden, false);
     assert.equal(nodes.get("workflow-surface").hidden, false);

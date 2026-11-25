@@ -130,7 +130,8 @@ function standalone(handoff, kind) {
         if (kind === "extensions" && selected.id === BASE) continue;
         if ([...entries.values()].some((entry) => entry.locator.catalogId === selected.id
             && entry.locator.source === selected.source)) continue;
-        if (!entries.has(selected.id)) {
+        const previous = entries.get(selected.id);
+        if (!previous || previous.locator.source === "unverified") {
             entries.set(selected.id, { selected, locator: {
                 installedId: selected.id, source: selected.source, catalogId: selected.id,
                 downloadUrl: selected.downloadUrl,
@@ -324,7 +325,8 @@ async function installBundles(project, handoff, command, warnings, download) {
     for (const selected of handoff.selections.bundles) {
         if ([...entries.values()].some((entry) => entry.locator.catalogId === selected.id
             && entry.locator.source === selected.source)) continue;
-        if (!entries.has(selected.id)) entries.set(selected.id, { selected,
+        const previous = entries.get(selected.id);
+        if (!previous || previous.locator.source === "unverified") entries.set(selected.id, { selected,
             locator: { installedId: selected.id, source: selected.source,
                 catalogId: selected.id, downloadUrl: selected.downloadUrl } });
     }
@@ -364,8 +366,9 @@ async function verifyRuntime(project, handoff, command, warnings) {
                 warnings.push(catalogInstallWarning(kind, item.id).message);
                 if (!found) {
                     warnings.push(`Runtime ${kind.slice(0, -1)} ${item.id} was not installed because its source could not be verified.`);
-                    continue;
                 }
+                // A same-ID Designer selection does not verify the runtime source.
+                continue;
             }
             if (!found || found.priority !== item.priority || found.enabled !== item.enabled
                 || (local && found.source !== "local")
@@ -392,8 +395,8 @@ async function verifyRuntime(project, handoff, command, warnings) {
             warnings.push(catalogInstallWarning("bundles", bundle.id).message);
             if (!actual) {
                 warnings.push(`Runtime bundle ${bundle.id} was not installed because its source could not be verified.`);
-                continue;
             }
+            continue;
         }
         if (!actual) throw new Error(`Runtime bundle ${bundle.id} is missing`);
         if (actual.version !== bundle.version) {

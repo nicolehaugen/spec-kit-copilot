@@ -54,6 +54,34 @@ const snapshot = { pipeline: [{ id: "commands/plan" }], catalog };
 const empty = { presets: [], extensions: [], bundles: [] };
 const exec = promisify(execFile);
 
+test("Wizard install evidence is validated across the Designer handoff", () => {
+    const item = { id: "sample", version: "1.0.0", priority: 10, enabled: true, source: "local" };
+    const installed = { ...empty, extensions: [item] };
+    const entry = { id: "sample", source: "community", version: item.version,
+        downloadUrl: "https://example.org/sample.zip", installAllowed: false };
+    const sources = { ...empty, extensions: [entry] };
+    const record = makeCatalogInstallSource("extension", entry, item, true);
+    const locators = resolveRuntimeInstallLocators(installed, sources, undefined, undefined, [], [record]);
+    const evidence = verifiedCatalogInstallEvidence(installed, locators, sources, [record]);
+    const handoff = buildDesignerHandoff(snapshot, empty, undefined, installed, randomUUID(), locators,
+        { installEvidence: evidence });
+    assert.deepEqual(handoff.workflow.installEvidence, [record]);
+    assert.equal(validateHandoff(handoff, handoff.handoffId), handoff);
+    const rejected = [
+        [{ ...record, approved: false }],
+        [record, record],
+        [makeCatalogInstallSource("extension", { ...entry, downloadUrl: "https://example.org/other.zip" },
+            item, true)],
+    ];
+    for (const invalid of rejected) {
+        const changed = structuredClone(handoff);
+        changed.workflow.installEvidence = invalid;
+        changed.sourceFingerprint = fingerprint({ workflow: changed.workflow, selections: changed.selections,
+            localSelections: changed.localSelections, canvasDesign: changed.canvasDesign });
+        assert.throws(() => validateHandoff(changed, changed.handoffId), /Invalid Designer handoff/);
+    }
+});
+
 test("hosted install URLs are quoted as single shell arguments in both install steps", () => {
     const url = "https://example.org/canvas.zip?x=1&y=';$(id)";
     assert.equal(quoteInstallUrl(url, "win32"), "'https://example.org/canvas.zip?x=1&y='';$(id)'");

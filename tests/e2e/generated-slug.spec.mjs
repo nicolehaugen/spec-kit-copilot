@@ -27,6 +27,29 @@ const workflowPage = { title, order, slots, badgeDestinations,
     placement: { page: "workflow", slot: "workflow.phases" }, viewLabels: {},
     controlHash: digest(phaseControlDefinition), hash: digest(phaseAdapter) };
 
+test("runtime warnings remain visible with the Workflow adapter and setup hidden", async ({ page }) => {
+    const warning = "Can't verify bundle 'unknown-kit' source. Install it via the Wizard.";
+    const canvas = await openGeneratedCanvas(false, ["specify"], undefined, undefined, undefined,
+        undefined, false, {}, undefined, {
+            showSetup: false, runtimeSetup: { presets: [], extensions: [], bundles: [],
+                warnings: [{ kind: "bundle", id: "unknown-kit", reason: "unverified", message: warning }] },
+        });
+    try {
+        await page.goto(canvas.url);
+        await expect(page.locator("#runtime-warnings")).toBeVisible();
+        await expect(page.locator("#runtime-warnings")).toHaveText(warning);
+        await expect(page.locator("#workflow-rows [data-workflow-id]").first()).toBeVisible();
+        await Promise.all([
+            page.waitForResponse((response) => response.url().includes("/api/refresh") && response.ok()),
+            page.locator("#refresh-state").click(),
+        ]);
+        await expect(page.locator("#runtime-warnings")).toHaveText(warning);
+    } finally {
+        await page.close();
+        await canvas.close();
+    }
+});
+
 test("New workflow reports connecting before the first state refresh", async ({ page }) => {
     const canvas = await openGeneratedCanvas(false);
     let releaseState;
@@ -233,6 +256,8 @@ async function openGeneratedCanvas(userProvidesSlug, phases = ["specify", "plan"
         },
         phaseArtifacts,
         installed: { presets: [], extensions: [], bundles: [] },
+        ...(options.showSetup !== undefined ? { showSetup: options.showSetup } : {}),
+        ...(options.runtimeSetup ? { runtimeSetup: options.runtimeSetup } : {}),
         ...(generatedPages ? { generatedPages } : {}),
         ...(readOnlyFields ? { readOnlyFields } : {}),
         ...(generatedControls ? { generatedControls } : {}),

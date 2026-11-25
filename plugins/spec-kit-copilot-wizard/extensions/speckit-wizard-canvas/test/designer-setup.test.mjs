@@ -181,6 +181,53 @@ test("unverified runtime dependencies warn and remain uninstalled during child b
         || args.includes("unknown-bundle")), false);
 });
 
+test("approved selections install despite same-ID unverified runtime packages", async (t) => {
+    const installed = {
+        presets: [{ id: "pirate-full", version: "1.1.0", priority: 4, enabled: false }],
+        extensions: [{ id: "pirate-full", version: "1.1.0", priority: 4, enabled: false }],
+        bundles: [{ id: "kit", version: "2.0.0" }],
+    };
+    const locators = Object.fromEntries(Object.entries(installed).map(([kind, items]) =>
+        [kind, items.map(({ id }) => ({ installedId: id, source: "unverified" }))]));
+    const selected = (id, version) => ({ id, version, source: "community", approved: true,
+        downloadUrl: `https://example.org/${id}.zip` });
+    const selections = { presets: [selected("pirate-full", "1.1.0")],
+        extensions: [selected("pirate-full", "1.1.0")], bundles: [selected("kit", "2.0.0")] };
+    const f = await fixture(t, { installed, locators, selections });
+    const selectedCalls = [];
+    const run = async (binary, args, options) => {
+        if (["preset", "extension"].includes(args[0]) && args[1] === "add"
+            && args[2] === "pirate-full") {
+            selectedCalls.push(args);
+            return f.run(binary, [...args.slice(0, 2), "pirate", ...args.slice(3)], options);
+        }
+        return f.run(binary, args, options);
+    };
+    const deps = { ...f.deps, run, download: async (_url, path) => writeFile(path, "zip") };
+    const result = await installDesignerSetup(f.project, f.root, f.id, f.hash, deps);
+    assert.deepEqual(selectedCalls.map((args) => args[0]).sort(), ["extension", "preset"]);
+    assert.ok(f.calls.some((args) => args[0] === "bundle" && args[1] === "install"));
+    for (const kind of ["extension", "preset", "bundle"]) {
+        assert.ok(result.warnings.some((warning) => warning.includes(`Can't verify ${kind} '`)));
+    }
+    assert.equal(f.packages.extensions.find((entry) => entry.id === "pirate-full").enabled, true);
+    assert.equal(f.packages.presets[0].enabled, true);
+    assert.equal((await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, deps)).stage, "ready");
+});
+
+test("same-ID unverified runtime package does not hide a selected catalog alias", async (t) => {
+    const installed = { ...empty, presets: [{ id: "pirate", version: "1.0.0",
+        priority: 4, enabled: false }] };
+    const locators = { ...empty, presets: [{ installedId: "pirate", source: "unverified" }] };
+    const selections = { ...empty, presets: [{ id: "pirate", source: "community",
+        approved: true, version: "1.1.0", downloadUrl: "https://example.org/pirate.zip" }] };
+    const f = await fixture(t, { installed, locators, selections });
+    const result = await installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps);
+    assert.ok(result.warnings.some((warning) => /Can't verify preset 'pirate' source/.test(warning)));
+    assert.equal(f.packages.presets[0].id, "pirate-full");
+    assert.equal((await finalizeDesignerSetup(f.project, f.root, f.id, f.hash, f.deps)).stage, "ready");
+});
+
 test("finalize rejects a verifier payload incompatible with the Designer open schema", async (t) => {
     const f = await fixture(t);
     await installDesignerSetup(f.project, f.root, f.id, f.hash, f.deps);
