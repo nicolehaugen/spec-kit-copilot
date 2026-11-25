@@ -1,6 +1,6 @@
 {
   "name": "spec-kit-copilot-bugfix",
-  "description": "A GitHub Copilot App canvas for the Spec Kit bug triage assess -> fix -> test pipeline.",
+  "description": "A GitHub Copilot App canvas for the Spec Kit Bug Fix Autopilot workflow.",
   "version": "0.1.0",
   "author": {
     "name": "GitHub",
